@@ -10,13 +10,13 @@ use thiserror::Error;
 pub struct ParseError(String);
 
 #[derive(Debug)]
-pub struct Supergraph {
+pub struct SupergraphIR {
     pub type_definitions: HashMap<String, SuperTypeDefinition>,
 }
 
-impl Supergraph {
-    pub fn new() -> Supergraph {
-        Supergraph {
+impl SupergraphIR {
+    pub fn new() -> SupergraphIR {
+        SupergraphIR {
             type_definitions: HashMap::new(),
         }
     }
@@ -213,10 +213,10 @@ fn get_join_field_directives<'a>(directives: Vec<Directive<'a, String>>) -> Vec<
     join_fields
 }
 
-pub fn parse_supergraph<'a>(sdl: &'a str) -> Result<Supergraph, ParseError> {
+pub fn parse_supergraph<'a>(sdl: &'a str) -> Result<SupergraphIR, ParseError> {
     let schema = parse_schema::<'a, String>(sdl).map_err(|e| ParseError(e.to_string()))?;
 
-    let mut supergraph = Supergraph::new();
+    let mut supergraph = SupergraphIR::new();
 
     for def in schema.definitions {
         match def {
