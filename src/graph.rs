@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, ops::Index};
+use std::{collections::HashMap, fmt::Display};
 
 use crate::supergraph::{SuperObjectTypeDefinition, SuperTypeDefinition, SupergraphIR};
 
@@ -33,20 +33,10 @@ impl Graph {
 
     pub fn add_from_roots(&mut self) {
         // find Query
-        let type_def = self.supergraph.type_definitions.get("Query");
-
-        if let Some(type_def) = type_def {
-            self.create_nodes_and_edges_for_type(type_def);
-        }
-        // for (const typeName of ['Query', 'Mutation', 'Subscription']) {
-        //   const typeState = this.supergraphState.objectTypes.get(typeName);
-
-        //   if (typeState && this.trueOrIfSubgraphThen(() => typeState.byGraph.has(this.id))) {
-        //     this.createNodesAndEdgesForType(typeState.name);
-        //   }
-        // }
-
-        // return this;
+        self.supergraph
+            .type_definitions
+            .get("Query")
+            .and_then(|type_def| Some(self.create_nodes_and_edges_for_type(type_def)));
     }
 
     fn create_nodes_and_edges_for_type(&mut self, type_def: &SuperTypeDefinition) {
