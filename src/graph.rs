@@ -31,7 +31,7 @@ impl Graph {
         }
     }
 
-    pub fn addFromRoots(&mut self) {
+    pub fn add_from_roots(&mut self) {
         // find Query
         let type_def = self.supergraph.type_definitions.get("Query");
 
