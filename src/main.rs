@@ -1,18 +1,24 @@
+mod edge;
 mod graph;
-pub mod supergraph;
+mod join_field;
+mod join_implements;
+mod join_type;
+mod node;
+mod supergraph;
 
 use std::fs;
 
-use graph::Graph;
+use graph::GraphQLSatisfiabilityGraph;
 
 fn main() {
-    let supergraph_sdl = fs::read_to_string("fixture/supergraph.graphql")
+    let supergraph_sdl = fs::read_to_string("fixture/dotan.supergraph.graphql")
         .expect("Unable to read supergraph.graphql");
 
-    let supergraph = supergraph::parse_supergraph(&supergraph_sdl).unwrap();
-    let mut super_graph = Graph::new(supergraph, "Supergraph".to_string());
+    // let supergraph = supergraph::parse_supergraph(&supergraph_sdl).unwrap();
+    let graph = GraphQLSatisfiabilityGraph::new_from_supergraph_sdl(&supergraph_sdl);
 
-    super_graph.add_from_roots();
-
-    // println!("{:?}", super_graph);
+    match graph {
+        Ok(graph) => println!("{}", graph),
+        Err(e) => eprintln!("Failed to build graph: {}", e),
+    }
 }

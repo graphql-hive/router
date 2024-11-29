@@ -1,234 +1,262 @@
-use graphql_parser_hive_fork::{
-    parse_schema,
-    schema::{Definition, Directive, ObjectType, TypeDefinition, Value},
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Debug,
 };
-use std::collections::HashMap;
-use thiserror::Error;
 
-#[derive(Error, Debug)]
-#[error("supergraph parse error: {}", _0)]
-pub struct ParseError(String);
+use graphql_parser_hive_fork::{
+    query::Directive,
+    schema::{Definition, Document, Field, InterfaceType, ObjectType, TypeDefinition},
+};
+use graphql_tools::ast::SchemaDocumentExtension;
+
+use crate::{
+    join_field::JoinFieldDirective, join_implements::JoinImplementsDirective,
+    join_type::JoinTypeDirective,
+};
+
+pub type SupergraphSchema = Document<'static, String>;
 
 #[derive(Debug)]
-pub struct SupergraphIR {
-    pub type_definitions: HashMap<String, SuperTypeDefinition>,
+pub struct SupergraphObjectType<'a> {
+    pub source: &'a ObjectType<'static, String>,
+    pub fields: HashMap<String, SupergraphField<'a>>,
+    pub join_type: Vec<JoinTypeDirective>,
+    pub join_implements: Vec<JoinImplementsDirective>,
+    pub root_type: Option<RootType>,
+    pub used_in_subgraphs: HashSet<String>,
 }
 
-impl SupergraphIR {
-    pub fn new() -> SupergraphIR {
-        SupergraphIR {
-            type_definitions: HashMap::new(),
+#[derive(Debug)]
+pub struct SupergraphInterfaceType<'a> {
+    pub source: &'a InterfaceType<'static, String>,
+    pub fields: HashMap<String, SupergraphField<'a>>,
+    pub join_type: Vec<JoinTypeDirective>,
+    pub join_implements: Vec<JoinImplementsDirective>,
+    pub used_in_subgraphs: HashSet<String>,
+}
+
+#[derive(Debug)]
+pub enum RootType {
+    Query,
+    Mutation,
+    Subscription,
+}
+
+#[derive(Debug)]
+pub struct SupergraphField<'a> {
+    pub source: &'a Field<'static, String>,
+    pub join_field: Vec<JoinFieldDirective>,
+}
+
+#[derive(Debug)]
+pub enum SupergraphDefinition<'a> {
+    Object(SupergraphObjectType<'a>),
+    Interface(SupergraphInterfaceType<'a>),
+}
+
+impl<'a> SupergraphDefinition<'a> {
+    pub fn name(&self) -> &str {
+        match self {
+            SupergraphDefinition::Object(object_type) => &object_type.source.name,
+            SupergraphDefinition::Interface(interface_type) => &interface_type.source.name,
         }
     }
 
-    pub fn add_object_type<'a>(&mut self, object_type: ObjectType<'a, String>) {
-        let fields: Vec<SuperFieldDefinition> = object_type
-            .fields
+    pub fn available_in_subgraph(&self, subgraph: &str) -> bool {
+        match self {
+            SupergraphDefinition::Object(object_type) => {
+                object_type.used_in_subgraphs.contains(subgraph)
+            }
+            SupergraphDefinition::Interface(interface_type) => {
+                interface_type.used_in_subgraphs.contains(subgraph)
+            }
+        }
+    }
+
+    pub fn is_root(&self) -> bool {
+        match self {
+            SupergraphDefinition::Object(object_type) => object_type.root_type.is_some(),
+            _ => false,
+        }
+    }
+
+    pub fn root_type(&self) -> Option<&RootType> {
+        match self {
+            SupergraphDefinition::Object(object_type) => object_type.root_type.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub fn fields(&self) -> &HashMap<String, SupergraphField> {
+        match self {
+            SupergraphDefinition::Object(object_type) => &object_type.fields,
+            SupergraphDefinition::Interface(interface_type) => &interface_type.fields,
+        }
+    }
+
+    pub fn join_types(&self) -> &Vec<JoinTypeDirective> {
+        match self {
+            SupergraphDefinition::Object(object_type) => &object_type.join_type,
+            SupergraphDefinition::Interface(interface_type) => &interface_type.join_type,
+        }
+    }
+
+    pub fn join_implements(&self) -> &Vec<JoinImplementsDirective> {
+        match self {
+            SupergraphDefinition::Object(object_type) => &object_type.join_implements,
+            SupergraphDefinition::Interface(interface_type) => &interface_type.join_implements,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct SupergraphIR<'a> {
+    pub definitions: HashMap<String, SupergraphDefinition<'a>>,
+}
+
+impl<'a> SupergraphIR<'a> {
+    pub fn new(schema: &'a SupergraphSchema) -> Self {
+        Self {
+            definitions: Self::build_map(schema),
+        }
+    }
+
+    fn build_map(schema: &'a SupergraphSchema) -> HashMap<String, SupergraphDefinition<'a>> {
+        schema
+            .definitions
             .iter()
-            .map(|field| SuperFieldDefinition {
-                name: field.name.clone(),
-                field_type: field.field_type.to_string(),
-                join: Some(get_join_field_directives(field.directives.clone())),
+            .filter_map(|definition| match definition {
+                Definition::TypeDefinition(TypeDefinition::Object(object_type)) => Some((
+                    object_type.name.to_string(),
+                    SupergraphDefinition::Object(Self::build_object_type(object_type, schema)),
+                )),
+                Definition::TypeDefinition(TypeDefinition::Interface(interface_type)) => Some((
+                    interface_type.name.to_string(),
+                    SupergraphDefinition::Interface(Self::build_interface_type(interface_type)),
+                )),
+                _ => None,
             })
-            .collect();
-
-        let directives = object_type.directives.clone();
-        self.type_definitions.insert(
-            object_type.name.clone(),
-            SuperTypeDefinition::Object(SuperObjectTypeDefinition {
-                name: object_type.name.clone(),
-                fields,
-                join: Some(get_join_type_directives(directives)),
-            }),
-        );
+            .collect()
     }
-}
 
-#[derive(Debug)]
-pub enum SuperTypeDefinition {
-    Object(SuperObjectTypeDefinition),
-}
+    fn build_fields(fields: &'a [Field<'static, String>]) -> HashMap<String, SupergraphField<'a>> {
+        fields
+            .iter()
+            .map(|field| {
+                (
+                    field.name.to_string(),
+                    SupergraphField {
+                        source: field,
+                        join_field: Self::extract_join_field_from_directives(&field.directives),
+                    },
+                )
+            })
+            .collect()
+    }
 
-#[derive(Debug)]
-pub struct SuperObjectTypeDefinition {
-    pub name: String,
-    pub fields: Vec<SuperFieldDefinition>,
-    pub join: Option<Vec<JoinType>>,
-}
+    fn build_interface_type(
+        interface_type: &'a InterfaceType<'static, String>,
+    ) -> SupergraphInterfaceType<'a> {
+        let fields = Self::build_fields(&interface_type.fields);
+        let used_in_subgraphs = Self::build_subgraph_usage_from_fields(&fields);
 
-#[derive(Debug)]
-pub struct JoinType {
-    graph: String,
-    key: Option<String>,
-    extension: bool,
-    resolvable: bool,
-    is_interface_object: bool,
-}
-
-#[derive(Debug)]
-pub struct JoinField {
-    graph: Option<String>,
-    requires: Option<String>,
-    provides: Option<String>,
-    type_in_graph: Option<String>,
-    external: bool,
-    override_value: Option<String>,
-    used_overridden: bool,
-}
-
-#[derive(Debug)]
-pub struct SuperFieldDefinition {
-    pub name: String,
-    pub field_type: String,
-    pub join: Option<Vec<JoinField>>,
-}
-
-fn get_join_type_directives<'a>(directives: Vec<Directive<'a, String>>) -> Vec<JoinType> {
-    let mut join_types: Vec<JoinType> = Vec::new();
-
-    for directive in directives {
-        if directive.name.ne("join__type") {
-            continue;
-        }
-
-        let mut graph: Option<String> = None;
-        let mut key: Option<String> = None;
-        let mut extension: bool = false;
-        let mut resolvable: bool = true;
-        let mut is_interface_object: bool = false;
-
-        // iterate over arguments and set values
-        for (arg_name, arg_value) in directive.arguments {
-            if arg_name.eq("graph") {
-                match arg_value {
-                    Value::String(value) => graph = Some(value),
-                    Value::Enum(value) => graph = Some(value),
-                    _ => {}
-                }
-            } else if arg_name.eq("key") {
-                match arg_value {
-                    Value::String(value) => key = Some(value),
-                    _ => {}
-                }
-            } else if arg_name.eq("extension") {
-                match arg_value {
-                    Value::Boolean(value) => extension = value,
-                    _ => {}
-                }
-            } else if arg_name.eq("resolvable") {
-                match arg_value {
-                    Value::Boolean(value) => resolvable = value,
-                    _ => {}
-                }
-            } else if arg_name.eq("is_interface_object") {
-                match arg_value {
-                    Value::Boolean(value) => is_interface_object = value,
-                    _ => {}
-                }
-            }
-        }
-
-        if let Some(graph) = graph {
-            join_types.push(JoinType {
-                graph,
-                key,
-                extension,
-                resolvable,
-                is_interface_object,
-            });
+        SupergraphInterfaceType {
+            source: interface_type,
+            fields,
+            join_type: Self::extract_join_types_from_directives(&interface_type.directives),
+            join_implements: Self::extract_join_implements_from_directives(
+                &interface_type.directives,
+            ),
+            used_in_subgraphs,
         }
     }
 
-    join_types
-}
+    fn build_object_type(
+        object_type: &'a ObjectType<'static, String>,
+        schema: &'a SupergraphSchema,
+    ) -> SupergraphObjectType<'a> {
+        let fields = Self::build_fields(&object_type.fields);
 
-fn get_join_field_directives<'a>(directives: Vec<Directive<'a, String>>) -> Vec<JoinField> {
-    let mut join_fields: Vec<JoinField> = Vec::new();
+        let root_type = if object_type.name == schema.query_type().name {
+            Some(RootType::Query)
+        } else if schema
+            .mutation_type()
+            .is_some_and(|t| t.name == object_type.name)
+        {
+            Some(RootType::Mutation)
+        } else if schema
+            .subscription_type()
+            .is_some_and(|t| t.name == object_type.name)
+        {
+            Some(RootType::Subscription)
+        } else {
+            None
+        };
 
-    for directive in directives {
-        if directive.name.ne("join__field") {
-            continue;
-        }
+        let used_in_subgraphs = Self::build_subgraph_usage_from_fields(&fields);
 
-        let mut graph: Option<String> = None;
-        let mut requires: Option<String> = None;
-        let mut provides: Option<String> = None;
-        let mut type_in_graph: Option<String> = None;
-        let mut external: bool = false;
-        let mut override_value: Option<String> = None;
-        let mut used_overridden: bool = false;
-
-        // iterate over arguments and set values
-        for (arg_name, arg_value) in directive.arguments {
-            if arg_name.eq("graph") {
-                match arg_value {
-                    Value::String(value) => graph = Some(value),
-                    Value::Enum(value) => graph = Some(value),
-                    _ => {}
-                }
-            } else if arg_name.eq("requires") {
-                match arg_value {
-                    Value::String(value) => requires = Some(value),
-                    _ => {}
-                }
-            } else if arg_name.eq("provides") {
-                match arg_value {
-                    Value::String(value) => provides = Some(value),
-                    _ => {}
-                }
-            } else if arg_name.eq("type") {
-                match arg_value {
-                    Value::String(value) => type_in_graph = Some(value),
-                    _ => {}
-                }
-            } else if arg_name.eq("external") {
-                match arg_value {
-                    Value::Boolean(value) => external = value,
-                    _ => {}
-                }
-            } else if arg_name.eq("override") {
-                match arg_value {
-                    Value::String(value) => override_value = Some(value),
-                    _ => {}
-                }
-            } else if arg_name.eq("usedOverridden") {
-                match arg_value {
-                    Value::Boolean(value) => used_overridden = value,
-                    _ => {}
-                }
-            }
-        }
-
-        join_fields.push(JoinField {
-            graph,
-            requires,
-            provides,
-            type_in_graph,
-            external,
-            override_value,
-            used_overridden,
-        });
-    }
-
-    join_fields
-}
-
-pub fn parse_supergraph<'a>(sdl: &'a str) -> Result<SupergraphIR, ParseError> {
-    let schema = parse_schema::<'a, String>(sdl).map_err(|e| ParseError(e.to_string()))?;
-
-    let mut supergraph = SupergraphIR::new();
-
-    for def in schema.definitions {
-        match def {
-            Definition::TypeDefinition(type_def) => match type_def {
-                TypeDefinition::Object(object_type_def) => {
-                    supergraph.add_object_type(object_type_def);
-                }
-                _ => {}
-            },
-            _ => {}
+        SupergraphObjectType {
+            source: object_type,
+            fields,
+            join_type: Self::extract_join_types_from_directives(&object_type.directives),
+            join_implements: Self::extract_join_implements_from_directives(&object_type.directives),
+            root_type,
+            used_in_subgraphs,
         }
     }
 
-    Ok(supergraph)
+    fn build_subgraph_usage_from_fields(
+        fields: &HashMap<String, SupergraphField>,
+    ) -> HashSet<String> {
+        fields
+            .iter()
+            .flat_map(|(_field_name, field)| field.join_field.iter())
+            .filter_map(|join_field| join_field.graph.as_ref().map(|graph| graph.to_string()))
+            .collect()
+    }
+
+    fn extract_join_field_from_directives(
+        directives: &[Directive<'static, String>],
+    ) -> Vec<JoinFieldDirective> {
+        directives
+            .iter()
+            .filter_map(|directive| {
+                if JoinFieldDirective::is(directive) {
+                    Some(JoinFieldDirective::from(directive))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn extract_join_implements_from_directives(
+        directives: &[Directive<'static, String>],
+    ) -> Vec<JoinImplementsDirective> {
+        directives
+            .iter()
+            .filter_map(|directive| {
+                if JoinImplementsDirective::is(directive) {
+                    Some(JoinImplementsDirective::from(directive))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn extract_join_types_from_directives(
+        directives: &[Directive<'static, String>],
+    ) -> Vec<JoinTypeDirective> {
+        directives
+            .iter()
+            .filter_map(|directive| {
+                if JoinTypeDirective::is(directive) {
+                    Some(JoinTypeDirective::from(directive))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
