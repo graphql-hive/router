@@ -3,7 +3,7 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use graphql_parser_hive_fork::{parse_schema, schema::ParseError};
+use graphql_parser_hive_fork::schema::{Document, ParseError};
 use graphql_tools::ast::{SchemaDocumentExtension, TypeExtension};
 use petgraph::{
     dot::Dot,
@@ -22,7 +22,7 @@ type Graph = Petgraph<Node, Edge, Directed>;
 
 #[derive(Debug)]
 pub struct GraphQLSatisfiabilityGraph {
-    lookup: LookupTable,
+    pub lookup: LookupTable,
 }
 
 #[derive(Debug, Error)]
@@ -36,11 +36,11 @@ pub enum GraphQLSatisfiabilityGraphError {
 }
 
 #[derive(Debug, Default)]
-struct LookupTable {
+pub struct LookupTable {
     graph: Graph,
-    query_root: Option<NodeIndex>,
-    mutation_root: Option<NodeIndex>,
-    subscription_root: Option<NodeIndex>,
+    pub query_root: NodeIndex,
+    pub mutation_root: Option<NodeIndex>,
+    pub subscription_root: Option<NodeIndex>,
     node_to_index: HashMap<String, NodeIndex>,
 }
 
@@ -94,21 +94,17 @@ impl LookupTable {
 
 impl GraphQLSatisfiabilityGraph {
     pub fn new_from_supergraph_sdl(
-        supergraph_sdl: &str,
+        supergraph: &Document<'static, String>,
     ) -> Result<Self, GraphQLSatisfiabilityGraphError> {
-        let supergraph = parse_schema(supergraph_sdl)
-            .map_err(GraphQLSatisfiabilityGraphError::ParseSchemaError)?
-            .into_static();
-
+        let supergraph_ir = SupergraphIR::new(supergraph);
         let mut lookup = LookupTable {
             node_to_index: HashMap::new(),
             graph: Graph::new(),
             ..Default::default()
         };
 
-        lookup.query_root = Some(
-            lookup.create_node_for_type(Node::QueryRoot(supergraph.query_type().name.clone())),
-        );
+        lookup.query_root =
+            lookup.create_node_for_type(Node::QueryRoot(supergraph.query_type().name.clone()));
         lookup.mutation_root = supergraph.mutation_type().map(|mutation_type| {
             lookup.create_node_for_type(Node::MutationRoot(mutation_type.name.clone()))
         });
@@ -118,9 +114,13 @@ impl GraphQLSatisfiabilityGraph {
 
         let mut instance = GraphQLSatisfiabilityGraph { lookup };
 
-        instance.build_graph(&SupergraphIR::new(&supergraph))?;
+        instance.build_graph(&supergraph_ir)?;
 
         Ok(instance)
+    }
+
+    fn has_node(&self, name: &str) -> bool {
+        self.lookup.node_to_index.contains_key(name)
     }
 
     fn build_graph(
@@ -171,7 +171,7 @@ impl GraphQLSatisfiabilityGraph {
 
             match definition.root_type() {
                 Some(RootType::Query) => {
-                    lookup.link_nodes(lookup.query_root.unwrap(), node_index, Edge::Root);
+                    lookup.link_nodes(lookup.query_root, node_index, Edge::Root);
                 }
                 Some(RootType::Mutation) => {
                     lookup.link_nodes(lookup.mutation_root.unwrap(), node_index, Edge::Root);

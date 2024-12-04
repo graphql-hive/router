@@ -112,11 +112,13 @@ impl<'a> SupergraphDefinition<'a> {
 #[derive(Debug)]
 pub struct SupergraphIR<'a> {
     pub definitions: HashMap<String, SupergraphDefinition<'a>>,
+    pub document: &'a Document<'static, String>,
 }
 
 impl<'a> SupergraphIR<'a> {
     pub fn new(schema: &'a SupergraphSchema) -> Self {
         Self {
+            document: schema,
             definitions: Self::build_map(schema),
         }
     }
