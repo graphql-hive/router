@@ -1,13 +1,28 @@
 mod utils;
 
+use query_planner::{operation_advisor::OperationAdvisor, parse_schema, supergraph::SupergraphIR};
 use wasm_bindgen::prelude::*;
 
+extern crate web_sys;
+
+// A macro to provide `println!(..)`-style syntax for `console.log` logging.
+macro_rules! log {
+    ( $( $t:tt )* ) => {
+        web_sys::console::log_1(&format!( $( $t )* ).into());
+    }
+}
+
 #[wasm_bindgen]
-extern "C" {
-    fn alert(s: &str);
+pub fn init_panic_hook() {
+    console_error_panic_hook::set_once();
 }
 
 #[wasm_bindgen]
 pub fn init(supergraph_sdl: &str) {
-    alert(format!("Hello, wasm-lib: {}", supergraph_sdl).as_str());
+    log!("called");
+
+    let schema_sdl = parse_schema(supergraph_sdl);
+    let supergraph = SupergraphIR::new(&schema_sdl);
+    let advisor = OperationAdvisor::new(supergraph);
+    log!("Hello, wasm-lib: {}", supergraph_sdl);
 }

@@ -6,7 +6,13 @@ mod join_type;
 mod move_validator;
 mod node;
 pub mod operation_advisor;
-mod supergraph;
+pub mod supergraph;
+
+pub fn parse_schema(sdl: &str) -> graphql_parser_hive_fork::schema::Document<'static, String> {
+    graphql_parser_hive_fork::parse_schema(sdl)
+        .unwrap()
+        .into_static()
+}
 
 #[cfg(test)]
 mod tests {
