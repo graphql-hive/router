@@ -37,7 +37,7 @@ pub enum GraphQLSatisfiabilityGraphError {
 
 #[derive(Debug, Default)]
 pub struct LookupTable {
-    graph: Graph,
+    pub graph: Graph,
     pub query_root: NodeIndex,
     pub mutation_root: Option<NodeIndex>,
     pub subscription_root: Option<NodeIndex>,
@@ -93,24 +93,30 @@ impl LookupTable {
 }
 
 impl GraphQLSatisfiabilityGraph {
-    pub fn new_from_supergraph_sdl(
-        supergraph: &Document<'static, String>,
+    pub fn new_from_supergraph(
+        supergraph_ir: &SupergraphIR,
     ) -> Result<Self, GraphQLSatisfiabilityGraphError> {
-        let supergraph_ir = SupergraphIR::new(supergraph);
         let mut lookup = LookupTable {
             node_to_index: HashMap::new(),
             graph: Graph::new(),
             ..Default::default()
         };
 
-        lookup.query_root =
-            lookup.create_node_for_type(Node::QueryRoot(supergraph.query_type().name.clone()));
-        lookup.mutation_root = supergraph.mutation_type().map(|mutation_type| {
+        lookup.query_root = lookup.create_node_for_type(Node::QueryRoot(
+            supergraph_ir.document.query_type().name.clone(),
+        ));
+        lookup.mutation_root = supergraph_ir.document.mutation_type().map(|mutation_type| {
             lookup.create_node_for_type(Node::MutationRoot(mutation_type.name.clone()))
         });
-        lookup.subscription_root = supergraph.subscription_type().map(|subscription_type| {
-            lookup.create_node_for_type(Node::SubscriptionRoot(subscription_type.name.clone()))
-        });
+        lookup.subscription_root =
+            supergraph_ir
+                .document
+                .subscription_type()
+                .map(|subscription_type| {
+                    lookup.create_node_for_type(Node::SubscriptionRoot(
+                        subscription_type.name.clone(),
+                    ))
+                });
 
         let mut instance = GraphQLSatisfiabilityGraph { lookup };
 
