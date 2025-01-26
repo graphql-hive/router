@@ -1,2 +1,2 @@
 [workspace]
-members = ["lib/query-planner"]
+members = ["lib/query-planner", "lib/wasm-lib"]

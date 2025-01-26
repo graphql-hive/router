@@ -3,6 +3,9 @@ name = "query-planner"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+
+
 [dependencies]
 graphql-tools = { version = "0.4.0", features = [
   "graphql_parser_fork",
