@@ -26,7 +26,8 @@ impl<'a> OperationAdvisor<'a> {
     }
 
     pub fn validate(&self, operation: Document<'static, String>) -> Result<(), ValidationError> {
-        let op_type: &graphql_parser_hive_fork::query::Definition<'_, String> = &operation.definitions[0];
+        let op_type: &graphql_parser_hive_fork::query::Definition<'_, String> =
+            &operation.definitions[0];
         let root_index = self.graph.lookup.query_root;
         let result = depth_first_search(&self.graph.lookup.graph, Some(root_index), |m| {
             println!("m: {:?}", m);

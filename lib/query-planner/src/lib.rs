@@ -22,7 +22,7 @@ mod tests {
 
     use crate::{operation_advisor::OperationAdvisor, supergraph::SupergraphIR};
 
-    // #[test]
+    #[test]
     fn test_run() {
         let current_dir = Path::new(file!()).parent().unwrap().parent().unwrap();
         let supergraph_sdl =

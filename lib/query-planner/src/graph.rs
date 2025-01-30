@@ -3,7 +3,7 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use graphql_parser_hive_fork::schema::{Document, ParseError};
+use graphql_parser_hive_fork::schema::ParseError;
 use graphql_tools::ast::{SchemaDocumentExtension, TypeExtension};
 use petgraph::{
     dot::Dot,
@@ -123,10 +123,6 @@ impl GraphQLSatisfiabilityGraph {
         instance.build_graph(&supergraph_ir)?;
 
         Ok(instance)
-    }
-
-    fn has_node(&self, name: &str) -> bool {
-        self.lookup.node_to_index.contains_key(name)
     }
 
     fn build_graph(
