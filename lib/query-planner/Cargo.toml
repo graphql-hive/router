@@ -1,0 +1,15 @@
+[package]
+name = "query-planner"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+
+
+[dependencies]
+graphql-tools = { version = "0.4.0", features = [
+  "graphql_parser_fork",
+], default-features = false }
+graphql-parser-hive-fork = "0.5.0"
+thiserror = "2.0.3"
+petgraph = "0.6.5"
