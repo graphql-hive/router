@@ -16,21 +16,17 @@ pub fn parse_schema(sdl: &str) -> graphql_parser_hive_fork::schema::Document<'st
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
-
-    use graphql_parser_hive_fork::parse_query;
-
     use crate::{operation_advisor::OperationAdvisor, supergraph::SupergraphIR};
+    use graphql_parser_hive_fork::parse_query;
+    use std::fs;
 
     #[test]
     fn test_run() {
-        let current_dir = Path::new(file!()).parent().unwrap().parent().unwrap();
-        let supergraph_sdl =
-            fs::read_to_string(current_dir.join("./fixture/dotan.supergraph.graphql"))
-                .expect("Unable to read supergraph.graphql");
+        let supergraph_sdl = fs::read_to_string("fixture/dotan.supergraph.graphql")
+            .expect("Unable to read supergraph file");
 
-        let operation = fs::read_to_string(current_dir.join("./fixture/dotan.operation.graphql"))
-            .expect("Unable to read dotan.operation.graphql");
+        let operation = fs::read_to_string("fixture/dotan.operation.graphql")
+            .expect("Unable to read operation file");
         let parsed_operation = parse_query(&operation).unwrap().into_static();
 
         let parsed_schema = graphql_parser_hive_fork::parse_schema(&supergraph_sdl)
