@@ -110,12 +110,12 @@ impl<'a> SupergraphDefinition<'a> {
 }
 
 #[derive(Debug)]
-pub struct SupergraphIR<'a> {
+pub struct SupergraphMetadata<'a> {
     pub definitions: HashMap<String, SupergraphDefinition<'a>>,
     pub document: &'a Document<'static, String>,
 }
 
-impl<'a> SupergraphIR<'a> {
+impl<'a> SupergraphMetadata<'a> {
     pub fn new(schema: &'a SupergraphSchema) -> Self {
         Self {
             document: schema,

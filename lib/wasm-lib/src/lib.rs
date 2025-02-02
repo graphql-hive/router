@@ -1,6 +1,8 @@
 mod utils;
 
-use query_planner::{operation_advisor::OperationAdvisor, parse_schema, supergraph::SupergraphIR};
+// use query_planner::{
+//     operation_advisor::OperationAdvisor, parse_schema, supergraph::SupergraphMetadata,
+// };
 use wasm_bindgen::prelude::*;
 
 extern crate web_sys;
@@ -21,8 +23,8 @@ pub fn init_panic_hook() {
 pub fn init(supergraph_sdl: &str) {
     log!("called");
 
-    let schema_sdl = parse_schema(supergraph_sdl);
-    let supergraph = SupergraphIR::new(&schema_sdl);
-    let advisor = OperationAdvisor::new(supergraph);
+    // let schema_sdl = parse_schema(supergraph_sdl);
+    // let supergraph = SupergraphMetadata::new(&schema_sdl);
+    // let advisor = OperationAdvisor::new(supergraph);
     log!("Hello, wasm-lib: {}", supergraph_sdl);
 }

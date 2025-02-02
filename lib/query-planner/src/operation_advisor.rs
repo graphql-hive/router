@@ -1,49 +1,32 @@
-use graphql_parser_hive_fork::query::Document;
-use petgraph::visit::{depth_first_search, Control};
-use thiserror::Error;
-
 use crate::{
-    graph::GraphQLSatisfiabilityGraph, move_validator::MoveValidator, supergraph::SupergraphIR,
+    consumer_schema::consumer_schema::ConsumerSchema, graph::GraphQLSatisfiabilityGraph,
+    supergraph::SupergraphMetadata,
 };
 
 pub struct OperationAdvisor<'a> {
-    supergraph: SupergraphIR<'a>,
-    graph: GraphQLSatisfiabilityGraph,
-    move_validator: MoveValidator,
+    pub supergraph_metadata: SupergraphMetadata<'a>,
+    pub graph: GraphQLSatisfiabilityGraph,
+    pub consumer_schema: ConsumerSchema,
 }
 
 impl<'a> OperationAdvisor<'a> {
-    pub fn new(supergraph: SupergraphIR<'a>) -> Self {
+    pub fn new(supergraph: SupergraphMetadata<'a>) -> Self {
         let graph = GraphQLSatisfiabilityGraph::new_from_supergraph(&supergraph)
             .expect("failed to build graph");
-        let move_validator = MoveValidator::new();
+
+        let consumer_schema = ConsumerSchema::new_from_supergraph(supergraph.document);
+
+        println!("consumer_schema = {}", consumer_schema.document);
 
         Self {
-            supergraph,
+            supergraph_metadata: supergraph,
+            consumer_schema,
             graph,
-            move_validator,
         }
     }
 
-    pub fn validate(&self, operation: Document<'static, String>) -> Result<(), ValidationError> {
-        let op_type: &graphql_parser_hive_fork::query::Definition<'_, String> =
-            &operation.definitions[0];
-        let root_index = self.graph.lookup.query_root;
-        let result = depth_first_search(&self.graph.lookup.graph, Some(root_index), |m| {
-            println!("m: {:?}", m);
-            // self.graph.lookup
-
-            Control::<()>::Continue
-        });
-
-        println!("result: {:?}", result);
-
-        Err(ValidationError::Todo)
+    #[cfg(test)]
+    pub fn print_graph(&self) -> String {
+        format!("{}", self.graph)
     }
-}
-
-#[derive(Debug, Error)]
-pub enum ValidationError {
-    #[error("TODO")]
-    Todo,
 }

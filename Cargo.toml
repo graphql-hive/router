@@ -1,2 +1,3 @@
 [workspace]
 members = ["lib/query-planner", "lib/wasm-lib"]
+resolver = "2"
