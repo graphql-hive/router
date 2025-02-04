@@ -382,7 +382,7 @@ pub trait SchemaTransformer<'a, T: Text<'a> + Clone> {
     }
 
     // Helper method for transforming lists
-    fn transform_list<I, F, R>(&mut self, list: &Vec<I>, f: F) -> TransformedValue<Vec<I>>
+    fn transform_list<I, F, R>(&mut self, list: &[I], f: F) -> TransformedValue<Vec<I>>
     where
         I: Clone,
         F: Fn(&mut Self, &I) -> R,

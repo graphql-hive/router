@@ -1,3 +1,25 @@
-pub mod consumer_schema;
 pub mod prune_inacessible;
 pub mod strip_schema_internals;
+
+use graphql_parser_hive_fork::schema::*;
+use prune_inacessible::PruneInaccessible;
+use strip_schema_internals::StripSchemaInternals;
+
+pub struct ConsumerSchema {
+    pub document: Document<'static, String>,
+}
+
+impl ConsumerSchema {
+    pub fn new_from_supergraph(supergraph: &Document<'static, String>) -> Self {
+        Self {
+            document: Self::create_consumer_schema(supergraph),
+        }
+    }
+
+    fn create_consumer_schema(supergraph: &Document<'static, String>) -> Document<'static, String> {
+        let mut result = PruneInaccessible::prune(supergraph);
+        result = StripSchemaInternals::strip_schema_internals(&result);
+
+        result
+    }
+}

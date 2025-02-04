@@ -54,7 +54,7 @@ pub enum SupergraphDefinition<'a> {
     Interface(SupergraphInterfaceType<'a>),
 }
 
-impl<'a> SupergraphDefinition<'a> {
+impl SupergraphDefinition<'_> {
     pub fn name(&self) -> &str {
         match self {
             SupergraphDefinition::Object(object_type) => &object_type.source.name,

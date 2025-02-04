@@ -29,7 +29,7 @@ impl StripSchemaInternals {
     pub fn strip_schema_internals(schema: &Document<'static, String>) -> Document<'static, String> {
         let mut transformer = StripSchemaInternals {};
         let result = transformer
-            .transform_document(&schema)
+            .transform_document(schema)
             .replace_or_else(|| schema.clone());
 
         result
@@ -51,7 +51,7 @@ impl<'a, T: Text<'a> + Clone> SchemaTransformer<'a, T> for StripSchemaInternals 
         &mut self,
         directives: &Vec<Directive<'a, T>>,
     ) -> TransformedValue<Vec<Directive<'a, T>>> {
-        let new_directives = StripSchemaInternals::filter_directives(&directives);
+        let new_directives = StripSchemaInternals::filter_directives(directives);
 
         TransformedValue::Replace(new_directives)
     }

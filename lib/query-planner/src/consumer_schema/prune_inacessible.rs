@@ -14,7 +14,7 @@ impl PruneInaccessible {
     pub fn prune(schema: &Document<'static, String>) -> Document<'static, String> {
         let mut transformer = PruneInaccessible {};
         let result = transformer
-            .transform_document(&schema)
+            .transform_document(schema)
             .replace_or_else(|| schema.clone());
 
         result
@@ -92,7 +92,7 @@ impl<'a, T: Text<'a> + Clone> SchemaTransformer<'a, T> for PruneInaccessible {
                 .filter(|v| !Self::has_inaccessible_directive(&v.directives))
                 .cloned()
                 .collect(),
-            position: input.position.clone(),
+            position: input.position,
         })
     }
 
@@ -107,7 +107,7 @@ impl<'a, T: Text<'a> + Clone> SchemaTransformer<'a, T> for PruneInaccessible {
                 .filter(|v| !Self::has_inaccessible_directive(&v.directives))
                 .cloned()
                 .collect(),
-            position: enum_type.position.clone(),
+            position: enum_type.position,
         })
     }
 

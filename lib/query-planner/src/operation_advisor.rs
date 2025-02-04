@@ -1,5 +1,5 @@
 use crate::{
-    consumer_schema::consumer_schema::ConsumerSchema, graph::GraphQLSatisfiabilityGraph,
+    consumer_schema::ConsumerSchema, graph::GraphQLSatisfiabilityGraph,
     supergraph::SupergraphMetadata,
 };
 
