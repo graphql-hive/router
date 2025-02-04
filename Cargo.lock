@@ -348,12 +348,19 @@ dependencies = [
 
 [[package]]
 name = "query-planner"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "graphql-parser-hive-fork",
  "graphql-tools",
  "petgraph",
  "thiserror 2.0.11",
+]
+
+[[package]]
+name = "query-planner-bin"
+version = "0.0.1"
+dependencies = [
+ "query-planner",
 ]
 
 [[package]]
