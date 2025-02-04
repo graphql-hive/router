@@ -15,7 +15,7 @@ use thiserror::Error;
 use crate::{
     edge::Edge,
     node::Node,
-    supergraph::{RootType, SupergraphDefinition, SupergraphIR},
+    supergraph::{RootType, SupergraphDefinition, SupergraphMetadata},
 };
 
 type Graph = Petgraph<Node, Edge, Directed>;
@@ -94,7 +94,7 @@ impl LookupTable {
 
 impl GraphQLSatisfiabilityGraph {
     pub fn new_from_supergraph(
-        supergraph_ir: &SupergraphIR,
+        supergraph_ir: &SupergraphMetadata,
     ) -> Result<Self, GraphQLSatisfiabilityGraphError> {
         let mut lookup = LookupTable {
             node_to_index: HashMap::new(),
@@ -120,14 +120,14 @@ impl GraphQLSatisfiabilityGraph {
 
         let mut instance = GraphQLSatisfiabilityGraph { lookup };
 
-        instance.build_graph(&supergraph_ir)?;
+        instance.build_graph(supergraph_ir)?;
 
         Ok(instance)
     }
 
     fn build_graph(
         &mut self,
-        supergraph_ir: &SupergraphIR,
+        supergraph_ir: &SupergraphMetadata,
     ) -> Result<(), GraphQLSatisfiabilityGraphError> {
         // First, we iterate all the definitions in the supergraph and build nodes for each of them.
         // We create all the nodes first, and then we create the edges.
