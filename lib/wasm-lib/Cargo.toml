@@ -1,6 +1,6 @@
 [package]
-name = "wasm-lib"
-version = "0.1.0"
+name = "query-planner-wasm"
+version = "0.0.1"
 authors = ["Dotan Simha <dotansimha@gmail.com>"]
 edition = "2018"
 
@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 default = ["console_error_panic_hook"]
 
 [dependencies]
-wasm-bindgen = "0.2.84"
+wasm-bindgen = "0.2.100"
 query-planner = { path = "../query-planner" }
 # The `console_error_panic_hook` crate provides better debugging of panics by
 # logging them with `console.error`. This is great for development, but requires
@@ -20,13 +20,14 @@ query-planner = { path = "../query-planner" }
 console_error_panic_hook = { version = "0.1.7", optional = true }
 
 [dev-dependencies]
-wasm-bindgen-test = "0.3.34"
+wasm-bindgen-test = "0.3.50"
 
+# TODO: Fix
 # [profile.release]
 # # Tell `rustc` to optimize for small code size.
 # opt-level = "s"
 # debug = true
 
 [dependencies.web-sys]
-version = "0.3"
+version = "0.3.77"
 features = ["console"]

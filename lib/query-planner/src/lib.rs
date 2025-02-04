@@ -35,8 +35,8 @@ mod tests {
             .unwrap()
             .into_static();
         let supergraph_ir = SupergraphMetadata::new(&parsed_schema);
-        let advisor = OperationAdvisor::new(supergraph_ir);
-        fs::write("test.graph", advisor.print_graph()).expect("Unable to write graph file");
+        let _advisor = OperationAdvisor::new(supergraph_ir);
+        // fs::write("test.graph", advisor.print_graph()).expect("Unable to write graph file");
 
         // let plan = advisor.build_plan(&PlanInput::new(parsed_operation, None));
         // match plan {
