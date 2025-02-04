@@ -8,4 +8,4 @@ name = "query-planner"
 path = "src/main.rs"
 
 [dependencies]
-query-planner = { path = "../query-planner" }
+query-planner = { path = "../lib/query-planner" }

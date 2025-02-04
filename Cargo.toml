@@ -1,4 +1,4 @@
 [workspace]
-members = ["lib/query-planner", "lib/wasm-lib", "lib/bin"]
+members = ["lib/query-planner", "lib/wasm-lib", "bin"]
 resolver = "2"
-default-members = ["lib/bin"]
+default-members = ["bin"]
