@@ -112,6 +112,9 @@ type Product implements ProductItf & SkuItf
   oldField: String @join__field(graph: PRODUCTS)
   reviewsCount: Int! @join__field(graph: REVIEWS)
   reviews: [Review!]! @join__field(graph: REVIEWS)
+  shippingClass: ShippingClass
+    @join__field(graph: PRODUCTS)
+    @join__field(graph: INVENTORY)
 }
 
 type ProductDimension

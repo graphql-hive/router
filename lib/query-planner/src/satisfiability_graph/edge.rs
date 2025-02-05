@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use crate::supergraph_metadata::join_field::JoinFieldDirective;
+use crate::federation_spec::directives::JoinFieldDirective;
 
 pub enum Edge {
     Root, // Root of the graph

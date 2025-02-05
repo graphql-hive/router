@@ -1,4 +1,5 @@
 mod consumer_schema;
+mod federation_spec;
 mod satisfiability_graph;
 mod utils;
 
