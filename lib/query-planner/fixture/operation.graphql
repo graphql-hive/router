@@ -1,0 +1,20 @@
+query someData {
+    allPandas {
+        name
+        favoriteFood
+    }
+    allProducts {
+        id
+        name
+        reviewsCount
+        reviewsScore
+        createdBy {
+            email
+            name
+        }
+        reviews {
+            id
+            body
+        }
+    }
+}

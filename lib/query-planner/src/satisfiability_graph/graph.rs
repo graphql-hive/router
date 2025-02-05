@@ -7,8 +7,8 @@ use graphql_parser_hive_fork::schema::ParseError;
 use graphql_tools::ast::{SchemaDocumentExtension, TypeExtension};
 use petgraph::{
     dot::Dot,
-    graph::{EdgeIndex, NodeIndex},
-    Directed, Graph as Petgraph,
+    graph::{EdgeIndex, Edges, NodeIndex},
+    Directed, Direction, Graph as Petgraph,
 };
 use thiserror::Error;
 
@@ -39,7 +39,7 @@ pub struct LookupTable {
     pub query_root: NodeIndex,
     pub mutation_root: Option<NodeIndex>,
     pub subscription_root: Option<NodeIndex>,
-    node_to_index: HashMap<String, NodeIndex>,
+    pub node_to_index: HashMap<String, NodeIndex>,
 }
 
 impl LookupTable {
@@ -169,17 +169,45 @@ impl GraphQLSatisfiabilityGraph {
             // Create the Node for the type, and link it to the root if it's a root type.
             let node_index = lookup.create_node_for_type(node);
 
-            match definition.root_type() {
-                Some(RootType::Query) => {
-                    lookup.link_nodes(lookup.query_root, node_index, Edge::Root);
+            if let Some(root_type) = definition.root_type() {
+                // Check if this subgraph defines any fields on this root type
+                let has_fields_in_subgraph = definition.fields().values().any(|field| {
+                    if field.join_field.is_empty() {
+                        // For fields without join_field, check if the parent type is in this subgraph
+                        definition.available_in_subgraph(&join_type.graph)
+                    } else {
+                        // For fields with join_field, check if any specify this subgraph
+                        field.join_field.iter().any(|jf| {
+                            jf.graph
+                                .as_ref()
+                                .map(|g| g == &join_type.graph)
+                                .unwrap_or(false)
+                        })
+                    }
+                });
+
+                // Only connect if this subgraph defines fields on this root type
+                if has_fields_in_subgraph {
+                    match root_type {
+                        RootType::Query => {
+                            lookup.link_nodes(lookup.query_root, node_index, Edge::Root);
+                        }
+                        RootType::Mutation => {
+                            lookup.link_nodes(
+                                lookup.mutation_root.unwrap(),
+                                node_index,
+                                Edge::Root,
+                            );
+                        }
+                        RootType::Subscription => {
+                            lookup.link_nodes(
+                                lookup.subscription_root.unwrap(),
+                                node_index,
+                                Edge::Root,
+                            );
+                        }
+                    }
                 }
-                Some(RootType::Mutation) => {
-                    lookup.link_nodes(lookup.mutation_root.unwrap(), node_index, Edge::Root);
-                }
-                Some(RootType::Subscription) => {
-                    lookup.link_nodes(lookup.subscription_root.unwrap(), node_index, Edge::Root);
-                }
-                _ => {}
             }
 
             // Iterate the fields of the object type and create nodes for them.
@@ -237,12 +265,12 @@ impl GraphQLSatisfiabilityGraph {
 
         Ok(())
     }
-
     fn build_interface_edges(
         lookup: &mut LookupTable,
         definition: &SupergraphDefinition,
     ) -> Result<(), GraphQLSatisfiabilityGraphError> {
         for join_implements in definition.join_implements() {
+            // Current code: Creates edge FROM implementing type TO interface
             let id_from = Node::id_from(definition.name(), Some(&join_implements.graph));
             let id_to = Node::id_from(&join_implements.interface, Some(&join_implements.graph));
 
@@ -251,9 +279,60 @@ impl GraphQLSatisfiabilityGraph {
                 &id_to,
                 Edge::InterfaceImplementation(join_implements.interface.clone()),
             )?;
+
+            lookup.link_nodes_using_indices(
+                &id_to,   // From interface
+                &id_from, // To implementing type
+                Edge::InterfaceImplementation(definition.name().to_string()),
+            )?;
         }
 
         Ok(())
+    }
+
+    pub fn find_definition_node(
+        &self,
+        definition_name: &str,
+        subgraph: &str,
+    ) -> Option<(NodeIndex, &Node)> {
+        let id = Node::id_from(definition_name, Some(subgraph));
+
+        self.lookup
+            .node_to_index
+            .get(&id)
+            .map(|&index| (index, &self.lookup.graph[index]))
+    }
+
+    pub fn root_query_node(&self) -> &Node {
+        &self.lookup.graph[self.lookup.query_root]
+    }
+
+    pub fn root_mutation_node(&self) -> Option<&Node> {
+        if let Some(mutation_root) = self.lookup.mutation_root {
+            Some(&self.lookup.graph[mutation_root])
+        } else {
+            None
+        }
+    }
+
+    pub fn root_subscription_node(&self) -> Option<&Node> {
+        if let Some(subscription_root) = self.lookup.subscription_root {
+            Some(&self.lookup.graph[subscription_root])
+        } else {
+            None
+        }
+    }
+
+    pub fn edges_to(&self, node_index: NodeIndex) -> Edges<'_, Edge, Directed> {
+        self.lookup
+            .graph
+            .edges_directed(node_index, Direction::Incoming)
+    }
+
+    pub fn edges_from(&self, node_index: NodeIndex) -> Edges<'_, Edge, Directed> {
+        self.lookup
+            .graph
+            .edges_directed(node_index, Direction::Outgoing)
     }
 
     fn build_field_edges(
@@ -265,42 +344,94 @@ impl GraphQLSatisfiabilityGraph {
                 let id_from = Node::id_from(definition.name(), Some(&join_type.graph));
                 let type_to = field.source.field_type.inner_type();
 
-                // If the field has no join field, we can link it directly to the field type.
-                if field.join_field.is_empty() {
+                // Check if this field belongs to the current subgraph
+                let field_belongs_to_subgraph = if field.join_field.is_empty() {
+                    // If there's no join_field, the field might be a scalar or a local type
+                    // We should check if the parent type is available in this subgraph
+                    definition.available_in_subgraph(&join_type.graph)
+                } else {
+                    // For fields with join_field directives, check if any of them specify this subgraph
+                    field.join_field.iter().any(|jf| {
+                        let has_override = jf
+                            .override_value
+                            .as_ref()
+                            .map(|override_value| {
+                                // TODO: override is defines as String, it's better to
+                                // do some actual checking of the enum value here.
+                                *override_value == join_type.graph.to_lowercase()
+                            })
+                            .unwrap_or(false);
+
+                        has_override
+                            || jf
+                                .graph
+                                .as_ref()
+                                .map(|g| g == &join_type.graph)
+                                .unwrap_or(false)
+                    })
+                };
+
+                if field_belongs_to_subgraph {
+                    // First, create the edge in the current subgraph
                     let id_to = Node::id_from(type_to, Some(&join_type.graph));
+                    // Find the specific join_field for this subgraph if it exists
+                    let subgraph_join_field = field
+                        .join_field
+                        .iter()
+                        .find(|jf| {
+                            jf.graph
+                                .as_ref()
+                                .map(|g| g == &join_type.graph)
+                                .unwrap_or(false)
+                        })
+                        .cloned();
 
                     lookup.link_nodes_using_indices(
                         &id_from,
                         &id_to,
-                        Edge::Field {
-                            name: name.to_string(),
-                            join_field: None,
-                        },
+                        Edge::field(name.to_string(), subgraph_join_field),
                     )?;
-                } else if definition.available_in_subgraph(&join_type.graph) {
-                    for jf in &field.join_field {
-                        if let Some(join_field_subgraph) = &jf.graph {
-                            let subgraph_target = if *join_field_subgraph != join_type.graph {
-                                join_field_subgraph
-                            } else {
-                                &join_type.graph
-                            };
 
-                            let id_to = Node::id_from(type_to, Some(subgraph_target));
-                            lookup.link_nodes_using_indices(
-                                &id_from,
-                                &id_to,
-                                Edge::Field {
-                                    name: name.to_string(),
-                                    join_field: Some(jf.clone()),
-                                },
-                            )?;
+                    // Only create cross-subgraph edges for fields returning entity or interface types
+                    // Check if the type exists in other subgraphs (indicating it's a federated type)
+                    let is_federated_type = definition.join_types().len() > 1;
+
+                    // For root fields or fields that return federated types
+                    if definition.is_root() || is_federated_type {
+                        // Count how many subgraphs this type exists in
+                        let mut subgraph_count = 0;
+                        for check_join_type in definition.join_types() {
+                            let check_id = Node::id_from(type_to, Some(&check_join_type.graph));
+                            if lookup.node_to_index.contains_key(&check_id) {
+                                subgraph_count += 1;
+                            }
+                        }
+
+                        // Only proceed if this type exists in multiple subgraphs (true federation)
+                        if subgraph_count > 1 {
+                            for other_join_type in definition.join_types() {
+                                // Skip the current subgraph as we already created that edge
+                                if other_join_type.graph == join_type.graph {
+                                    continue;
+                                }
+
+                                // Check if the type exists in this other subgraph
+                                let other_id_to =
+                                    Node::id_from(type_to, Some(&other_join_type.graph));
+                                if lookup.node_to_index.contains_key(&other_id_to) {
+                                    // Create an edge to this type in the other subgraph
+                                    lookup.link_nodes_using_indices(
+                                        &id_from,
+                                        &other_id_to,
+                                        Edge::field(name.to_string(), None),
+                                    )?;
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-
         Ok(())
     }
 }

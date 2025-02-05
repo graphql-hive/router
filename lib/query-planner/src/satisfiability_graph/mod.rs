@@ -1,3 +1,4 @@
-mod edge;
+pub mod edge;
 pub mod graph;
-mod node;
+pub mod node;
+mod tests;

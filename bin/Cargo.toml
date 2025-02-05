@@ -9,3 +9,4 @@ path = "src/main.rs"
 
 [dependencies]
 query-planner = { path = "../lib/query-planner" }
+graphql-parser-hive-fork = "0.5.0"
