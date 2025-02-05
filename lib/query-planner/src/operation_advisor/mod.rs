@@ -1,6 +1,6 @@
 use crate::{
-    consumer_schema::ConsumerSchema, graph::GraphQLSatisfiabilityGraph,
-    supergraph::SupergraphMetadata,
+    consumer_schema::ConsumerSchema, satisfiability_graph::graph::GraphQLSatisfiabilityGraph,
+    supergraph_metadata::SupergraphMetadata,
 };
 
 pub struct OperationAdvisor<'a> {

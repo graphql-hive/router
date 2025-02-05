@@ -3,7 +3,7 @@ use std::process;
 
 use query_planner::operation_advisor::OperationAdvisor;
 use query_planner::parse_schema;
-use query_planner::supergraph::SupergraphMetadata;
+use query_planner::supergraph_metadata::SupergraphMetadata;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

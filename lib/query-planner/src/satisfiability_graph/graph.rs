@@ -12,11 +12,9 @@ use petgraph::{
 };
 use thiserror::Error;
 
-use crate::{
-    edge::Edge,
-    node::Node,
-    supergraph::{RootType, SupergraphDefinition, SupergraphMetadata},
-};
+use crate::supergraph_metadata::{RootType, SupergraphDefinition, SupergraphMetadata};
+
+use super::{edge::Edge, node::Node};
 
 type Graph = Petgraph<Node, Edge, Directed>;
 
