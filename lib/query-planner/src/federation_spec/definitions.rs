@@ -10,7 +10,7 @@ impl LinkImportScalar {
     pub const NAME: &str = "link__Import";
 }
 
-pub struct JoinFieldSetScalar {}  
+pub struct JoinFieldSetScalar {}
 
 impl JoinFieldSetScalar {
     pub const NAME: &str = "join__FieldSet";
