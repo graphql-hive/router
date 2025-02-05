@@ -1,3 +1,10 @@
+mod pathfinder;
+mod pathfinder2;
+
+use graphql_parser_hive_fork::query::OperationDefinition;
+use pathfinder::Pathfinder;
+use pathfinder2::Pathfinder2;
+
 use crate::{
     consumer_schema::ConsumerSchema, satisfiability_graph::graph::GraphQLSatisfiabilityGraph,
     supergraph_metadata::SupergraphMetadata,
@@ -14,19 +21,19 @@ impl<'a> OperationAdvisor<'a> {
         let graph = GraphQLSatisfiabilityGraph::new_from_supergraph(&supergraph)
             .expect("failed to build graph");
 
-        let consumer_schema = ConsumerSchema::new_from_supergraph(supergraph.document);
-
-        println!("consumer_schema = {}", consumer_schema.document);
-
         Self {
+            consumer_schema: ConsumerSchema::new_from_supergraph(supergraph.document),
             supergraph_metadata: supergraph,
-            consumer_schema,
             graph,
         }
     }
 
-    #[cfg(test)]
-    pub fn print_graph(&self) -> String {
-        format!("{}", self.graph)
+    pub fn travel_plan(&self, operation: OperationDefinition<'static, String>) {
+        let pathfinder = Pathfinder2::new(&self.graph);
+        // let resolved_fields = Pathfinder::new(&self.graph).traverse(&operation);
+
+        // for field in &resolved_fields {
+        //     println!("{}", field);
+        // }
     }
 }

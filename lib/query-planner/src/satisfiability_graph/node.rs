@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Node {
     QueryRoot(String),
     MutationRoot(String),
@@ -28,9 +29,9 @@ impl Node {
 impl Debug for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Node::QueryRoot(name) => write!(f, "QueryRoot({})", name),
-            Node::MutationRoot(name) => write!(f, "MutationRoot({})", name),
-            Node::SubscriptionRoot(name) => write!(f, "SubscriptionRoot({})", name),
+            Node::QueryRoot(name) => write!(f, "{}", name),
+            Node::MutationRoot(name) => write!(f, "{}", name),
+            Node::SubscriptionRoot(name) => write!(f, "{}", name),
             Node::SubgraphType { name, subgraph } => {
                 write!(f, "{}/{}", name, subgraph)
             }

@@ -62,6 +62,25 @@ impl SupergraphDefinition<'_> {
     }
 
     pub fn available_in_subgraph(&self, subgraph: &str) -> bool {
+        // First check join_type directives
+        let available_in_join_type = self.join_types().iter().any(|jt| jt.graph == subgraph);
+
+        if available_in_join_type {
+            return true;
+        }
+
+        // Then check fields
+        self.used_in_fields(subgraph)
+    }
+
+    pub fn is_interface(&self) -> bool {
+        match self {
+            SupergraphDefinition::Object(_) => false,
+            SupergraphDefinition::Interface(_) => true,
+        }
+    }
+
+    pub fn used_in_fields(&self, subgraph: &str) -> bool {
         match self {
             SupergraphDefinition::Object(object_type) => {
                 object_type.used_in_subgraphs.contains(subgraph)
@@ -106,6 +125,13 @@ impl SupergraphDefinition<'_> {
             SupergraphDefinition::Interface(interface_type) => &interface_type.join_implements,
         }
     }
+
+    // Check if the given type name represents a scalar type
+    pub fn is_scalar_type(&self, type_name: &str) -> bool {
+        // Standard GraphQL scalar types
+        static STANDARD_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
+        STANDARD_SCALARS.contains(&type_name)
+    }
 }
 
 #[derive(Debug)]
@@ -120,6 +146,25 @@ impl<'a> SupergraphMetadata<'a> {
             document: schema,
             definitions: Self::build_map(schema),
         }
+    }
+
+    // Helper method to check if a type is a scalar
+    pub fn is_scalar_type(&self, type_name: &str) -> bool {
+        // Standard GraphQL scalar types
+        static STANDARD_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
+
+        if STANDARD_SCALARS.contains(&type_name) {
+            return true;
+        }
+
+        // Check for custom scalar types in the schema
+        self.document.definitions.iter().any(|def| {
+            if let Definition::TypeDefinition(TypeDefinition::Scalar(scalar)) = def {
+                scalar.name == type_name
+            } else {
+                false
+            }
+        })
     }
 
     fn build_map(schema: &'a SupergraphSchema) -> HashMap<String, SupergraphDefinition<'a>> {
@@ -209,11 +254,18 @@ impl<'a> SupergraphMetadata<'a> {
     fn build_subgraph_usage_from_fields(
         fields: &HashMap<String, SupergraphField>,
     ) -> HashSet<String> {
-        fields
-            .iter()
-            .flat_map(|(_field_name, field)| field.join_field.iter())
-            .filter_map(|join_field| join_field.graph.as_ref().map(|graph| graph.to_string()))
-            .collect()
+        let mut subgraphs = HashSet::new();
+
+        // Add subgraphs from join_field directives
+        for (_field_name, field) in fields.iter() {
+            for join_field in field.join_field.iter() {
+                if let Some(graph) = &join_field.graph {
+                    subgraphs.insert(graph.to_string());
+                }
+            }
+        }
+
+        subgraphs
     }
 
     fn extract_join_field_from_directives(
