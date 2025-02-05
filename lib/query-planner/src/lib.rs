@@ -1,7 +1,9 @@
 mod consumer_schema;
 mod satisfiability_graph;
+mod federation_spec;
 mod utils;
 
+pub mod discovery_graph;
 pub mod operation_advisor;
 pub mod supergraph_metadata;
 

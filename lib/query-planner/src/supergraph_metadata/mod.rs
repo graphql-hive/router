@@ -1,7 +1,3 @@
-pub mod join_field;
-pub mod join_implements;
-pub mod join_type;
-
 use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
@@ -12,9 +8,10 @@ use graphql_parser_hive_fork::{
     schema::{Definition, Document, Field, InterfaceType, ObjectType, TypeDefinition},
 };
 use graphql_tools::ast::SchemaDocumentExtension;
-use join_field::JoinFieldDirective;
-use join_implements::JoinImplementsDirective;
-use join_type::JoinTypeDirective;
+
+use crate::federation_spec::directives::{
+    JoinFieldDirective, JoinImplementsDirective, JoinTypeDirective,
+};
 
 pub type SupergraphSchema = Document<'static, String>;
 

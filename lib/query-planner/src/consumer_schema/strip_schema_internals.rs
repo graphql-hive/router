@@ -1,18 +1,24 @@
 use graphql_parser_hive_fork::query::Text;
 use graphql_parser_hive_fork::schema::*;
 
-use crate::utils::schema_transformer::{SchemaTransformer, TransformedValue};
+use crate::{
+    federation_spec::directives::{
+        JoinEnumValueDirective, JoinFieldDirective, JoinGraphDirective, JoinImplementsDirective,
+        JoinTypeDirective, JoinUnionMemberDirective,
+    },
+    utils::schema_transformer::{SchemaTransformer, TransformedValue},
+};
 
 // directive @inaccessible on FIELD_DEFINITION | OBJECT | INTERFACE | UNION | ENUM | ENUM_VALUE | SCALAR | INPUT_OBJECT | INPUT_FIELD_DEFINITION | ARGUMENT_DEFINITION
 pub(crate) struct StripSchemaInternals;
 
 static DIRECTIVES_TO_STRIP: [&str; 9] = [
-    "join__type",
-    "join__enumValue",
-    "join__field",
-    "join__implements",
-    "join__unionMember",
-    "join__graph",
+    JoinTypeDirective::NAME,
+    JoinEnumValueDirective::NAME,
+    JoinFieldDirective::NAME,
+    JoinImplementsDirective::NAME,
+    JoinUnionMemberDirective::NAME,
+    JoinGraphDirective::NAME,
     "link",
     "tag",
     "inaccessible",

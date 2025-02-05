@@ -154,7 +154,7 @@ impl GraphQLSatisfiabilityGraph {
 
     fn build_nodes_for_definition(lookup: &mut LookupTable, definition: &SupergraphDefinition) {
         for join_type in definition.join_types() {
-            // We can skip creating Nodes for types that are not available in the current subgraph,
+            // We can skip creating nodes for types that are not available in the current subgraph,
             // when iterating the root type.
             // We determine that by checking the fields of the object type and check what fields are involved in a join.
             if !definition.available_in_subgraph(&join_type.graph) && definition.is_root() {
