@@ -33,3 +33,33 @@ impl JoinGraphDirective {
         directive.name == Self::NAME
     }
 }
+
+pub struct TagDirective {}
+
+impl TagDirective {
+    pub const NAME: &str = "tag";
+
+    pub fn is(directive: &Directive<'_, String>) -> bool {
+        directive.name == Self::NAME
+    }
+}
+
+pub struct LinkDirective {}
+
+impl LinkDirective {
+    pub const NAME: &str = "link";
+
+    pub fn is(directive: &Directive<'_, String>) -> bool {
+        directive.name == Self::NAME
+    }
+}
+
+pub struct InaccessibleDirective {}
+
+impl InaccessibleDirective {
+    pub const NAME: &str = "inaccessible";
+
+    pub fn is(directive: &Directive<'_, String>) -> bool {
+        directive.name == Self::NAME
+    }
+}

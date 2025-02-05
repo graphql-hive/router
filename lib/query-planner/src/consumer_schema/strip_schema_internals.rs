@@ -2,9 +2,13 @@ use graphql_parser_hive_fork::query::Text;
 use graphql_parser_hive_fork::schema::*;
 
 use crate::{
-    federation_spec::directives::{
-        JoinEnumValueDirective, JoinFieldDirective, JoinGraphDirective, JoinImplementsDirective,
-        JoinTypeDirective, JoinUnionMemberDirective,
+    federation_spec::{
+        definitions::{JoinFieldSetScalar, JoinGraphEnum, LinkImportScalar, LinkPurposeEnum},
+        directives::{
+            InaccessibleDirective, JoinEnumValueDirective, JoinFieldDirective, JoinGraphDirective,
+            JoinImplementsDirective, JoinTypeDirective, JoinUnionMemberDirective, LinkDirective,
+            TagDirective,
+        },
     },
     utils::schema_transformer::{SchemaTransformer, TransformedValue},
 };
@@ -19,16 +23,16 @@ static DIRECTIVES_TO_STRIP: [&str; 9] = [
     JoinImplementsDirective::NAME,
     JoinUnionMemberDirective::NAME,
     JoinGraphDirective::NAME,
-    "link",
-    "tag",
-    "inaccessible",
+    LinkDirective::NAME,
+    TagDirective::NAME,
+    InaccessibleDirective::NAME,
 ];
 
 static DEFINITIONS_TO_STRIP: [&str; 4] = [
-    "join__Graph",
-    "link__Purpose",
-    "link__Import",
-    "join__FieldSet",
+    LinkPurposeEnum::NAME,
+    LinkImportScalar::NAME,
+    JoinGraphEnum::NAME,
+    JoinFieldSetScalar::NAME,
 ];
 
 impl StripSchemaInternals {

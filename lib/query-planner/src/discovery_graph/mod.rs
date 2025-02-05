@@ -8,6 +8,8 @@ use graphql_parser_hive_fork::schema::{Definition, Document, TypeDefinition};
 use node::DiscoveryNode;
 use petgraph::{dot::Dot, graph::NodeIndex, Directed, Graph as Petgraph};
 
+use crate::federation_spec::FederationSpec;
+
 type Graph = Petgraph<DiscoveryNode, DiscoveryEdge, Directed>;
 
 pub struct DiscoveryGraph {
@@ -51,7 +53,11 @@ impl DiscoveryGraph {
         let mut graph = Graph::new();
 
         // First, iterate and build all the relevant nodes
-        for definition in supergraph.definitions.iter() {
+        for definition in supergraph
+            .definitions
+            .iter()
+            .filter(|d| !FederationSpec::is_core_definition(d))
+        {
             match definition {
                 Definition::TypeDefinition(type_definition) => match type_definition {
                     TypeDefinition::Scalar(scalar_type) => {

@@ -1,3 +1,4 @@
+use crate::federation_spec::directives::InaccessibleDirective;
 use crate::utils::schema_transformer::Transformed;
 
 use crate::utils::schema_transformer::TransformedValue;
@@ -23,7 +24,9 @@ impl PruneInaccessible {
     pub(crate) fn has_inaccessible_directive<'a, T: Text<'a> + Clone>(
         directives: &Vec<Directive<'a, T>>,
     ) -> bool {
-        directives.iter().any(|d| d.name == "inaccessible".into())
+        directives
+            .iter()
+            .any(|d| d.name == InaccessibleDirective::NAME.into())
     }
 }
 
