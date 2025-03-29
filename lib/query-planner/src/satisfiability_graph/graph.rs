@@ -402,29 +402,39 @@ impl GraphQLSatisfiabilityGraph {
         }
     }
 
-    pub fn find_possible_routes(
+    pub fn find_possible_direct_routes(
         &self,
         from_node: NodeIndex,
         field_edge_name: &str,
     ) -> Vec<(EdgeIndex, NodeIndex)> {
-        let mut possible_routes = Vec::new();
         let edges = self.edges_from(from_node);
 
-        for edge in edges {
-            let target = edge.target();
-            let edge_data = edge.weight();
+        edges
+            .filter_map(|edge| {
+                let target = edge.target();
+                let edge_data = edge.weight();
 
-            match edge_data {
-                Edge::Field { name, .. } => {
-                    if name == field_edge_name {
-                        possible_routes.push((edge.id(), target));
+                match edge_data {
+                    Edge::Field { name, .. } => {
+                        if name == field_edge_name {
+                            return Some((edge.id(), target));
+                        }
+
+                        None
                     }
+                    _ => None,
                 }
-                _ => {}
-            }
-        }
+            })
+            .collect()
+    }
 
-        possible_routes
+    pub fn find_possible_indirect_routes(
+        &self,
+        from_node: NodeIndex,
+        field_edge_name: &str,
+    ) -> Vec<(EdgeIndex, NodeIndex)> {
+        // TODO: Implement this function to find possible indirect routes
+        vec![]
     }
 
     fn build_field_edges(

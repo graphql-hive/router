@@ -20,6 +20,8 @@ impl<'a> OperationAdvisor<'a> {
         let graph = GraphQLSatisfiabilityGraph::new_from_supergraph(&supergraph)
             .expect("failed to build graph");
 
+        println!("{}", graph);
+
         Self {
             consumer_schema: ConsumerSchema::new_from_supergraph(supergraph.document),
             supergraph_metadata: supergraph,

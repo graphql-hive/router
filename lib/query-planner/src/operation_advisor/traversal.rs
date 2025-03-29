@@ -20,8 +20,6 @@ impl PossibleRoutesMap {
     pub fn from_hashmap(map: HashMap<String, Vec<TraversalJump>>) -> Self {
         Self { map }
     }
-
-    pub fn collect_routes(&self) {}
 }
 
 #[derive(Debug)]
@@ -130,53 +128,58 @@ impl<'a, 'b> OperationTraversal<'a, 'b> {
         field: &Field<'static, String>,
     ) -> Option<Vec<TraversalJump>> {
         println!("  processing field '{}'", field.name);
-        let possible_routes = self.graph.find_possible_routes(parent_node, &field.name);
+        let direct_paths = self
+            .graph
+            .find_possible_direct_routes(parent_node, &field.name);
 
-        if possible_routes.is_empty() {
-            return None;
-        }
+        if !direct_paths.is_empty() {
+            let valid_direct_paths = direct_paths
+                .iter()
+                .filter_map(
+                    |(edge_id, target_node_index)| match self.graph.edge(*edge_id) {
+                        Edge::Field { .. } => {
+                            let children = if !field.selection_set.items.is_empty() {
+                                let child_map = self.traverse_selection_set(
+                                    *target_node_index,
+                                    &field.selection_set,
+                                );
 
-        let jumps = possible_routes
-            .iter()
-            .filter_map(
-                |(edge_id, target_node_index)| match self.graph.edge(*edge_id) {
-                    Edge::Field { .. } => {
-                        let children = if !field.selection_set.items.is_empty() {
-                            let child_map = self.traverse_selection_set(
-                                *target_node_index,
-                                &field.selection_set,
-                            );
-                            
-                            // Check if child map is empty (dead end)
-                            if child_map.map.is_empty() {
-                                None
+                                // Check if child map is empty (dead end)
+                                if child_map.map.is_empty() {
+                                    None
+                                } else {
+                                    Some(child_map)
+                                }
                             } else {
-                                Some(child_map)
-                            }
-                        } else {
-                            None
-                        };
+                                None
+                            };
 
-                        Some(TraversalJump::Direct {
+                            Some(TraversalJump::Direct {
+                                through_edge: *edge_id,
+                                to_node: *target_node_index,
+                                children,
+                            })
+                        }
+                        Edge::InterfaceImplementation(_name) => Some(TraversalJump::Indirect {
                             through_edge: *edge_id,
                             to_node: *target_node_index,
-                            children,
-                        })
+                            children: None,
+                        }),
+                        Edge::EntityReference(_v) => Some(TraversalJump::Indirect {
+                            through_edge: *edge_id,
+                            to_node: *target_node_index,
+                            children: None,
+                        }),
+                        _ => None,
                     },
-                    Edge::InterfaceImplementation(_name) => {
-                        unimplemented!("unexpected root here")
-                    }
-                    Edge::EntityReference(_v) => unimplemented!("unexpected root here"),
-                    Edge::Root { field_name } => unimplemented!("unexpected root here"),
-                },
-            )
-            .collect::<Vec<_>>();
-            
-        // If all possible jumps were filtered out (all dead ends), return None
-        if jumps.is_empty() {
-            None
-        } else {
-            Some(jumps)
+                )
+                .collect::<Vec<_>>();
+
+            if !valid_direct_paths.is_empty() {
+                return Some(valid_direct_paths);
+            }
         }
+
+        None
     }
 }
