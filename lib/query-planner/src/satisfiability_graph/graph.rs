@@ -8,6 +8,7 @@ use graphql_tools::ast::{SchemaDocumentExtension, TypeExtension};
 use petgraph::{
     dot::Dot,
     graph::{EdgeIndex, Edges, NodeIndex},
+    visit::EdgeRef,
     Directed, Direction, Graph as Petgraph,
 };
 use thiserror::Error;
@@ -171,41 +172,41 @@ impl GraphQLSatisfiabilityGraph {
 
             if let Some(root_type) = definition.root_type() {
                 // Check if this subgraph defines any fields on this root type
-                let has_fields_in_subgraph = definition.fields().values().any(|field| {
-                    if field.join_field.is_empty() {
-                        // For fields without join_field, check if the parent type is in this subgraph
-                        definition.available_in_subgraph(&join_type.graph)
-                    } else {
-                        // For fields with join_field, check if any specify this subgraph
-                        field.join_field.iter().any(|jf| {
-                            jf.graph
-                                .as_ref()
-                                .map(|g| g == &join_type.graph)
-                                .unwrap_or(false)
-                        })
-                    }
-                });
+                let fields_in_subgraph = definition
+                    .fields()
+                    .values()
+                    .filter(|field| {
+                        if field.join_field.is_empty() {
+                            // For fields without join_field, check if the parent type is in this subgraph
+                            definition.available_in_subgraph(&join_type.graph)
+                        } else {
+                            // For fields with join_field, check if any specify this subgraph
+                            field.join_field.iter().any(|jf| {
+                                jf.graph
+                                    .as_ref()
+                                    .map(|g| g == &join_type.graph)
+                                    .unwrap_or(false)
+                            })
+                        }
+                    })
+                    .collect::<Vec<_>>();
 
                 // Only connect if this subgraph defines fields on this root type
-                if has_fields_in_subgraph {
-                    match root_type {
-                        RootType::Query => {
-                            lookup.link_nodes(lookup.query_root, node_index, Edge::Root);
-                        }
-                        RootType::Mutation => {
-                            lookup.link_nodes(
-                                lookup.mutation_root.unwrap(),
-                                node_index,
-                                Edge::Root,
-                            );
-                        }
-                        RootType::Subscription => {
-                            lookup.link_nodes(
-                                lookup.subscription_root.unwrap(),
-                                node_index,
-                                Edge::Root,
-                            );
-                        }
+                if !fields_in_subgraph.is_empty() {
+                    let from = match root_type {
+                        RootType::Query => lookup.query_root,
+                        RootType::Mutation => lookup.mutation_root.unwrap(),
+                        RootType::Subscription => lookup.subscription_root.unwrap(),
+                    };
+
+                    for field in fields_in_subgraph {
+                        lookup.link_nodes(
+                            from,
+                            node_index,
+                            Edge::Root {
+                                field_name: field.source.name.to_string(),
+                            },
+                        );
                     }
                 }
             }
@@ -333,6 +334,22 @@ impl GraphQLSatisfiabilityGraph {
         self.lookup
             .graph
             .edges_directed(node_index, Direction::Outgoing)
+    }
+
+    pub fn debug_node_index(&self, node_index: NodeIndex) {
+        let node = &self.lookup.graph[node_index];
+        println!("Node {:?}: {:?}", node_index, node);
+    }
+
+    pub fn debug_edges_from(&self, node_index: NodeIndex) {
+        self.debug_node_index(node_index);
+        let edges = self.edges_from(node_index);
+
+        for edge in edges {
+            let target = edge.target();
+            let edge_data = edge.weight();
+            println!("   Edge {:?} to {:?}", edge_data, self.lookup.graph[target]);
+        }
     }
 
     fn build_field_edges(

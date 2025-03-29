@@ -3,7 +3,9 @@ use std::fmt::Debug;
 use crate::federation_spec::directives::JoinFieldDirective;
 
 pub enum Edge {
-    Root, // Root of the graph
+    Root {
+        field_name: String,
+    },
     Field {
         name: String,
         join_field: Option<JoinFieldDirective>,
@@ -40,7 +42,7 @@ impl Edge {
             Self::Field { name, .. } => name,
             Self::EntityReference(id) => id,
             Self::InterfaceImplementation(id) => id,
-            Self::Root => "root",
+            Self::Root { field_name } => field_name,
         }
     }
 
@@ -80,7 +82,7 @@ impl Edge {
 impl Debug for Edge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Edge::Root => write!(f, ""),
+            Edge::Root { field_name } => write!(f, "root({})", field_name),
 
             Edge::Field {
                 name, join_field, ..
@@ -121,7 +123,12 @@ impl Debug for Edge {
 impl PartialEq for Edge {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Edge::Root, Edge::Root) => true,
+            (
+                Edge::Root { field_name },
+                Edge::Root {
+                    field_name: other_field_name,
+                },
+            ) => field_name == other_field_name,
             (
                 Edge::Field {
                     name,
