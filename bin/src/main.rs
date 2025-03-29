@@ -51,10 +51,10 @@ fn process_travel_plan(supergraph_path: &str, operation_path: &str) {
 
     let operation = parse_operation(&operation_text);
 
-    let travel_steps = advisor.travel_plan(match &operation.definitions[0] {
+    advisor.travel_plan(match &operation.definitions[0] {
         Definition::Operation(operation) => operation.clone(),
         _ => panic!("Expected operation definition"),
     });
 
-    println!("{:?}", travel_steps);
+    println!("{:?}", ());
 }

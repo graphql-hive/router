@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod satisfiability_graph {
-    use std::{error::Error, iter::Map, path::PathBuf, process::id};
+    use std::path::PathBuf;
 
     use petgraph::{
         graph::{EdgeIndex, NodeIndex},
@@ -32,7 +32,7 @@ mod satisfiability_graph {
         pub edges: Vec<(EdgeIndex, &'a Edge)>,
     }
 
-    impl<'a> FindResult<'a> {
+    impl FindResult<'_> {
         pub fn assert_field_node_exists_once(&self, field_name: &str) -> &Self {
             assert!(
                 self.edges.iter().any(|v| v.1.id() == field_name),
@@ -82,15 +82,11 @@ mod satisfiability_graph {
     ) -> FindResult<'a> {
         let (from_node_index, _from_node) =
             graph
-                .find_definition_node(&from.0, &from.1)
-                .expect(&format!(
-                    "validate_connection: failde to locate 'from' node: {}/{}",
-                    from.0, from.1,
-                ));
-        let (to_node_index, _to_node) = graph.find_definition_node(&to.0, &to.1).expect(&format!(
-            "validate_connection: failde to locate 'to' node: {}/{}",
-            to.0, to.1,
-        ));
+                .find_definition_node(from.0, from.1)
+                .unwrap_or_else(|| panic!("validate_connection: failde to locate 'from' node: {}/{}",
+                    from.0, from.1));
+        let (to_node_index, _to_node) = graph.find_definition_node(to.0, to.1).unwrap_or_else(|| panic!("validate_connection: failde to locate 'to' node: {}/{}",
+            to.0, to.1));
         let edges = graph.edges_from(from_node_index);
 
         FindResult {

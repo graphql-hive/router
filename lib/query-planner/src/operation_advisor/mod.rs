@@ -1,5 +1,3 @@
-mod pathfinder;
-
 use graphql_parser_hive_fork::query::OperationDefinition;
 
 use crate::{
@@ -25,7 +23,7 @@ impl<'a> OperationAdvisor<'a> {
         }
     }
 
-    pub fn travel_plan(&self, operation: OperationDefinition<'static, String>) {
+    pub fn travel_plan(&self, _operation: OperationDefinition<'static, String>) {
         // let pathfinder = Pathfinder2::new(&self.graph);
         // let resolved_fields = Pathfinder::new(&self.graph).traverse(&operation);
 
