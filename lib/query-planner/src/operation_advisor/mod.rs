@@ -1,4 +1,5 @@
 mod pathfinder;
+mod traversal;
 
 use graphql_parser_hive_fork::query::OperationDefinition;
 use pathfinder::Pathfinder;
@@ -27,7 +28,7 @@ impl<'a> OperationAdvisor<'a> {
     }
 
     pub fn travel_plan(&self, operation: OperationDefinition<'static, String>) {
-        let deps_tree = Pathfinder::new(&self.graph).traverse_operation(&operation);
+        let deps_tree = Pathfinder::new(&self.graph).find_paths_for_operation(&operation);
 
         println!("deps_tree: {:#?}", deps_tree);
     }

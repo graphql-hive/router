@@ -18,6 +18,14 @@ use crate::supergraph_metadata::{RootType, SupergraphDefinition, SupergraphMetad
 use super::{edge::Edge, node::Node};
 
 type Graph = Petgraph<Node, Edge, Directed>;
+type RootEntrypointsMap = HashMap<(OperationType, String), NodeIndex>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OperationType {
+    Query,
+    Mutation,
+    Subscription,
+}
 
 #[derive(Debug)]
 pub struct GraphQLSatisfiabilityGraph {
@@ -41,6 +49,13 @@ pub struct LookupTable {
     pub mutation_root: Option<NodeIndex>,
     pub subscription_root: Option<NodeIndex>,
     pub node_to_index: HashMap<String, NodeIndex>,
+    /// Utility functions for working with root entrypoints.
+    /// This struct has key of: (OperationType, RootFieldName)
+    /// It helps us to decide where to start the graph traversal for a given root selection set field.
+    ///
+    /// Example:
+    ///    (Query, allProducts) -> SubgraphType { name: "Query", subgraph: "PRODUCT" }
+    pub root_entrypoints: RootEntrypointsMap,
 }
 
 impl LookupTable {
@@ -124,6 +139,35 @@ impl GraphQLSatisfiabilityGraph {
         Ok(instance)
     }
 
+    fn build_root_entrypoints(lookup_table: &mut LookupTable) {
+        fn build_from_root_node(index: NodeIndex, table: &mut LookupTable, op_type: OperationType) {
+            let query_edges = table.graph.edges_directed(index, Direction::Outgoing);
+
+            for edge_ref in query_edges {
+                let edge = edge_ref.weight();
+                if let Edge::Root { field_name } = edge {
+                    table
+                        .root_entrypoints
+                        .insert((op_type, field_name.clone()), edge_ref.target());
+                }
+            }
+        }
+
+        build_from_root_node(lookup_table.query_root, lookup_table, OperationType::Query);
+
+        if let Some(mutation_root) = lookup_table.mutation_root {
+            build_from_root_node(mutation_root, lookup_table, OperationType::Mutation);
+        }
+
+        if let Some(subscription_root) = lookup_table.subscription_root {
+            build_from_root_node(subscription_root, lookup_table, OperationType::Subscription);
+        }
+    }
+
+    pub fn node(&self, node_index: NodeIndex) -> &Node {
+        self.lookup.graph.node_weight(node_index).unwrap()
+    }
+
     fn build_graph(
         &mut self,
         supergraph_ir: &SupergraphMetadata,
@@ -149,6 +193,8 @@ impl GraphQLSatisfiabilityGraph {
             // Then, we iterate and build the edges that are based on interfaces.
             Self::build_interface_edges(&mut self.lookup, definition)?;
         }
+
+        Self::build_root_entrypoints(&mut self.lookup);
 
         Ok(())
     }
