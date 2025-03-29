@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@9399c7bb15d4c7d47b27263d024f0a4978346ba4 # v1
-      - run: cargo test --all-features --all
+      - run: cargo test_all
 
   build-wasm:
     name: build-wasm
