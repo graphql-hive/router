@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use graphql_parser_hive_fork::query::{Field, OperationDefinition, Selection, SelectionSet};
 use petgraph::graph::{EdgeIndex, NodeIndex};
 
+use crate::satisfiability_graph::edge::Edge;
 use crate::satisfiability_graph::graph::{GraphQLSatisfiabilityGraph, OperationType};
 
 pub struct OperationTraversal<'a, 'b> {
@@ -10,23 +11,36 @@ pub struct OperationTraversal<'a, 'b> {
     graph: &'b GraphQLSatisfiabilityGraph,
 }
 
-type PossibleRoutesMap = HashMap<String, Vec<TraversalJump>>;
+#[derive(Debug)]
+struct PossibleRoutesMap {
+    pub map: HashMap<String, Vec<TraversalJump>>,
+}
+
+impl PossibleRoutesMap {
+    pub fn from_hashmap(map: HashMap<String, Vec<TraversalJump>>) -> Self {
+        Self { map }
+    }
+
+    pub fn collect_routes(&self) {}
+}
 
 #[derive(Debug)]
 pub struct TraversalNode {
     pub field_name: String,
-    pub children: PossibleRoutesMap,
+    pub children: Option<PossibleRoutesMap>,
 }
 
 #[derive(Debug)]
 enum TraversalJump {
     Direct {
         through_edge: EdgeIndex,
-        children: PossibleRoutesMap,
+        to_node: NodeIndex,
+        children: Option<PossibleRoutesMap>,
     },
     Indirect {
         through_edge: EdgeIndex,
-        children: PossibleRoutesMap,
+        to_node: NodeIndex,
+        children: Option<PossibleRoutesMap>,
     },
 }
 
@@ -65,17 +79,20 @@ impl<'a, 'b> OperationTraversal<'a, 'b> {
         parent_node: NodeIndex,
         selection_set: &SelectionSet<'static, String>,
     ) -> PossibleRoutesMap {
-        selection_set
-            .items
-            .iter()
-            .map(|item| match item {
-                Selection::Field(field) => (
-                    field.name.to_string(),
-                    self.process_field(parent_node, field),
-                ),
-                _ => todo!("not implemented"),
-            })
-            .collect()
+        PossibleRoutesMap::from_hashmap(
+            selection_set
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    Selection::Field(field) => {
+                        let process_field = self.process_field(parent_node, field);
+
+                        process_field.map(|v| (field.name.to_string(), v))
+                    }
+                    _ => todo!("not implemented"),
+                })
+                .collect(),
+        )
     }
 
     fn traverse_root_selection_set(
@@ -83,57 +100,67 @@ impl<'a, 'b> OperationTraversal<'a, 'b> {
         op_type: OperationType,
         selection_set: &SelectionSet<'static, String>,
     ) -> PossibleRoutesMap {
-        selection_set
-            .items
-            .iter()
-            .map(|item| match item {
-                Selection::Field(field) => {
-                    let field_name = field.name.as_str();
-                    let root = self
-                        .graph
-                        .lookup
-                        .root_entrypoints
-                        .get(&(op_type, field_name.into()))
-                        .unwrap();
+        PossibleRoutesMap::from_hashmap(
+            selection_set
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    Selection::Field(field) => {
+                        let field_name = field.name.as_str();
+                        let root = self
+                            .graph
+                            .lookup
+                            .root_entrypoints
+                            .get(&(op_type, field_name.into()))
+                            .unwrap();
 
-                    println!(
-                        "[traverse_root_selection_set] field_name: {}, root: {:?}",
-                        field_name, root
-                    );
+                        let available_field_jumps = self.process_field(root.clone(), field);
 
-                    (
-                        field_name.to_string(),
-                        self.process_field(root.clone(), field),
-                    )
-                }
-                _ => todo!("not implemented"),
-            })
-            .collect()
+                        available_field_jumps.map(|v| (field_name.to_string(), v))
+                    }
+                    _ => todo!("not implemented"),
+                })
+                .collect(),
+        )
     }
 
     fn process_field(
         &self,
         parent_node: NodeIndex,
         field: &Field<'static, String>,
-    ) -> Vec<TraversalJump> {
+    ) -> Option<Vec<TraversalJump>> {
         println!("  processing field '{}'", field.name);
         let possible_routes = self.graph.find_possible_routes(parent_node, &field.name);
 
-        for (edge_id, target_node_index) in possible_routes {
-            println!(
-                "       found possible route via {:?},  to {:?}",
-                edge_id, target_node_index
-            );
-            let edge = self.graph.edge(edge_id);
-            // TraversalJump::from(edge);
-            // let mut node = TraversalNode::new(field.name.clone());
-
-            // if !field.selection_set.items.is_empty() {
-            //     node.children = self.traverse_selection_set(jump., &field.selection_set);
-            // }
-            // println!("  Possible route: {:?}", jump);
+        if possible_routes.is_empty() {
+            return None;
         }
 
-        vec![]
+        Some(
+            possible_routes
+                .iter()
+                .map(
+                    |(edge_id, target_node_index)| match self.graph.edge(*edge_id) {
+                        Edge::Field { .. } => TraversalJump::Direct {
+                            through_edge: *edge_id,
+                            to_node: *target_node_index,
+                            children: if !field.selection_set.items.is_empty() {
+                                Some(self.traverse_selection_set(
+                                    *target_node_index,
+                                    &field.selection_set,
+                                ))
+                            } else {
+                                None
+                            },
+                        },
+                        Edge::InterfaceImplementation(_name) => {
+                            unimplemented!("unexpected root here")
+                        }
+                        Edge::EntityReference(_v) => unimplemented!("unexpected root here"),
+                        Edge::Root { field_name } => unimplemented!("unexpected root here"),
+                    },
+                )
+                .collect::<Vec<_>>(),
+        )
     }
 }

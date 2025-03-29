@@ -415,18 +415,12 @@ impl GraphQLSatisfiabilityGraph {
             let edge_data = edge.weight();
 
             match edge_data {
-                Edge::Field {
-                    name,
-                    join_field,
-                    requires,
-                    provides,
-                    override_from,
-                } => {
+                Edge::Field { name, .. } => {
                     if name == field_edge_name {
                         possible_routes.push((edge.id(), target));
                     }
                 }
-                _ => unimplemented!("todo"),
+                _ => {}
             }
         }
 
