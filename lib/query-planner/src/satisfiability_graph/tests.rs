@@ -80,13 +80,21 @@ mod satisfiability_graph {
         from: (&str, &str),
         to: (&str, &str),
     ) -> FindResult<'a> {
-        let (from_node_index, _from_node) =
-            graph
-                .find_definition_node(from.0, from.1)
-                .unwrap_or_else(|| panic!("validate_connection: failde to locate 'from' node: {}/{}",
-                    from.0, from.1));
-        let (to_node_index, _to_node) = graph.find_definition_node(to.0, to.1).unwrap_or_else(|| panic!("validate_connection: failde to locate 'to' node: {}/{}",
-            to.0, to.1));
+        let (from_node_index, _from_node) = graph
+            .find_definition_node(from.0, from.1)
+            .unwrap_or_else(|| {
+                panic!(
+                    "validate_connection: failde to locate 'from' node: {}/{}",
+                    from.0, from.1
+                )
+            });
+        let (to_node_index, _to_node) =
+            graph.find_definition_node(to.0, to.1).unwrap_or_else(|| {
+                panic!(
+                    "validate_connection: failde to locate 'to' node: {}/{}",
+                    to.0, to.1
+                )
+            });
         let edges = graph.edges_from(from_node_index);
 
         FindResult {
