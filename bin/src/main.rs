@@ -55,6 +55,4 @@ fn process_travel_plan(supergraph_path: &str, operation_path: &str) {
         Definition::Operation(operation) => operation.clone(),
         _ => panic!("Expected operation definition"),
     });
-
-    println!("{:?}", ());
 }

@@ -1,4 +1,7 @@
+mod pathfinder;
+
 use graphql_parser_hive_fork::query::OperationDefinition;
+use pathfinder::Pathfinder;
 
 use crate::{
     consumer_schema::ConsumerSchema, satisfiability_graph::graph::GraphQLSatisfiabilityGraph,
@@ -23,12 +26,9 @@ impl<'a> OperationAdvisor<'a> {
         }
     }
 
-    pub fn travel_plan(&self, _operation: OperationDefinition<'static, String>) {
-        // let pathfinder = Pathfinder2::new(&self.graph);
-        // let resolved_fields = Pathfinder::new(&self.graph).traverse(&operation);
+    pub fn travel_plan(&self, operation: OperationDefinition<'static, String>) {
+        let deps_tree = Pathfinder::new(&self.graph).traverse_operation(&operation);
 
-        // for field in &resolved_fields {
-        //     println!("{}", field);
-        // }
+        println!("deps_tree: {:#?}", deps_tree);
     }
 }
