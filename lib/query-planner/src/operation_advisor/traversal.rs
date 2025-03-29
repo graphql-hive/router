@@ -136,31 +136,47 @@ impl<'a, 'b> OperationTraversal<'a, 'b> {
             return None;
         }
 
-        Some(
-            possible_routes
-                .iter()
-                .map(
-                    |(edge_id, target_node_index)| match self.graph.edge(*edge_id) {
-                        Edge::Field { .. } => TraversalJump::Direct {
+        let jumps = possible_routes
+            .iter()
+            .filter_map(
+                |(edge_id, target_node_index)| match self.graph.edge(*edge_id) {
+                    Edge::Field { .. } => {
+                        let children = if !field.selection_set.items.is_empty() {
+                            let child_map = self.traverse_selection_set(
+                                *target_node_index,
+                                &field.selection_set,
+                            );
+                            
+                            // Check if child map is empty (dead end)
+                            if child_map.map.is_empty() {
+                                None
+                            } else {
+                                Some(child_map)
+                            }
+                        } else {
+                            None
+                        };
+
+                        Some(TraversalJump::Direct {
                             through_edge: *edge_id,
                             to_node: *target_node_index,
-                            children: if !field.selection_set.items.is_empty() {
-                                Some(self.traverse_selection_set(
-                                    *target_node_index,
-                                    &field.selection_set,
-                                ))
-                            } else {
-                                None
-                            },
-                        },
-                        Edge::InterfaceImplementation(_name) => {
-                            unimplemented!("unexpected root here")
-                        }
-                        Edge::EntityReference(_v) => unimplemented!("unexpected root here"),
-                        Edge::Root { field_name } => unimplemented!("unexpected root here"),
+                            children,
+                        })
                     },
-                )
-                .collect::<Vec<_>>(),
-        )
+                    Edge::InterfaceImplementation(_name) => {
+                        unimplemented!("unexpected root here")
+                    }
+                    Edge::EntityReference(_v) => unimplemented!("unexpected root here"),
+                    Edge::Root { field_name } => unimplemented!("unexpected root here"),
+                },
+            )
+            .collect::<Vec<_>>();
+            
+        // If all possible jumps were filtered out (all dead ends), return None
+        if jumps.is_empty() {
+            None
+        } else {
+            Some(jumps)
+        }
     }
 }
