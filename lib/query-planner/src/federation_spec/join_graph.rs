@@ -20,14 +20,12 @@ impl From<&Directive<'_, String>> for JoinGraphDirective {
 
         for (arg_name, arg_value) in &directive.arguments {
             if arg_name.eq("name") {
-                match arg_value {
-                    Value::String(value) => result.name = value.clone(),
-                    _ => {}
+                if let Value::String(value) = arg_value {
+                    result.name = value.clone()
                 }
             } else if arg_name.eq("url") {
-                match arg_value {
-                    Value::String(value) => result.url = value.clone(),
-                    _ => {}
+                if let Value::String(value) = arg_value {
+                    result.url = value.clone()
                 }
             }
         }

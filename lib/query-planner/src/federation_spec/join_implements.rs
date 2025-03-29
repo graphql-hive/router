@@ -2,7 +2,7 @@ use graphql_parser_hive_fork::query::Directive;
 
 #[derive(Debug, Default, Clone)]
 pub struct JoinImplementsDirective {
-    pub graph: String,
+    pub graph_id: String,
     pub interface: String,
 }
 
@@ -22,10 +22,10 @@ impl From<&Directive<'_, String>> for JoinImplementsDirective {
             if arg_name.eq("graph") {
                 match arg_value {
                     graphql_parser_hive_fork::schema::Value::String(value) => {
-                        result.graph = value.clone()
+                        result.graph_id = value.clone()
                     }
                     graphql_parser_hive_fork::schema::Value::Enum(value) => {
-                        result.graph = value.clone()
+                        result.graph_id = value.clone()
                     }
                     _ => {}
                 }

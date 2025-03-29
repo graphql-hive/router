@@ -1,7 +1,7 @@
 use graphql_parser_hive_fork::query::OperationDefinition;
 
 use crate::{
-    consumer_schema::ConsumerSchema, satisfiability_graph::graph::GraphQLSatisfiabilityGraph,
+    consumer_schema::ConsumerSchema, graph::GraphQLSatisfiabilityGraph,
     supergraph_metadata::SupergraphMetadata,
 };
 
@@ -24,11 +24,6 @@ impl<'a> OperationAdvisor<'a> {
     }
 
     pub fn travel_plan(&self, _operation: OperationDefinition<'static, String>) {
-        // let pathfinder = Pathfinder2::new(&self.graph);
-        // let resolved_fields = Pathfinder::new(&self.graph).traverse(&operation);
-
-        // for field in &resolved_fields {
-        //     println!("{}", field);
-        // }
+        unimplemented!("travel_plan")
     }
 }

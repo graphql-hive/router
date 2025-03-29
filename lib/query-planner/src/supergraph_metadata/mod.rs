@@ -13,11 +13,13 @@ use graphql_parser_hive_fork::{
 use graphql_tools::ast::SchemaDocumentExtension;
 
 use crate::federation_spec::directives::{
-    JoinEnumValueDirective, JoinFieldDirective, JoinGraphDirective, JoinImplementsDirective,
-    JoinTypeDirective, JoinUnionMemberDirective,
+    InaccessibleDirective, JoinEnumValueDirective, JoinFieldDirective, JoinGraphDirective,
+    JoinImplementsDirective, JoinTypeDirective, JoinUnionMemberDirective,
 };
 
 pub type SupergraphSchema = Document<'static, String>;
+
+static STANDARD_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
 
 #[derive(Debug)]
 pub struct SupergraphObjectType<'a> {
@@ -48,6 +50,7 @@ pub enum RootType {
 #[derive(Debug)]
 pub struct SupergraphField<'a> {
     pub source: &'a Field<'static, String>,
+    pub inaccessible: bool,
     pub join_field: Vec<JoinFieldDirective>,
 }
 
@@ -105,27 +108,12 @@ impl SupergraphDefinition<'_> {
         }
     }
 
-    pub fn is_defined_in_subgraph(&self, subgraph: &str) -> bool {
-        self.join_types().iter().any(|jt| jt.graph == subgraph)
-    }
-
-    pub fn available_in_subgraph(&self, subgraph: &str) -> bool {
-        // First check join_type directives
-        let available_in_join_type = self.join_types().iter().any(|jt| jt.graph == subgraph);
-
-        if available_in_join_type {
-            return true;
-        }
-
-        // Then check fields
-        self.used_in_fields(subgraph)
+    pub fn is_defined_in_subgraph(&self, graph_id: &str) -> bool {
+        self.join_types().iter().any(|jt| jt.graph_id == graph_id)
     }
 
     pub fn is_interface(&self) -> bool {
-        match self {
-            SupergraphDefinition::Interface(_) => true,
-            _ => false,
-        }
+        matches!(self, SupergraphDefinition::Interface(_))
     }
 
     pub fn used_in_fields(&self, subgraph: &str) -> bool {
@@ -147,7 +135,7 @@ impl SupergraphDefinition<'_> {
         }
     }
 
-    pub fn root_type(&self) -> Option<&RootType> {
+    pub fn try_into_root_type(&self) -> Option<&RootType> {
         match self {
             SupergraphDefinition::Object(object_type) => object_type.root_type.as_ref(),
             _ => None,
@@ -156,7 +144,7 @@ impl SupergraphDefinition<'_> {
 
     pub fn fields(&self) -> &HashMap<String, SupergraphField> {
         static EMPTY: std::sync::LazyLock<HashMap<String, SupergraphField>> =
-            std::sync::LazyLock::new(|| HashMap::<String, SupergraphField>::new());
+            std::sync::LazyLock::new(HashMap::<String, SupergraphField>::new);
 
         match self {
             SupergraphDefinition::Object(object_type) => &object_type.fields,
@@ -179,6 +167,13 @@ impl SupergraphDefinition<'_> {
         }
     }
 
+    pub fn subgraphs(&self) -> HashSet<&str> {
+        self.join_types()
+            .iter()
+            .map(|join_type| join_type.graph_id.as_str())
+            .collect::<HashSet<&str>>()
+    }
+
     pub fn join_implements(&self) -> &Vec<JoinImplementsDirective> {
         match self {
             SupergraphDefinition::Object(object_type) => &object_type.join_implements,
@@ -192,20 +187,14 @@ impl SupergraphDefinition<'_> {
             }
         }
     }
-
-    // Check if the given type name represents a scalar type
-    pub fn is_scalar_type(&self, type_name: &str) -> bool {
-        // Standard GraphQL scalar types
-        static STANDARD_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
-        STANDARD_SCALARS.contains(&type_name)
-    }
 }
 
 #[derive(Debug)]
 pub struct SupergraphMetadata<'a> {
     pub definitions: HashMap<String, SupergraphDefinition<'a>>,
     pub document: &'a Document<'static, String>,
-    pub known_subgraphs: HashSet<String>,
+    pub known_subgraphs: HashMap<String, String>,
+    pub known_scalars: HashSet<String>,
 }
 
 impl<'a> SupergraphMetadata<'a> {
@@ -214,19 +203,15 @@ impl<'a> SupergraphMetadata<'a> {
             document: schema,
             definitions: Self::build_map(schema),
             known_subgraphs: Self::extract_subgraph_names(schema),
+            known_scalars: Self::extract_known_scalars(schema),
         }
     }
 
-    // Helper method to check if a type is a scalar
     pub fn is_scalar_type(&self, type_name: &str) -> bool {
-        // Standard GraphQL scalar types
-        static STANDARD_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
-
         if STANDARD_SCALARS.contains(&type_name) {
             return true;
         }
 
-        // Check for custom scalar types in the schema
         self.document.definitions.iter().any(|def| {
             if let Definition::TypeDefinition(TypeDefinition::Scalar(scalar)) = def {
                 scalar.name == type_name
@@ -236,8 +221,24 @@ impl<'a> SupergraphMetadata<'a> {
         })
     }
 
-    fn extract_subgraph_names(schema: &'a SupergraphSchema) -> HashSet<String> {
+    fn extract_known_scalars(schema: &'a SupergraphSchema) -> HashSet<String> {
         let mut set = HashSet::new();
+
+        for def in schema.definitions.iter() {
+            if let Definition::TypeDefinition(TypeDefinition::Scalar(scalar_type)) = def {
+                set.insert(scalar_type.name.to_string());
+            }
+        }
+
+        for builtin in STANDARD_SCALARS {
+            set.insert(builtin.to_string());
+        }
+
+        set
+    }
+
+    fn extract_subgraph_names(schema: &'a SupergraphSchema) -> HashMap<String, String> {
+        let mut map = HashMap::new();
         let join_graph_enum = schema.definitions.iter().find_map(|d| match d {
             Definition::TypeDefinition(TypeDefinition::Enum(e)) => {
                 if e.name == "join__Graph" {
@@ -250,20 +251,21 @@ impl<'a> SupergraphMetadata<'a> {
         });
 
         if let Some(join_graph_enum) = join_graph_enum {
-            for value in join_graph_enum.values.iter() {
-                let join_graph_directive: Option<JoinGraphDirective> = value
+            for enum_value in join_graph_enum.values.iter() {
+                let graph_id = enum_value.name.to_string();
+                let join_graph_directive: Option<JoinGraphDirective> = enum_value
                     .directives
                     .iter()
                     .find(|d| JoinGraphDirective::is(d))
                     .map(|d| d.into());
 
                 if let Some(join_graph_directive) = join_graph_directive {
-                    set.insert(join_graph_directive.name);
+                    map.insert(graph_id, join_graph_directive.name);
                 }
             }
         }
 
-        set
+        map
     }
 
     fn build_map(schema: &'a SupergraphSchema) -> HashMap<String, SupergraphDefinition<'a>> {
@@ -354,6 +356,10 @@ impl<'a> SupergraphMetadata<'a> {
                     SupergraphField {
                         source: field,
                         join_field: Self::extract_join_field_from_directives(&field.directives),
+                        inaccessible: !Self::extract_inaccessible_from_directives(
+                            &field.directives,
+                        )
+                        .is_empty(),
                     },
                 )
             })
@@ -419,13 +425,17 @@ impl<'a> SupergraphMetadata<'a> {
         // Add subgraphs from join_field directives
         for (_field_name, field) in fields.iter() {
             for join_field in field.join_field.iter() {
-                if let Some(graph) = &join_field.graph {
+                if let Some(graph) = &join_field.graph_id {
                     subgraphs.insert(graph.to_string());
                 }
             }
         }
 
         subgraphs
+    }
+
+    pub fn resolve_graph_id(&self, graph_id: &str) -> String {
+        self.known_subgraphs.get(graph_id).unwrap().to_string()
     }
 
     fn extract_join_field_from_directives(
@@ -436,6 +446,21 @@ impl<'a> SupergraphMetadata<'a> {
             .filter_map(|directive| {
                 if JoinFieldDirective::is(directive) {
                     Some(JoinFieldDirective::from(directive))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn extract_inaccessible_from_directives(
+        directives: &[Directive<'static, String>],
+    ) -> Vec<InaccessibleDirective> {
+        directives
+            .iter()
+            .filter_map(|directive| {
+                if InaccessibleDirective::is(directive) {
+                    Some(InaccessibleDirective::from(directive))
                 } else {
                     None
                 }

@@ -2,7 +2,7 @@ use graphql_parser_hive_fork::schema::{Directive, Value};
 
 #[derive(Debug, Default, Clone)]
 pub struct JoinTypeDirective {
-    pub graph: String,
+    pub graph_id: String,
     pub key: Option<String>,
     pub extension: Option<bool>,
     pub resolvable: Option<bool>,
@@ -24,8 +24,8 @@ impl From<&Directive<'_, String>> for JoinTypeDirective {
         for (arg_name, arg_value) in &directive.arguments {
             if arg_name.eq("graph") {
                 match arg_value {
-                    Value::String(value) => result.graph = value.clone(),
-                    Value::Enum(value) => result.graph = value.clone(),
+                    Value::String(value) => result.graph_id = value.clone(),
+                    Value::Enum(value) => result.graph_id = value.clone(),
                     _ => {}
                 }
             } else if arg_name.eq("key") {
