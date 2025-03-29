@@ -168,6 +168,10 @@ impl GraphQLSatisfiabilityGraph {
         self.lookup.graph.node_weight(node_index).unwrap()
     }
 
+    pub fn edge(&self, edge_id: EdgeIndex) -> &Edge {
+        self.lookup.graph.edge_weight(edge_id).unwrap()
+    }
+
     fn build_graph(
         &mut self,
         supergraph_ir: &SupergraphMetadata,
@@ -396,6 +400,37 @@ impl GraphQLSatisfiabilityGraph {
             let edge_data = edge.weight();
             println!("   Edge {:?} to {:?}", edge_data, self.lookup.graph[target]);
         }
+    }
+
+    pub fn find_possible_routes(
+        &self,
+        from_node: NodeIndex,
+        field_edge_name: &str,
+    ) -> Vec<(EdgeIndex, NodeIndex)> {
+        let mut possible_routes = Vec::new();
+        let edges = self.edges_from(from_node);
+
+        for edge in edges {
+            let target = edge.target();
+            let edge_data = edge.weight();
+
+            match edge_data {
+                Edge::Field {
+                    name,
+                    join_field,
+                    requires,
+                    provides,
+                    override_from,
+                } => {
+                    if name == field_edge_name {
+                        possible_routes.push((edge.id(), target));
+                    }
+                }
+                _ => unimplemented!("todo"),
+            }
+        }
+
+        possible_routes
     }
 
     fn build_field_edges(
