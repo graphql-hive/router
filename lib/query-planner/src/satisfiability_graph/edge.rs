@@ -47,15 +47,11 @@ impl Edge {
     /// Returns true if this edge can provide the specified field
     pub fn provides_field(&self, field_name: &str) -> bool {
         match self {
-            Self::Field { provides, .. } => {
-                if let Some(provides) = provides {
-                    // Check if the provides directive includes this field
-                    // This is a simplified check - in a full implementation you'd want to parse
-                    // the provides string and check if it contains the field
-                    provides.contains(field_name)
-                } else {
-                    false
-                }
+            Self::Field { provides: Some(provides), .. } => {
+                // Check if the provides directive includes this field
+                // This is a simplified check - in a full implementation you'd want to parse
+                // the provides string and check if it contains the field
+                provides.contains(field_name)
             }
             _ => false,
         }
