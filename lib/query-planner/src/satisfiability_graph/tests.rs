@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod satisfiability_graph {
-    use std::path::PathBuf;
+    use std::{path::PathBuf, process::id};
 
     use petgraph::{
         graph::{EdgeIndex, NodeIndex},
@@ -75,6 +75,44 @@ mod satisfiability_graph {
         }
     }
 
+    fn validate_incoming_edges_count<'a>(
+        graph: &'a GraphQLSatisfiabilityGraph,
+        node: (&str, &str),
+        expectec_count: usize,
+    ) {
+        let (node_index, _) = graph.find_definition_node(node.0, node.1).unwrap();
+        let edges = graph.edges_to(node_index);
+        let count = edges.clone().count();
+
+        println!(
+            "node: {}/{}, incoming edges: {:?}",
+            node.0,
+            node.1,
+            edges.map(|v| v.weight().id()).collect::<Vec<_>>()
+        );
+
+        assert_eq!(count, expectec_count);
+    }
+
+    fn validate_outgoing_edges_count<'a>(
+        graph: &'a GraphQLSatisfiabilityGraph,
+        node: (&str, &str),
+        expectec_count: usize,
+    ) {
+        let (node_index, _) = graph.find_definition_node(node.0, node.1).unwrap();
+        let edges = graph.edges_from(node_index);
+        let count = edges.clone().count();
+
+        println!(
+            "node: {}/{}, outgoing edges: {:?}",
+            node.0,
+            node.1,
+            edges.map(|v| v.weight().id()).collect::<Vec<_>>()
+        );
+
+        assert_eq!(count, expectec_count);
+    }
+
     fn validate_connection<'a>(
         graph: &'a GraphQLSatisfiabilityGraph,
         from: (&str, &str),
@@ -120,6 +158,13 @@ mod satisfiability_graph {
         assert_eq!(graph.root_query_node(), &Node::QueryRoot("Query".into()));
         assert_eq!(graph.root_mutation_node(), None);
         assert_eq!(graph.root_subscription_node(), None);
+
+        // validate the count expected count of incoming/outgoing edges
+        validate_incoming_edges_count(&graph, ("ProductItf", "INVENTORY"), 2);
+        validate_outgoing_edges_count(&graph, ("ProductItf", "INVENTORY"), 2);
+
+        validate_incoming_edges_count(&graph, ("ProductItf", "PRODUCTS"), 2);
+        // validate_outgoing_edges_count(&graph, ("String", "PRODUCTS"), 7);
 
         validate_connection(
             &graph,

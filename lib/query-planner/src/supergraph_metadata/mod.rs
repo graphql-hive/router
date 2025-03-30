@@ -25,6 +25,24 @@ pub struct SupergraphObjectType<'a> {
     pub used_in_subgraphs: HashSet<String>,
 }
 
+impl<'a> SupergraphObjectType<'a> {
+    pub fn available_in_subgraph(&self, subgraph: &str) -> bool {
+        // First check join_type directives
+        let available_in_join_type = self.join_type.iter().any(|jt| jt.graph == subgraph);
+
+        if available_in_join_type {
+            return true;
+        }
+
+        // Then check fields
+        self.used_in_fields(subgraph)
+    }
+
+    pub fn used_in_fields(&self, subgraph: &str) -> bool {
+        self.used_in_subgraphs.contains(subgraph)
+    }
+}
+
 #[derive(Debug)]
 pub struct SupergraphInterfaceType<'a> {
     pub source: &'a InterfaceType<'static, String>,
