@@ -1,3 +1,4 @@
+pub use crate::federation_spec::inacessible::InaccessibleDirective;
 pub use crate::federation_spec::join_field::JoinFieldDirective;
 pub use crate::federation_spec::join_implements::JoinImplementsDirective;
 pub use crate::federation_spec::join_type::JoinTypeDirective;
@@ -30,10 +31,4 @@ pub struct LinkDirective {}
 
 impl LinkDirective {
     pub const NAME: &str = "link";
-}
-
-pub struct InaccessibleDirective {}
-
-impl InaccessibleDirective {
-    pub const NAME: &str = "inaccessible";
 }

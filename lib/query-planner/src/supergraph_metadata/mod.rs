@@ -7,10 +7,10 @@ use graphql_parser_hive_fork::{
     query::Directive,
     schema::{Definition, Document, Field, InterfaceType, ObjectType, TypeDefinition},
 };
-use graphql_tools::ast::SchemaDocumentExtension;
+use graphql_tools::ast::{SchemaDocumentExtension, TypeExtension};
 
 use crate::federation_spec::directives::{
-    JoinFieldDirective, JoinImplementsDirective, JoinTypeDirective,
+    InaccessibleDirective, JoinFieldDirective, JoinImplementsDirective, JoinTypeDirective,
 };
 
 pub type SupergraphSchema = Document<'static, String>;
@@ -62,6 +62,8 @@ pub enum RootType {
 #[derive(Debug)]
 pub struct SupergraphField<'a> {
     pub source: &'a Field<'static, String>,
+    pub is_scalar: bool,
+    pub inaccessible: bool,
     pub join_field: Vec<JoinFieldDirective>,
 }
 
@@ -137,6 +139,21 @@ impl SupergraphDefinition<'_> {
         }
     }
 
+    pub fn subgraphs(&self) -> Vec<&str> {
+        match self {
+            SupergraphDefinition::Object(object_type) => object_type
+                .join_type
+                .iter()
+                .map(|join_type| join_type.graph.as_str())
+                .collect::<Vec<&str>>(),
+            SupergraphDefinition::Interface(interface_type) => interface_type
+                .join_type
+                .iter()
+                .map(|join_type| join_type.graph.as_str())
+                .collect::<Vec<&str>>(),
+        }
+    }
+
     pub fn join_implements(&self) -> &Vec<JoinImplementsDirective> {
         match self {
             SupergraphDefinition::Object(object_type) => &object_type.join_implements,
@@ -186,24 +203,49 @@ impl<'a> SupergraphMetadata<'a> {
     }
 
     fn build_map(schema: &'a SupergraphSchema) -> HashMap<String, SupergraphDefinition<'a>> {
+        let known_scalars = [
+            schema
+                .definitions
+                .iter()
+                .filter_map(|def| match def {
+                    Definition::TypeDefinition(TypeDefinition::Scalar(scalar_type)) => {
+                        Some(scalar_type.name.as_str())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<&str>>(),
+            vec!["ID", "String", "Boolean", "Int", "Float"],
+        ]
+        .concat();
+
         schema
             .definitions
             .iter()
             .filter_map(|definition| match definition {
                 Definition::TypeDefinition(TypeDefinition::Object(object_type)) => Some((
                     object_type.name.to_string(),
-                    SupergraphDefinition::Object(Self::build_object_type(object_type, schema)),
+                    SupergraphDefinition::Object(Self::build_object_type(
+                        object_type,
+                        schema,
+                        &known_scalars,
+                    )),
                 )),
                 Definition::TypeDefinition(TypeDefinition::Interface(interface_type)) => Some((
                     interface_type.name.to_string(),
-                    SupergraphDefinition::Interface(Self::build_interface_type(interface_type)),
+                    SupergraphDefinition::Interface(Self::build_interface_type(
+                        interface_type,
+                        &known_scalars,
+                    )),
                 )),
                 _ => None,
             })
             .collect()
     }
 
-    fn build_fields(fields: &'a [Field<'static, String>]) -> HashMap<String, SupergraphField<'a>> {
+    fn build_fields(
+        fields: &'a [Field<'static, String>],
+        known_scalars: &Vec<&'a str>,
+    ) -> HashMap<String, SupergraphField<'a>> {
         fields
             .iter()
             .map(|field| {
@@ -211,7 +253,12 @@ impl<'a> SupergraphMetadata<'a> {
                     field.name.to_string(),
                     SupergraphField {
                         source: field,
+                        is_scalar: known_scalars.contains(&field.field_type.inner_type()),
                         join_field: Self::extract_join_field_from_directives(&field.directives),
+                        inaccessible: !Self::extract_inaccessible_from_directives(
+                            &field.directives,
+                        )
+                        .is_empty(),
                     },
                 )
             })
@@ -220,8 +267,9 @@ impl<'a> SupergraphMetadata<'a> {
 
     fn build_interface_type(
         interface_type: &'a InterfaceType<'static, String>,
+        known_scalars: &Vec<&'a str>,
     ) -> SupergraphInterfaceType<'a> {
-        let fields = Self::build_fields(&interface_type.fields);
+        let fields = Self::build_fields(&interface_type.fields, known_scalars);
         let used_in_subgraphs = Self::build_subgraph_usage_from_fields(&fields);
 
         SupergraphInterfaceType {
@@ -238,8 +286,9 @@ impl<'a> SupergraphMetadata<'a> {
     fn build_object_type(
         object_type: &'a ObjectType<'static, String>,
         schema: &'a SupergraphSchema,
+        known_scalars: &Vec<&'a str>,
     ) -> SupergraphObjectType<'a> {
-        let fields = Self::build_fields(&object_type.fields);
+        let fields = Self::build_fields(&object_type.fields, &known_scalars);
 
         let root_type = if object_type.name == schema.query_type().name {
             Some(RootType::Query)
@@ -294,6 +343,21 @@ impl<'a> SupergraphMetadata<'a> {
             .filter_map(|directive| {
                 if JoinFieldDirective::is(directive) {
                     Some(JoinFieldDirective::from(directive))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn extract_inaccessible_from_directives(
+        directives: &[Directive<'static, String>],
+    ) -> Vec<InaccessibleDirective> {
+        directives
+            .iter()
+            .filter_map(|directive| {
+                if InaccessibleDirective::is(directive) {
+                    Some(InaccessibleDirective::from(directive))
                 } else {
                     None
                 }
