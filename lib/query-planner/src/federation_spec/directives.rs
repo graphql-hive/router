@@ -1,24 +1,9 @@
+pub use crate::federation_spec::join_enum_value::JoinEnumValueDirective;
 pub use crate::federation_spec::join_field::JoinFieldDirective;
+pub use crate::federation_spec::join_graph::JoinGraphDirective;
 pub use crate::federation_spec::join_implements::JoinImplementsDirective;
 pub use crate::federation_spec::join_type::JoinTypeDirective;
-
-pub struct JoinEnumValueDirective {}
-
-impl JoinEnumValueDirective {
-    pub const NAME: &str = "join__enumValue";
-}
-
-pub struct JoinUnionMemberDirective {}
-
-impl JoinUnionMemberDirective {
-    pub const NAME: &str = "join__unionMember";
-}
-
-pub struct JoinGraphDirective {}
-
-impl JoinGraphDirective {
-    pub const NAME: &str = "join__graph";
-}
+pub use crate::federation_spec::join_union::JoinUnionMemberDirective;
 
 pub struct TagDirective {}
 
