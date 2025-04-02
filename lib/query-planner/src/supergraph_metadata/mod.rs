@@ -5,12 +5,16 @@ use std::{
 
 use graphql_parser_hive_fork::{
     query::Directive,
-    schema::{Definition, Document, Field, InterfaceType, ObjectType, TypeDefinition},
+    schema::{
+        Definition, Document, EnumType, EnumValue, Field, InputObjectType, InterfaceType,
+        ObjectType, ScalarType, TypeDefinition, UnionType,
+    },
 };
 use graphql_tools::ast::SchemaDocumentExtension;
 
 use crate::federation_spec::directives::{
-    JoinFieldDirective, JoinImplementsDirective, JoinTypeDirective,
+    JoinEnumValueDirective, JoinFieldDirective, JoinGraphDirective, JoinImplementsDirective,
+    JoinTypeDirective, JoinUnionMemberDirective,
 };
 
 pub type SupergraphSchema = Document<'static, String>;
@@ -51,6 +55,42 @@ pub struct SupergraphField<'a> {
 pub enum SupergraphDefinition<'a> {
     Object(SupergraphObjectType<'a>),
     Interface(SupergraphInterfaceType<'a>),
+    Union(SupergraphUnionType<'a>),
+    Enum(SupergraphEnumType<'a>),
+    Scalar(SupergraphScalarType<'a>),
+    InputObject(SupergraphInputObjectType<'a>),
+}
+
+#[derive(Debug)]
+pub struct SupergraphEnumValueType<'a> {
+    pub source: &'a EnumValue<'static, String>,
+    pub join_enum_value: Vec<JoinEnumValueDirective>,
+}
+
+#[derive(Debug)]
+pub struct SupergraphInputObjectType<'a> {
+    pub source: &'a InputObjectType<'static, String>,
+    pub join_type: Vec<JoinTypeDirective>,
+}
+
+#[derive(Debug)]
+pub struct SupergraphScalarType<'a> {
+    pub source: &'a ScalarType<'static, String>,
+    pub join_type: Vec<JoinTypeDirective>,
+}
+
+#[derive(Debug)]
+pub struct SupergraphEnumType<'a> {
+    pub source: &'a EnumType<'static, String>,
+    pub values: Vec<SupergraphEnumValueType<'a>>,
+    pub join_type: Vec<JoinTypeDirective>,
+}
+
+#[derive(Debug)]
+pub struct SupergraphUnionType<'a> {
+    pub source: &'a UnionType<'static, String>,
+    pub join_type: Vec<JoinTypeDirective>,
+    pub union_members: Vec<JoinUnionMemberDirective>,
 }
 
 impl SupergraphDefinition<'_> {
@@ -58,7 +98,15 @@ impl SupergraphDefinition<'_> {
         match self {
             SupergraphDefinition::Object(object_type) => &object_type.source.name,
             SupergraphDefinition::Interface(interface_type) => &interface_type.source.name,
+            SupergraphDefinition::Union(union_type) => &union_type.source.name,
+            SupergraphDefinition::Enum(enum_type) => &enum_type.source.name,
+            SupergraphDefinition::Scalar(scalar_type) => &scalar_type.source.name,
+            SupergraphDefinition::InputObject(input_type) => &input_type.source.name,
         }
+    }
+
+    pub fn is_defined_in_subgraph(&self, subgraph: &str) -> bool {
+        self.join_types().iter().any(|jt| jt.graph == subgraph)
     }
 
     pub fn available_in_subgraph(&self, subgraph: &str) -> bool {
@@ -75,8 +123,8 @@ impl SupergraphDefinition<'_> {
 
     pub fn is_interface(&self) -> bool {
         match self {
-            SupergraphDefinition::Object(_) => false,
             SupergraphDefinition::Interface(_) => true,
+            _ => false,
         }
     }
 
@@ -88,6 +136,7 @@ impl SupergraphDefinition<'_> {
             SupergraphDefinition::Interface(interface_type) => {
                 interface_type.used_in_subgraphs.contains(subgraph)
             }
+            _ => false,
         }
     }
 
@@ -106,9 +155,13 @@ impl SupergraphDefinition<'_> {
     }
 
     pub fn fields(&self) -> &HashMap<String, SupergraphField> {
+        static EMPTY: std::sync::LazyLock<HashMap<String, SupergraphField>> =
+            std::sync::LazyLock::new(|| HashMap::<String, SupergraphField>::new());
+
         match self {
             SupergraphDefinition::Object(object_type) => &object_type.fields,
             SupergraphDefinition::Interface(interface_type) => &interface_type.fields,
+            _ => &EMPTY,
         }
     }
 
@@ -116,6 +169,13 @@ impl SupergraphDefinition<'_> {
         match self {
             SupergraphDefinition::Object(object_type) => &object_type.join_type,
             SupergraphDefinition::Interface(interface_type) => &interface_type.join_type,
+            SupergraphDefinition::Union(_)
+            | SupergraphDefinition::Enum(_)
+            | SupergraphDefinition::Scalar(_)
+            | SupergraphDefinition::InputObject(_) => {
+                static EMPTY: Vec<JoinTypeDirective> = Vec::new();
+                &EMPTY
+            }
         }
     }
 
@@ -123,6 +183,13 @@ impl SupergraphDefinition<'_> {
         match self {
             SupergraphDefinition::Object(object_type) => &object_type.join_implements,
             SupergraphDefinition::Interface(interface_type) => &interface_type.join_implements,
+            SupergraphDefinition::Union(_)
+            | SupergraphDefinition::Enum(_)
+            | SupergraphDefinition::Scalar(_)
+            | SupergraphDefinition::InputObject(_) => {
+                static EMPTY: Vec<JoinImplementsDirective> = Vec::new();
+                &EMPTY
+            }
         }
     }
 
@@ -138,6 +205,7 @@ impl SupergraphDefinition<'_> {
 pub struct SupergraphMetadata<'a> {
     pub definitions: HashMap<String, SupergraphDefinition<'a>>,
     pub document: &'a Document<'static, String>,
+    pub known_subgraphs: HashSet<String>,
 }
 
 impl<'a> SupergraphMetadata<'a> {
@@ -145,6 +213,7 @@ impl<'a> SupergraphMetadata<'a> {
         Self {
             document: schema,
             definitions: Self::build_map(schema),
+            known_subgraphs: Self::extract_subgraph_names(schema),
         }
     }
 
@@ -167,6 +236,36 @@ impl<'a> SupergraphMetadata<'a> {
         })
     }
 
+    fn extract_subgraph_names(schema: &'a SupergraphSchema) -> HashSet<String> {
+        let mut set = HashSet::new();
+        let join_graph_enum = schema.definitions.iter().find_map(|d| match d {
+            Definition::TypeDefinition(TypeDefinition::Enum(e)) => {
+                if e.name == "join__Graph" {
+                    Some(e)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        });
+
+        if let Some(join_graph_enum) = join_graph_enum {
+            for value in join_graph_enum.values.iter() {
+                let join_graph_directive: Option<JoinGraphDirective> = value
+                    .directives
+                    .iter()
+                    .find(|d| JoinGraphDirective::is(d))
+                    .map(|d| d.into());
+
+                if let Some(join_graph_directive) = join_graph_directive {
+                    set.insert(join_graph_directive.name);
+                }
+            }
+        }
+
+        set
+    }
+
     fn build_map(schema: &'a SupergraphSchema) -> HashMap<String, SupergraphDefinition<'a>> {
         schema
             .definitions
@@ -180,9 +279,70 @@ impl<'a> SupergraphMetadata<'a> {
                     interface_type.name.to_string(),
                     SupergraphDefinition::Interface(Self::build_interface_type(interface_type)),
                 )),
+                Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => Some((
+                    enum_type.name.to_string(),
+                    SupergraphDefinition::Enum(Self::build_enum_type(enum_type)),
+                )),
+                Definition::TypeDefinition(TypeDefinition::Union(union_type)) => Some((
+                    union_type.name.to_string(),
+                    SupergraphDefinition::Union(Self::build_union_type(union_type)),
+                )),
+                Definition::TypeDefinition(TypeDefinition::Scalar(scalar_type)) => Some((
+                    scalar_type.name.to_string(),
+                    SupergraphDefinition::Scalar(Self::build_scalar_type(scalar_type)),
+                )),
+                Definition::TypeDefinition(TypeDefinition::InputObject(input_object_type)) => {
+                    Some((
+                        input_object_type.name.to_string(),
+                        SupergraphDefinition::InputObject(Self::build_input_object_type(
+                            input_object_type,
+                        )),
+                    ))
+                }
                 _ => None,
             })
             .collect()
+    }
+
+    fn build_input_object_type(
+        input_object_type: &'a InputObjectType<'static, String>,
+    ) -> SupergraphInputObjectType<'a> {
+        SupergraphInputObjectType {
+            source: input_object_type,
+            join_type: Self::extract_join_types_from_directives(&input_object_type.directives),
+        }
+    }
+
+    fn build_scalar_type(scalar_type: &'a ScalarType<'static, String>) -> SupergraphScalarType<'a> {
+        SupergraphScalarType {
+            source: scalar_type,
+            join_type: Self::extract_join_types_from_directives(&scalar_type.directives),
+        }
+    }
+
+    fn build_union_type(union_type: &'a UnionType<'static, String>) -> SupergraphUnionType<'a> {
+        SupergraphUnionType {
+            source: union_type,
+            join_type: Self::extract_join_types_from_directives(&union_type.directives),
+            union_members: Self::extract_join_union_from_directives(&union_type.directives),
+        }
+    }
+
+    fn build_enum_type(enum_type: &'a EnumType<'static, String>) -> SupergraphEnumType<'a> {
+        SupergraphEnumType {
+            source: enum_type,
+            join_type: Self::extract_join_types_from_directives(&enum_type.directives),
+            values: enum_type
+                .values
+                .iter()
+                .map(|value| SupergraphEnumValueType {
+                    source: value,
+                    join_enum_value: Self::extract_join_enum_value_from_directives(
+                        &value.directives,
+                    ),
+                })
+                .collect(),
+        }
     }
 
     fn build_fields(fields: &'a [Field<'static, String>]) -> HashMap<String, SupergraphField<'a>> {
@@ -306,6 +466,36 @@ impl<'a> SupergraphMetadata<'a> {
             .filter_map(|directive| {
                 if JoinTypeDirective::is(directive) {
                     Some(JoinTypeDirective::from(directive))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn extract_join_union_from_directives(
+        directives: &[Directive<'static, String>],
+    ) -> Vec<JoinUnionMemberDirective> {
+        directives
+            .iter()
+            .filter_map(|directive| {
+                if JoinUnionMemberDirective::is(directive) {
+                    Some(JoinUnionMemberDirective::from(directive))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn extract_join_enum_value_from_directives(
+        directives: &[Directive<'static, String>],
+    ) -> Vec<JoinEnumValueDirective> {
+        directives
+            .iter()
+            .filter_map(|directive| {
+                if JoinEnumValueDirective::is(directive) {
+                    Some(JoinEnumValueDirective::from(directive))
                 } else {
                     None
                 }
