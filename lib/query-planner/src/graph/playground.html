@@ -361,6 +361,35 @@ digraph G {
         </div>
 
         <script>
+            // URL Parameter Management Functions
+            function getUrlParam(name) {
+                const urlParams = new URLSearchParams(window.location.search);
+                return urlParams.get(name);
+            }
+
+            function updateUrlParam(name, value) {
+                const url = new URL(window.location.href);
+                if (value) {
+                    url.searchParams.set(name, value);
+                } else {
+                    url.searchParams.delete(name);
+                }
+                window.history.replaceState({}, "", url);
+            }
+
+            function encodeGraphContent(content) {
+                return btoa(encodeURIComponent(content));
+            }
+
+            function decodeGraphContent(encoded) {
+                try {
+                    return decodeURIComponent(atob(encoded));
+                } catch (e) {
+                    console.error("Error decoding graph content:", e);
+                    return null;
+                }
+            }
+
             // Custom mode for DOT syntax highlighting
             CodeMirror.defineMode("dot", function () {
                 return {
@@ -456,6 +485,18 @@ digraph G {
                 };
             });
 
+            // Get initial content from URL parameter if exists
+            const encodedGraph = getUrlParam("graph");
+            let initialContent = document.getElementById("editor").value;
+
+            if (encodedGraph) {
+                const decodedContent = decodeGraphContent(encodedGraph);
+                if (decodedContent) {
+                    initialContent = decodedContent;
+                    document.getElementById("editor").value = initialContent;
+                }
+            }
+
             // Initialize CodeMirror with DOT syntax highlighting
             const editor = CodeMirror.fromTextArea(
                 document.getElementById("editor"),
@@ -465,8 +506,19 @@ digraph G {
                     theme: "default",
                     autofocus: true,
                     lineWrapping: true,
+                    value: initialContent,
                 },
             );
+
+            // Function to update URL when editor content changes
+            function updateGraphUrl() {
+                const content = editor.getValue();
+                const encoded = encodeGraphContent(content);
+                updateUrlParam("graph", encoded);
+            }
+
+            // Add event listener to update URL on blur
+            editor.on("blur", updateGraphUrl);
 
             // Initialize Viz.js with full module and better error handling
             const viz = new Viz({
@@ -1540,7 +1592,11 @@ digraph G {
             editor.on("change", () => {
                 // Debounce to avoid too many updates
                 clearTimeout(editor.updateTimeout);
-                editor.updateTimeout = setTimeout(renderGraph, 500);
+                editor.updateTimeout = setTimeout(() => {
+                    renderGraph();
+                    // Update URL parameter after rendering
+                    updateGraphUrl();
+                }, 500);
             });
 
             // Panel resizer functionality
