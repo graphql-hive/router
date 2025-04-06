@@ -15,6 +15,6 @@ impl<'a> FederationDirective<'a> for InaccessibleDirective {
     }
 
     fn parse(_: &Directive<'_, String>) -> Self {
-        Self::default()
+        Self
     }
 }
