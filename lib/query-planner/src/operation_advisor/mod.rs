@@ -2,17 +2,17 @@ use graphql_parser_hive_fork::query::OperationDefinition;
 
 use crate::{
     consumer_schema::ConsumerSchema, graph::GraphQLSatisfiabilityGraph,
-    supergraph_metadata::SupergraphMetadata,
+    supergraph_metadata::SupergraphState,
 };
 
 pub struct OperationAdvisor<'a> {
-    pub supergraph_metadata: SupergraphMetadata<'a>,
+    pub supergraph_metadata: SupergraphState<'a>,
     pub graph: GraphQLSatisfiabilityGraph,
     pub consumer_schema: ConsumerSchema,
 }
 
 impl<'a> OperationAdvisor<'a> {
-    pub fn new(supergraph: SupergraphMetadata<'a>) -> Self {
+    pub fn new(supergraph: SupergraphState<'a>) -> Self {
         let graph = GraphQLSatisfiabilityGraph::new_from_supergraph(&supergraph)
             .expect("failed to build graph");
 

@@ -5,7 +5,7 @@ mod star_stuff {
             edge::Edge, node::Node, GraphQLSatisfiabilityGraph, GraphQLSatisfiabilityGraphError,
         },
         parse_schema,
-        supergraph_metadata::SupergraphMetadata,
+        supergraph_metadata::SupergraphState,
     };
     use petgraph::visit::{EdgeRef, NodeRef};
     use std::path::PathBuf;
@@ -14,7 +14,7 @@ mod star_stuff {
         supergraph_sdl: &str,
     ) -> Result<GraphQLSatisfiabilityGraph, GraphQLSatisfiabilityGraphError> {
         let schema = parse_schema(supergraph_sdl);
-        let metadata = SupergraphMetadata::new(&schema);
+        let metadata = SupergraphState::new(&schema);
 
         GraphQLSatisfiabilityGraph::new_from_supergraph(&metadata)
     }

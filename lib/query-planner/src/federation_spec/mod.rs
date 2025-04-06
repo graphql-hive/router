@@ -9,6 +9,7 @@ use crate::supergraph_metadata::{SupergraphDefinition, SupergraphField};
 pub mod definitions;
 pub mod directives;
 
+pub(crate) mod directive_trait;
 pub(crate) mod inacessible;
 pub(crate) mod join_enum_value;
 pub(crate) mod join_field;

@@ -22,7 +22,7 @@ use thiserror::Error;
 
 use crate::{
     federation_spec::FederationRules,
-    supergraph_metadata::{RootType, SupergraphDefinition, SupergraphMetadata},
+    supergraph_metadata::{RootType, SupergraphDefinition, SupergraphState},
 };
 
 use super::graph::{edge::Edge, node::Node};
@@ -50,7 +50,7 @@ pub enum GraphQLSatisfiabilityGraphError {
 
 impl GraphQLSatisfiabilityGraph {
     pub fn new_from_supergraph(
-        supergraph_ir: &SupergraphMetadata,
+        supergraph_ir: &SupergraphState,
     ) -> Result<Self, GraphQLSatisfiabilityGraphError> {
         let mut instance = GraphQLSatisfiabilityGraph {
             node_to_index: HashMap::new(),
@@ -73,7 +73,7 @@ impl GraphQLSatisfiabilityGraph {
 
     fn build_graph(
         &mut self,
-        state: &SupergraphMetadata,
+        state: &SupergraphState,
     ) -> Result<(), GraphQLSatisfiabilityGraphError> {
         self.build_root_nodes(state);
         self.link_root_edges(state);
@@ -85,7 +85,7 @@ impl GraphQLSatisfiabilityGraph {
         Ok(())
     }
 
-    fn build_root_nodes(&mut self, state: &SupergraphMetadata<'_>) {
+    fn build_root_nodes(&mut self, state: &SupergraphState<'_>) {
         self.query_root =
             self.upsert_node(Node::QueryRoot(state.document.query_type().name.clone()));
         self.mutation_root = state
@@ -128,7 +128,7 @@ impl GraphQLSatisfiabilityGraph {
 
     fn build_entity_reference_edges(
         &mut self,
-        state: &SupergraphMetadata<'_>,
+        state: &SupergraphState<'_>,
     ) -> Result<(), GraphQLSatisfiabilityGraphError> {
         for (def_name, definition) in state.definitions.iter() {
             for join_type1 in definition.join_types() {
@@ -155,7 +155,7 @@ impl GraphQLSatisfiabilityGraph {
 
     fn build_interface_implementation_edges(
         &mut self,
-        state: &SupergraphMetadata<'_>,
+        state: &SupergraphState<'_>,
     ) -> Result<(), GraphQLSatisfiabilityGraphError> {
         for (def_name, definition) in state
             .definitions
@@ -221,7 +221,7 @@ impl GraphQLSatisfiabilityGraph {
         self.graph.edges_directed(node_index, Direction::Outgoing)
     }
 
-    fn link_root_edges(&mut self, state: &SupergraphMetadata<'_>) {
+    fn link_root_edges(&mut self, state: &SupergraphState<'_>) {
         for (def_name, definition) in state.definitions.iter() {
             if let Some(root_type) = definition.try_into_root_type() {
                 for graph_id in definition.subgraphs().iter() {
@@ -257,7 +257,7 @@ impl GraphQLSatisfiabilityGraph {
         }
     }
 
-    fn build_field_edges(&mut self, state: &SupergraphMetadata<'_>) {
+    fn build_field_edges(&mut self, state: &SupergraphState<'_>) {
         for (def_name, definition) in state.definitions.iter() {
             for graph_id in definition.subgraphs().iter() {
                 if definition.is_defined_in_subgraph(graph_id) {
@@ -317,7 +317,7 @@ impl GraphQLSatisfiabilityGraph {
 
     fn handle_viewed_selection_set(
         &mut self,
-        state: &SupergraphMetadata,
+        state: &SupergraphState,
         selection_set: &SelectionSet<'static, String>,
         graph_id: &str,
         parent_type_def: &SupergraphDefinition<'_>,
@@ -370,7 +370,7 @@ impl GraphQLSatisfiabilityGraph {
 
     fn build_viewed_field_edges(
         &mut self,
-        state: &SupergraphMetadata,
+        state: &SupergraphState,
     ) -> Result<(), GraphQLSatisfiabilityGraphError> {
         for (_, definition) in state.definitions.iter() {
             for join_type in definition.join_types().iter() {

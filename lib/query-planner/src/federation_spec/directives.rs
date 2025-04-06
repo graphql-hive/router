@@ -1,3 +1,4 @@
+pub use crate::federation_spec::directive_trait::FederationDirective;
 pub use crate::federation_spec::inacessible::InaccessibleDirective;
 pub use crate::federation_spec::join_enum_value::JoinEnumValueDirective;
 pub use crate::federation_spec::join_field::JoinFieldDirective;
