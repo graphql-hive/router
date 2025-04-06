@@ -1,0 +1,9 @@
+query products {
+    allProducts {
+        product {
+            price {
+                price
+            }
+        }
+    }
+}

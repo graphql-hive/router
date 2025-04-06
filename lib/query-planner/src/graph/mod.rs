@@ -54,6 +54,10 @@ impl Graph {
         self.graph.edge_weight(edge_id).unwrap()
     }
 
+    pub fn get_edge_tail(&self, edge_id: &EdgeIndex) -> NodeIndex {
+        self.graph.edge_endpoints(*edge_id).unwrap().1
+    }
+
     fn build_graph(&mut self, state: &SupergraphState) {
         self.build_root_nodes(state);
         self.link_root_edges(state);

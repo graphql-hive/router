@@ -52,6 +52,13 @@ impl Edge {
             _ => None,
         }
     }
+
+    pub fn cost(&self) -> u64 {
+        match self {
+            Self::FieldMove { .. } => 1,
+            _ => 10,
+        }
+    }
 }
 
 impl Debug for Edge {
@@ -89,7 +96,6 @@ impl Debug for Edge {
 
                 result
             }
-
             Edge::EntityMove(name) => write!(f, "🔑 {}", name),
             Edge::AbstractMove(name) => write!(f, "🔮 {}", name),
         }
