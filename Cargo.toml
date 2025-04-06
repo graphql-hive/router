@@ -2,3 +2,6 @@
 members = ["lib/query-planner", "lib/wasm-lib", "bin"]
 resolver = "2"
 default-members = ["bin"]
+
+[profile.dev]
+debug = "full"

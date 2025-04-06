@@ -1,31 +1,36 @@
 use graphql_parser_hive_fork::query::Directive;
 
+use super::directives::FederationDirective;
+
 #[derive(Debug, Default, Clone)]
 pub struct JoinImplementsDirective {
-    pub graph: String,
+    pub graph_id: String,
     pub interface: String,
 }
 
 impl JoinImplementsDirective {
     pub const NAME: &str = "join__implements";
-
-    pub fn is(directive: &Directive<'_, String>) -> bool {
-        directive.name == Self::NAME
-    }
 }
 
-impl From<&Directive<'_, String>> for JoinImplementsDirective {
-    fn from(directive: &Directive<'_, String>) -> Self {
+impl<'a> FederationDirective<'a> for JoinImplementsDirective {
+    fn directive_name() -> &'a str {
+        Self::NAME
+    }
+
+    fn parse(directive: &Directive<'_, String>) -> Self
+    where
+        Self: Sized,
+    {
         let mut result = Self::default();
 
         for (arg_name, arg_value) in &directive.arguments {
             if arg_name.eq("graph") {
                 match arg_value {
                     graphql_parser_hive_fork::schema::Value::String(value) => {
-                        result.graph = value.clone()
+                        result.graph_id = value.clone()
                     }
                     graphql_parser_hive_fork::schema::Value::Enum(value) => {
-                        result.graph = value.clone()
+                        result.graph_id = value.clone()
                     }
                     _ => {}
                 }

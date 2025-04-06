@@ -1,0 +1,111 @@
+schema
+    @link(url: "https://specs.apollo.dev/link/v1.0")
+    @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+    query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(
+    graph: join__Graph
+    requires: join__FieldSet
+    provides: join__FieldSet
+    type: String
+    external: Boolean
+    override: String
+    usedOverridden: Boolean
+) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(
+    graph: join__Graph!
+    interface: String!
+) repeatable on OBJECT | INTERFACE
+
+directive @join__type(
+    graph: join__Graph!
+    key: join__FieldSet
+    extension: Boolean! = false
+    resolvable: Boolean! = true
+    isInterfaceObject: Boolean! = false
+) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(
+    graph: join__Graph!
+    member: String!
+) repeatable on UNION
+
+scalar join__FieldSet
+
+directive @link(
+    url: String
+    as: String
+    for: link__Purpose
+    import: [link__Import]
+) repeatable on SCHEMA
+
+scalar link__Import
+
+enum link__Purpose {
+    """
+    `SECURITY` features provide metadata necessary to securely resolve fields.
+    """
+    SECURITY
+
+    """
+    `EXECUTION` features provide metadata necessary for operation execution.
+    """
+    EXECUTION
+}
+
+enum join__Graph {
+    BAR @join__graph(name: "bar", url: "")
+    BAZ @join__graph(name: "baz", url: "")
+    FOO @join__graph(name: "foo", url: "")
+}
+
+type Group
+    @join__type(graph: BAR, key: "id")
+    @join__type(graph: FOO, key: "id") {
+    id: ID
+    topic: Topic @join__field(graph: BAR)
+    title: String @join__field(graph: FOO)
+    users: [User] @join__field(graph: FOO, provides: "id")
+    user: User @join__field(graph: FOO, provides: "name profile{age}")
+}
+
+type Topic @join__type(graph: BAR, key: "id") {
+    id: ID!
+    title: String!
+}
+
+type User
+    @join__type(graph: BAR, key: "id")
+    @join__type(graph: FOO, key: "id") {
+    id: String!
+        @join__field(graph: BAR)
+        @join__field(graph: FOO, external: true)
+    name: String
+        @join__field(graph: BAR, type: "String")
+        @join__field(graph: FOO, type: "String!", external: true)
+    profile: Profile
+        @join__field(graph: BAR)
+        @join__field(graph: FOO, external: true)
+}
+
+type Profile @join__type(graph: BAR) @join__type(graph: FOO) {
+    age: Int
+}
+
+type Theme @join__type(graph: BAZ, key: "id") {
+    id: ID!
+    primaryColor: String
+}
+
+type Query
+    @join__type(graph: BAR)
+    @join__type(graph: BAZ)
+    @join__type(graph: FOO) {
+    themes: [Theme] @join__field(graph: BAZ)
+}

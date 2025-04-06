@@ -1,8 +1,10 @@
 use graphql_parser_hive_fork::schema::{Directive, Value};
 
-#[derive(Debug, Default, Clone)]
+use super::directives::FederationDirective;
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct JoinFieldDirective {
-    pub graph: Option<String>,
+    pub graph_id: Option<String>,
     pub requires: Option<String>,
     pub provides: Option<String>,
     pub type_in_graph: Option<String>,
@@ -13,21 +15,24 @@ pub struct JoinFieldDirective {
 
 impl JoinFieldDirective {
     pub const NAME: &str = "join__field";
-
-    pub fn is(directive: &Directive<'_, String>) -> bool {
-        directive.name == Self::NAME
-    }
 }
 
-impl From<&Directive<'_, String>> for JoinFieldDirective {
-    fn from(directive: &Directive<'_, String>) -> Self {
+impl<'a> FederationDirective<'a> for JoinFieldDirective {
+    fn directive_name() -> &'a str {
+        Self::NAME
+    }
+
+    fn parse(directive: &Directive<'_, String>) -> Self
+    where
+        Self: Sized,
+    {
         let mut result = Self::default();
 
         for (arg_name, arg_value) in &directive.arguments {
             if arg_name.eq("graph") {
                 match arg_value {
-                    Value::String(value) => result.graph = Some(value.clone()),
-                    Value::Enum(value) => result.graph = Some(value.clone()),
+                    Value::String(value) => result.graph_id = Some(value.clone()),
+                    Value::Enum(value) => result.graph_id = Some(value.clone()),
                     _ => {}
                 }
             } else if arg_name.eq("requires") {

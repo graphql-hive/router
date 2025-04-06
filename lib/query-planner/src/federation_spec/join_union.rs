@@ -1,5 +1,7 @@
 use graphql_parser_hive_fork::schema::{Directive, Value};
 
+use super::directives::FederationDirective;
+
 #[derive(Debug, Default, Clone)]
 pub struct JoinUnionMemberDirective {
     graph: String,
@@ -8,14 +10,17 @@ pub struct JoinUnionMemberDirective {
 
 impl JoinUnionMemberDirective {
     pub const NAME: &str = "join__unionMember";
-
-    pub fn is(directive: &Directive<'_, String>) -> bool {
-        directive.name == Self::NAME
-    }
 }
 
-impl From<&Directive<'_, String>> for JoinUnionMemberDirective {
-    fn from(directive: &Directive<'_, String>) -> Self {
+impl<'a> FederationDirective<'a> for JoinUnionMemberDirective {
+    fn directive_name() -> &'a str {
+        Self::NAME
+    }
+
+    fn parse(directive: &Directive<'_, String>) -> Self
+    where
+        Self: Sized,
+    {
         let mut result = Self::default();
 
         for (arg_name, arg_value) in &directive.arguments {

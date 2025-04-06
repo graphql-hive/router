@@ -1,6 +1,6 @@
 mod consumer_schema;
 mod federation_spec;
-mod satisfiability_graph;
+mod graph;
 mod utils;
 
 pub mod operation_advisor;

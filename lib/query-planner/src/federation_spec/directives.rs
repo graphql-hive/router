@@ -1,3 +1,5 @@
+pub use crate::federation_spec::directive_trait::FederationDirective;
+pub use crate::federation_spec::inacessible::InaccessibleDirective;
 pub use crate::federation_spec::join_enum_value::JoinEnumValueDirective;
 pub use crate::federation_spec::join_field::JoinFieldDirective;
 pub use crate::federation_spec::join_graph::JoinGraphDirective;
@@ -15,10 +17,4 @@ pub struct LinkDirective {}
 
 impl LinkDirective {
     pub const NAME: &str = "link";
-}
-
-pub struct InaccessibleDirective {}
-
-impl InaccessibleDirective {
-    pub const NAME: &str = "inaccessible";
 }

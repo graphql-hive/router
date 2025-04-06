@@ -1,3 +1,4 @@
+use crate::federation_spec::directives::FederationDirective;
 use crate::federation_spec::directives::InaccessibleDirective;
 use crate::utils::schema_transformer::Transformed;
 
@@ -26,7 +27,7 @@ impl PruneInaccessible {
     ) -> bool {
         directives
             .iter()
-            .any(|d| d.name == InaccessibleDirective::NAME.into())
+            .any(|d| d.name == InaccessibleDirective::directive_name().into())
     }
 }
 

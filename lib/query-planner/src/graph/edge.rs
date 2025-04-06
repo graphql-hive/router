@@ -3,75 +3,52 @@ use std::fmt::Debug;
 use crate::federation_spec::directives::JoinFieldDirective;
 
 pub enum Edge {
-    Root, // Root of the graph
-    Field {
+    /// A special edge between the root Node and then root entry point to the graph
+    /// With this helper, you can jump from Query::RootQuery --field-> Query/SomeSubgraph --> --field--> SomeType/SomeSubgraph
+    RootEntrypoint {
+        field_name: String,
+    },
+    /// Represent a simple file move
+    FieldMove {
         name: String,
         join_field: Option<JoinFieldDirective>,
         requires: Option<String>,
-        provides: Option<String>,
         override_from: Option<String>,
-    }, // Field of an entity
-    EntityReference(String), // 🔑 Reference to another entity using "@key"
-    InterfaceImplementation(String), // 🔮 Interface implementation
+    },
+    EntityMove(String),
+    /// join__implements
+    AbstractMove(String),
+    // interfaceObject
+    // InterfaceObjectMove(String),
 }
 
 impl Edge {
     /// Helper to create a Field edge from a field name and join directive
-    pub fn field(name: String, join_field: Option<JoinFieldDirective>) -> Self {
+    pub fn create_field_move(name: String, join_field: Option<JoinFieldDirective>) -> Self {
         let requires = join_field.as_ref().and_then(|jf| jf.requires.clone());
-        let provides = join_field.as_ref().and_then(|jf| jf.provides.clone());
         let override_from = join_field.as_ref().and_then(|jf| jf.override_value.clone());
 
-        Self::Field {
+        Self::FieldMove {
             name,
             join_field,
             requires,
-            provides,
             override_from,
         }
     }
 
-    pub fn is_entity_reference(&self) -> bool {
-        matches!(self, Self::EntityReference(_))
-    }
-
     pub fn id(&self) -> &str {
         match self {
-            Self::Field { name, .. } => name,
-            Self::EntityReference(id) => id,
-            Self::InterfaceImplementation(id) => id,
-            Self::Root => "root",
-        }
-    }
-
-    /// Returns true if this edge can provide the specified field
-    pub fn provides_field(&self, field_name: &str) -> bool {
-        match self {
-            Self::Field {
-                provides: Some(provides),
-                ..
-            } => {
-                // Check if the provides directive includes this field
-                // This is a simplified check - in a full implementation you'd want to parse
-                // the provides string and check if it contains the field
-                provides.contains(field_name)
-            }
-            _ => false,
-        }
-    }
-
-    /// Returns true if this edge requires other fields
-    pub fn has_requirements(&self) -> bool {
-        match self {
-            Self::Field { requires, .. } => requires.is_some(),
-            _ => false,
+            Self::FieldMove { name, .. } => name,
+            Self::EntityMove(id) => id,
+            Self::AbstractMove(id) => id,
+            Self::RootEntrypoint { field_name } => field_name,
         }
     }
 
     /// Gets the requirements as a string, if any
     pub fn get_requirements(&self) -> Option<&String> {
         match self {
-            Self::Field { requires, .. } => requires.as_ref(),
+            Self::FieldMove { requires, .. } => requires.as_ref(),
             _ => None,
         }
     }
@@ -80,9 +57,9 @@ impl Edge {
 impl Debug for Edge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Edge::Root => write!(f, ""),
+            Edge::RootEntrypoint { field_name } => write!(f, "root({})", field_name),
 
-            Edge::Field {
+            Edge::FieldMove {
                 name, join_field, ..
             } => {
                 // Start with the field name
@@ -95,8 +72,8 @@ impl Debug for Edge {
                     }
 
                     // Add provides directive if present
-                    if let Some(prov) = &jf.provides {
-                        result = result.and_then(|_| write!(f, " @provides({})", prov));
+                    if jf.provides.is_some() {
+                        result = result.and_then(|_| write!(f, " @provides"));
                     }
 
                     // Add other relevant directives like external, override, etc.
@@ -113,22 +90,28 @@ impl Debug for Edge {
                 result
             }
 
-            Edge::EntityReference(name) => write!(f, "🔑 {}", name),
-            Edge::InterfaceImplementation(name) => write!(f, "🔮 {}", name),
+            Edge::EntityMove(name) => write!(f, "🔑 {}", name),
+            Edge::AbstractMove(name) => write!(f, "🔮 {}", name),
         }
     }
 }
+
 impl PartialEq for Edge {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Edge::Root, Edge::Root) => true,
             (
-                Edge::Field {
+                Edge::RootEntrypoint { field_name },
+                Edge::RootEntrypoint {
+                    field_name: other_field_name,
+                },
+            ) => field_name == other_field_name,
+            (
+                Edge::FieldMove {
                     name,
                     join_field: Some(jf1),
                     ..
                 },
-                Edge::Field {
+                Edge::FieldMove {
                     name: other_name,
                     join_field: Some(jf2),
                     ..
@@ -143,23 +126,21 @@ impl PartialEq for Edge {
             }
 
             (
-                Edge::Field {
+                Edge::FieldMove {
                     name,
                     join_field: None,
                     ..
                 },
-                Edge::Field {
+                Edge::FieldMove {
                     name: other_name,
                     join_field: None,
                     ..
                 },
             ) => name == other_name,
 
-            (Edge::EntityReference(name), Edge::EntityReference(other_name)) => name == other_name,
+            (Edge::EntityMove(name), Edge::EntityMove(other_name)) => name == other_name,
 
-            (Edge::InterfaceImplementation(name), Edge::InterfaceImplementation(other_name)) => {
-                name == other_name
-            }
+            (Edge::AbstractMove(name), Edge::AbstractMove(other_name)) => name == other_name,
 
             _ => false,
         }
