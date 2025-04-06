@@ -1,22 +1,18 @@
 #[cfg(test)]
 mod star_stuff {
     use crate::{
-        graph::{
-            edge::Edge, node::Node, GraphQLSatisfiabilityGraph, GraphQLSatisfiabilityGraphError,
-        },
+        graph::{edge::Edge, node::Node, Graph},
         parse_schema,
         supergraph_metadata::SupergraphState,
     };
     use petgraph::visit::{EdgeRef, NodeRef};
     use std::path::PathBuf;
 
-    fn init_test(
-        supergraph_sdl: &str,
-    ) -> Result<GraphQLSatisfiabilityGraph, GraphQLSatisfiabilityGraphError> {
+    fn init_test(supergraph_sdl: &str) -> Graph {
         let schema = parse_schema(supergraph_sdl);
         let metadata = SupergraphState::new(&schema);
 
-        GraphQLSatisfiabilityGraph::new_from_supergraph(&metadata)
+        Graph::new_from_supergraph(&metadata)
     }
 
     #[derive(Debug)]
@@ -106,7 +102,7 @@ mod star_stuff {
         }
     }
 
-    fn find_node_doesnt_exists(graph: &GraphQLSatisfiabilityGraph, node_id: &str) {
+    fn find_node_doesnt_exists(graph: &Graph, node_id: &str) {
         let node_res = graph.node_to_index.get(node_id);
 
         assert!(
@@ -116,10 +112,7 @@ mod star_stuff {
         );
     }
 
-    fn find_node<'a>(
-        graph: &'a GraphQLSatisfiabilityGraph,
-        node_id: &str,
-    ) -> (FoundEdges<'a>, FoundEdges<'a>) {
+    fn find_node<'a>(graph: &'a Graph, node_id: &str) -> (FoundEdges<'a>, FoundEdges<'a>) {
         let node_res = graph.node_to_index.get(node_id);
 
         assert!(node_res.is_some(), "failed to find node {}", node_id);
@@ -148,8 +141,7 @@ mod star_stuff {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixture/supergraph.graphql");
         let graph = init_test(
             &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
-        )
-        .expect("failed to build graph");
+        );
 
         // Field ownership: make sure fields defined where they belong
         find_node(&graph, "Product/REVIEWS")
@@ -229,8 +221,7 @@ mod star_stuff {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixture/supergraph.graphql");
         let graph = init_test(
             &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
-        )
-        .expect("failed to build graph");
+        );
 
         // Validate root nodes
         assert_eq!(graph.root_query_node(), &Node::QueryRoot("Query".into()));
@@ -276,8 +267,7 @@ mod star_stuff {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixture/supergraph2.graphql");
         let graph = init_test(
             &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
-        )
-        .expect("failed to build graph");
+        );
 
         let (_, outgoing) = find_node(&graph, "Group/FOO");
         // Multiple provides should create multiple edges, one for each "view"

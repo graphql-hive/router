@@ -7,10 +7,11 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use graphql_parser_hive_fork::{
-    query::{Selection, SelectionSet},
-    schema::ParseError,
+use crate::{
+    federation_spec::FederationRules,
+    supergraph_metadata::{RootType, SupergraphDefinition, SupergraphState},
 };
+use graphql_parser_hive_fork::query::{Selection, SelectionSet};
 use graphql_tools::ast::{SchemaDocumentExtension, TypeExtension};
 use node::SubgraphType;
 use petgraph::{
@@ -18,49 +19,31 @@ use petgraph::{
     graph::{EdgeIndex, Edges, NodeIndex},
     Directed, Direction, Graph as Petgraph,
 };
-use thiserror::Error;
-
-use crate::{
-    federation_spec::FederationRules,
-    supergraph_metadata::{RootType, SupergraphDefinition, SupergraphState},
-};
 
 use super::graph::{edge::Edge, node::Node};
 
-type Graph = Petgraph<Node, Edge, Directed>;
+type InnerGraph = Petgraph<Node, Edge, Directed>;
 
 #[derive(Debug, Default)]
-pub struct GraphQLSatisfiabilityGraph {
-    pub graph: Graph,
+pub struct Graph {
+    pub graph: InnerGraph,
     pub query_root: NodeIndex,
     pub mutation_root: Option<NodeIndex>,
     pub subscription_root: Option<NodeIndex>,
     pub node_to_index: HashMap<String, NodeIndex>,
 }
 
-#[derive(Debug, Error)]
-pub enum GraphQLSatisfiabilityGraphError {
-    #[error("failed to parse schema: {0}")]
-    ParseSchemaError(#[from] ParseError),
-    #[error("failed to locate 'from' node with id {0}")]
-    FromEdgeIdNotFound(String),
-    #[error("failed to locate 'to' node with id {0}")]
-    ToEdgeIdNotFound(String),
-}
-
-impl GraphQLSatisfiabilityGraph {
-    pub fn new_from_supergraph(
-        supergraph_ir: &SupergraphState,
-    ) -> Result<Self, GraphQLSatisfiabilityGraphError> {
-        let mut instance = GraphQLSatisfiabilityGraph {
+impl Graph {
+    pub fn new_from_supergraph(supergraph_ir: &SupergraphState) -> Self {
+        let mut instance = Graph {
             node_to_index: HashMap::new(),
-            graph: Graph::new(),
+            graph: InnerGraph::new(),
             ..Default::default()
         };
 
-        instance.build_graph(supergraph_ir)?;
+        instance.build_graph(supergraph_ir);
 
-        Ok(instance)
+        instance
     }
 
     pub fn node(&self, node_index: NodeIndex) -> &Node {
@@ -71,18 +54,13 @@ impl GraphQLSatisfiabilityGraph {
         self.graph.edge_weight(edge_id).unwrap()
     }
 
-    fn build_graph(
-        &mut self,
-        state: &SupergraphState,
-    ) -> Result<(), GraphQLSatisfiabilityGraphError> {
+    fn build_graph(&mut self, state: &SupergraphState) {
         self.build_root_nodes(state);
         self.link_root_edges(state);
         self.build_field_edges(state);
-        self.build_interface_implementation_edges(state)?;
-        self.build_entity_reference_edges(state)?;
-        self.build_viewed_field_edges(state)?;
-
-        Ok(())
+        self.build_interface_implementation_edges(state);
+        self.build_entity_reference_edges(state);
+        self.build_viewed_field_edges(state);
     }
 
     fn build_root_nodes(&mut self, state: &SupergraphState<'_>) {
@@ -126,10 +104,7 @@ impl GraphQLSatisfiabilityGraph {
         }
     }
 
-    fn build_entity_reference_edges(
-        &mut self,
-        state: &SupergraphState<'_>,
-    ) -> Result<(), GraphQLSatisfiabilityGraphError> {
+    fn build_entity_reference_edges(&mut self, state: &SupergraphState<'_>) {
         for (def_name, definition) in state.definitions.iter() {
             for join_type1 in definition.join_types() {
                 for join_type2 in definition.join_types() {
@@ -149,14 +124,9 @@ impl GraphQLSatisfiabilityGraph {
                 }
             }
         }
-
-        Ok(())
     }
 
-    fn build_interface_implementation_edges(
-        &mut self,
-        state: &SupergraphState<'_>,
-    ) -> Result<(), GraphQLSatisfiabilityGraphError> {
+    fn build_interface_implementation_edges(&mut self, state: &SupergraphState<'_>) {
         for (def_name, definition) in state
             .definitions
             .iter()
@@ -177,8 +147,6 @@ impl GraphQLSatisfiabilityGraph {
                 );
             }
         }
-
-        Ok(())
     }
 
     pub fn find_definition_node(
@@ -368,10 +336,7 @@ impl GraphQLSatisfiabilityGraph {
         }
     }
 
-    fn build_viewed_field_edges(
-        &mut self,
-        state: &SupergraphState,
-    ) -> Result<(), GraphQLSatisfiabilityGraphError> {
+    fn build_viewed_field_edges(&mut self, state: &SupergraphState) {
         for (_, definition) in state.definitions.iter() {
             for join_type in definition.join_types().iter() {
                 let mut view_id = 0;
@@ -430,13 +395,11 @@ impl GraphQLSatisfiabilityGraph {
                 }
             }
         }
-
-        Ok(())
     }
 }
 
 /// Print me with `println!("{}", graph);` to see the graph in DOT/digraph format.
-impl Display for GraphQLSatisfiabilityGraph {
+impl Display for Graph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", Dot::with_config(&self.graph, &[]))
     }
