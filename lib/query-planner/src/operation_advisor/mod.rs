@@ -143,11 +143,13 @@ impl<'a> OperationAdvisor<'a> {
 
         match edge.requirements() {
             None => {
-                debug!()
+                debug!("edge does not have requirements, will return empty array");
                 Some(vec![])
-            },
+            }
             Some(requirements) => {
-                println!("")
+                debug!("edge requirements: '{}'", requirements);
+
+                Some(vec![])
             }
         }
     }

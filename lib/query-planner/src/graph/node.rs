@@ -1,9 +1,5 @@
 use std::fmt::Debug;
 
-use petgraph::graph::NodeIndex;
-
-pub type NodePair<'a> = (&'a Node, NodeIndex);
-
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SubgraphType {
     pub name: String,
