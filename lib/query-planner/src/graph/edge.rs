@@ -1,6 +1,10 @@
 use std::fmt::Debug;
 
+use petgraph::graph::EdgeIndex;
+
 use crate::federation_spec::directives::JoinFieldDirective;
+
+pub type EdgePair<'a> = (&'a Edge, EdgeIndex);
 
 pub enum Edge {
     /// A special edge between the root Node and then root entry point to the graph
@@ -46,7 +50,7 @@ impl Edge {
     }
 
     /// Gets the requirements as a string, if any
-    pub fn get_requirements(&self) -> Option<&String> {
+    pub fn requirements(&self) -> Option<&String> {
         match self {
             Self::FieldMove { requires, .. } => requires.as_ref(),
             _ => None,

@@ -4,17 +4,17 @@ pub mod traversal_step;
 use std::fmt::Debug;
 
 use graphql_parser_hive_fork::query::OperationDefinition;
-use petgraph::{
-    graph::{EdgeIndex, NodeIndex},
-    visit::EdgeRef,
-};
+use petgraph::{graph::NodeIndex, visit::EdgeRef};
 use resolution_path::ResolutionPath;
 use tracing::{debug, instrument};
 use traversal_step::Step;
 
 use crate::{
     consumer_schema::ConsumerSchema,
-    graph::{edge::Edge, Graph},
+    graph::{
+        edge::{Edge, EdgePair},
+        Graph,
+    },
     supergraph_metadata::SupergraphState,
 };
 
@@ -77,9 +77,9 @@ impl<'a> OperationAdvisor<'a> {
                 .iter()
                 .flat_map(|path| {
                     debug!(
-                        "looking for paths for step {} from node {:?}",
+                        "looking for paths to step '{}' from node {:?}",
                         step.field_name(),
-                        self.graph.node(path.root_node).id()
+                        self.graph.node(path.root_node).id(),
                     );
                     let direct_paths = self.find_direct_paths(path, step);
                     debug!("found total of {} direct paths", direct_paths.len());
@@ -109,8 +109,9 @@ impl<'a> OperationAdvisor<'a> {
             .filter(|e| matches!(e.weight(), Edge::FieldMove { name, .. } if name == step.field_name() && !path.edges.contains(&e.id())));
 
         for edge in edges_iter {
+            let edge_weight = edge.weight();
             let edge_id = &edge.id();
-            let can_be_satisfied = self.can_satisfy_edge(edge_id, path);
+            let can_be_satisfied = self.can_satisfy_edge((edge_weight, *edge_id), path);
 
             match can_be_satisfied {
                 Some(p) => {
@@ -135,10 +136,20 @@ impl<'a> OperationAdvisor<'a> {
     #[instrument(skip(self))]
     fn can_satisfy_edge(
         &self,
-        edge: &EdgeIndex,
+        (edge, edge_id): EdgePair,
         path: &ResolutionPath,
     ) -> Option<Vec<ResolutionPath>> {
-        None
+        debug!(edge_weight = debug(edge));
+
+        match edge.requirements() {
+            None => {
+                debug!()
+                Some(vec![])
+            },
+            Some(requirements) => {
+                println!("")
+            }
+        }
     }
 
     fn get_entrypoints(&self, operation_type: &OperationType) -> Vec<NodeIndex> {
