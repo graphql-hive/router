@@ -147,7 +147,11 @@ impl<'a> OperationAdvisor<'a> {
                 Some(vec![])
             }
             Some(requirements) => {
-                debug!("edge requirements: '{}'", requirements);
+                debug!(
+                    "checking requirements for '{}' in edge '{}'",
+                    requirements,
+                    edge.id()
+                );
 
                 Some(vec![])
             }
