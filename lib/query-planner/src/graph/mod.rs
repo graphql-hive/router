@@ -1,5 +1,6 @@
 pub mod edge;
 pub mod node;
+pub mod selection;
 mod tests;
 
 use std::{
