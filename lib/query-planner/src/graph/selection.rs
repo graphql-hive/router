@@ -2,50 +2,109 @@ use std::{fmt::Debug, hash::Hash};
 
 use graphql_parser_hive_fork::{
     parse_query,
-    query::{Definition, OperationDefinition, SelectionSet},
+    query::{Definition, OperationDefinition},
 };
 
 #[derive(Clone)]
-pub struct GraphSelection {
-    pub selection_set: SelectionSet<'static, String>,
-    pub source: String,
+pub enum SelectionNode {
+    Field {
+        field_name: String,
+        type_name: String,
+        selections: Option<Box<Vec<SelectionNode>>>,
+    },
+    Fragment {
+        type_name: String,
+        selections: Box<Vec<SelectionNode>>,
+    },
 }
 
-impl Debug for GraphSelection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("")
-            .field("selection_set", &self.source)
-            .finish()
-    }
-}
-
-impl PartialEq for GraphSelection {
-    fn eq(&self, other: &Self) -> bool {
-        &self.selection_set == &other.selection_set || self.source == other.source
-    }
-}
-
-impl Eq for GraphSelection {}
-
-impl Hash for GraphSelection {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.source.hash(state);
-    }
-}
-
-impl GraphSelection {
-    // Modified to take source_str with correct lifetime
-    pub fn from_selection_set(
-        selection_set: &SelectionSet<'static, String>,
-        source_str: &str,
-    ) -> Self {
-        GraphSelection {
-            selection_set: selection_set.clone(),
-            source: source_str.to_string(),
+impl SelectionNode {
+    pub fn selections(&self) -> Option<&Vec<SelectionNode>> {
+        match self {
+            SelectionNode::Field { selections, .. } => selections.as_ref().map(|s| s.as_ref()),
+            SelectionNode::Fragment { selections, .. } => Some(selections.as_ref()),
         }
     }
 
-    pub fn parse(selection_set_str: String) -> Self {
+    pub fn type_name(&self) -> &str {
+        match self {
+            SelectionNode::Field { type_name, .. } => type_name,
+            SelectionNode::Fragment { type_name, .. } => type_name,
+        }
+    }
+}
+
+impl Debug for SelectionNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SelectionNode::Field {
+                field_name,
+                type_name,
+                selections,
+            } => f
+                .debug_struct("PlanSelection::Field")
+                .field("field_name", field_name)
+                .field("type_name", type_name)
+                .field("selections", selections)
+                .finish(),
+            SelectionNode::Fragment {
+                type_name,
+                selections,
+            } => f
+                .debug_struct("PlanSelection::Fragment")
+                .field("type_name", type_name)
+                .field("selections", selections)
+                .finish(),
+        }
+    }
+}
+
+impl PartialEq for SelectionNode {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                SelectionNode::Field {
+                    field_name,
+                    type_name,
+                    ..
+                },
+                SelectionNode::Field {
+                    field_name: other_field_name,
+                    type_name: other_type_name,
+                    ..
+                },
+            ) => field_name == other_field_name && type_name == other_type_name,
+            (
+                SelectionNode::Fragment {
+                    type_name,
+                    selections,
+                    ..
+                },
+                SelectionNode::Fragment {
+                    type_name: other_type_name,
+                    selections: other_selections,
+                    ..
+                },
+            ) => type_name == other_type_name && selections == other_selections,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for SelectionNode {}
+
+impl Hash for SelectionNode {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.source().hash(state);
+    }
+}
+
+impl SelectionNode {
+    pub fn parse_field_selection(
+        selection_set_str: String,
+        field_name: &str,
+        type_name: &str,
+    ) -> Self {
         let parsed_doc = parse_query(&selection_set_str).unwrap().into_static();
         let parsed_definition = parsed_doc
             .definitions
@@ -61,9 +120,11 @@ impl GraphSelection {
         }
         .expect("invalid selection set");
 
-        GraphSelection {
+        SelectionNode::Field {
             selection_set,
             source: selection_set_str,
+            field_name: field_name.to_string(),
+            type_name: type_name.to_string(),
         }
     }
 }

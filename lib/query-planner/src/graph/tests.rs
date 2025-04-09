@@ -209,8 +209,8 @@ mod star_stuff {
             .edge("delivery", "DeliveryEstimates/INVENTORY")
             .expect("cant find edge");
         assert_eq!(
-            edge.requirements().map(|v| &v.source),
-            Some(&String::from("dimensions{size weight}"))
+            edge.requirements().map(|v| v.source().to_string()),
+            Some(String::from("dimensions{size weight}"))
         );
     }
 

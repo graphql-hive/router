@@ -20,7 +20,7 @@ use petgraph::{
     graph::{EdgeIndex, Edges, NodeIndex},
     Directed, Direction, Graph as Petgraph,
 };
-use selection::GraphSelection;
+use selection::SelectionNode;
 
 use super::graph::{edge::Edge, node::Node};
 
@@ -155,18 +155,6 @@ impl Graph {
         }
     }
 
-    pub fn find_definition_node(
-        &self,
-        definition_name: &str,
-        subgraph: &str,
-    ) -> Option<(NodeIndex, &Node)> {
-        let id = Node::id_from(definition_name, Some(subgraph));
-
-        self.node_to_index
-            .get(&id)
-            .map(|&index| (index, &self.graph[index]))
-    }
-
     pub fn root_query_node(&self) -> &Node {
         &self.graph[self.query_root]
     }
@@ -266,6 +254,7 @@ impl Graph {
                                     Edge::create_field_move(
                                         field_name.clone(),
                                         Some(join_field.clone()),
+                                        target_type,
                                     ),
                                 );
                             }
@@ -277,7 +266,7 @@ impl Graph {
                                 self.upsert_edge(
                                     head,
                                     tail,
-                                    Edge::create_field_move(field_name.clone(), None),
+                                    Edge::create_field_move(field_name.clone(), None, target_type),
                                 );
                             }
                             // The field is not available in the current subgraph
@@ -314,14 +303,18 @@ impl Graph {
                         false => Node::SubgraphTypeView {
                             view_id,
                             node: subgraph_type,
-                            selection_set: GraphSelection::parse(field.selection_set.to_string()),
+                            selection_set: SelectionNode::parse_field_selection(
+                                field.selection_set.to_string(),
+                                &field.name,
+                                return_type_name,
+                            ),
                         },
                     });
 
                     self.upsert_edge(
                         head,
                         tail,
-                        Edge::create_field_move(field.name.to_string(), None),
+                        Edge::create_field_move(field.name.to_string(), None, return_type_name),
                     );
 
                     if !is_leaf {
@@ -373,7 +366,11 @@ impl Graph {
                                         name: return_type_name.to_string(),
                                         subgraph: join_type.graph_id.to_string(),
                                     },
-                                    selection_set: GraphSelection::parse(selection_set.to_string()),
+                                    selection_set: SelectionNode::parse_field_selection(
+                                        selection_set.to_string(),
+                                        &field_name,
+                                        return_type_name,
+                                    ),
                                 });
 
                                 self.upsert_edge(
@@ -382,6 +379,7 @@ impl Graph {
                                     Edge::create_field_move(
                                         field_name.to_string(),
                                         Some(join_field.clone()),
+                                        return_type_name,
                                     ),
                                 );
 

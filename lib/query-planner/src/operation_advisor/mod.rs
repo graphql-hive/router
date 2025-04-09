@@ -1,3 +1,4 @@
+pub mod plan_nodes;
 pub mod resolution_path;
 pub mod traversal_step;
 
@@ -13,6 +14,7 @@ use crate::{
     consumer_schema::ConsumerSchema,
     graph::{
         edge::{Edge, EdgePair},
+        selection::SelectionNode,
         Graph,
     },
     supergraph_metadata::SupergraphState,
@@ -130,6 +132,11 @@ impl<'a> OperationAdvisor<'a> {
 
     #[instrument(skip(self))]
     fn find_indirect_paths(&self, path: &ResolutionPath, step: &Step) -> Vec<ResolutionPath> {
+        let tail_node_index = path.tail(&self.graph);
+        let tail_node = self.graph.node(tail_node_index);
+        let source_graph_id = tail_node.graph_id().expect("tail does not have graph info");
+        println!("source_graph_id: {source_graph_id}");
+
         vec![]
     }
 
@@ -146,12 +153,25 @@ impl<'a> OperationAdvisor<'a> {
                 debug!("edge does not have requirements, will return empty array");
                 Some(vec![])
             }
-            Some(requirements) => {
+            Some(edge_requirements) => {
                 debug!(
                     "checking requirements for '{:?}' in edge '{}'",
-                    requirements,
+                    edge_requirements,
                     edge.id()
                 );
+
+                let mut requirements: Vec<MoveRequirement> = vec![];
+                let paths_to_requirements: Vec<ResolutionPath> = vec![];
+
+                for selection in edge_requirements.selection_set() {
+                    requirements.splice(
+                        0..0,
+                        vec![MoveRequirement {
+                            paths: vec![path.clone()],
+                            selection: selection.clone(),
+                        }],
+                    );
+                }
 
                 Some(vec![])
             }
@@ -182,4 +202,9 @@ impl<'a> OperationAdvisor<'a> {
     //         OperationDefinition::Subscription(s) => &s.selection_set,
     //     }
     // }
+}
+
+struct MoveRequirement {
+    paths: Vec<ResolutionPath>,
+    selection: SelectionNode,
 }
