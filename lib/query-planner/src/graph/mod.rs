@@ -20,6 +20,7 @@ use petgraph::{
     graph::{EdgeIndex, Edges, NodeIndex},
     Directed, Direction, Graph as Petgraph,
 };
+use selection::GraphSelection;
 
 use super::graph::{edge::Edge, node::Node};
 
@@ -313,7 +314,7 @@ impl Graph {
                         false => Node::SubgraphTypeView {
                             view_id,
                             node: subgraph_type,
-                            selection_set: field.selection_set.to_string(),
+                            selection_set: GraphSelection::parse(field.selection_set.to_string()),
                         },
                     });
 
@@ -372,7 +373,7 @@ impl Graph {
                                         name: return_type_name.to_string(),
                                         subgraph: join_type.graph_id.to_string(),
                                     },
-                                    selection_set: selection_set.to_string(),
+                                    selection_set: GraphSelection::parse(selection_set.to_string()),
                                 });
 
                                 self.upsert_edge(

@@ -148,7 +148,7 @@ impl<'a> OperationAdvisor<'a> {
             }
             Some(requirements) => {
                 debug!(
-                    "checking requirements for '{}' in edge '{}'",
+                    "checking requirements for '{:?}' in edge '{}'",
                     requirements,
                     edge.id()
                 );

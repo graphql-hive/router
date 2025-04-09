@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+use super::selection::GraphSelection;
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SubgraphType {
     pub name: String,
@@ -18,7 +20,7 @@ pub enum Node {
     SubgraphTypeView {
         view_id: u64,
         node: SubgraphType,
-        selection_set: String,
+        selection_set: GraphSelection,
     },
 }
 
@@ -64,7 +66,7 @@ impl Node {
                     name: name.to_string(),
                     subgraph: subgraph.to_string(),
                 },
-                selection_set: view.1,
+                selection_set: GraphSelection::parse(view.1),
             },
             None => Node::SubgraphType(SubgraphType {
                 name: name.to_string(),

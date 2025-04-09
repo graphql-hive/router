@@ -4,6 +4,8 @@ use petgraph::graph::EdgeIndex;
 
 use crate::federation_spec::directives::JoinFieldDirective;
 
+use super::selection::GraphSelection;
+
 pub type EdgePair<'a> = (&'a Edge, EdgeIndex);
 
 pub enum Edge {
@@ -16,7 +18,7 @@ pub enum Edge {
     FieldMove {
         name: String,
         join_field: Option<JoinFieldDirective>,
-        requires: Option<String>,
+        requires: Option<GraphSelection>,
         override_from: Option<String>,
     },
     EntityMove(String),
@@ -35,7 +37,7 @@ impl Edge {
         Self::FieldMove {
             name,
             join_field,
-            requires,
+            requires: requires.map(|s| GraphSelection::parse(s)),
             override_from,
         }
     }
@@ -50,7 +52,7 @@ impl Edge {
     }
 
     /// Gets the requirements as a string, if any
-    pub fn requirements(&self) -> Option<&String> {
+    pub fn requirements(&self) -> Option<&GraphSelection> {
         match self {
             Self::FieldMove { requires, .. } => requires.as_ref(),
             _ => None,
