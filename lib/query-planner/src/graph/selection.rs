@@ -1,4 +1,7 @@
-use std::{fmt::Debug, hash::Hash};
+use std::{
+    fmt::{Debug, Display},
+    hash::Hash,
+};
 
 use graphql_parser_hive_fork::{
     parse_query,
@@ -93,38 +96,44 @@ impl PartialEq for SelectionNode {
 
 impl Eq for SelectionNode {}
 
-impl Hash for SelectionNode {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.source().hash(state);
-    }
+// impl Hash for SelectionNode {
+//     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+//         self.source().hash(state);
+//     }
+// }
+
+pub struct Selection {
+    type_name: String,
+    key_fields_string: String,
+    selection_set: Vec<SelectionNode>,
 }
 
-impl SelectionNode {
-    pub fn parse_field_selection(
-        selection_set_str: String,
-        field_name: &str,
-        type_name: &str,
-    ) -> Self {
-        let parsed_doc = parse_query(&selection_set_str).unwrap().into_static();
-        let parsed_definition = parsed_doc
-            .definitions
-            .first()
-            .expect("failed to parse selection set")
-            .clone();
+impl Selection {
+    // pub fn parse_field_selection(
+    //     selection_set_str: String,
+    //     field_name: &str,
+    //     type_name: &str,
+    // ) -> Self {
+    //     let parsed_doc = parse_query(&selection_set_str).unwrap().into_static();
+    //     let parsed_definition = parsed_doc
+    //         .definitions
+    //         .first()
+    //         .expect("failed to parse selection set")
+    //         .clone();
 
-        let selection_set = match parsed_definition {
-            Definition::Operation(OperationDefinition::SelectionSet(selection_set)) => {
-                Some(selection_set)
-            }
-            _ => None,
-        }
-        .expect("invalid selection set");
+    //     let selection_set = match parsed_definition {
+    //         Definition::Operation(OperationDefinition::SelectionSet(selection_set)) => {
+    //             Some(selection_set)
+    //         }
+    //         _ => None,
+    //     }
+    //     .expect("invalid selection set");
 
-        SelectionNode::Field {
-            selection_set,
-            source: selection_set_str,
-            field_name: field_name.to_string(),
-            type_name: type_name.to_string(),
-        }
-    }
+    //     SelectionNode::Field {
+    //         selection_set,
+    //         source: selection_set_str,
+    //         field_name: field_name.to_string(),
+    //         type_name: type_name.to_string(),
+    //     }
+    // }
 }

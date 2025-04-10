@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     federation_spec::FederationRules,
-    supergraph_metadata::{RootType, SupergraphDefinition, SupergraphState},
+    state::supergraph_state::{RootType, SupergraphDefinition, SupergraphState},
 };
 use graphql_parser_hive_fork::query::{Selection, SelectionSet};
 use graphql_tools::ast::{SchemaDocumentExtension, TypeExtension};
@@ -254,7 +254,6 @@ impl Graph {
                                     Edge::create_field_move(
                                         field_name.clone(),
                                         Some(join_field.clone()),
-                                        target_type,
                                     ),
                                 );
                             }
@@ -266,7 +265,7 @@ impl Graph {
                                 self.upsert_edge(
                                     head,
                                     tail,
-                                    Edge::create_field_move(field_name.clone(), None, target_type),
+                                    Edge::create_field_move(field_name.clone(), None),
                                 );
                             }
                             // The field is not available in the current subgraph
@@ -303,18 +302,19 @@ impl Graph {
                         false => Node::SubgraphTypeView {
                             view_id,
                             node: subgraph_type,
-                            selection_set: SelectionNode::parse_field_selection(
-                                field.selection_set.to_string(),
-                                &field.name,
-                                return_type_name,
-                            ),
+                            selection_set: field.selection_set.to_string(),
+                            // selection_set: SelectionNode::parse_field_selection(
+                            //     field.selection_set.to_string(),
+                            //     &field.name,
+                            //     return_type_name,
+                            // ),
                         },
                     });
 
                     self.upsert_edge(
                         head,
                         tail,
-                        Edge::create_field_move(field.name.to_string(), None, return_type_name),
+                        Edge::create_field_move(field.name.to_string(), None),
                     );
 
                     if !is_leaf {
@@ -366,11 +366,12 @@ impl Graph {
                                         name: return_type_name.to_string(),
                                         subgraph: join_type.graph_id.to_string(),
                                     },
-                                    selection_set: SelectionNode::parse_field_selection(
-                                        selection_set.to_string(),
-                                        &field_name,
-                                        return_type_name,
-                                    ),
+                                    selection_set: selection_set.to_string(),
+                                    // selection_set: SelectionNode::parse_field_selection(
+                                    //     selection_set.to_string(),
+                                    //     &field_name,
+                                    //     return_type_name,
+                                    // ),
                                 });
 
                                 self.upsert_edge(
@@ -379,7 +380,6 @@ impl Graph {
                                     Edge::create_field_move(
                                         field_name.to_string(),
                                         Some(join_field.clone()),
-                                        return_type_name,
                                     ),
                                 );
 

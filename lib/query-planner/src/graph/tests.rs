@@ -3,7 +3,7 @@ mod star_stuff {
     use crate::{
         graph::{edge::Edge, node::Node, Graph},
         parse_schema,
-        supergraph_metadata::SupergraphState,
+        state::supergraph_state::SupergraphState,
     };
     use petgraph::visit::{EdgeRef, NodeRef};
     use std::path::PathBuf;
@@ -208,10 +208,7 @@ mod star_stuff {
             .assert_field_edge("delivery", "DeliveryEstimates/INVENTORY")
             .edge("delivery", "DeliveryEstimates/INVENTORY")
             .expect("cant find edge");
-        assert_eq!(
-            edge.requirements().map(|v| v.source().to_string()),
-            Some(String::from("dimensions{size weight}"))
-        );
+        assert_eq!(edge.requirements(), Some("dimensions{size weight}"));
     }
 
     // Sorry for the bad impl here, I wanted to make sure some nodes and edges are not breaking or duplicated.

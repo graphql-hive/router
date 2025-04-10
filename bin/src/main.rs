@@ -4,7 +4,7 @@ use std::process;
 use query_planner::operation_advisor::traversal_step::Step;
 use query_planner::operation_advisor::OperationAdvisor;
 use query_planner::parse_schema;
-use query_planner::supergraph_metadata::SupergraphState;
+use query_planner::state::supergraph_state::SupergraphState;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 

@@ -17,11 +17,11 @@ use crate::{
         selection::SelectionNode,
         Graph,
     },
-    supergraph_metadata::SupergraphState,
+    state::supergraph_state::SupergraphState,
 };
 
 pub struct OperationAdvisor<'a> {
-    pub supergraph_metadata: SupergraphState<'a>,
+    pub supergraph_state: SupergraphState<'a>,
     pub graph: Graph,
     pub consumer_schema: ConsumerSchema,
 }
@@ -57,7 +57,7 @@ impl<'a> OperationAdvisor<'a> {
 
         Self {
             consumer_schema: ConsumerSchema::new_from_supergraph(supergraph.document),
-            supergraph_metadata: supergraph,
+            supergraph_state: supergraph,
             graph,
         }
     }
@@ -160,18 +160,18 @@ impl<'a> OperationAdvisor<'a> {
                     edge.id()
                 );
 
-                let mut requirements: Vec<MoveRequirement> = vec![];
-                let paths_to_requirements: Vec<ResolutionPath> = vec![];
+                // let mut requirements: Vec<MoveRequirement> = vec![];
+                // let paths_to_requirements: Vec<ResolutionPath> = vec![];
 
-                for selection in edge_requirements.selection_set() {
-                    requirements.splice(
-                        0..0,
-                        vec![MoveRequirement {
-                            paths: vec![path.clone()],
-                            selection: selection.clone(),
-                        }],
-                    );
-                }
+                // for selection in edge_requirements.selection_set() {
+                //     requirements.splice(
+                //         0..0,
+                //         vec![MoveRequirement {
+                //             paths: vec![path.clone()],
+                //             selection: selection.clone(),
+                //         }],
+                //     );
+                // }
 
                 Some(vec![])
             }

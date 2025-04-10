@@ -4,7 +4,7 @@ use graphql_parser_hive_fork::{
     query::{Definition, OperationDefinition, SelectionSet},
 };
 
-use crate::supergraph_metadata::{SupergraphDefinition, SupergraphField};
+use crate::state::supergraph_state::{SupergraphDefinition, SupergraphField};
 
 pub mod definitions;
 pub mod directives;

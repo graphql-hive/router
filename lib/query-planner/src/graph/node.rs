@@ -20,7 +20,7 @@ pub enum Node {
     SubgraphTypeView {
         view_id: u64,
         node: SubgraphType,
-        selection_set: SelectionNode,
+        selection_set: String,
     },
 }
 
