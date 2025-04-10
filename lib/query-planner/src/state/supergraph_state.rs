@@ -62,8 +62,7 @@ impl<'a> SupergraphState<'a> {
     }
 
     pub fn selection_resolvers_for_subgraph(&self, subgraph_id: &str) -> &SelectionResolver {
-        &self
-            .subgraphs_state
+        self.subgraphs_state
             .get(subgraph_id)
             .expect("subgraph state not found")
     }

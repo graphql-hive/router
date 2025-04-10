@@ -14,7 +14,6 @@ use crate::{
     consumer_schema::ConsumerSchema,
     graph::{
         edge::{Edge, EdgePair},
-        selection::SelectionNode,
         Graph,
     },
     state::supergraph_state::SupergraphState,
@@ -64,7 +63,7 @@ impl<'a> OperationAdvisor<'a> {
 
     #[instrument(skip(self))]
     pub fn walk_steps(&self, op_type: &OperationType, steps: &Vec<Step>) {
-        let root_entrypoints = self.get_entrypoints(&op_type);
+        let root_entrypoints = self.get_entrypoints(op_type);
         let initial_paths = root_entrypoints
             .iter()
             .map(|node_index| ResolutionPath::new(*node_index))
@@ -89,9 +88,8 @@ impl<'a> OperationAdvisor<'a> {
                     debug!("found total of {} indirect paths", indirect_paths.len());
                     let advance = !direct_paths.is_empty() || !indirect_paths.is_empty();
                     debug!("advance: {}", advance);
-                    let all_paths = direct_paths.into_iter().chain(indirect_paths.into_iter());
 
-                    all_paths
+                    direct_paths.into_iter().chain(indirect_paths.into_iter())
                 })
                 .collect();
 
@@ -204,7 +202,7 @@ impl<'a> OperationAdvisor<'a> {
     // }
 }
 
-struct MoveRequirement {
-    paths: Vec<ResolutionPath>,
-    selection: SelectionNode,
-}
+// struct MoveRequirement {
+//     paths: Vec<ResolutionPath>,
+//     selection: SelectionNode,
+// }

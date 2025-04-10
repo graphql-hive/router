@@ -55,10 +55,10 @@ impl SelectionResolver {
         let selections = if selection_field.selection_set.items.is_empty() {
             None
         } else {
-            Some(Box::new(self.resolve_selection_set(
+            Some(self.resolve_selection_set(
                 &field_in_type_def.return_type_name,
                 &selection_field.selection_set,
-            )))
+            ))
         };
 
         SelectionNode::Field {

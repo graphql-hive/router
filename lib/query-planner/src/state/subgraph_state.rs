@@ -37,7 +37,6 @@ impl SubgraphState {
 
             let subgraph_def = match supergraph_def {
                 SupergraphDefinition::Object(supergraph_object_type) => Self::process_object_type(
-                    &supergraph_state,
                     graph_id,
                     &relevant_join_types,
                     supergraph_object_type,
@@ -74,9 +73,8 @@ impl SubgraphState {
     }
 
     fn process_object_type(
-        supergraph_state: &SupergraphState,
         graph_id: &str,
-        graph_join_types: &Vec<JoinTypeDirective>,
+        graph_join_types: &[JoinTypeDirective],
         supergraph_object_type: &SupergraphObjectType<'_>,
     ) -> Option<SubgraphDefinition> {
         let relevant_fields: Vec<SubgraphField> = supergraph_object_type
@@ -99,7 +97,7 @@ impl SubgraphState {
         let subgraph_obj_type = SubgraphDefinition::Object(SubgraphObjectType {
             name: supergraph_object_type.source.name.to_string(),
             fields: relevant_fields,
-            join_types: graph_join_types.clone(),
+            join_types: graph_join_types.to_owned(),
         });
 
         Some(subgraph_obj_type)
@@ -107,15 +105,12 @@ impl SubgraphState {
 
     #[cfg(test)]
     pub fn known_subgraph_definitions(&self) -> HashMap<&String, &SubgraphDefinition> {
-        self.definitions
-            .iter()
-            .map(|(def_name, subgraph)| (def_name, subgraph))
-            .collect()
+        self.definitions.iter().collect()
     }
 
     fn process_interface_type(
         graph_id: &str,
-        graph_join_types: &Vec<JoinTypeDirective>,
+        graph_join_types: &[JoinTypeDirective],
         supergraph_interface_type: &SupergraphInterfaceType<'_>,
     ) -> Option<SubgraphDefinition> {
         let relevant_fields: Vec<SubgraphField> = supergraph_interface_type
@@ -138,7 +133,7 @@ impl SubgraphState {
         let subgraph_interface_type = SubgraphDefinition::Interface(SubgraphInterfaceType {
             name: supergraph_interface_type.source.name.to_string(),
             fields: relevant_fields,
-            join_types: graph_join_types.clone(),
+            join_types: graph_join_types.to_owned(),
         });
 
         Some(subgraph_interface_type)
@@ -146,7 +141,7 @@ impl SubgraphState {
 
     fn process_enum_type(
         graph_id: &str,
-        graph_join_types: &Vec<JoinTypeDirective>,
+        graph_join_types: &[JoinTypeDirective],
         enum_type: &super::supergraph_state::SupergraphEnumType<'_>,
     ) -> Option<SubgraphDefinition> {
         let relevant_values = enum_type.values_of_subgraph(graph_id);
@@ -165,13 +160,13 @@ impl SubgraphState {
         Some(SubgraphDefinition::Enum(SubgraphEnumType {
             name: enum_type.source.name.to_string(),
             values,
-            join_types: graph_join_types.clone(),
+            join_types: graph_join_types.to_owned(),
         }))
     }
 
     fn process_union_type(
         graph_id: &str,
-        graph_join_types: &Vec<JoinTypeDirective>,
+        graph_join_types: &[JoinTypeDirective],
         union_type: &super::supergraph_state::SupergraphUnionType<'_>,
     ) -> Option<SubgraphDefinition> {
         let relevant_types = union_type.relevant_types(graph_id);
@@ -183,7 +178,7 @@ impl SubgraphState {
         Some(SubgraphDefinition::Union(SubgraphUnionType {
             name: union_type.source.name.to_string(),
             types: relevant_types.iter().map(|v| v.to_string()).collect(),
-            join_types: graph_join_types.clone(),
+            join_types: graph_join_types.to_owned(),
         }))
     }
 
@@ -197,7 +192,7 @@ impl SubgraphState {
 
     fn process_input_object_type(
         _graph_id: &str,
-        _graph_join_types: &Vec<JoinTypeDirective>,
+        _graph_join_types: &[JoinTypeDirective],
         _scalar_type: &super::supergraph_state::SupergraphInputObjectType<'_>,
     ) -> Option<SubgraphDefinition> {
         unimplemented!("not there yet")
@@ -320,11 +315,11 @@ mod tests {
         let supergraph = SupergraphState::new(&schema);
 
         assert_eq!(supergraph.subgraphs_state.keys().count(), 5);
-        assert!(supergraph.subgraphs_state.get("PANDAS").is_some());
-        assert!(supergraph.subgraphs_state.get("USERS").is_some());
-        assert!(supergraph.subgraphs_state.get("REVIEWS").is_some());
-        assert!(supergraph.subgraphs_state.get("PRODUCTS").is_some());
-        assert!(supergraph.subgraphs_state.get("INVENTORY").is_some());
+        assert!(supergraph.subgraphs_state.contains_key("PANDAS"));
+        assert!(supergraph.subgraphs_state.contains_key("USERS"));
+        assert!(supergraph.subgraphs_state.contains_key("REVIEWS"));
+        assert!(supergraph.subgraphs_state.contains_key("PRODUCTS"));
+        assert!(supergraph.subgraphs_state.contains_key("INVENTORY"));
 
         let types = supergraph
             .subgraph_state("PANDAS")
@@ -360,7 +355,7 @@ mod tests {
             .known_subgraph_definitions();
 
         assert_eq!(types.len(), 1);
-        assert!(types.get(&String::from("Query")).is_none());
+        assert!(!types.contains_key(&String::from("Query")));
         let mut user_type_fields = types
             .get(&String::from("User"))
             .expect("User type not found")

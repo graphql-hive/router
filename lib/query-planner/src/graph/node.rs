@@ -1,7 +1,5 @@
 use std::fmt::Debug;
 
-use super::selection::SelectionNode;
-
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SubgraphType {
     pub name: String,

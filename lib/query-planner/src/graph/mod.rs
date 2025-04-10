@@ -10,10 +10,7 @@ use std::{
 
 use crate::{
     federation_spec::FederationRules,
-    state::{
-        selection_resolver::SelectionResolver,
-        supergraph_state::{RootType, SupergraphDefinition, SupergraphState},
-    },
+    state::supergraph_state::{RootType, SupergraphDefinition, SupergraphState},
 };
 use graphql_parser_hive_fork::query::{Selection, SelectionSet};
 use graphql_tools::ast::{SchemaDocumentExtension, TypeExtension};
