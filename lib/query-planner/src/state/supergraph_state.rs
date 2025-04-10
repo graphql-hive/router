@@ -360,6 +360,7 @@ impl SupergraphObjectType<'_> {
                 let current_graph_graph_jf = field_def
                     .join_field
                     .iter()
+                    // TODO: handle override: "something"
                     .find(|jf| jf.graph_id.as_ref().is_some_and(|g| g == graph_id));
 
                 if no_join_field || current_graph_graph_jf.is_some() {

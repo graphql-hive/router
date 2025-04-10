@@ -37,6 +37,7 @@ impl SubgraphState {
 
             let subgraph_def = match supergraph_def {
                 SupergraphDefinition::Object(supergraph_object_type) => Self::process_object_type(
+                    &supergraph_state,
                     graph_id,
                     &relevant_join_types,
                     supergraph_object_type,
@@ -73,6 +74,7 @@ impl SubgraphState {
     }
 
     fn process_object_type(
+        supergraph_state: &SupergraphState,
         graph_id: &str,
         graph_join_types: &Vec<JoinTypeDirective>,
         supergraph_object_type: &SupergraphObjectType<'_>,
@@ -372,8 +374,21 @@ mod tests {
             .get("REVIEWS")
             .unwrap()
             .known_subgraph_definitions();
-
-        assert_eq!(types.len(), 4); // Review, User, Product, Inventory
+        assert_eq!(types.len(), 4);
+        let mut product_type_fields = types
+            .get(&String::from("Product"))
+            .expect("Product type not found")
+            .fields()
+            .unwrap()
+            .iter()
+            .map(|r| &r.name)
+            .collect::<Vec<_>>();
+        product_type_fields.sort();
+        assert_eq!(product_type_fields.len(), 4);
+        assert_eq!(
+            product_type_fields,
+            vec!["id", "reviews", "reviewsCount", "reviewsScore"]
+        );
 
         let types = supergraph
             .subgraphs_state
@@ -401,7 +416,8 @@ mod tests {
             .map(|r| &r.name)
             .collect::<Vec<_>>();
         product_type_fields.sort();
-        // assert_eq!(product_type_fields.len(), 10);
+        assert_eq!(product_type_fields.len(), 9);
+
         assert_eq!(
             product_type_fields,
             vec![
