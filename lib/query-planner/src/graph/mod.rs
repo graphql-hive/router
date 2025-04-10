@@ -10,7 +10,10 @@ use std::{
 
 use crate::{
     federation_spec::FederationRules,
-    state::supergraph_state::{RootType, SupergraphDefinition, SupergraphState},
+    state::{
+        selection_resolver::SelectionResolver,
+        supergraph_state::{RootType, SupergraphDefinition, SupergraphState},
+    },
 };
 use graphql_parser_hive_fork::query::{Selection, SelectionSet};
 use graphql_tools::ast::{SchemaDocumentExtension, TypeExtension};
@@ -20,7 +23,6 @@ use petgraph::{
     graph::{EdgeIndex, Edges, NodeIndex},
     Directed, Direction, Graph as Petgraph,
 };
-use selection::SelectionNode;
 
 use super::graph::{edge::Edge, node::Node};
 
@@ -36,14 +38,14 @@ pub struct Graph {
 }
 
 impl Graph {
-    pub fn new_from_supergraph(supergraph_ir: &SupergraphState) -> Self {
+    pub fn new_from_supergraph(supergraph_state: &SupergraphState) -> Self {
         let mut instance = Graph {
             node_to_index: HashMap::new(),
             graph: InnerGraph::new(),
             ..Default::default()
         };
 
-        instance.build_graph(supergraph_ir);
+        instance.build_graph(supergraph_state);
 
         instance
     }
@@ -121,11 +123,17 @@ impl Graph {
                         if let Some(key) = &join_type2.key {
                             let tail = self
                                 .upsert_node(Node::subgraph_type(def_name, &join_type2.graph_id));
+                            let selection_resolver =
+                                state.selection_resolvers_for_subgraph(&join_type2.graph_id);
+                            let selection = selection_resolver.resolve(def_name, key);
 
-                            self.upsert_edge(head, tail, Edge::EntityMove(key.clone()));
+                            self.upsert_edge(head, tail, Edge::create_entity_move(key, selection));
                         }
                     } else if let Some(key) = &join_type1.key {
-                        self.upsert_edge(head, head, Edge::EntityMove(key.clone()));
+                        let selection_resolver =
+                            state.selection_resolvers_for_subgraph(&join_type1.graph_id);
+                        let selection = selection_resolver.resolve(def_name, key);
+                        self.upsert_edge(head, head, Edge::create_entity_move(key, selection));
                     }
                 }
             }

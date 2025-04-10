@@ -4,7 +4,7 @@ use petgraph::graph::EdgeIndex;
 
 use crate::federation_spec::directives::JoinFieldDirective;
 
-use super::selection::SelectionNode;
+use super::selection::Selection;
 
 pub type EdgePair<'a> = (&'a Edge, EdgeIndex);
 
@@ -21,7 +21,10 @@ pub enum Edge {
         requires: Option<String>,
         override_from: Option<String>,
     },
-    EntityMove(String),
+    EntityMove {
+        key: String,
+        requirement: Selection,
+    },
     /// join__implements
     AbstractMove(String),
     // interfaceObject
@@ -29,7 +32,13 @@ pub enum Edge {
 }
 
 impl Edge {
-    /// Helper to create a Field edge from a field name and join directive
+    pub fn create_entity_move(key: &str, selection: Selection) -> Self {
+        Self::EntityMove {
+            key: key.to_string(),
+            requirement: selection,
+        }
+    }
+
     pub fn create_field_move(name: String, join_field: Option<JoinFieldDirective>) -> Self {
         let requires = join_field.as_ref().and_then(|jf| jf.requires.clone());
         let override_from = join_field.as_ref().and_then(|jf| jf.override_value.clone());
@@ -45,7 +54,7 @@ impl Edge {
     pub fn id(&self) -> &str {
         match self {
             Self::FieldMove { name, .. } => name,
-            Self::EntityMove(id) => id,
+            Self::EntityMove { key, .. } => key,
             Self::AbstractMove(id) => id,
             Self::RootEntrypoint { field_name } => field_name,
         }
@@ -102,7 +111,7 @@ impl Debug for Edge {
 
                 result
             }
-            Edge::EntityMove(name) => write!(f, "🔑 {}", name),
+            Edge::EntityMove { key, .. } => write!(f, "🔑 {}", key),
             Edge::AbstractMove(name) => write!(f, "🔮 {}", name),
         }
     }
@@ -150,7 +159,9 @@ impl PartialEq for Edge {
                 },
             ) => name == other_name,
 
-            (Edge::EntityMove(name), Edge::EntityMove(other_name)) => name == other_name,
+            (Edge::EntityMove { key, .. }, Edge::EntityMove { key: other_key, .. }) => {
+                key == other_key
+            }
 
             (Edge::AbstractMove(name), Edge::AbstractMove(other_name)) => name == other_name,
 

@@ -12,7 +12,7 @@ use crate::federation_spec::directives::{
     JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective, JoinUnionMemberDirective,
 };
 
-use super::subgraph_state::SubgraphState;
+use super::{selection_resolver::SelectionResolver, subgraph_state::SubgraphState};
 
 static STANDARD_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
 pub type SchemaDocument = input::Document<'static, String>;
@@ -28,12 +28,12 @@ pub struct SupergraphState<'a> {
     /// A set of all known scalars in this schema, including built-ins
     pub known_scalars: HashSet<String>,
     /// A map from subgraph id to a subgraph state
-    pub subgraphs_state: HashMap<String, SubgraphState>,
+    pub subgraphs_state: HashMap<String, SelectionResolver>,
 }
 
 impl<'a> SupergraphState<'a> {
     pub fn new(schema: &'a SchemaDocument) -> Self {
-        let mut supergraph_state = Self {
+        let mut instance = Self {
             document: schema,
             definitions: Self::build_map(schema),
             known_subgraphs: Self::extract_subgraph_names(schema),
@@ -41,14 +41,31 @@ impl<'a> SupergraphState<'a> {
             subgraphs_state: HashMap::new(),
         };
 
-        for subgraph_id in supergraph_state.known_subgraphs.keys() {
-            supergraph_state.subgraphs_state.insert(
-                subgraph_id.clone(),
-                SubgraphState::decompose_from_supergraph(subgraph_id, &supergraph_state),
-            );
+        for subgraph_id in instance.known_subgraphs.keys() {
+            let state = SubgraphState::decompose_from_supergraph(subgraph_id, &instance);
+            let resolver = SelectionResolver::new_from_state(state);
+
+            instance
+                .subgraphs_state
+                .insert(subgraph_id.clone(), resolver);
         }
 
-        supergraph_state
+        instance
+    }
+
+    pub fn subgraph_state(&self, subgraph_id: &str) -> &SubgraphState {
+        &self
+            .subgraphs_state
+            .get(subgraph_id)
+            .expect("subgraph state not found")
+            .subgraph_state
+    }
+
+    pub fn selection_resolvers_for_subgraph(&self, subgraph_id: &str) -> &SelectionResolver {
+        &self
+            .subgraphs_state
+            .get(subgraph_id)
+            .expect("subgraph state not found")
     }
 
     pub fn is_scalar_type(&self, type_name: &str) -> bool {

@@ -254,6 +254,17 @@ pub struct SubgraphUnionType {
 }
 
 impl SubgraphDefinition {
+    pub fn name(&self) -> &str {
+        match self {
+            SubgraphDefinition::Object(obj) => &obj.name,
+            SubgraphDefinition::Interface(iface) => &iface.name,
+            SubgraphDefinition::Union(union) => &union.name,
+            SubgraphDefinition::Enum(enum_type) => &enum_type.name,
+            SubgraphDefinition::Scalar(scalar) => &scalar.name,
+            SubgraphDefinition::InputObject(input_object) => &input_object.name,
+        }
+    }
+
     pub fn is_entity_type(&self) -> bool {
         match self {
             SubgraphDefinition::Object(obj) => {
@@ -316,9 +327,7 @@ mod tests {
         assert!(supergraph.subgraphs_state.get("INVENTORY").is_some());
 
         let types = supergraph
-            .subgraphs_state
-            .get("PANDAS")
-            .unwrap()
+            .subgraph_state("PANDAS")
             .known_subgraph_definitions();
 
         assert_eq!(types.len(), 2); // Query, Panda
@@ -347,9 +356,7 @@ mod tests {
         assert_eq!(panda_type_fields, vec!["favoriteFood", "name"]);
 
         let types = supergraph
-            .subgraphs_state
-            .get("USERS")
-            .unwrap()
+            .subgraph_state("USERS")
             .known_subgraph_definitions();
 
         assert_eq!(types.len(), 1);
@@ -370,9 +377,7 @@ mod tests {
         );
 
         let types = supergraph
-            .subgraphs_state
-            .get("REVIEWS")
-            .unwrap()
+            .subgraph_state("REVIEWS")
             .known_subgraph_definitions();
         assert_eq!(types.len(), 4);
         let mut product_type_fields = types
@@ -391,9 +396,7 @@ mod tests {
         );
 
         let types = supergraph
-            .subgraphs_state
-            .get("PRODUCTS")
-            .unwrap()
+            .subgraph_state("PRODUCTS")
             .known_subgraph_definitions();
         assert_eq!(types.len(), 8);
         let mut query_type_fields = types
@@ -434,9 +437,7 @@ mod tests {
         );
 
         let types = supergraph
-            .subgraphs_state
-            .get("INVENTORY")
-            .unwrap()
+            .subgraph_state("INVENTORY")
             .known_subgraph_definitions();
 
         assert_eq!(types.len(), 5); // Inventory

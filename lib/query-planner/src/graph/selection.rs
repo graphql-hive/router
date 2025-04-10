@@ -1,14 +1,11 @@
-use std::{
-    fmt::{Debug, Display},
-    hash::Hash,
-};
+use std::fmt::Debug;
 
 use graphql_parser_hive_fork::{
     parse_query,
     query::{Definition, OperationDefinition},
 };
 
-#[derive(Clone)]
+#[derive(Clone, Ord)]
 pub enum SelectionNode {
     Field {
         field_name: String,
@@ -21,11 +18,42 @@ pub enum SelectionNode {
     },
 }
 
+impl PartialOrd for SelectionNode {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (SelectionNode::Field { .. }, SelectionNode::Field { .. }) => {
+                self.sort_key().partial_cmp(&other.sort_key())
+            }
+            (
+                SelectionNode::Fragment { type_name: a, .. },
+                SelectionNode::Fragment { type_name: b, .. },
+            ) => a.partial_cmp(b),
+            (SelectionNode::Field { .. }, SelectionNode::Fragment { .. }) => {
+                Some(std::cmp::Ordering::Less)
+            }
+            (SelectionNode::Fragment { .. }, SelectionNode::Field { .. }) => {
+                Some(std::cmp::Ordering::Greater)
+            }
+        }
+    }
+}
+
 impl SelectionNode {
     pub fn selections(&self) -> Option<&Vec<SelectionNode>> {
         match self {
             SelectionNode::Field { selections, .. } => selections.as_ref().map(|s| s.as_ref()),
             SelectionNode::Fragment { selections, .. } => Some(selections.as_ref()),
+        }
+    }
+
+    pub fn sort_key(&self) -> String {
+        match self {
+            SelectionNode::Field {
+                field_name,
+                type_name,
+                ..
+            } => format!("{}.{}", type_name, field_name),
+            SelectionNode::Fragment { type_name, .. } => type_name.to_string(),
         }
     }
 
@@ -109,31 +137,36 @@ pub struct Selection {
 }
 
 impl Selection {
-    // pub fn parse_field_selection(
-    //     selection_set_str: String,
-    //     field_name: &str,
-    //     type_name: &str,
-    // ) -> Self {
-    //     let parsed_doc = parse_query(&selection_set_str).unwrap().into_static();
-    //     let parsed_definition = parsed_doc
-    //         .definitions
-    //         .first()
-    //         .expect("failed to parse selection set")
-    //         .clone();
+    pub fn new(
+        type_name: String,
+        key_fields_string: String,
+        selection_set: Vec<SelectionNode>,
+    ) -> Self {
+        Self {
+            type_name,
+            key_fields_string,
+            selection_set,
+        }
+    }
+}
 
-    //     let selection_set = match parsed_definition {
-    //         Definition::Operation(OperationDefinition::SelectionSet(selection_set)) => {
-    //             Some(selection_set)
-    //         }
-    //         _ => None,
-    //     }
-    //     .expect("invalid selection set");
+pub fn parse_selection_set(
+    selection_set_str: &str,
+) -> graphql_parser_hive_fork::query::SelectionSet<'static, String> {
+    let parsed_doc = parse_query(&selection_set_str).unwrap().into_static();
+    let parsed_definition = parsed_doc
+        .definitions
+        .first()
+        .expect("failed to parse selection set")
+        .clone();
 
-    //     SelectionNode::Field {
-    //         selection_set,
-    //         source: selection_set_str,
-    //         field_name: field_name.to_string(),
-    //         type_name: type_name.to_string(),
-    //     }
-    // }
+    let selection_set = match parsed_definition {
+        Definition::Operation(OperationDefinition::SelectionSet(selection_set)) => {
+            Some(selection_set)
+        }
+        _ => None,
+    }
+    .expect("invalid selection set");
+
+    selection_set
 }
