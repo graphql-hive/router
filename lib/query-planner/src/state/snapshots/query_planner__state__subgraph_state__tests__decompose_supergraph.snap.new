@@ -1,0 +1,10 @@
+---
+source: lib/query-planner/src/state/subgraph_state.rs
+assertion_line: 168
+expression: "vec![1, 2, 3]"
+---
+[
+    1,
+    2,
+    3,
+]

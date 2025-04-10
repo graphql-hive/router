@@ -4,8 +4,8 @@ use super::directives::FederationDirective;
 
 #[derive(Debug, Default, Clone)]
 pub struct JoinUnionMemberDirective {
-    graph: String,
-    member: String,
+    pub graph: String,
+    pub member: String,
 }
 
 impl JoinUnionMemberDirective {

@@ -11,8 +11,10 @@ use crate::federation_spec::directives::{
     FederationDirective, InaccessibleDirective, JoinEnumValueDirective, JoinFieldDirective,
     JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective, JoinUnionMemberDirective,
 };
-static STANDARD_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
 
+use super::subgraph_state::SubgraphState;
+
+static STANDARD_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
 pub type SchemaDocument = input::Document<'static, String>;
 
 #[derive(Debug)]
@@ -25,16 +27,28 @@ pub struct SupergraphState<'a> {
     pub known_subgraphs: HashMap<String, String>,
     /// A set of all known scalars in this schema, including built-ins
     pub known_scalars: HashSet<String>,
+    /// A map from subgraph id to a subgraph state
+    pub subgraphs_state: HashMap<String, SubgraphState>,
 }
 
 impl<'a> SupergraphState<'a> {
     pub fn new(schema: &'a SchemaDocument) -> Self {
-        Self {
+        let mut supergraph_state = Self {
             document: schema,
             definitions: Self::build_map(schema),
             known_subgraphs: Self::extract_subgraph_names(schema),
             known_scalars: Self::extract_known_scalars(schema),
+            subgraphs_state: HashMap::new(),
+        };
+
+        for subgraph_id in supergraph_state.known_subgraphs.keys() {
+            supergraph_state.subgraphs_state.insert(
+                subgraph_id.clone(),
+                SubgraphState::decompose_from_supergraph(subgraph_id, &supergraph_state),
+            );
         }
+
+        supergraph_state
     }
 
     pub fn is_scalar_type(&self, type_name: &str) -> bool {
@@ -169,6 +183,7 @@ impl<'a> SupergraphState<'a> {
         SupergraphUnionType {
             source: union_type,
             join_type: Self::extract_directives::<JoinTypeDirective>(&union_type.directives),
+            types: union_type.types.clone(),
             union_members: Self::extract_directives::<JoinUnionMemberDirective>(
                 &union_type.directives,
             ),
@@ -332,6 +347,56 @@ pub struct SupergraphObjectType<'a> {
     pub used_in_subgraphs: HashSet<String>,
 }
 
+impl SupergraphObjectType<'_> {
+    pub fn fields_of_subgraph(
+        &self,
+        graph_id: &str,
+    ) -> HashMap<&String, (&SupergraphField<'_>, Option<JoinFieldDirective>)> {
+        self.fields
+            .iter()
+            .filter_map(|(_field_name, field_def)| {
+                let no_join_field = field_def.join_field.is_empty();
+
+                let current_graph_graph_jf = field_def
+                    .join_field
+                    .iter()
+                    .find(|jf| jf.graph_id.as_ref().is_some_and(|g| g == graph_id));
+
+                if no_join_field || current_graph_graph_jf.is_some() {
+                    Some((_field_name, (field_def, current_graph_graph_jf.cloned())))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+}
+
+impl SupergraphInterfaceType<'_> {
+    pub fn fields_of_subgraph(
+        &self,
+        graph_id: &str,
+    ) -> HashMap<&String, (&SupergraphField<'_>, Option<JoinFieldDirective>)> {
+        self.fields
+            .iter()
+            .filter_map(|(_field_name, field_def)| {
+                let no_join_field = field_def.join_field.is_empty();
+
+                let current_graph_graph_jf = field_def
+                    .join_field
+                    .iter()
+                    .find(|jf| jf.graph_id.as_ref().is_some_and(|g| g == graph_id));
+
+                if no_join_field || current_graph_graph_jf.is_some() {
+                    Some((_field_name, (field_def, current_graph_graph_jf.cloned())))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug)]
 pub struct SupergraphInterfaceType<'a> {
     pub source: &'a input::InterfaceType<'static, String>,
@@ -366,11 +431,36 @@ pub struct SupergraphEnumType<'a> {
     pub join_type: Vec<JoinTypeDirective>,
 }
 
+impl SupergraphEnumType<'_> {
+    pub fn values_of_subgraph(&self, graph_id: &str) -> Vec<&SupergraphEnumValueType<'_>> {
+        self.values
+            .iter()
+            .filter(|value| value.join_enum_value.iter().any(|je| je.graph == graph_id))
+            .collect::<Vec<_>>()
+    }
+}
+
 #[derive(Debug)]
 pub struct SupergraphUnionType<'a> {
     pub source: &'a input::UnionType<'static, String>,
+    pub types: Vec<String>,
     pub join_type: Vec<JoinTypeDirective>,
     pub union_members: Vec<JoinUnionMemberDirective>,
+}
+
+impl SupergraphUnionType<'_> {
+    pub fn relevant_types(&self, graph_id: &str) -> HashSet<&String> {
+        self.union_members
+            .iter()
+            .filter_map(|um| {
+                if um.graph == graph_id {
+                    Some(&um.member)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
 
 impl SupergraphDefinition<'_> {
@@ -385,24 +475,20 @@ impl SupergraphDefinition<'_> {
         }
     }
 
+    pub fn extract_join_types_for(&self, graph_id: &str) -> Vec<JoinTypeDirective> {
+        self.join_types()
+            .iter()
+            .filter(|jt| jt.graph_id == graph_id)
+            .cloned()
+            .collect()
+    }
+
     pub fn is_defined_in_subgraph(&self, graph_id: &str) -> bool {
-        self.join_types().iter().any(|jt| jt.graph_id == graph_id)
+        !self.extract_join_types_for(graph_id).is_empty()
     }
 
     pub fn is_interface(&self) -> bool {
         matches!(self, SupergraphDefinition::Interface(_))
-    }
-
-    pub fn used_in_fields(&self, subgraph: &str) -> bool {
-        match self {
-            SupergraphDefinition::Object(object_type) => {
-                object_type.used_in_subgraphs.contains(subgraph)
-            }
-            SupergraphDefinition::Interface(interface_type) => {
-                interface_type.used_in_subgraphs.contains(subgraph)
-            }
-            _ => false,
-        }
     }
 
     pub fn is_root(&self) -> bool {
@@ -434,13 +520,10 @@ impl SupergraphDefinition<'_> {
         match self {
             SupergraphDefinition::Object(object_type) => &object_type.join_type,
             SupergraphDefinition::Interface(interface_type) => &interface_type.join_type,
-            SupergraphDefinition::Union(_)
-            | SupergraphDefinition::Enum(_)
-            | SupergraphDefinition::Scalar(_)
-            | SupergraphDefinition::InputObject(_) => {
-                static EMPTY: Vec<JoinTypeDirective> = Vec::new();
-                &EMPTY
-            }
+            SupergraphDefinition::Union(union_type) => &union_type.join_type,
+            SupergraphDefinition::Enum(enum_type) => &enum_type.join_type,
+            SupergraphDefinition::Scalar(scalar_type) => &scalar_type.join_type,
+            SupergraphDefinition::InputObject(input_object_type) => &input_object_type.join_type,
         }
     }
 
