@@ -208,7 +208,7 @@ mod star_stuff {
             .assert_field_edge("delivery", "DeliveryEstimates/INVENTORY")
             .edge("delivery", "DeliveryEstimates/INVENTORY")
             .expect("cant find edge");
-        assert_eq!(edge.requirements(), Some("dimensions{size weight}"));
+        assert_eq!(edge.requires(), Some("dimensions{size weight}"));
     }
 
     // Sorry for the bad impl here, I wanted to make sure some nodes and edges are not breaking or duplicated.

@@ -14,6 +14,7 @@ use crate::{
     consumer_schema::ConsumerSchema,
     graph::{
         edge::{Edge, EdgePair},
+        selection::SelectionNode,
         Graph,
     },
     state::supergraph_state::SupergraphState,
@@ -146,30 +147,48 @@ impl<'a> OperationAdvisor<'a> {
     ) -> Option<Vec<ResolutionPath>> {
         debug!(edge_weight = debug(edge));
 
-        match edge.requirements() {
+        match edge.requirements_selections() {
             None => {
                 debug!("edge does not have requirements, will return empty array");
                 Some(vec![])
             }
-            Some(edge_requirements) => {
+            Some(selections) => {
                 debug!(
                     "checking requirements for '{:?}' in edge '{}'",
-                    edge_requirements,
+                    selections,
                     edge.id()
                 );
 
-                // let mut requirements: Vec<MoveRequirement> = vec![];
-                // let paths_to_requirements: Vec<ResolutionPath> = vec![];
+                let mut requirements: Vec<MoveRequirement> = vec![];
+                let paths_to_requirements: Vec<ResolutionPath> = vec![];
 
-                // for selection in edge_requirements.selection_set() {
-                //     requirements.splice(
-                //         0..0,
-                //         vec![MoveRequirement {
-                //             paths: vec![path.clone()],
-                //             selection: selection.clone(),
-                //         }],
-                //     );
-                // }
+                for selection in selections.selection_set.iter() {
+                    requirements.splice(
+                        0..0,
+                        vec![MoveRequirement {
+                            paths: vec![path.clone()],
+                            selection: selection.clone(),
+                        }],
+                    );
+                }
+
+                while let Some(requirement) = requirements.pop() {
+                    // Process the requirement here
+                    match &requirement.selection {
+                        SelectionNode::Field {
+                            field_name,
+                            type_name,
+                            selections,
+                        } => {
+                            let result =
+                                validate_field_requirement(field_name, type_name, selections);
+                            // Process the field selection here
+                        }
+                        SelectionNode::Fragment { .. } => {
+                            unimplemented!("fragment not supported yet")
+                        }
+                    }
+                }
 
                 Some(vec![])
             }
@@ -202,7 +221,7 @@ impl<'a> OperationAdvisor<'a> {
     // }
 }
 
-// struct MoveRequirement {
-//     paths: Vec<ResolutionPath>,
-//     selection: SelectionNode,
-// }
+pub struct MoveRequirement {
+    pub paths: Vec<ResolutionPath>,
+    pub selection: SelectionNode,
+}

@@ -8,6 +8,11 @@ use super::selection::Selection;
 
 pub type EdgePair<'a> = (&'a Edge, EdgeIndex);
 
+pub struct EntityMove {
+    pub key: String,
+    pub requirement: Selection,
+}
+
 pub enum Edge {
     /// A special edge between the root Node and then root entry point to the graph
     /// With this helper, you can jump from Query::RootQuery --field-> Query/SomeSubgraph --> --field--> SomeType/SomeSubgraph
@@ -21,10 +26,7 @@ pub enum Edge {
         requires: Option<String>,
         override_from: Option<String>,
     },
-    EntityMove {
-        key: String,
-        requirement: Selection,
-    },
+    EntityMove(EntityMove),
     /// join__implements
     AbstractMove(String),
     // interfaceObject
@@ -33,10 +35,10 @@ pub enum Edge {
 
 impl Edge {
     pub fn create_entity_move(key: &str, selection: Selection) -> Self {
-        Self::EntityMove {
+        Self::EntityMove(EntityMove {
             key: key.to_string(),
             requirement: selection,
-        }
+        })
     }
 
     pub fn create_field_move(name: String, join_field: Option<JoinFieldDirective>) -> Self {
@@ -54,16 +56,22 @@ impl Edge {
     pub fn id(&self) -> &str {
         match self {
             Self::FieldMove { name, .. } => name,
-            Self::EntityMove { key, .. } => key,
+            Self::EntityMove(EntityMove { key, .. }) => key,
             Self::AbstractMove(id) => id,
             Self::RootEntrypoint { field_name } => field_name,
         }
     }
 
-    /// Gets the requirements as a string, if any
-    pub fn requirements(&self) -> Option<&str> {
+    pub fn requires(&self) -> Option<&str> {
         match self {
             Self::FieldMove { requires, .. } => requires.as_ref().map(|req| req.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn requirements_selections(&self) -> Option<&Selection> {
+        match self {
+            Self::EntityMove(entity_move) => Some(&entity_move.requirement),
             _ => None,
         }
     }
@@ -111,7 +119,7 @@ impl Debug for Edge {
 
                 result
             }
-            Edge::EntityMove { key, .. } => write!(f, "🔑 {}", key),
+            Edge::EntityMove(EntityMove { key, .. }) => write!(f, "🔑 {}", key),
             Edge::AbstractMove(name) => write!(f, "🔮 {}", name),
         }
     }
@@ -159,9 +167,10 @@ impl PartialEq for Edge {
                 },
             ) => name == other_name,
 
-            (Edge::EntityMove { key, .. }, Edge::EntityMove { key: other_key, .. }) => {
-                key == other_key
-            }
+            (
+                Edge::EntityMove(EntityMove { key, .. }),
+                Edge::EntityMove(EntityMove { key: other_key, .. }),
+            ) => key == other_key,
 
             (Edge::AbstractMove(name), Edge::AbstractMove(other_name)) => name == other_name,
 

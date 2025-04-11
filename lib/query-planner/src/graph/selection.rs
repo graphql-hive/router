@@ -136,6 +136,7 @@ impl Eq for SelectionNode {}
 //     }
 // }
 
+#[derive(Debug)]
 pub struct Selection {
     pub type_name: String,
     pub key_fields_string: String,
