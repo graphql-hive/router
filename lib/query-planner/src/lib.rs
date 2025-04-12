@@ -3,7 +3,7 @@ mod federation_spec;
 mod graph;
 mod utils;
 
-pub mod operation_advisor;
+pub mod planner;
 pub mod state;
 
 pub fn parse_schema(sdl: &str) -> graphql_parser_hive_fork::schema::Document<'static, String> {

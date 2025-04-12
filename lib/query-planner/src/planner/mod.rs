@@ -20,15 +20,15 @@ use crate::{
     state::supergraph_state::SupergraphState,
 };
 
-pub struct OperationAdvisor<'a> {
+pub struct Planner<'a> {
     pub supergraph_state: SupergraphState<'a>,
     pub graph: Graph,
     pub consumer_schema: ConsumerSchema,
 }
 
-impl Debug for OperationAdvisor<'_> {
+impl Debug for Planner<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OperationAdvisor").finish()
+        f.debug_struct("Planner").finish()
     }
 }
 
@@ -51,7 +51,7 @@ impl From<&OperationDefinition<'static, String>> for OperationType {
     }
 }
 
-impl<'a> OperationAdvisor<'a> {
+impl<'a> Planner<'a> {
     pub fn new(supergraph: SupergraphState<'a>) -> Self {
         let graph = Graph::new_from_supergraph(&supergraph);
 
@@ -172,17 +172,18 @@ impl<'a> OperationAdvisor<'a> {
                     );
                 }
 
+                // it's important to pop from the end as we want to process the last added requirement first
                 while let Some(requirement) = requirements.pop() {
-                    // Process the requirement here
                     match &requirement.selection {
                         SelectionNode::Field {
                             field_name,
                             type_name,
                             selections,
                         } => {
-                            let result =
-                                validate_field_requirement(field_name, type_name, selections);
-                            // Process the field selection here
+                            // let result =
+                            // validate_field_requirement(field_name, type_name, selections);
+
+                            // match result {}
                         }
                         SelectionNode::Fragment { .. } => {
                             unimplemented!("fragment not supported yet")
@@ -190,7 +191,7 @@ impl<'a> OperationAdvisor<'a> {
                     }
                 }
 
-                Some(vec![])
+                Some(paths_to_requirements)
             }
         }
     }
