@@ -43,6 +43,10 @@ pub enum GraphError {
     EdgeNotFound(EdgeIndex),
     #[error("Unexpected missing root type {0}")]
     MissingRootType(RootOperationType),
+    #[error("Definition with name '{0}' was not found")]
+    DefinitionNotFound(String),
+    #[error("Field named '{0}' was not found in definition name '{1}'")]
+    FieldDefinitionNotFound(String, String),
 }
 
 impl Graph {
@@ -331,12 +335,18 @@ impl Graph {
         parent_type_def: &SupergraphDefinition<'_>,
         head: NodeIndex,
         view_id: u64,
-    ) {
+    ) -> Result<(), GraphError> {
         for selection in selection_set.items.iter() {
             match selection {
                 Selection::Field(field) => {
                     let is_leaf = field.selection_set.items.is_empty();
-                    let field_in_parent = parent_type_def.fields().get(&field.name).unwrap();
+                    let field_in_parent =
+                        parent_type_def.fields().get(&field.name).ok_or_else(|| {
+                            GraphError::FieldDefinitionNotFound(
+                                field.name.clone(),
+                                parent_type_def.name().to_string(),
+                            )
+                        })?;
                     let return_type_name = field_in_parent.source.field_type.inner_type();
 
                     let subgraph_type = SubgraphType {
@@ -364,7 +374,10 @@ impl Graph {
                     );
 
                     if !is_leaf {
-                        let return_type = state.definitions.get(return_type_name).unwrap();
+                        let return_type =
+                            state.definitions.get(return_type_name).ok_or_else(|| {
+                                GraphError::DefinitionNotFound(return_type_name.to_string())
+                            })?;
 
                         self.handle_viewed_selection_set(
                             state,
@@ -373,12 +386,14 @@ impl Graph {
                             return_type,
                             tail,
                             view_id,
-                        );
+                        )?;
                     }
                 }
                 _ => unimplemented!("fragments are not supported in provides yet"),
             };
         }
+
+        Ok(())
     }
 
     fn build_viewed_field_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
@@ -429,7 +444,10 @@ impl Graph {
                                     ),
                                 );
 
-                                let return_type = state.definitions.get(return_type_name).unwrap();
+                                let return_type =
+                                    state.definitions.get(return_type_name).ok_or_else(|| {
+                                        GraphError::DefinitionNotFound(return_type_name.to_string())
+                                    })?;
 
                                 self.handle_viewed_selection_set(
                                     state,
@@ -438,7 +456,7 @@ impl Graph {
                                     return_type,
                                     tail,
                                     view_id,
-                                );
+                                )?;
                             }
                         }
                     }
