@@ -12,7 +12,7 @@ mod star_stuff {
         let schema = parse_schema(supergraph_sdl);
         let metadata = SupergraphState::new(&schema);
 
-        Graph::new_from_supergraph(&metadata)
+        Graph::new_from_supergraph(&metadata).expect("failed to create graph")
     }
 
     #[derive(Debug)]
@@ -136,7 +136,7 @@ mod star_stuff {
     }
 
     #[test]
-    fn star_stuff() {
+    fn star_stuff() -> Result<(), Box<dyn std::error::Error>> {
         let supergraph_path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixture/supergraph.graphql");
         let graph = init_test(
@@ -209,6 +209,8 @@ mod star_stuff {
             .edge("delivery", "DeliveryEstimates/INVENTORY")
             .expect("cant find edge");
         assert_eq!(edge.requires(), Some("dimensions{size weight}"));
+
+        Ok(())
     }
 
     // Sorry for the bad impl here, I wanted to make sure some nodes and edges are not breaking or duplicated.
@@ -259,7 +261,7 @@ mod star_stuff {
     }
 
     #[test]
-    fn multiple_provides() {
+    fn multiple_provides() -> Result<(), Box<dyn std::error::Error>> {
         let supergraph_path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixture/supergraph2.graphql");
         let graph = init_test(
@@ -271,7 +273,7 @@ mod star_stuff {
         let (_, to) = outgoing
             .edge_field("users")
             .expect("failed to find edge for field users");
-        let node1 = graph.node(*graph.node_to_index.get(to).unwrap());
+        let node1 = graph.node(*graph.node_to_index.get(to).unwrap())?;
         assert!(node1.is_view_node());
 
         // Verify that each provided path points only to the relevant, provided fields
@@ -283,7 +285,7 @@ mod star_stuff {
         let (_, to) = outgoing
             .edge_field("user")
             .expect("failed to find edge for field user");
-        let node2 = graph.node(*graph.node_to_index.get(to).unwrap());
+        let node2 = graph.node(*graph.node_to_index.get(to).unwrap())?;
         assert!(node2.is_view_node());
 
         // Verify that each provided path points only to the relevant, provided fields
@@ -297,7 +299,7 @@ mod star_stuff {
             .map(|(_, key)| *graph.node_to_index.get(key).unwrap())
             .expect("failed to located viewed node from profile field");
 
-        let nested_provides_node = graph.node(nested_provides_id);
+        let nested_provides_node = graph.node(nested_provides_id)?;
         assert!(nested_provides_node.is_view_node());
         assert!(nested_provides_node.id().starts_with("(Profile/FOO)"));
 
@@ -310,5 +312,7 @@ mod star_stuff {
 
         // Two different views should be different nodes
         assert_ne!(node1, node2);
+
+        Ok(())
     }
 }

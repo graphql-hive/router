@@ -1,3 +1,5 @@
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 mod consumer_schema;
 mod federation_spec;
 mod graph;

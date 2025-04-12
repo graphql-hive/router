@@ -2,7 +2,7 @@ pub mod plan_nodes;
 pub mod resolution_path;
 pub mod traversal_step;
 
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 use graphql_parser_hive_fork::query::OperationDefinition;
 use petgraph::{graph::NodeIndex, visit::EdgeRef};
@@ -15,9 +15,9 @@ use crate::{
     graph::{
         edge::{Edge, EdgePair},
         selection::SelectionNode,
-        Graph,
+        Graph, GraphError,
     },
-    state::supergraph_state::SupergraphState,
+    state::supergraph_state::{RootOperationType, SupergraphState},
 };
 
 pub struct Planner<'a> {
@@ -32,76 +32,85 @@ impl Debug for Planner<'_> {
     }
 }
 
-#[derive(Debug)]
-pub enum OperationType {
-    Query,
-    Mutation,
-    Subscription,
+#[derive(Debug, thiserror::Error)]
+pub enum PlannerError {
+    #[error("Graph construction error: {0}")]
+    GraphError(GraphError),
+    #[error("Tail {0:?} is missing information")]
+    TailMissingInfo(NodeIndex),
 }
 
-impl From<&OperationDefinition<'static, String>> for OperationType {
-    fn from(operation: &OperationDefinition<'static, String>) -> Self {
-        match operation {
-            OperationDefinition::Query(_) | OperationDefinition::SelectionSet(_) => {
-                OperationType::Query
-            }
-            OperationDefinition::Mutation(_) => OperationType::Mutation,
-            OperationDefinition::Subscription(_) => OperationType::Subscription,
-        }
+impl From<GraphError> for PlannerError {
+    fn from(error: GraphError) -> Self {
+        PlannerError::GraphError(error)
     }
 }
 
 impl<'a> Planner<'a> {
-    pub fn new(supergraph: SupergraphState<'a>) -> Self {
-        let graph = Graph::new_from_supergraph(&supergraph);
+    pub fn new(supergraph: SupergraphState<'a>) -> Result<Self, PlannerError> {
+        let graph = Graph::new_from_supergraph(&supergraph)?;
 
-        Self {
+        Ok(Self {
             consumer_schema: ConsumerSchema::new_from_supergraph(supergraph.document),
             supergraph_state: supergraph,
             graph,
-        }
+        })
     }
 
     #[instrument(skip(self))]
-    pub fn walk_steps(&self, op_type: &OperationType, steps: &Vec<Step>) {
-        let root_entrypoints = self.get_entrypoints(op_type);
+    pub fn walk_steps(
+        &self,
+        op_type: &RootOperationType,
+        steps: &Vec<Step>,
+    ) -> Result<(), PlannerError> {
+        let root_entrypoints = self.get_entrypoints(op_type)?;
         let initial_paths = root_entrypoints
             .iter()
             .map(|node_index| ResolutionPath::new(*node_index))
             .collect::<Vec<ResolutionPath>>();
 
-        steps.iter().fold(initial_paths, |current_paths, step| {
-            if current_paths.is_empty() {
-                return vec![];
-            }
+        steps
+            .iter()
+            .try_fold(initial_paths, |current_paths, step| {
+                if current_paths.is_empty() {
+                    return Ok(vec![]);
+                }
 
-            let next_paths: Vec<ResolutionPath> = current_paths
-                .iter()
-                .flat_map(|path| {
-                    debug!(
-                        "looking for paths to step '{}' from node {:?}",
-                        step.field_name(),
-                        self.graph.node(path.root_node).id(),
-                    );
-                    let direct_paths = self.find_direct_paths(path, step);
-                    debug!("found total of {} direct paths", direct_paths.len());
-                    let indirect_paths = self.find_indirect_paths(path, step);
-                    debug!("found total of {} indirect paths", indirect_paths.len());
-                    let advance = !direct_paths.is_empty() || !indirect_paths.is_empty();
-                    debug!("advance: {}", advance);
+                let next_paths: Result<Vec<ResolutionPath>, PlannerError> =
+                    current_paths.iter().try_fold(vec![], |mut acc, path| {
+                        debug!(
+                            "looking for paths to step '{}' from node {:?}",
+                            step.field_name(),
+                            self.graph.node(path.root_node).unwrap().id(),
+                        );
+                        let direct_paths = self.find_direct_paths(path, step)?;
+                        debug!("found total of {} direct paths", direct_paths.len());
+                        let indirect_paths = self.find_indirect_paths(path, step)?;
+                        debug!("found total of {} indirect paths", indirect_paths.len());
+                        let advance = !direct_paths.is_empty() || !indirect_paths.is_empty();
+                        debug!("advance: {}", advance);
 
-                    direct_paths.into_iter().chain(indirect_paths.into_iter())
-                })
-                .collect();
+                        acc.extend(direct_paths.into_iter());
+                        acc.extend(indirect_paths.into_iter());
 
-            next_paths
-        });
+                        Ok(acc)
+                    });
+
+                next_paths
+            })?;
+
+        Ok(())
     }
 
     #[instrument(skip(self))]
-    fn find_direct_paths(&self, path: &ResolutionPath, step: &Step) -> Vec<ResolutionPath> {
-        let mut result = vec![];
-        let path_tail = path.tail(&self.graph);
+    fn find_direct_paths(
+        &self,
+        path: &ResolutionPath,
+        step: &Step,
+    ) -> Result<Vec<ResolutionPath>, PlannerError> {
+        let mut result: Vec<ResolutionPath> = vec![];
+        let path_tail = path.tail(&self.graph)?;
+
         // Get all the edges from the current tail
         // Filter by FieldMove edges with matching field name and not already in path, to avoid loops
         let edges_iter = self
@@ -117,7 +126,7 @@ impl<'a> Planner<'a> {
             match can_be_satisfied {
                 Some(p) => {
                     debug!("edge satisfied: {:?}", p);
-                    let next_resolution_path = path.advance_to(&self.graph, edge_id);
+                    let next_resolution_path = path.advance_to(&self.graph, edge_id)?;
                     result.push(next_resolution_path);
                 }
                 None => {
@@ -126,17 +135,21 @@ impl<'a> Planner<'a> {
             }
         }
 
-        result
+        Ok(result)
     }
 
     #[instrument(skip(self))]
-    fn find_indirect_paths(&self, path: &ResolutionPath, step: &Step) -> Vec<ResolutionPath> {
-        let tail_node_index = path.tail(&self.graph);
-        let tail_node = self.graph.node(tail_node_index);
+    fn find_indirect_paths(
+        &self,
+        path: &ResolutionPath,
+        step: &Step,
+    ) -> Result<Vec<ResolutionPath>, PlannerError> {
+        let tail_node_index = path.tail(&self.graph)?;
+        let tail_node = self.graph.node(tail_node_index)?;
         let source_graph_id = tail_node.graph_id().expect("tail does not have graph info");
         println!("source_graph_id: {source_graph_id}");
 
-        vec![]
+        Ok(vec![])
     }
 
     #[instrument(skip(self))]
@@ -196,17 +209,22 @@ impl<'a> Planner<'a> {
         }
     }
 
-    fn get_entrypoints(&self, operation_type: &OperationType) -> Vec<NodeIndex> {
+    fn get_entrypoints(
+        &self,
+        operation_type: &RootOperationType,
+    ) -> Result<Vec<NodeIndex>, PlannerError> {
         let entrypoint_root = match operation_type {
-            OperationType::Query => self.graph.query_root,
-            OperationType::Mutation => self.graph.mutation_root.unwrap(),
-            OperationType::Subscription => self.graph.subscription_root.unwrap(),
-        };
+            RootOperationType::Query => Some(self.graph.query_root),
+            RootOperationType::Mutation => self.graph.mutation_root,
+            RootOperationType::Subscription => self.graph.subscription_root,
+        }
+        .ok_or_else(|| GraphError::MissingRootType(*operation_type))?;
 
-        self.graph
+        Ok(self
+            .graph
             .edges_from(entrypoint_root)
             .map(|e| e.target())
-            .collect::<Vec<NodeIndex>>()
+            .collect::<Vec<NodeIndex>>())
     }
 
     // fn root_selection_set(

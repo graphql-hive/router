@@ -4,6 +4,8 @@ use petgraph::graph::{EdgeIndex, NodeIndex};
 
 use crate::graph::Graph;
 
+use super::PlannerError;
+
 #[derive(Clone)]
 pub struct ResolutionPath {
     pub root_node: NodeIndex,
@@ -44,25 +46,27 @@ impl ResolutionPath {
         }
     }
 
-    pub fn tail(&self, graph: &Graph) -> NodeIndex {
-        if self.edges.is_empty() {
-            self.root_node
-        } else {
-            let last_edge_id = self.edges.last().unwrap();
-            graph.get_edge_tail(last_edge_id)
+    pub fn tail(&self, graph: &Graph) -> Result<NodeIndex, PlannerError> {
+        match self.edges.last() {
+            Some(last_edge_id) => Ok(graph.get_edge_tail(last_edge_id)?),
+            None => Ok(self.root_node),
         }
     }
 
-    pub fn advance_to(&self, graph: &Graph, edge_index: &EdgeIndex) -> ResolutionPath {
-        let edge = graph.edge(*edge_index);
+    pub fn advance_to(
+        &self,
+        graph: &Graph,
+        edge_index: &EdgeIndex,
+    ) -> Result<ResolutionPath, PlannerError> {
+        let edge = graph.edge(*edge_index)?;
         let mut new_edges = self.edges.clone();
         new_edges.push(*edge_index);
 
-        ResolutionPath {
+        Ok(ResolutionPath {
             root_node: self.root_node,
             edges: new_edges,
             required_paths_for_edges: self.required_paths_for_edges.clone(),
             cost: self.cost + edge.cost(),
-        }
+        })
     }
 }

@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    fmt::Debug,
+    fmt::{Debug, Display},
 };
 
 use graphql_parser_hive_fork::query::Directive;
@@ -270,17 +270,17 @@ impl<'a> SupergraphState<'a> {
         let fields = Self::build_fields(&object_type.fields);
 
         let root_type = if object_type.name == schema.query_type().name {
-            Some(RootType::Query)
+            Some(RootOperationType::Query)
         } else if schema
             .mutation_type()
             .is_some_and(|t| t.name == object_type.name)
         {
-            Some(RootType::Mutation)
+            Some(RootOperationType::Mutation)
         } else if schema
             .subscription_type()
             .is_some_and(|t| t.name == object_type.name)
         {
-            Some(RootType::Subscription)
+            Some(RootOperationType::Subscription)
         } else {
             None
         };
@@ -336,11 +336,21 @@ impl<'a> SupergraphState<'a> {
     }
 }
 
-#[derive(Debug)]
-pub enum RootType {
+#[derive(Debug, Clone, Copy)]
+pub enum RootOperationType {
     Query,
     Mutation,
     Subscription,
+}
+
+impl Display for RootOperationType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RootOperationType::Query => write!(f, "Query"),
+            RootOperationType::Mutation => write!(f, "Mutation"),
+            RootOperationType::Subscription => write!(f, "Subscription"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -359,7 +369,7 @@ pub struct SupergraphObjectType<'a> {
     pub fields: HashMap<String, SupergraphField<'a>>,
     pub join_type: Vec<JoinTypeDirective>,
     pub join_implements: Vec<JoinImplementsDirective>,
-    pub root_type: Option<RootType>,
+    pub root_type: Option<RootOperationType>,
     pub used_in_subgraphs: HashSet<String>,
 }
 
@@ -515,7 +525,7 @@ impl SupergraphDefinition<'_> {
         }
     }
 
-    pub fn try_into_root_type(&self) -> Option<&RootType> {
+    pub fn try_into_root_type(&self) -> Option<&RootOperationType> {
         match self {
             SupergraphDefinition::Object(object_type) => object_type.root_type.as_ref(),
             _ => None,

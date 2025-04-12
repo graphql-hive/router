@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     federation_spec::FederationRules,
-    state::supergraph_state::{RootType, SupergraphDefinition, SupergraphState},
+    state::supergraph_state::{RootOperationType, SupergraphDefinition, SupergraphState},
 };
 use graphql_parser_hive_fork::query::{Selection, SelectionSet};
 use graphql_tools::ast::{SchemaDocumentExtension, TypeExtension};
@@ -18,6 +18,7 @@ use node::SubgraphType;
 use petgraph::{
     dot::Dot,
     graph::{EdgeIndex, Edges, NodeIndex},
+    visit::EdgeRef,
     Directed, Direction, Graph as Petgraph,
 };
 
@@ -34,41 +35,60 @@ pub struct Graph {
     pub node_to_index: HashMap<String, NodeIndex>,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum GraphError {
+    #[error("Node with index '{0:?}' was not found")]
+    NodeNotFound(NodeIndex),
+    #[error("Edge with index '{0:?}' was not found")]
+    EdgeNotFound(EdgeIndex),
+    #[error("Unexpected missing root type {0}")]
+    MissingRootType(RootOperationType),
+}
+
 impl Graph {
-    pub fn new_from_supergraph(supergraph_state: &SupergraphState) -> Self {
+    pub fn new_from_supergraph(supergraph_state: &SupergraphState) -> Result<Self, GraphError> {
         let mut instance = Graph {
             node_to_index: HashMap::new(),
             graph: InnerGraph::new(),
             ..Default::default()
         };
 
-        instance.build_graph(supergraph_state);
+        instance.build_graph(supergraph_state)?;
 
-        instance
+        Ok(instance)
     }
 
-    pub fn node(&self, node_index: NodeIndex) -> &Node {
-        self.graph.node_weight(node_index).unwrap()
+    pub fn node(&self, node_index: NodeIndex) -> Result<&Node, GraphError> {
+        self.graph
+            .node_weight(node_index)
+            .ok_or_else(|| GraphError::NodeNotFound(node_index))
     }
 
-    pub fn edge(&self, edge_id: EdgeIndex) -> &Edge {
-        self.graph.edge_weight(edge_id).unwrap()
+    pub fn edge(&self, edge_index: EdgeIndex) -> Result<&Edge, GraphError> {
+        self.graph
+            .edge_weight(edge_index)
+            .ok_or_else(|| GraphError::EdgeNotFound(edge_index))
     }
 
-    pub fn get_edge_tail(&self, edge_id: &EdgeIndex) -> NodeIndex {
-        self.graph.edge_endpoints(*edge_id).unwrap().1
+    pub fn get_edge_tail(&self, edge_index: &EdgeIndex) -> Result<NodeIndex, GraphError> {
+        self.graph
+            .edge_endpoints(*edge_index)
+            .ok_or_else(|| GraphError::EdgeNotFound(*edge_index))
+            .map(|v| v.1)
     }
 
-    fn build_graph(&mut self, state: &SupergraphState) {
-        self.build_root_nodes(state);
-        self.link_root_edges(state);
-        self.build_field_edges(state);
-        self.build_interface_implementation_edges(state);
-        self.build_entity_reference_edges(state);
-        self.build_viewed_field_edges(state);
+    fn build_graph(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
+        self.build_root_nodes(state)?;
+        self.link_root_edges(state)?;
+        self.build_field_edges(state)?;
+        self.build_interface_implementation_edges(state)?;
+        self.build_entity_reference_edges(state)?;
+        self.build_viewed_field_edges(state)?;
+
+        Ok(())
     }
 
-    fn build_root_nodes(&mut self, state: &SupergraphState<'_>) {
+    fn build_root_nodes(&mut self, state: &SupergraphState<'_>) -> Result<(), GraphError> {
         self.query_root =
             self.upsert_node(Node::QueryRoot(state.document.query_type().name.clone()));
         self.mutation_root = state
@@ -78,13 +98,15 @@ impl Graph {
         self.subscription_root = state.document.subscription_type().map(|subscription_type| {
             self.upsert_node(Node::SubscriptionRoot(subscription_type.name.clone()))
         });
+
+        Ok(())
     }
 
     pub fn upsert_node(&mut self, node: Node) -> NodeIndex {
         let id = node.id();
 
-        if self.node_to_index.contains_key(&id) {
-            return *self.node_to_index.get(&id).unwrap();
+        if let Some(index) = self.node_to_index.get(&id) {
+            return *index;
         }
 
         let index = self.graph.add_node(node);
@@ -93,14 +115,18 @@ impl Graph {
     }
 
     pub fn upsert_edge(&mut self, head: NodeIndex, tail: NodeIndex, edge: Edge) -> EdgeIndex {
-        let existing_edge = self.graph.edge_indices().find(|edge_index| {
-            let (source, target) = self.graph.edge_endpoints(*edge_index).unwrap();
-            let edge_weight = self.graph.edge_weight(*edge_index).unwrap();
-            let is_same_nodes = source == head && target == tail;
-            let is_same_edge = edge_weight == &edge;
+        let existing_edge = self
+            .graph
+            .edges_connecting(head, tail)
+            .find_map(|edge_ref| {
+                let edge_weight = edge_ref.weight();
 
-            is_same_nodes && is_same_edge
-        });
+                if edge_weight == &edge {
+                    Some(edge_ref.id())
+                } else {
+                    None
+                }
+            });
 
         if let Some(edge) = existing_edge {
             edge
@@ -109,7 +135,10 @@ impl Graph {
         }
     }
 
-    fn build_entity_reference_edges(&mut self, state: &SupergraphState<'_>) {
+    fn build_entity_reference_edges(
+        &mut self,
+        state: &SupergraphState<'_>,
+    ) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
             for join_type1 in definition.join_types() {
                 for join_type2 in definition.join_types() {
@@ -135,9 +164,14 @@ impl Graph {
                 }
             }
         }
+
+        Ok(())
     }
 
-    fn build_interface_implementation_edges(&mut self, state: &SupergraphState<'_>) {
+    fn build_interface_implementation_edges(
+        &mut self,
+        state: &SupergraphState<'_>,
+    ) -> Result<(), GraphError> {
         for (def_name, definition) in state
             .definitions
             .iter()
@@ -158,6 +192,8 @@ impl Graph {
                 );
             }
         }
+
+        Ok(())
     }
 
     pub fn root_query_node(&self) -> &Node {
@@ -188,7 +224,7 @@ impl Graph {
         self.graph.edges_directed(node_index, Direction::Outgoing)
     }
 
-    fn link_root_edges(&mut self, state: &SupergraphState<'_>) {
+    fn link_root_edges(&mut self, state: &SupergraphState<'_>) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
             if let Some(root_type) = definition.try_into_root_type() {
                 for graph_id in definition.subgraphs().iter() {
@@ -204,10 +240,11 @@ impl Graph {
                         }
 
                         let head = match root_type {
-                            RootType::Query => self.query_root,
-                            RootType::Mutation => self.mutation_root.unwrap(),
-                            RootType::Subscription => self.subscription_root.unwrap(),
-                        };
+                            RootOperationType::Query => Some(self.query_root),
+                            RootOperationType::Mutation => self.mutation_root,
+                            RootOperationType::Subscription => self.subscription_root,
+                        }
+                        .ok_or_else(|| GraphError::MissingRootType(*root_type))?;
 
                         let tail = self.upsert_node(Node::subgraph_type(def_name, graph_id));
 
@@ -222,9 +259,11 @@ impl Graph {
                 }
             }
         }
+
+        Ok(())
     }
 
-    fn build_field_edges(&mut self, state: &SupergraphState<'_>) {
+    fn build_field_edges(&mut self, state: &SupergraphState<'_>) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
             for graph_id in definition.subgraphs().iter() {
                 if definition.is_defined_in_subgraph(graph_id) {
@@ -280,6 +319,8 @@ impl Graph {
                 }
             }
         }
+
+        Ok(())
     }
 
     fn handle_viewed_selection_set(
@@ -340,7 +381,7 @@ impl Graph {
         }
     }
 
-    fn build_viewed_field_edges(&mut self, state: &SupergraphState) {
+    fn build_viewed_field_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
         for (_, definition) in state.definitions.iter() {
             for join_type in definition.join_types().iter() {
                 let mut view_id = 0;
@@ -404,6 +445,8 @@ impl Graph {
                 }
             }
         }
+
+        Ok(())
     }
 }
 

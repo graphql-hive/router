@@ -1,6 +1,4 @@
-use crate::graph::selection::SelectionNode;
-
-use super::OperationType;
+use crate::{graph::selection::SelectionNode, state::supergraph_state::RootOperationType};
 
 pub struct Plan {
     pub root: PlanNode,
@@ -16,7 +14,7 @@ pub enum PlanNode {
 pub struct FetchNode {
     pub service_name: String,
     pub operation: String,
-    pub operation_type: OperationType,
+    pub operation_type: RootOperationType,
     pub requires: Option<SelectionNode>,
 }
 

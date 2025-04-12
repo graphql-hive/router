@@ -4,6 +4,7 @@ use std::process;
 use query_planner::parse_schema;
 use query_planner::planner::traversal_step::Step;
 use query_planner::planner::Planner;
+use query_planner::state::supergraph_state::RootOperationType;
 use query_planner::state::supergraph_state::SupergraphState;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -43,14 +44,16 @@ fn main() {
 fn process_consumer_schema(path: &str) {
     let supergraph_sdl = std::fs::read_to_string(path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
-    let advisor = Planner::new(SupergraphState::new(&parsed_schema));
+    let advisor =
+        Planner::new(SupergraphState::new(&parsed_schema)).expect("failed to build planner");
     println!("{}", advisor.consumer_schema.document);
 }
 
 fn process_graph(path: &str) {
     let supergraph_sdl = std::fs::read_to_string(path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
-    let advisor = Planner::new(SupergraphState::new(&parsed_schema));
+    let advisor =
+        Planner::new(SupergraphState::new(&parsed_schema)).expect("failed to build planner");
 
     println!("{}", advisor.graph);
 }
@@ -59,10 +62,13 @@ fn process_paths(supergraph_path: &str, steps: &str) {
     let supergraph_sdl =
         std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
-    let advisor = Planner::new(SupergraphState::new(&parsed_schema));
+    let advisor =
+        Planner::new(SupergraphState::new(&parsed_schema)).expect("failed to build planner");
     let steps = Step::parse_field_step(steps);
 
-    advisor.walk_steps(&query_planner::planner::OperationType::Query, &steps);
+    advisor
+        .walk_steps(&RootOperationType::Query, &steps)
+        .expect("failed to walk");
 }
 
 // fn process_plan(supergraph_path: &str, operation_path: &str) {
