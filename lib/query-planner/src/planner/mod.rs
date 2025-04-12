@@ -2,9 +2,8 @@ pub mod plan_nodes;
 pub mod resolution_path;
 pub mod traversal_step;
 
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 
-use graphql_parser_hive_fork::query::OperationDefinition;
 use petgraph::{graph::NodeIndex, visit::EdgeRef};
 use resolution_path::ResolutionPath;
 use tracing::{debug, instrument};
@@ -14,8 +13,9 @@ use crate::{
     consumer_schema::ConsumerSchema,
     graph::{
         edge::{Edge, EdgePair},
+        error::GraphError,
         selection::SelectionNode,
-        Graph, GraphError,
+        Graph,
     },
     state::supergraph_state::{RootOperationType, SupergraphState},
 };

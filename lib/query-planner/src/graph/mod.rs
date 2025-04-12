@@ -1,6 +1,8 @@
 pub mod edge;
+pub mod error;
 pub mod node;
 pub mod selection;
+
 mod tests;
 
 use std::{
@@ -12,6 +14,7 @@ use crate::{
     federation_spec::FederationRules,
     state::supergraph_state::{RootOperationType, SupergraphDefinition, SupergraphState},
 };
+use error::GraphError;
 use graphql_parser_hive_fork::query::{Selection, SelectionSet};
 use graphql_tools::ast::{SchemaDocumentExtension, TypeExtension};
 use node::SubgraphType;
@@ -33,20 +36,6 @@ pub struct Graph {
     pub mutation_root: Option<NodeIndex>,
     pub subscription_root: Option<NodeIndex>,
     pub node_to_index: HashMap<String, NodeIndex>,
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum GraphError {
-    #[error("Node with index '{0:?}' was not found")]
-    NodeNotFound(NodeIndex),
-    #[error("Edge with index '{0:?}' was not found")]
-    EdgeNotFound(EdgeIndex),
-    #[error("Unexpected missing root type {0}")]
-    MissingRootType(RootOperationType),
-    #[error("Definition with name '{0}' was not found")]
-    DefinitionNotFound(String),
-    #[error("Field named '{0}' was not found in definition name '{1}'")]
-    FieldDefinitionNotFound(String, String),
 }
 
 impl Graph {
