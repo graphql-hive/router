@@ -10,6 +10,14 @@ pub struct SelectionResolver {
     pub subgraph_state: SubgraphState,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum SelectionResolverError {
+    #[error("definition with name '{0}' was not found")]
+    DefinitionNotFound(String),
+    #[error("definition field '{0}' was not found in '{1}'")]
+    DefinitionFieldNotFound(String, String),
+}
+
 impl SelectionResolver {
     pub fn new_from_state(subgraph: SubgraphState) -> Self {
         Self {
@@ -17,40 +25,50 @@ impl SelectionResolver {
         }
     }
 
-    pub fn resolve(&self, type_name: &str, key_fields: &str) -> Selection {
+    pub fn resolve(
+        &self,
+        type_name: &str,
+        key_fields: &str,
+    ) -> Result<Selection, SelectionResolverError> {
         let subgraph_type_def = self
             .subgraph_state
             .definitions
             .get(type_name)
-            .expect("Type not found");
+            .ok_or_else(|| SelectionResolverError::DefinitionNotFound(type_name.to_string()))?;
 
         let selection_set = parse_selection_set(&format!("{{ {} }}", key_fields));
-        let selection_nodes = self.resolve_selection_set(subgraph_type_def.name(), &selection_set);
+        let selection_nodes =
+            self.resolve_selection_set(subgraph_type_def.name(), &selection_set)?;
         let fields = Selection::new(
             subgraph_type_def.name().to_string(),
             key_fields.to_string(),
             selection_nodes,
         );
 
-        fields
+        Ok(fields)
     }
 
     fn resolve_field_selection(
         &self,
         type_name: &str,
         selection_field: &Field<'static, String>,
-    ) -> SelectionNode {
+    ) -> Result<SelectionNode, SelectionResolverError> {
         let type_state = self
             .subgraph_state
             .definitions
             .get(type_name)
-            .expect("failed to locate def");
+            .ok_or_else(|| SelectionResolverError::DefinitionNotFound(type_name.to_string()))?;
         let field_in_type_def = type_state
             .fields()
             .unwrap()
             .iter()
             .find(|f| f.name == selection_field.name)
-            .expect("failed to locate field");
+            .ok_or_else(|| {
+                SelectionResolverError::DefinitionFieldNotFound(
+                    type_name.to_string(),
+                    selection_field.name.to_string(),
+                )
+            })?;
 
         let selections = if selection_field.selection_set.items.is_empty() {
             None
@@ -58,27 +76,27 @@ impl SelectionResolver {
             Some(self.resolve_selection_set(
                 &field_in_type_def.return_type_name,
                 &selection_field.selection_set,
-            ))
+            )?)
         };
 
-        SelectionNode::Field {
+        Ok(SelectionNode::Field {
             field_name: field_in_type_def.name.clone(),
             type_name: type_name.to_string(),
             selections,
-        }
+        })
     }
 
     fn resolve_selection_set(
         &self,
         type_name: &str,
         selection_set: &SelectionSet<'static, String>,
-    ) -> Vec<SelectionNode> {
+    ) -> Result<Vec<SelectionNode>, SelectionResolverError> {
         let mut result: Vec<SelectionNode> = vec![];
 
         for selection in &selection_set.items {
             match selection {
                 OperationSelectionKind::Field(field) => {
-                    let selection_node = self.resolve_field_selection(type_name, field);
+                    let selection_node = self.resolve_field_selection(type_name, field)?;
                     result.push(selection_node);
                 }
                 OperationSelectionKind::InlineFragment(_fragment) => {
@@ -92,6 +110,6 @@ impl SelectionResolver {
 
         result.sort();
 
-        result
+        Ok(result)
     }
 }

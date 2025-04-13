@@ -164,7 +164,7 @@ impl Graph {
                                 .upsert_node(Node::subgraph_type(def_name, &join_type2.graph_id));
                             let selection_resolver =
                                 state.selection_resolvers_for_subgraph(&join_type2.graph_id)?;
-                            let selection = selection_resolver.resolve(def_name, key);
+                            let selection = selection_resolver.resolve(def_name, key)?;
 
                             info!(
                                 "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
@@ -176,7 +176,7 @@ impl Graph {
                     } else if let Some(key) = &join_type1.key {
                         let selection_resolver =
                             state.selection_resolvers_for_subgraph(&join_type1.graph_id)?;
-                        let selection = selection_resolver.resolve(def_name, key);
+                        let selection = selection_resolver.resolve(def_name, key)?;
 
                         info!(
                             "Creating self-referencing entity move edge in '{}/{}' via key '{}'",
