@@ -149,7 +149,7 @@ impl<'a> Planner<'a> {
         let tail_node = self.graph.node(tail_node_index)?;
         let source_graph_id = tail_node
             .graph_id()
-            .ok_or_else(|| PlannerError::TailMissingInfo(tail_node_index))?;
+            .ok_or(PlannerError::TailMissingInfo(tail_node_index))?;
         println!("source_graph_id: {source_graph_id}");
 
         Ok(vec![])
@@ -221,7 +221,7 @@ impl<'a> Planner<'a> {
             RootOperationType::Mutation => self.graph.mutation_root,
             RootOperationType::Subscription => self.graph.subscription_root,
         }
-        .ok_or_else(|| GraphError::MissingRootType(*operation_type))?;
+        .ok_or(GraphError::MissingRootType(*operation_type))?;
 
         Ok(self
             .graph

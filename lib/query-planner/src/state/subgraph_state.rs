@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use graphql_tools::ast::TypeExtension;
-use tracing::{debug, instrument};
+use tracing::instrument;
 
 use crate::federation_spec::{directives::JoinFieldDirective, join_type::JoinTypeDirective};
 

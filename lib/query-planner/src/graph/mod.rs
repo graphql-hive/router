@@ -58,19 +58,19 @@ impl Graph {
     pub fn node(&self, node_index: NodeIndex) -> Result<&Node, GraphError> {
         self.graph
             .node_weight(node_index)
-            .ok_or_else(|| GraphError::NodeNotFound(node_index))
+            .ok_or(GraphError::NodeNotFound(node_index))
     }
 
     pub fn edge(&self, edge_index: EdgeIndex) -> Result<&Edge, GraphError> {
         self.graph
             .edge_weight(edge_index)
-            .ok_or_else(|| GraphError::EdgeNotFound(edge_index))
+            .ok_or(GraphError::EdgeNotFound(edge_index))
     }
 
     pub fn get_edge_tail(&self, edge_index: &EdgeIndex) -> Result<NodeIndex, GraphError> {
         self.graph
             .edge_endpoints(*edge_index)
-            .ok_or_else(|| GraphError::EdgeNotFound(*edge_index))
+            .ok_or(GraphError::EdgeNotFound(*edge_index))
             .map(|v| v.1)
     }
 
@@ -278,7 +278,7 @@ impl Graph {
                             RootOperationType::Mutation => self.mutation_root,
                             RootOperationType::Subscription => self.subscription_root,
                         }
-                        .ok_or_else(|| GraphError::MissingRootType(*root_type))?;
+                        .ok_or(GraphError::MissingRootType(*root_type))?;
 
                         let tail = self.upsert_node(Node::subgraph_type(def_name, graph_id));
 
