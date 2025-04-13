@@ -52,31 +52,13 @@ impl Node {
         })
     }
 
-    pub fn create_node_for_definition(
-        name: &str,
-        subgraph: &str,
-        view: Option<(u64, String)>,
-    ) -> Node {
-        match view {
-            Some(view) => Node::SubgraphTypeView {
-                view_id: view.0,
-                node: SubgraphType {
-                    name: name.to_string(),
-                    subgraph: subgraph.to_string(),
-                },
-                selection_set: view.1,
-            },
-            None => Node::SubgraphType(SubgraphType {
-                name: name.to_string(),
-                subgraph: subgraph.to_string(),
-            }),
-        }
-    }
-
-    pub fn id_from(type_name: &str, subgraph: Option<&str>) -> String {
-        match subgraph {
-            Some(subgraph) => format!("{}/{}", type_name, subgraph),
-            None => type_name.to_string(),
+    pub fn graph_id(&self) -> Option<&str> {
+        match self {
+            Node::QueryRoot(_) => None,
+            Node::MutationRoot(_) => None,
+            Node::SubscriptionRoot(_) => None,
+            Node::SubgraphType(st) => Some(&st.subgraph),
+            Node::SubgraphTypeView { node, .. } => Some(&node.subgraph),
         }
     }
 }

@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+set -e
 
 export GRAPH=$(cargo run graph $1) # cargo run graph $1
 export URL_ENCODED_GRAPH=$(printf %s "$GRAPH" | jq -sRr @uri) # encodeUriComponent

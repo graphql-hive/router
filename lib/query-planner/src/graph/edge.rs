@@ -2,6 +2,13 @@ use std::fmt::Debug;
 
 use crate::federation_spec::directives::JoinFieldDirective;
 
+use super::selection::Selection;
+
+pub struct EntityMove {
+    pub key: String,
+    pub requirement: Selection,
+}
+
 pub enum Edge {
     /// A special edge between the root Node and then root entry point to the graph
     /// With this helper, you can jump from Query::RootQuery --field-> Query/SomeSubgraph --> --field--> SomeType/SomeSubgraph
@@ -15,7 +22,7 @@ pub enum Edge {
         requires: Option<String>,
         override_from: Option<String>,
     },
-    EntityMove(String),
+    EntityMove(EntityMove),
     /// join__implements
     AbstractMove(String),
     // interfaceObject
@@ -23,13 +30,19 @@ pub enum Edge {
 }
 
 impl Edge {
-    /// Helper to create a Field edge from a field name and join directive
+    pub fn create_entity_move(key: &str, selection: Selection) -> Self {
+        Self::EntityMove(EntityMove {
+            key: key.to_string(),
+            requirement: selection,
+        })
+    }
+
     pub fn create_field_move(name: String, join_field: Option<JoinFieldDirective>) -> Self {
         let requires = join_field.as_ref().and_then(|jf| jf.requires.clone());
         let override_from = join_field.as_ref().and_then(|jf| jf.override_value.clone());
 
         Self::FieldMove {
-            name,
+            name: name.clone(),
             join_field,
             requires,
             override_from,
@@ -39,17 +52,30 @@ impl Edge {
     pub fn id(&self) -> &str {
         match self {
             Self::FieldMove { name, .. } => name,
-            Self::EntityMove(id) => id,
+            Self::EntityMove(EntityMove { key, .. }) => key,
             Self::AbstractMove(id) => id,
             Self::RootEntrypoint { field_name } => field_name,
         }
     }
 
-    /// Gets the requirements as a string, if any
-    pub fn get_requirements(&self) -> Option<&String> {
+    pub fn requires(&self) -> Option<&str> {
         match self {
-            Self::FieldMove { requires, .. } => requires.as_ref(),
+            Self::FieldMove { requires, .. } => requires.as_ref().map(|req| req.as_str()),
             _ => None,
+        }
+    }
+
+    pub fn requirements_selections(&self) -> Option<&Selection> {
+        match self {
+            Self::EntityMove(entity_move) => Some(&entity_move.requirement),
+            _ => None,
+        }
+    }
+
+    pub fn cost(&self) -> u64 {
+        match self {
+            Self::FieldMove { .. } => 1,
+            _ => 10,
         }
     }
 }
@@ -89,8 +115,7 @@ impl Debug for Edge {
 
                 result
             }
-
-            Edge::EntityMove(name) => write!(f, "🔑 {}", name),
+            Edge::EntityMove(EntityMove { key, .. }) => write!(f, "🔑 {}", key),
             Edge::AbstractMove(name) => write!(f, "🔮 {}", name),
         }
     }
@@ -138,7 +163,10 @@ impl PartialEq for Edge {
                 },
             ) => name == other_name,
 
-            (Edge::EntityMove(name), Edge::EntityMove(other_name)) => name == other_name,
+            (
+                Edge::EntityMove(EntityMove { key, .. }),
+                Edge::EntityMove(EntityMove { key: other_key, .. }),
+            ) => key == other_key,
 
             (Edge::AbstractMove(name), Edge::AbstractMove(other_name)) => name == other_name,
 
