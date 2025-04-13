@@ -1,12 +1,8 @@
 use std::fmt::Debug;
 
-use petgraph::graph::EdgeIndex;
-
 use crate::federation_spec::directives::JoinFieldDirective;
 
 use super::selection::Selection;
-
-pub type EdgePair<'a> = (&'a Edge, EdgeIndex);
 
 pub struct EntityMove {
     pub key: String,

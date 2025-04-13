@@ -4,19 +4,17 @@ pub mod traversal_step;
 
 use std::fmt::Debug;
 
-use petgraph::{graph::NodeIndex, visit::EdgeRef};
+use petgraph::{
+    graph::{EdgeIndex, NodeIndex},
+    visit::EdgeRef,
+};
 use resolution_path::ResolutionPath;
 use tracing::{debug, instrument};
 use traversal_step::Step;
 
 use crate::{
     consumer_schema::ConsumerSchema,
-    graph::{
-        edge::{Edge, EdgePair},
-        error::GraphError,
-        selection::SelectionNode,
-        Graph,
-    },
+    graph::{edge::Edge, error::GraphError, selection::SelectionNode, Graph},
     state::supergraph_state::{RootOperationType, SupergraphState},
 };
 
@@ -109,34 +107,34 @@ impl<'a> Planner<'a> {
         step: &Step,
     ) -> Result<Vec<ResolutionPath>, PlannerError> {
         todo!("Implement find_direct_paths and others");
-        let mut result: Vec<ResolutionPath> = vec![];
-        let path_tail = path.tail(&self.graph)?;
+        // let mut result: Vec<ResolutionPath> = vec![];
+        // let path_tail = path.tail(&self.graph)?;
 
-        // Get all the edges from the current tail
-        // Filter by FieldMove edges with matching field name and not already in path, to avoid loops
-        let edges_iter = self
-            .graph
-            .edges_from(path_tail)
-            .filter(|e| matches!(e.weight(), Edge::FieldMove { name, .. } if name == step.field_name() && !path.edges.contains(&e.id())));
+        // // Get all the edges from the current tail
+        // // Filter by FieldMove edges with matching field name and not already in path, to avoid loops
+        // let edges_iter = self
+        //     .graph
+        //     .edges_from(path_tail)
+        //     .filter(|e| matches!(e.weight(), Edge::FieldMove { name, .. } if name == step.field_name() && !path.edges.contains(&e.id())));
 
-        for edge in edges_iter {
-            let edge_weight = edge.weight();
-            let edge_id = &edge.id();
-            let can_be_satisfied = self.can_satisfy_edge((edge_weight, *edge_id), path);
+        // for edge in edges_iter {
+        //     let edge_weight = edge.weight();
+        //     let edge_id = &edge.id();
+        //     let can_be_satisfied = self.can_satisfy_edge((edge_weight, *edge_id), path);
 
-            match can_be_satisfied {
-                Some(p) => {
-                    debug!("edge satisfied: {:?}", p);
-                    let next_resolution_path = path.advance_to(&self.graph, edge_id)?;
-                    result.push(next_resolution_path);
-                }
-                None => {
-                    debug!("edge not satisfied");
-                }
-            }
-        }
+        //     match can_be_satisfied {
+        //         Some(p) => {
+        //             debug!("edge satisfied: {:?}", p);
+        //             let next_resolution_path = path.advance_to(&self.graph, edge_id)?;
+        //             result.push(next_resolution_path);
+        //         }
+        //         None => {
+        //             debug!("edge not satisfied");
+        //         }
+        //     }
+        // }
 
-        Ok(result)
+        // Ok(result)
     }
 
     #[instrument(skip(self))]
@@ -158,7 +156,7 @@ impl<'a> Planner<'a> {
     #[instrument(skip(self))]
     fn can_satisfy_edge(
         &self,
-        (edge, edge_id): EdgePair,
+        (edge, edge_id): (&Edge, EdgeIndex),
         path: &ResolutionPath,
     ) -> Option<Vec<ResolutionPath>> {
         debug!(edge_weight = debug(edge));
@@ -191,11 +189,8 @@ impl<'a> Planner<'a> {
                 // it's important to pop from the end as we want to process the last added requirement first
                 while let Some(requirement) = requirements.pop() {
                     match &requirement.selection {
-                        SelectionNode::Field {
-                            field_name,
-                            type_name,
-                            selections,
-                        } => {
+                        SelectionNode::Field { .. } => {
+                            todo!("implement this")
                             // let result =
                             // validate_field_requirement(field_name, type_name, selections);
 
