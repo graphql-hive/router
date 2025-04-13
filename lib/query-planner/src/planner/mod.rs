@@ -108,6 +108,7 @@ impl<'a> Planner<'a> {
         path: &ResolutionPath,
         step: &Step,
     ) -> Result<Vec<ResolutionPath>, PlannerError> {
+        todo!("Implement find_direct_paths and others");
         let mut result: Vec<ResolutionPath> = vec![];
         let path_tail = path.tail(&self.graph)?;
 
