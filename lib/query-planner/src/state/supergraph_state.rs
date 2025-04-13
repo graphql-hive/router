@@ -6,6 +6,7 @@ use std::{
 use graphql_parser_hive_fork::query::Directive;
 use graphql_parser_hive_fork::schema as input;
 use graphql_tools::ast::SchemaDocumentExtension;
+use tracing::instrument;
 
 use crate::federation_spec::directives::{
     FederationDirective, InaccessibleDirective, JoinEnumValueDirective, JoinFieldDirective,
@@ -14,8 +15,15 @@ use crate::federation_spec::directives::{
 
 use super::{selection_resolver::SelectionResolver, subgraph_state::SubgraphState};
 
-static STANDARD_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
+static BUILDIB_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
+
 pub type SchemaDocument = input::Document<'static, String>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum SupergraphStateError {
+    #[error("Subgraph not found: '{0}'")]
+    SubgraphNotFound(String),
+}
 
 #[derive(Debug)]
 pub struct SupergraphState<'a> {
@@ -32,6 +40,7 @@ pub struct SupergraphState<'a> {
 }
 
 impl<'a> SupergraphState<'a> {
+    #[instrument(skip(schema), name = "new_supergraph_state")]
     pub fn new(schema: &'a SchemaDocument) -> Self {
         let mut instance = Self {
             document: schema,
@@ -53,22 +62,27 @@ impl<'a> SupergraphState<'a> {
         instance
     }
 
-    pub fn subgraph_state(&self, subgraph_id: &str) -> &SubgraphState {
-        &self
-            .subgraphs_state
-            .get(subgraph_id)
-            .expect("subgraph state not found")
-            .subgraph_state
-    }
-
-    pub fn selection_resolvers_for_subgraph(&self, subgraph_id: &str) -> &SelectionResolver {
+    pub fn subgraph_state(
+        &self,
+        subgraph_id: &str,
+    ) -> Result<&SubgraphState, SupergraphStateError> {
         self.subgraphs_state
             .get(subgraph_id)
-            .expect("subgraph state not found")
+            .ok_or_else(|| SupergraphStateError::SubgraphNotFound(subgraph_id.to_string()))
+            .map(|v| &v.subgraph_state)
+    }
+
+    pub fn selection_resolvers_for_subgraph(
+        &self,
+        subgraph_id: &str,
+    ) -> Result<&SelectionResolver, SupergraphStateError> {
+        self.subgraphs_state
+            .get(subgraph_id)
+            .ok_or_else(|| SupergraphStateError::SubgraphNotFound(subgraph_id.to_string()))
     }
 
     pub fn is_scalar_type(&self, type_name: &str) -> bool {
-        if STANDARD_SCALARS.contains(&type_name) {
+        if BUILDIB_SCALARS.contains(&type_name) {
             return true;
         }
 
@@ -92,7 +106,7 @@ impl<'a> SupergraphState<'a> {
             }
         }
 
-        for builtin in STANDARD_SCALARS {
+        for builtin in BUILDIB_SCALARS {
             set.insert(builtin.to_string());
         }
 
@@ -127,6 +141,7 @@ impl<'a> SupergraphState<'a> {
         map
     }
 
+    #[instrument(skip(schema))]
     fn build_map(schema: &'a SchemaDocument) -> HashMap<String, SupergraphDefinition<'a>> {
         schema
             .definitions
@@ -175,6 +190,7 @@ impl<'a> SupergraphState<'a> {
             .collect()
     }
 
+    #[instrument(skip(input_object_type), fields(name = input_object_type.name))]
     fn build_input_object_type(
         input_object_type: &'a input::InputObjectType<'static, String>,
     ) -> SupergraphInputObjectType<'a> {
@@ -184,6 +200,7 @@ impl<'a> SupergraphState<'a> {
         }
     }
 
+    #[instrument(skip(scalar_type), fields(name = scalar_type.name))]
     fn build_scalar_type(
         scalar_type: &'a input::ScalarType<'static, String>,
     ) -> SupergraphScalarType<'a> {
@@ -193,6 +210,7 @@ impl<'a> SupergraphState<'a> {
         }
     }
 
+    #[instrument(skip(union_type), fields(name = union_type.name))]
     fn build_union_type(
         union_type: &'a input::UnionType<'static, String>,
     ) -> SupergraphUnionType<'a> {
@@ -206,6 +224,7 @@ impl<'a> SupergraphState<'a> {
         }
     }
 
+    #[instrument(skip(enum_type), fields(name = enum_type.name))]
     fn build_enum_type(enum_type: &'a input::EnumType<'static, String>) -> SupergraphEnumType<'a> {
         SupergraphEnumType {
             source: enum_type,
@@ -222,7 +241,7 @@ impl<'a> SupergraphState<'a> {
                 .collect(),
         }
     }
-
+    #[instrument(skip(fields), fields(fields_count = fields.len()))]
     fn build_fields(
         fields: &'a [input::Field<'static, String>],
     ) -> HashMap<String, SupergraphField<'a>> {
@@ -246,6 +265,7 @@ impl<'a> SupergraphState<'a> {
             .collect()
     }
 
+    #[instrument(skip(interface_type), fields(name = interface_type.name))]
     fn build_interface_type(
         interface_type: &'a input::InterfaceType<'static, String>,
     ) -> SupergraphInterfaceType<'a> {
@@ -263,6 +283,7 @@ impl<'a> SupergraphState<'a> {
         }
     }
 
+    #[instrument(skip(object_type, schema), fields(name = object_type.name))]
     fn build_object_type(
         object_type: &'a input::ObjectType<'static, String>,
         schema: &'a SchemaDocument,
@@ -314,10 +335,6 @@ impl<'a> SupergraphState<'a> {
         }
 
         subgraphs
-    }
-
-    pub fn resolve_graph_id(&self, graph_id: &str) -> String {
-        self.known_subgraphs.get(graph_id).unwrap().to_string()
     }
 
     fn extract_directives<D: FederationDirective<'a>>(

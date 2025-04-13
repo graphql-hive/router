@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use graphql_tools::ast::TypeExtension;
+use tracing::{debug, instrument};
 
 use crate::federation_spec::{directives::JoinFieldDirective, join_type::JoinTypeDirective};
 
@@ -18,6 +19,7 @@ pub struct SubgraphState {
 }
 
 impl SubgraphState {
+    #[instrument(skip(supergraph_state))]
     pub fn decompose_from_supergraph(
         graph_id: &SubgraphId,
         supergraph_state: &SupergraphState,
@@ -323,6 +325,7 @@ mod tests {
 
         let types = supergraph
             .subgraph_state("PANDAS")
+            .expect("failed to find subgraph")
             .known_subgraph_definitions();
 
         assert_eq!(types.len(), 2); // Query, Panda
@@ -352,6 +355,7 @@ mod tests {
 
         let types = supergraph
             .subgraph_state("USERS")
+            .expect("failed to find subgraph")
             .known_subgraph_definitions();
 
         assert_eq!(types.len(), 1);
@@ -373,6 +377,7 @@ mod tests {
 
         let types = supergraph
             .subgraph_state("REVIEWS")
+            .expect("failed to find subgraph")
             .known_subgraph_definitions();
         assert_eq!(types.len(), 4);
         let mut product_type_fields = types
@@ -392,6 +397,7 @@ mod tests {
 
         let types = supergraph
             .subgraph_state("PRODUCTS")
+            .expect("failed to find subgraph")
             .known_subgraph_definitions();
         assert_eq!(types.len(), 8);
         let mut query_type_fields = types
@@ -433,6 +439,7 @@ mod tests {
 
         let types = supergraph
             .subgraph_state("INVENTORY")
+            .expect("failed to find subgraph")
             .known_subgraph_definitions();
 
         assert_eq!(types.len(), 5); // Inventory

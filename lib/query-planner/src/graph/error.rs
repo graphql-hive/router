@@ -1,4 +1,4 @@
-use crate::state::supergraph_state::RootOperationType;
+use crate::state::supergraph_state::{RootOperationType, SupergraphStateError};
 use petgraph::graph::{EdgeIndex, NodeIndex};
 
 #[derive(thiserror::Error, Debug)]
@@ -13,4 +13,12 @@ pub enum GraphError {
     DefinitionNotFound(String),
     #[error("Field named '{0}' was not found in definition name '{1}'")]
     FieldDefinitionNotFound(String, String),
+    #[error("Supergraph state error: {0}")]
+    SupergraphStateError(SupergraphStateError),
+}
+
+impl From<SupergraphStateError> for GraphError {
+    fn from(err: SupergraphStateError) -> Self {
+        GraphError::SupergraphStateError(err)
+    }
 }
