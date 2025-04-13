@@ -12,7 +12,7 @@ mod star_stuff {
         let schema = parse_schema(supergraph_sdl);
         let metadata = SupergraphState::new(&schema);
 
-        Graph::new_from_supergraph(&metadata).expect("failed to create graph")
+        Graph::graph_from_supergraph_state(&metadata).expect("failed to create graph")
     }
 
     #[derive(Debug)]

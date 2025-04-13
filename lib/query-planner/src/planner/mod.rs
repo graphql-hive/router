@@ -48,7 +48,7 @@ impl From<GraphError> for PlannerError {
 
 impl<'a> Planner<'a> {
     pub fn new(supergraph: SupergraphState<'a>) -> Result<Self, PlannerError> {
-        let graph = Graph::new_from_supergraph(&supergraph)?;
+        let graph = Graph::graph_from_supergraph_state(&supergraph)?;
 
         Ok(Self {
             consumer_schema: ConsumerSchema::new_from_supergraph(supergraph.document),
@@ -146,7 +146,9 @@ impl<'a> Planner<'a> {
     ) -> Result<Vec<ResolutionPath>, PlannerError> {
         let tail_node_index = path.tail(&self.graph)?;
         let tail_node = self.graph.node(tail_node_index)?;
-        let source_graph_id = tail_node.graph_id().expect("tail does not have graph info");
+        let source_graph_id = tail_node
+            .graph_id()
+            .ok_or_else(|| PlannerError::TailMissingInfo(tail_node_index))?;
         println!("source_graph_id: {source_graph_id}");
 
         Ok(vec![])
