@@ -2,7 +2,7 @@ pub mod plan_nodes;
 pub mod resolution_path;
 pub mod traversal_step;
 
-use std::{fmt::Debug, fs::read};
+use std::fmt::Debug;
 
 use petgraph::{
     graph::{EdgeIndex, NodeIndex},
@@ -149,9 +149,11 @@ impl<'a> Planner<'a> {
     ) -> Result<Vec<ResolutionPath>, PlannerError> {
         let tail_node_index = path.tail(&self.graph)?;
         let tail_node = self.graph.node(tail_node_index)?;
-        let source_graph_id = tail_node
+        let _source_graph_id = tail_node
             .graph_id()
             .ok_or(PlannerError::TailMissingInfo(tail_node_index))?;
+
+        // todo!("almost there")
 
         Ok(vec![])
     }
