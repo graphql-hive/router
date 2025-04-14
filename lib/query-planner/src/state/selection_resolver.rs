@@ -1,7 +1,7 @@
 use graphql_parser_hive_fork::query::{Field, SelectionSet};
 use graphql_tools::static_graphql::query::Selection as OperationSelectionKind;
 
-use crate::graph::selection::{parse_selection_set, Selection, SelectionNode};
+use crate::graph::selection::{parse_selection_set, Selection, SelectionNode, SelectionNodeField};
 
 use super::subgraph_state::SubgraphState;
 
@@ -79,11 +79,11 @@ impl SelectionResolver {
             )?)
         };
 
-        Ok(SelectionNode::Field {
+        Ok(SelectionNode::Field(SelectionNodeField {
             field_name: field_in_type_def.name.clone(),
             type_name: type_name.to_string(),
             selections,
-        })
+        }))
     }
 
     fn resolve_selection_set(

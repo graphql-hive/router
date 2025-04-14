@@ -2,7 +2,7 @@ pub mod plan_nodes;
 pub mod resolution_path;
 pub mod traversal_step;
 
-use std::fmt::Debug;
+use std::{fmt::Debug, fs::read};
 
 use petgraph::{
     graph::{EdgeIndex, NodeIndex},
@@ -14,7 +14,12 @@ use traversal_step::Step;
 
 use crate::{
     consumer_schema::ConsumerSchema,
-    graph::{edge::Edge, error::GraphError, selection::SelectionNode, Graph},
+    graph::{
+        edge::Edge,
+        error::GraphError,
+        selection::{SelectionNode, SelectionNodeField},
+        Graph,
+    },
     state::supergraph_state::{RootOperationType, SupergraphState},
 };
 
@@ -106,35 +111,34 @@ impl<'a> Planner<'a> {
         path: &ResolutionPath,
         step: &Step,
     ) -> Result<Vec<ResolutionPath>, PlannerError> {
-        todo!("Implement find_direct_paths and others");
-        // let mut result: Vec<ResolutionPath> = vec![];
-        // let path_tail = path.tail(&self.graph)?;
+        let mut result: Vec<ResolutionPath> = vec![];
+        let path_tail = path.tail(&self.graph)?;
 
-        // // Get all the edges from the current tail
-        // // Filter by FieldMove edges with matching field name and not already in path, to avoid loops
-        // let edges_iter = self
-        //     .graph
-        //     .edges_from(path_tail)
-        //     .filter(|e| matches!(e.weight(), Edge::FieldMove { name, .. } if name == step.field_name() && !path.edges.contains(&e.id())));
+        // Get all the edges from the current tail
+        // Filter by FieldMove edges with matching field name and not already in path, to avoid loops
+        let edges_iter = self
+            .graph
+            .edges_from(path_tail)
+            .filter(|e| matches!(e.weight(), Edge::FieldMove { name, .. } if name == step.field_name() && !path.edges.contains(&e.id())));
 
-        // for edge in edges_iter {
-        //     let edge_weight = edge.weight();
-        //     let edge_id = &edge.id();
-        //     let can_be_satisfied = self.can_satisfy_edge((edge_weight, *edge_id), path);
+        for edge in edges_iter {
+            let edge_weight = edge.weight();
+            let edge_id = &edge.id();
+            let can_be_satisfied = self.can_satisfy_edge((edge_weight, *edge_id), path)?;
 
-        //     match can_be_satisfied {
-        //         Some(p) => {
-        //             debug!("edge satisfied: {:?}", p);
-        //             let next_resolution_path = path.advance_to(&self.graph, edge_id)?;
-        //             result.push(next_resolution_path);
-        //         }
-        //         None => {
-        //             debug!("edge not satisfied");
-        //         }
-        //     }
-        // }
+            match can_be_satisfied {
+                Some(p) => {
+                    debug!("edge satisfied: {:?}", p);
+                    let next_resolution_path = path.advance_to(&self.graph, edge_id)?;
+                    result.push(next_resolution_path);
+                }
+                None => {
+                    debug!("edge not satisfied");
+                }
+            }
+        }
 
-        // Ok(result)
+        Ok(result)
     }
 
     #[instrument(skip(self))]
@@ -148,7 +152,6 @@ impl<'a> Planner<'a> {
         let source_graph_id = tail_node
             .graph_id()
             .ok_or(PlannerError::TailMissingInfo(tail_node_index))?;
-        println!("source_graph_id: {source_graph_id}");
 
         Ok(vec![])
     }
@@ -158,13 +161,11 @@ impl<'a> Planner<'a> {
         &self,
         (edge, edge_id): (&Edge, EdgeIndex),
         path: &ResolutionPath,
-    ) -> Option<Vec<ResolutionPath>> {
-        debug!(edge_weight = debug(edge));
-
+    ) -> Result<Option<Vec<ResolutionPath>>, PlannerError> {
         match edge.requirements_selections() {
             None => {
                 debug!("edge does not have requirements, will return empty array");
-                Some(vec![])
+                Ok(Some(vec![]))
             }
             Some(selections) => {
                 debug!(
@@ -174,7 +175,7 @@ impl<'a> Planner<'a> {
                 );
 
                 let mut requirements: Vec<MoveRequirement> = vec![];
-                let paths_to_requirements: Vec<ResolutionPath> = vec![];
+                let mut paths_to_requirements: Vec<ResolutionPath> = vec![];
 
                 for selection in selections.selection_set.iter() {
                     requirements.splice(
@@ -189,12 +190,26 @@ impl<'a> Planner<'a> {
                 // it's important to pop from the end as we want to process the last added requirement first
                 while let Some(requirement) = requirements.pop() {
                     match &requirement.selection {
-                        SelectionNode::Field { .. } => {
-                            todo!("implement this")
-                            // let result =
-                            // validate_field_requirement(field_name, type_name, selections);
+                        SelectionNode::Field(selection_field_requirement) => {
+                            debug!(
+                                "validating requirements for '{:?}' in edge '{:?}'",
+                                requirement, selection_field_requirement
+                            );
 
-                            // match result {}
+                            let result = self.validate_field_requirement(
+                                &requirement,
+                                selection_field_requirement,
+                            )?;
+
+                            match result {
+                                Some((next_paths, next_requirements)) => {
+                                    paths_to_requirements.extend(next_paths);
+                                    requirements.splice(0..0, next_requirements);
+                                }
+                                None => {
+                                    return Ok(None);
+                                }
+                            };
                         }
                         SelectionNode::Fragment { .. } => {
                             unimplemented!("fragment not supported yet")
@@ -202,9 +217,71 @@ impl<'a> Planner<'a> {
                     }
                 }
 
-                Some(paths_to_requirements)
+                Ok(Some(paths_to_requirements))
             }
         }
+    }
+
+    #[instrument(skip(self))]
+    fn validate_field_requirement(
+        &self,
+        move_requirement: &MoveRequirement,
+        field_move_requirement: &SelectionNodeField,
+    ) -> Result<Option<(Vec<ResolutionPath>, Vec<MoveRequirement>)>, PlannerError> {
+        let field_name = &field_move_requirement.field_name;
+        let mut next_paths: Vec<ResolutionPath> = Vec::new();
+
+        for path in move_requirement.paths.iter() {
+            let direct_paths = self.find_direct_paths(
+                path,
+                &Step::FieldStep {
+                    name: field_name.clone(),
+                },
+            )?;
+
+            for direct_path in direct_paths.into_iter() {
+                next_paths.push(direct_path);
+            }
+        }
+
+        for path in move_requirement.paths.iter() {
+            let indirect_paths = self.find_indirect_paths(
+                path,
+                &Step::FieldStep {
+                    name: field_name.clone(),
+                },
+            )?;
+
+            for indirect_path in indirect_paths.into_iter() {
+                next_paths.push(indirect_path);
+            }
+        }
+
+        if next_paths.is_empty() {
+            return Ok(None);
+        }
+
+        if move_requirement.selection.selections().is_none()
+            || move_requirement
+                .selection
+                .selections()
+                .is_some_and(|s| s.is_empty())
+        {
+            return Ok(Some((next_paths, vec![])));
+        }
+
+        let next_requirements: Vec<MoveRequirement> = move_requirement
+            .selection
+            .selections()
+            .unwrap()
+            .iter()
+            .map(|selection| MoveRequirement {
+                selection: selection.clone(),
+                paths: next_paths.clone(),
+            })
+            .collect();
+
+        Ok(Some((next_paths, next_requirements)))
     }
 
     fn get_entrypoints(
@@ -238,6 +315,7 @@ impl<'a> Planner<'a> {
     // }
 }
 
+#[derive(Debug)]
 pub struct MoveRequirement {
     pub paths: Vec<ResolutionPath>,
     pub selection: SelectionNode,

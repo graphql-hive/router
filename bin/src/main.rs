@@ -10,7 +10,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 fn main() {
-    let tree_layer = tracing_tree::HierarchicalLayer::new(3)
+    let tree_layer = tracing_tree::HierarchicalLayer::new(2)
         // open/close logging
         .with_span_modes(false)
         // timer
@@ -18,6 +18,7 @@ fn main() {
         // unused
         .with_thread_names(false)
         .with_thread_ids(false)
+        .with_indent_lines(true)
         .with_targets(false);
 
     tracing_subscriber::registry().with(tree_layer).init();

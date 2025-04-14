@@ -5,13 +5,16 @@ use graphql_parser_hive_fork::{
     query::{Definition, OperationDefinition},
 };
 
+#[derive(Clone, Debug)]
+pub struct SelectionNodeField {
+    pub field_name: String,
+    pub type_name: String,
+    pub selections: Option<Vec<SelectionNode>>,
+}
+
 #[derive(Clone)]
 pub enum SelectionNode {
-    Field {
-        field_name: String,
-        type_name: String,
-        selections: Option<Vec<SelectionNode>>,
-    },
+    Field(SelectionNodeField),
     Fragment {
         type_name: String,
         selections: Vec<SelectionNode>,
@@ -21,17 +24,18 @@ pub enum SelectionNode {
 impl Ord for SelectionNode {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match (self, other) {
-            (SelectionNode::Field { .. }, SelectionNode::Field { .. }) => {
-                self.sort_key().cmp(&other.sort_key())
-            }
+            (
+                SelectionNode::Field(SelectionNodeField { .. }),
+                SelectionNode::Field(SelectionNodeField { .. }),
+            ) => self.sort_key().cmp(&other.sort_key()),
             (
                 SelectionNode::Fragment { type_name: a, .. },
                 SelectionNode::Fragment { type_name: b, .. },
             ) => a.cmp(b),
-            (SelectionNode::Field { .. }, SelectionNode::Fragment { .. }) => {
+            (SelectionNode::Field(SelectionNodeField { .. }), SelectionNode::Fragment { .. }) => {
                 std::cmp::Ordering::Less
             }
-            (SelectionNode::Fragment { .. }, SelectionNode::Field { .. }) => {
+            (SelectionNode::Fragment { .. }, SelectionNode::Field(SelectionNodeField { .. })) => {
                 std::cmp::Ordering::Greater
             }
         }
@@ -47,25 +51,25 @@ impl PartialOrd for SelectionNode {
 impl SelectionNode {
     pub fn selections(&self) -> Option<&Vec<SelectionNode>> {
         match self {
-            SelectionNode::Field { selections, .. } => selections.as_ref(),
+            SelectionNode::Field(SelectionNodeField { selections, .. }) => selections.as_ref(),
             SelectionNode::Fragment { selections, .. } => Some(selections),
         }
     }
 
     pub fn sort_key(&self) -> String {
         match self {
-            SelectionNode::Field {
+            SelectionNode::Field(SelectionNodeField {
                 field_name,
                 type_name,
                 ..
-            } => format!("{}.{}", type_name, field_name),
+            }) => format!("{}.{}", type_name, field_name),
             SelectionNode::Fragment { type_name, .. } => type_name.to_string(),
         }
     }
 
     pub fn type_name(&self) -> &str {
         match self {
-            SelectionNode::Field { type_name, .. } => type_name,
+            SelectionNode::Field(SelectionNodeField { type_name, .. }) => type_name,
             SelectionNode::Fragment { type_name, .. } => type_name,
         }
     }
@@ -74,11 +78,11 @@ impl SelectionNode {
 impl Debug for SelectionNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SelectionNode::Field {
+            SelectionNode::Field(SelectionNodeField {
                 field_name,
                 type_name,
                 selections,
-            } => f
+            }) => f
                 .debug_struct("PlanSelection::Field")
                 .field("field_name", field_name)
                 .field("type_name", type_name)
@@ -100,16 +104,16 @@ impl PartialEq for SelectionNode {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (
-                SelectionNode::Field {
+                SelectionNode::Field(SelectionNodeField {
                     field_name,
                     type_name,
                     ..
-                },
-                SelectionNode::Field {
+                }),
+                SelectionNode::Field(SelectionNodeField {
                     field_name: other_field_name,
                     type_name: other_type_name,
                     ..
-                },
+                }),
             ) => field_name == other_field_name && type_name == other_type_name,
             (
                 SelectionNode::Fragment {
