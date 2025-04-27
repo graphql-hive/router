@@ -75,6 +75,8 @@ impl<'a> Planner<'a> {
         steps
             .iter()
             .try_fold(initial_paths, |current_paths, step| {
+                debug!("trying to advance to step: {:?}", step,);
+
                 if current_paths.is_empty() {
                     return Ok(vec![]);
                 }
@@ -82,16 +84,16 @@ impl<'a> Planner<'a> {
                 let next_paths: Result<Vec<ResolutionPath>, PlannerError> =
                     current_paths.iter().try_fold(vec![], |mut acc, path| {
                         debug!(
-                            "looking for paths to step '{}' from node {:?}",
-                            step.field_name(),
-                            self.graph.node(path.root_node).unwrap().id(),
+                            "finding paths from {:?}",
+                            self.graph
+                                .node(path.tail(&self.graph).unwrap())
+                                .unwrap()
+                                .id()
                         );
                         let direct_paths = self.find_direct_paths(path, step)?;
-                        debug!("found total of {} direct paths", direct_paths.len());
                         let indirect_paths = self.find_indirect_paths(path, step)?;
-                        debug!("found total of {} indirect paths", indirect_paths.len());
                         let advance = !direct_paths.is_empty() || !indirect_paths.is_empty();
-                        debug!("advance: {}", advance);
+                        // debug!("advance: {}", advance);
 
                         acc.extend(direct_paths.into_iter());
                         acc.extend(indirect_paths.into_iter());
@@ -105,7 +107,7 @@ impl<'a> Planner<'a> {
         Ok(())
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self), ret())]
     fn find_direct_paths(
         &self,
         path: &ResolutionPath,
@@ -124,16 +126,23 @@ impl<'a> Planner<'a> {
         for edge in edges_iter {
             let edge_weight = edge.weight();
             let edge_id = &edge.id();
+
+            debug!("checking edge {}", self.graph.pretty_print(*edge_id));
             let can_be_satisfied = self.can_satisfy_edge((edge_weight, *edge_id), path)?;
 
             match can_be_satisfied {
                 Some(p) => {
-                    debug!("edge satisfied: {:?}", p);
+                    debug!(
+                        "Advancing path {} with edge {}",
+                        path.pretty_print(&self.graph),
+                        self.graph.pretty_print(edge.id())
+                    );
+                    // debug!("edge satisfied: {:?}", p);
                     let next_resolution_path = path.advance_to(&self.graph, edge_id)?;
                     result.push(next_resolution_path);
                 }
                 None => {
-                    debug!("edge not satisfied");
+                    debug!("Edge not satisfied, continue look up...");
                 }
             }
         }
@@ -141,7 +150,7 @@ impl<'a> Planner<'a> {
         Ok(result)
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self), ret())]
     fn find_indirect_paths(
         &self,
         path: &ResolutionPath,
@@ -165,16 +174,13 @@ impl<'a> Planner<'a> {
         path: &ResolutionPath,
     ) -> Result<Option<Vec<ResolutionPath>>, PlannerError> {
         match edge.requirements_selections() {
-            None => {
-                debug!("edge does not have requirements, will return empty array");
-                Ok(Some(vec![]))
-            }
+            None => Ok(Some(vec![])),
             Some(selections) => {
-                debug!(
-                    "checking requirements for '{:?}' in edge '{}'",
-                    selections,
-                    edge.id()
-                );
+                // debug!(
+                //     "checking requirements for '{:?}' in edge '{}'",
+                //     selections,
+                //     edge.id()
+                // );
 
                 let mut requirements: Vec<MoveRequirement> = vec![];
                 let mut paths_to_requirements: Vec<ResolutionPath> = vec![];
@@ -193,10 +199,10 @@ impl<'a> Planner<'a> {
                 while let Some(requirement) = requirements.pop() {
                     match &requirement.selection {
                         SelectionNode::Field(selection_field_requirement) => {
-                            debug!(
-                                "validating requirements for '{:?}' in edge '{:?}'",
-                                requirement, selection_field_requirement
-                            );
+                            // debug!(
+                            //     "validating requirements for '{:?}' in edge '{:?}'",
+                            //     requirement, selection_field_requirement
+                            // );
 
                             let result = self.validate_field_requirement(
                                 &requirement,

@@ -7,7 +7,7 @@ pub enum Step {
 impl Debug for Step {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Step::FieldStep { name } => f.write_str(name),
+            Step::FieldStep { name } => f.debug_tuple("FieldStep").field(name).finish(),
         }
     }
 }
