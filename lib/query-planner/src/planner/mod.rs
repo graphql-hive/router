@@ -92,7 +92,7 @@ impl<'a> Planner<'a> {
                         );
                         let direct_paths = self.find_direct_paths(path, step)?;
                         let indirect_paths = self.find_indirect_paths(path, step)?;
-                        let advance = !direct_paths.is_empty() || !indirect_paths.is_empty();
+                        let _advance = !direct_paths.is_empty() || !indirect_paths.is_empty();
                         // debug!("advance: {}", advance);
 
                         acc.extend(direct_paths.into_iter());
@@ -131,7 +131,7 @@ impl<'a> Planner<'a> {
             let can_be_satisfied = self.can_satisfy_edge((edge_weight, *edge_id), path)?;
 
             match can_be_satisfied {
-                Some(p) => {
+                Some(_p) => {
                     debug!(
                         "Advancing path {} with edge {}",
                         path.pretty_print(&self.graph),
