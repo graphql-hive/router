@@ -53,6 +53,18 @@ impl ResolutionPath {
         }
     }
 
+    pub fn pretty_print(&self, graph: &Graph) -> String {
+        if self.edges.is_empty() {
+            graph.node(self.root_node).unwrap().id()
+        } else {
+            self.edges
+                .iter()
+                .map(|i| graph.pretty_print(*i))
+                .collect::<Vec<String>>()
+                .join(" --> ")
+        }
+    }
+
     pub fn advance_to(
         &self,
         graph: &Graph,

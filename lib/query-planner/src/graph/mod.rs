@@ -91,6 +91,15 @@ impl Graph {
         Ok(())
     }
 
+    pub fn pretty_print(&self, edge_index: EdgeIndex) -> String {
+        let (source, target) = self.graph.edge_endpoints(edge_index).unwrap();
+        let from = self.node(source).unwrap();
+        let to = self.node(target).unwrap();
+        let edge = self.edge(edge_index).unwrap();
+
+        format!("{} --[{}]-> {}", from.id(), edge.id(), to.id())
+    }
+
     #[instrument(skip(self, state))]
     fn build_root_nodes(&mut self, state: &SupergraphState<'_>) -> Result<(), GraphError> {
         self.query_root =
