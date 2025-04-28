@@ -433,9 +433,12 @@ dependencies = [
  "graphql-parser-hive-fork",
  "graphql-tools",
  "insta",
+ "lazy_static",
  "petgraph",
  "thiserror 2.0.12",
  "tracing",
+ "tracing-subscriber",
+ "tracing-tree",
 ]
 
 [[package]]

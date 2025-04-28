@@ -1,0 +1,101 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+  query: Query
+}
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(
+  graph: join__Graph
+  requires: join__FieldSet
+  provides: join__FieldSet
+  type: String
+  external: Boolean
+  override: String
+  usedOverridden: Boolean
+) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(
+  graph: join__Graph!
+  interface: String!
+) repeatable on OBJECT | INTERFACE
+
+directive @join__type(
+  graph: join__Graph!
+  key: join__FieldSet
+  extension: Boolean! = false
+  resolvable: Boolean! = true
+  isInterfaceObject: Boolean! = false
+) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(
+  graph: join__Graph!
+  member: String!
+) repeatable on UNION
+
+directive @link(
+  url: String
+  as: String
+  for: link__Purpose
+  import: [link__Import]
+) repeatable on SCHEMA
+
+type Category @join__type(graph: CATEGORY) {
+  id: ID!
+  name: String!
+}
+
+scalar join__FieldSet
+
+enum join__Graph {
+  CATEGORY @join__graph(name: "category", url: "")
+  NAME @join__graph(name: "name", url: "")
+  PRICE @join__graph(name: "price", url: "")
+}
+
+scalar link__Import
+
+enum link__Purpose {
+  """
+  `SECURITY` features provide metadata necessary to securely resolve fields.
+  """
+  SECURITY
+
+  """
+  `EXECUTION` features provide metadata necessary for operation execution.
+  """
+  EXECUTION
+}
+
+type Name @join__type(graph: NAME) {
+  id: ID!
+  brand: String!
+  model: String!
+}
+
+type Price @join__type(graph: PRICE) {
+  id: ID!
+  amount: Int!
+  currency: String!
+}
+
+type Product
+  @join__type(graph: CATEGORY)
+  @join__type(graph: NAME)
+  @join__type(graph: PRICE) {
+  id: ID!
+  category: Category! @join__field(graph: CATEGORY)
+  name: Name! @join__field(graph: NAME)
+  price: Price! @join__field(graph: PRICE)
+}
+
+type Query
+  @join__type(graph: CATEGORY)
+  @join__type(graph: NAME)
+  @join__type(graph: PRICE) {
+  product: Product!
+  products: [Product!]!
+}

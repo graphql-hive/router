@@ -5,10 +5,9 @@ edition = "2021"
 
 [lib]
 
-
 [dependencies]
 graphql-tools = { version = "0.4.0", features = [
-    "graphql_parser_fork",
+  "graphql_parser_fork",
 ], default-features = false }
 graphql-parser-hive-fork = "0.5.0"
 thiserror = "2.0.12"
@@ -16,4 +15,7 @@ petgraph = "0.8.0"
 tracing = "0.1.41"
 
 [dev-dependencies]
-insta = "1.42.1"
+insta = { version = "1.42.1" }
+tracing-subscriber = "0.3.19"
+tracing-tree = "0.4.0"
+lazy_static = "1.5.0"
