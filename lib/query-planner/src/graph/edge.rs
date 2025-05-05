@@ -98,7 +98,17 @@ impl Display for Edge {
             Edge::SubgraphEntrypoint { graph_id, .. } => write!(f, "{}", graph_id),
             Edge::EntityMove(EntityMove { .. }) => write!(f, "🔑"),
             Edge::AbstractMove(_) => write!(f, "🔮"),
-            Edge::FieldMove { name, .. } => write!(f, "{}", name),
+            Edge::FieldMove { name, requires, .. } => {
+                write!(
+                    f,
+                    "{}{}",
+                    name,
+                    requires
+                        .as_ref()
+                        .map(|v| format!(" 🧩{{{}}}", v))
+                        .unwrap_or("".to_string())
+                )
+            }
         }
     }
 }
@@ -137,7 +147,9 @@ impl Debug for Edge {
 
                 result
             }
-            Edge::EntityMove(EntityMove { key, .. }) => write!(f, "🔑 {}", key),
+            Edge::EntityMove(EntityMove { key, requirement }) => {
+                write!(f, "🔑 {} {}", key, requirement)
+            }
             Edge::AbstractMove(name) => write!(f, "🔮 {}", name),
         }
     }

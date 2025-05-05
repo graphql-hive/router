@@ -110,21 +110,31 @@ impl Graph {
             None => "",
         };
 
+        let requires_details = match edge {
+            Edge::FieldMove { requires, .. } => requires
+                .as_ref()
+                .map(|v| format!(" 🧩{{{}}}", v))
+                .unwrap_or("".to_string()),
+            _ => "".to_string(),
+        };
+
         if without_source {
             format!(
-                "-({}{}{})- {}",
+                "-({}{}{}{})- {}",
                 key_str,
                 req_str,
                 edge.display_name(),
+                requires_details,
                 to.id()
             )
         } else {
             format!(
-                "{} -({}{}{})- {}",
+                "{} -({}{}{}{})- {}",
                 from.id(),
                 key_str,
                 req_str,
                 edge.display_name(),
+                requires_details,
                 to.id()
             )
         }

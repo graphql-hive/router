@@ -78,10 +78,6 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
       @"root(Query) -(NAME)- Query/NAME -(product)- Product/NAME -(name)- Name/NAME -(id)- ID/NAME"
     );
 
-    // let mut as_strs = best_paths_per_leaf[8]
-    //     .iter()
-    //     .map(|p| p.pretty_print(&graph))
-    //     .collect::<Vec<String>>();
     best_paths_per_leaf[8].sort_by(|a, b| a.pretty_print(&graph).cmp(&b.pretty_print(&graph)));
 
     insta::assert_snapshot!(
