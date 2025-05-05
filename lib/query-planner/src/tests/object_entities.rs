@@ -1,6 +1,6 @@
 use crate::{
     parse_operation,
-    planner::walker::walk_operation,
+    planner::{tree::query_tree::QueryTree, walker::walk_operation},
     tests::testkit::{init_logger, read_supergraph},
     utils::operation_utils::get_operation_to_execute,
 };
@@ -35,6 +35,13 @@ fn testing() -> Result<(), Box<dyn Error>> {
       best_paths_per_leaf[1][0].pretty_print(&graph),
       @"root(Query) -(STORE)- Query/STORE -(products)- Product/STORE -(🔑🧩uuid)- Product/COST -(price)- Price/COST -(amount)- Float/COST"
     );
+
+    let qtps = best_paths_per_leaf
+        .iter()
+        .map(|paths| QueryTree::from_path(&graph, &paths[0]))
+        .collect::<Vec<_>>();
+
+    println!("{}", qtps[0].pretty_print(&graph)?);
 
     Ok(())
 }

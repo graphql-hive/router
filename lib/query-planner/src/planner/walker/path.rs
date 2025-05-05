@@ -5,10 +5,7 @@ use petgraph::{
     visit::EdgeRef,
 };
 
-use crate::{
-    graph::{edge::EdgeReference, Graph},
-    planner::tree::QueryTreeNode,
-};
+use crate::graph::{edge::EdgeReference, Graph};
 
 #[derive(Debug, Clone)]
 pub struct PathSegment {
@@ -144,23 +141,6 @@ impl OperationPath {
 
         segments.reverse();
         segments
-    }
-
-    pub fn get_requirement_tree(&self) -> Vec<Option<&QueryTreeNode>> {
-        vec![]
-        /*
-        // TODO: Consider VecDeque so we can just do push_front
-        let mut segments: Vec<Option<&QueryTreeNode>> = vec![];
-
-        let mut current = self.last_segment.as_ref();
-        while let Some(segment) = current {
-            segments.push(segment.requirement_tree.as_ref());
-            current = segment.prev.as_deref();
-        }
-
-        segments.reverse();
-        segments
-        */
     }
 
     pub fn pretty_print(&self, graph: &Graph) -> String {

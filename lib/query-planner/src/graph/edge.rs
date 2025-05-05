@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 use petgraph::graph::EdgeReference as GraphEdgeReference;
 
@@ -89,6 +89,17 @@ impl Edge {
         };
 
         move_cost + requirement_cost
+    }
+}
+
+impl Display for Edge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Edge::SubgraphEntrypoint { graph_id, .. } => write!(f, "{}", graph_id),
+            Edge::EntityMove(EntityMove { .. }) => write!(f, "🔑"),
+            Edge::AbstractMove(_) => write!(f, "🔮"),
+            Edge::FieldMove { name, .. } => write!(f, "{}", name),
+        }
     }
 }
 
