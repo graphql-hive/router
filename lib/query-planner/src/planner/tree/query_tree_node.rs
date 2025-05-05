@@ -152,7 +152,7 @@ impl QueryTreeNode {
         let tail_str = format!("{}", node);
 
         if !self.requirements.is_empty() {
-            write!(result, "\n{}🧩 #{} [", indent, edge_index.index())?;
+            write!(result, "\n{}🧩 [", indent)?;
 
             for req_step in self.requirements.iter() {
                 write!(result, "{}", req_step.pretty_print(graph, indent_level)?)?;
@@ -162,29 +162,11 @@ impl QueryTreeNode {
         }
 
         match edge {
-            Edge::EntityMove(_) => write!(
-                result,
-                "\n{}{} {} #{}",
-                indent,
-                move_str,
-                tail_str,
-                edge_index.index()
-            ),
-            Edge::SubgraphEntrypoint { graph_id, .. } => write!(
-                result,
-                "\n{}🚪 {} #{}",
-                indent,
-                graph_id,
-                edge_index.index()
-            ),
-            _ => write!(
-                result,
-                "\n{}{} of {} #{}",
-                indent,
-                move_str,
-                tail_str,
-                edge_index.index()
-            ),
+            Edge::EntityMove(_) => write!(result, "\n{}{} {}", indent, move_str, tail_str),
+            Edge::SubgraphEntrypoint { graph_id, .. } => {
+                write!(result, "\n{}🚪 {}", indent, graph_id)
+            }
+            _ => write!(result, "\n{}{} of {}", indent, move_str, tail_str),
         }?;
 
         for sub_step in self.children.iter() {

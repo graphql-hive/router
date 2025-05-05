@@ -44,7 +44,32 @@ fn testing() -> Result<(), Box<dyn Error>> {
         })
         .collect::<Vec<_>>();
 
-    println!("{}", qtps[0].pretty_print(&graph)?);
+    insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
+    root(Query)
+      🚪 STORE
+        products of Product/STORE
+          🧩 [
+            id of ID/STORE
+          ]
+          🔑 Product/INFO
+            isAvailable of Boolean/INFO
+    ");
+
+    insta::assert_snapshot!(qtps[1].pretty_print(&graph)?, @r"
+    root(Query)
+      🚪 STORE
+        products of Product/STORE
+          🧩 [
+            🧩 [
+              id of ID/STORE
+            ]
+            🔑 Product/INFO
+              uuid of ID/INFO
+          ]
+          🔑 Product/COST
+            price of Price/COST
+              amount of Float/COST
+    ");
 
     Ok(())
 }
