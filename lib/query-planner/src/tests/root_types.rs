@@ -1,7 +1,7 @@
 use crate::{
     parse_operation,
     planner::walker::walk_operation,
-    tests::testkit::{init_logger, read_supergraph},
+    tests::testkit::{init_logger, paths_to_trees, read_supergraph},
     utils::operation_utils::get_operation_to_execute,
 };
 use std::error::Error;
@@ -96,6 +96,71 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
       as_strs[2],
       @"root(Query) -(PRICE)- Query/PRICE -(product)- Product/PRICE -(id)- ID/PRICE"
     );
+
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+
+    insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
+    root(Query)
+      🚪 (Query/PRICE)
+        product of Product/PRICE
+          price of Price/PRICE
+            currency of String/PRICE
+    ");
+    insta::assert_snapshot!(qtps[1].pretty_print(&graph)?, @r"
+    root(Query)
+      🚪 (Query/PRICE)
+        product of Product/PRICE
+          price of Price/PRICE
+            amount of Int/PRICE
+    ");
+    insta::assert_snapshot!(qtps[2].pretty_print(&graph)?, @r"
+    root(Query)
+      🚪 (Query/PRICE)
+        product of Product/PRICE
+          price of Price/PRICE
+            id of ID/PRICE
+    ");
+    insta::assert_snapshot!(qtps[3].pretty_print(&graph)?, @r"
+    root(Query)
+      🚪 (Query/CATEGORY)
+        product of Product/CATEGORY
+          category of Category/CATEGORY
+            name of String/CATEGORY
+    ");
+    insta::assert_snapshot!(qtps[4].pretty_print(&graph)?, @r"
+    root(Query)
+      🚪 (Query/CATEGORY)
+        product of Product/CATEGORY
+          category of Category/CATEGORY
+            id of ID/CATEGORY
+    ");
+    insta::assert_snapshot!(qtps[5].pretty_print(&graph)?, @r"
+    root(Query)
+      🚪 (Query/NAME)
+        product of Product/NAME
+          name of Name/NAME
+            model of String/NAME
+    ");
+    insta::assert_snapshot!(qtps[6].pretty_print(&graph)?, @r"
+    root(Query)
+      🚪 (Query/NAME)
+        product of Product/NAME
+          name of Name/NAME
+            brand of String/NAME
+    ");
+    insta::assert_snapshot!(qtps[7].pretty_print(&graph)?, @r"
+    root(Query)
+      🚪 (Query/NAME)
+        product of Product/NAME
+          name of Name/NAME
+            id of ID/NAME
+    ");
+    insta::assert_snapshot!(qtps[8].pretty_print(&graph)?, @r"
+    root(Query)
+      🚪 (Query/PRICE)
+        product of Product/PRICE
+          id of ID/PRICE
+    ");
 
     Ok(())
 }
