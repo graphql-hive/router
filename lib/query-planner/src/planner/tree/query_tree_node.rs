@@ -163,8 +163,8 @@ impl QueryTreeNode {
 
         match edge {
             Edge::EntityMove(_) => write!(result, "\n{}{} {}", indent, move_str, tail_str),
-            Edge::SubgraphEntrypoint { graph_id, .. } => {
-                write!(result, "\n{}🚪 {}", indent, graph_id)
+            Edge::SubgraphEntrypoint { .. } => {
+                write!(result, "\n{}🚪 ({})", indent, tail_str)
             }
             _ => write!(result, "\n{}{} of {}", indent, move_str, tail_str),
         }?;

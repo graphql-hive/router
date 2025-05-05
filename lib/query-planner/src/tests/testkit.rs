@@ -8,7 +8,19 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::graph::Graph;
 use crate::parse_schema;
+use crate::planner::tree::query_tree::QueryTree;
+use crate::planner::walker::path::OperationPath;
 use crate::state::supergraph_state::SupergraphState;
+
+pub fn paths_to_trees(graph: &Graph, paths: &Vec<Vec<OperationPath>>) -> Vec<QueryTree> {
+    paths
+        .iter()
+        .map(|paths| {
+            QueryTree::from_path(&graph, &paths[0])
+                .expect("expected tree to be built but it failed")
+        })
+        .collect::<Vec<_>>()
+}
 
 fn init_test_logger_internal() {
     let tree_layer = tracing_tree::HierarchicalLayer::new(2)
