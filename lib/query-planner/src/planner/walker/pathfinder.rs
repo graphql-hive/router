@@ -9,7 +9,10 @@ use crate::{
         selection::{Selection, SelectionNode, SelectionNodeField},
         Graph,
     },
-    planner::walker::best_path::{find_best_paths, BestPathTracker},
+    planner::{
+        tree::query_tree_node::QueryTreeNode,
+        walker::best_path::{find_best_paths, BestPathTracker},
+    },
 };
 
 use super::{error::WalkOperationError, excluded::ExcludedFromLookup, path::OperationPath};
@@ -133,17 +136,14 @@ pub fn find_indirect_paths(
                     debug!("Requirements not satisfied, continue look up...");
                     continue;
                 }
-                Some(_paths) => {
+                Some(paths) => {
                     debug!(
                         "Advancing path to {}",
                         graph.pretty_print_edge(edge_ref.id(), false)
                     );
 
-                    let next_resolution_path = path.advance(
-                        &edge_ref,
-                        // TODO: Implement QueryTreeNode::from_paths here
-                        /*QueryTreeNode::from_paths(graph, &paths)*/
-                    );
+                    let next_resolution_path =
+                        path.advance(&edge_ref, QueryTreeNode::from_paths(graph, &paths)?);
 
                     let direct_paths_excluded =
                         excluded.next(edge_tail_graph_id, &visited_key_fields, &[]);
@@ -234,17 +234,15 @@ pub fn find_direct_paths(
         let can_be_satisfied = can_satisfy_edge(graph, &edge_ref, path, &new_excluded, false)?;
 
         match can_be_satisfied {
-            Some(_paths) => {
+            Some(paths) => {
                 debug!(
                     "Advancing path {} with edge {}",
                     path.pretty_print(graph),
                     graph.pretty_print_edge(edge_ref.id(), false)
                 );
 
-                let next_resolution_path = path.advance(
-                    &edge_ref,
-                    /*QueryTreeNode::from_paths(graph, &paths)*/
-                );
+                let next_resolution_path =
+                    path.advance(&edge_ref, QueryTreeNode::from_paths(graph, &paths)?);
 
                 result.push(next_resolution_path);
             }

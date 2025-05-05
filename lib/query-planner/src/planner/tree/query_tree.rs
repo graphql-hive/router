@@ -2,7 +2,10 @@ use std::fmt::Write;
 
 use tracing::{debug, instrument};
 
-use crate::{graph::Graph, planner::walker::path::OperationPath};
+use crate::{
+    graph::{error::GraphError, Graph},
+    planner::walker::path::OperationPath,
+};
 
 use super::query_tree_node::QueryTreeNode;
 
@@ -17,23 +20,23 @@ impl QueryTree {
     }
 
     #[instrument(skip(graph))]
-    pub fn from_path(graph: &Graph, path: &OperationPath) -> Self {
+    pub fn from_path(graph: &Graph, path: &OperationPath) -> Result<Self, GraphError> {
         debug!(
             "building tree directly from path starting at: {}",
             graph.pretty_print_node(&path.root_node)
         );
 
         let edges = path.get_edges();
-        // let requirements_tree = path.get_requirement_tree();
+        let requirements_tree = path.get_requirement_tree();
 
         let root_node = QueryTreeNode::create_root_for_path_sequences(
             graph,
             &path.root_node,
             &edges,
-            /* requirements_tree */ &vec![],
-        );
+            &requirements_tree,
+        )?;
 
-        QueryTree::new(root_node)
+        Ok(QueryTree::new(root_node))
     }
 
     #[instrument]

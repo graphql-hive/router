@@ -5,7 +5,10 @@ use petgraph::{
     visit::EdgeRef,
 };
 
-use crate::graph::{edge::EdgeReference, Graph};
+use crate::{
+    graph::{edge::EdgeReference, Graph},
+    planner::tree::query_tree_node::QueryTreeNode,
+};
 
 #[derive(Debug, Clone)]
 pub struct PathSegment {
@@ -14,7 +17,7 @@ pub struct PathSegment {
     edge_index: EdgeIndex,
     tail_node: NodeIndex,
     cumulative_cost: u64,
-    // requirement_tree: Option<QueryTreeNode>,
+    requirement_tree: Option<QueryTreeNode>,
 }
 
 impl PathSegment {
@@ -24,7 +27,7 @@ impl PathSegment {
             edge_index: edge.id(),
             tail_node: edge.target(),
             cumulative_cost: edge.weight().cost(),
-            // requirement_tree: None,
+            requirement_tree: None,
         }
     }
 }
@@ -86,7 +89,7 @@ impl OperationPath {
     pub fn advance(
         &self,
         edge_ref: &EdgeReference<'_>,
-        // requirement: Option<QueryTreeNode>,
+        requirement: Option<QueryTreeNode>,
     ) -> OperationPath {
         let prev_cost = self.cost;
         let edge_cost = edge_ref.weight().cost();
@@ -99,7 +102,7 @@ impl OperationPath {
             tail_node: edge_ref.target(),
             edge_index: edge_ref.id(),
             cumulative_cost: new_cost,
-            // requirement_tree: requirement,
+            requirement_tree: requirement,
         };
 
         OperationPath::new(self.root_node, Some(new_segment), new_visited)
@@ -127,6 +130,20 @@ impl OperationPath {
 
         edges.reverse();
         edges
+    }
+
+    pub fn get_requirement_tree(&self) -> Vec<Option<&QueryTreeNode>> {
+        // TODO: Consider VecDeque so we can just do push_front
+        let mut requirement_tree: Vec<Option<&QueryTreeNode>> = vec![];
+
+        let mut current = self.last_segment.as_ref();
+        while let Some(segment) = current {
+            requirement_tree.push(segment.requirement_tree.as_ref());
+            current = segment.prev.as_deref();
+        }
+
+        requirement_tree.reverse();
+        requirement_tree
     }
 
     pub fn get_segments(&self) -> Vec<&PathSegment> {
@@ -218,7 +235,7 @@ impl OperationPath {
                 prev: mem::take(&mut previous_new_segment),
                 cumulative_cost: new_cumulative_cost,
                 edge_index: original_segment.edge_index,
-                // requirement_tree: original_segment.requirement_tree.clone(),
+                requirement_tree: original_segment.requirement_tree.clone(),
                 tail_node: original_segment.tail_node,
             };
 

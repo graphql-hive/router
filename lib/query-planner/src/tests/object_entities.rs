@@ -38,7 +38,10 @@ fn testing() -> Result<(), Box<dyn Error>> {
 
     let qtps = best_paths_per_leaf
         .iter()
-        .map(|paths| QueryTree::from_path(&graph, &paths[0]))
+        .map(|paths| {
+            QueryTree::from_path(&graph, &paths[0])
+                .expect("expected tree to be built but it failed")
+        })
         .collect::<Vec<_>>();
 
     println!("{}", qtps[0].pretty_print(&graph)?);

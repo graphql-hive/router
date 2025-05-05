@@ -3,7 +3,7 @@ use std::fmt::Write;
 use tracing::{debug, instrument};
 
 use crate::{
-    graph::{edge::Edge, Graph},
+    graph::{edge::Edge, error::GraphError, Graph},
     planner::walker::path::OperationPath,
 };
 
@@ -44,30 +44,68 @@ impl QueryTreeNode {
     // #[instrument(skip(graph), fields(
     //   paths = paths.iter().map(|path| path.pretty_print(graph)).collect::<Vec<String>>().join(", ")
     // ))]
-    pub fn from_paths(graph: &Graph, paths: &[OperationPath]) -> Option<Self> {
+    pub fn from_paths(graph: &Graph, paths: &[OperationPath]) -> Result<Option<Self>, GraphError> {
         if paths.is_empty() {
-            return None;
+            return Ok(None);
         }
 
         let mut trees = paths
             .iter()
-            .map(|path| QueryTree::from_path(graph, path))
+            .map(|path| {
+                QueryTree::from_path(graph, path).expect("expected tree to be built but it failed")
+            })
             .collect::<Vec<_>>();
 
         if trees.len() == 1 {
-            return Some(trees.remove(0).root);
+            return Ok(Some(trees.remove(0).root));
         }
 
-        Some(QueryTree::merge_trees(trees).root)
+        Ok(Some(QueryTree::merge_trees(trees).root))
     }
 
+    #[instrument(skip(graph, requirements_trees), fields(
+      total_edges = edges.len()
+    ))]
     fn from_path_segment_sequences(
-        _graph: &Graph,
-        _edges: &[EdgeIndex],
-        _requirements_tree: &[Option<&QueryTreeNode>],
-        _current_index: usize,
-    ) -> Option<QueryTreeNode> {
-        None
+        graph: &Graph,
+        edges: &[EdgeIndex],
+        requirements_trees: &[Option<&QueryTreeNode>],
+        current_index: usize,
+    ) -> Result<Option<Self>, GraphError> {
+        if current_index >= edges.len() {
+            return Ok(None);
+        }
+
+        let edge_at_index = edges[current_index];
+        let requirements_tree = requirements_trees[current_index];
+
+        debug!(
+            "Processing edge: {}",
+            graph.pretty_print_edge(edge_at_index, false)
+        );
+
+        // Creates the QueryTreeNode representing the state after traversing this edge
+        let tail_node_index = graph.get_edge_tail(&edge_at_index)?;
+        let mut tree_node = QueryTreeNode::new(&tail_node_index, Some(&edge_at_index));
+
+        if let Some(requirements_tree) = requirements_tree {
+            tree_node.requirements.push(requirements_tree.clone());
+        }
+
+        let subsequent_query_tree_node =
+            Self::from_path_segment_sequences(graph, edges, requirements_trees, current_index + 1)?;
+
+        match subsequent_query_tree_node {
+            Some(subsequent_query_tree_node) => {
+                debug!("Adding subsequent step as child");
+                tree_node.children.push(subsequent_query_tree_node);
+            }
+            None => {
+                debug!("No subsequent steps (leaf or end of path)");
+            }
+        }
+
+        Ok(Some(tree_node))
     }
 
     #[instrument(skip(graph))]
@@ -76,7 +114,7 @@ impl QueryTreeNode {
         root_node_index: &NodeIndex,
         edges: &Vec<EdgeIndex>,
         requirements_tree: &Vec<Option<&QueryTreeNode>>,
-    ) -> QueryTreeNode {
+    ) -> Result<QueryTreeNode, GraphError> {
         debug!(
             "Building root query tree node: {}",
             graph.pretty_print_node(root_node_index)
@@ -87,15 +125,15 @@ impl QueryTreeNode {
         if edges.is_empty() {
             debug!("Path has no edges beyond the root.");
         } else {
-            let first_subsequent_node =
-                QueryTreeNode::from_path_segment_sequences(graph, edges, requirements_tree, 0);
+            let subsequent_node =
+                QueryTreeNode::from_path_segment_sequences(graph, edges, requirements_tree, 0)?;
 
-            if let Some(first_subsequent_node) = first_subsequent_node {
-                root_tree_node.children.push(first_subsequent_node);
+            if let Some(subsequent_node) = subsequent_node {
+                root_tree_node.children.push(subsequent_node);
             }
         }
 
-        root_tree_node
+        Ok(root_tree_node)
     }
 
     fn internal_pretty_print(
@@ -114,14 +152,10 @@ impl QueryTreeNode {
         let tail_str = format!("{}", node);
 
         if !self.requirements.is_empty() {
-            write!(result, "\n{}🧩 #{:?} [", indent, edge_index)?;
+            write!(result, "\n{}🧩 #{} [", indent, edge_index.index())?;
 
             for req_step in self.requirements.iter() {
-                write!(
-                    result,
-                    "{}",
-                    req_step.internal_pretty_print(graph, indent_level)?
-                )?;
+                write!(result, "{}", req_step.pretty_print(graph, indent_level)?)?;
             }
 
             write!(result, "\n{}]", indent)?;
@@ -130,13 +164,26 @@ impl QueryTreeNode {
         match edge {
             Edge::EntityMove(_) => write!(
                 result,
-                "\n{}{} {} #{:?}",
-                indent, move_str, tail_str, edge_index
+                "\n{}{} {} #{}",
+                indent,
+                move_str,
+                tail_str,
+                edge_index.index()
+            ),
+            Edge::SubgraphEntrypoint { graph_id, .. } => write!(
+                result,
+                "\n{}🚪 {} #{}",
+                indent,
+                graph_id,
+                edge_index.index()
             ),
             _ => write!(
                 result,
-                "\n{}{} of {} #{:?}",
-                indent, move_str, tail_str, edge_index
+                "\n{}{} of {} #{}",
+                indent,
+                move_str,
+                tail_str,
+                edge_index.index()
             ),
         }?;
 
@@ -144,7 +191,7 @@ impl QueryTreeNode {
             write!(
                 result,
                 "{}",
-                sub_step.internal_pretty_print(graph, indent_level + 1)?
+                sub_step.pretty_print(graph, indent_level + 1)?
             )?;
         }
 
@@ -169,7 +216,7 @@ impl QueryTreeNode {
                     write!(
                         result,
                         "{}",
-                        sub_step.internal_pretty_print(graph, indent_level + 1)?
+                        sub_step.pretty_print(graph, indent_level + 1)?
                     )?;
                 }
             }
