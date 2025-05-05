@@ -33,7 +33,7 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
         }"#,
     );
     let operation = get_operation_to_execute(&document).expect("failed to locate operation");
-    let best_paths_per_leaf = walk_operation(&graph, operation)?;
+    let mut best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 9);
     assert_eq!(best_paths_per_leaf[0].len(), 1);
     assert_eq!(best_paths_per_leaf[1].len(), 1);
@@ -78,22 +78,22 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
       @"root(Query) -(NAME)- Query/NAME -(product)- Product/NAME -(name)- Name/NAME -(id)- ID/NAME"
     );
 
-    let mut as_strs = best_paths_per_leaf[8]
-        .iter()
-        .map(|p| p.pretty_print(&graph))
-        .collect::<Vec<String>>();
-    as_strs.sort();
+    // let mut as_strs = best_paths_per_leaf[8]
+    //     .iter()
+    //     .map(|p| p.pretty_print(&graph))
+    //     .collect::<Vec<String>>();
+    best_paths_per_leaf[8].sort_by(|a, b| a.pretty_print(&graph).cmp(&b.pretty_print(&graph)));
 
     insta::assert_snapshot!(
-      as_strs[0],
+      best_paths_per_leaf[8][0].pretty_print(&graph),
       @"root(Query) -(CATEGORY)- Query/CATEGORY -(product)- Product/CATEGORY -(id)- ID/CATEGORY"
     );
     insta::assert_snapshot!(
-      as_strs[1],
+      best_paths_per_leaf[8][1].pretty_print(&graph),
       @"root(Query) -(NAME)- Query/NAME -(product)- Product/NAME -(id)- ID/NAME"
     );
     insta::assert_snapshot!(
-      as_strs[2],
+      best_paths_per_leaf[8][2].pretty_print(&graph),
       @"root(Query) -(PRICE)- Query/PRICE -(product)- Product/PRICE -(id)- ID/PRICE"
     );
 
@@ -157,9 +157,9 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
     ");
     insta::assert_snapshot!(qtps[8].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/PRICE)
-        product of Product/PRICE
-          id of ID/PRICE
+      🚪 (Query/CATEGORY)
+        product of Product/CATEGORY
+          id of ID/CATEGORY
     ");
 
     Ok(())
