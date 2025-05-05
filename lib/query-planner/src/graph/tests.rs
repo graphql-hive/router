@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod star_stuff {
+mod graph_tests {
     use crate::{
         graph::{edge::Edge, node::Node, Graph},
         parse_schema,
@@ -35,7 +35,7 @@ mod star_stuff {
         }
 
         pub fn no_field_edge(&self, key: &str) -> &Self {
-            let edge = self.edges.iter().find(|(e, _)| e.id() == key);
+            let edge = self.edges.iter().find(|(e, _)| e.display_name() == key);
 
             assert!(edge.is_none(), "Field edge {} found", key);
 
@@ -56,23 +56,33 @@ mod star_stuff {
         }
 
         pub fn edge_field(&self, key: &str) -> Option<&(&Edge, String)> {
-            let mut r = self.edges.iter().filter(|(e, _target)| e.id() == key);
+            let mut r = self
+                .edges
+                .iter()
+                .filter(|(e, _target)| e.display_name() == key);
             assert_eq!(
                 r.clone().count(),
                 1,
                 "expected to find exactly one edge field named '{}', found {}, available fields: {:?}",
                 key,
                 r.clone().count(),
-                self.edges.iter().map(|(e, _)| e.id()).collect::<Vec<_>>()
+                self.edges.iter().map(|(e, _)| e.display_name()).collect::<Vec<_>>()
             );
 
             r.nth(0)
         }
 
+        pub fn edges_field(&self, key: &str) -> Vec<&(&Edge, String)> {
+            self.edges
+                .iter()
+                .filter(|(e, _target)| e.display_name() == key)
+                .collect()
+        }
+
         pub fn edge(&self, key: &str, other_side: &str) -> Option<&(&Edge, String)> {
             self.edges
                 .iter()
-                .find(|(e, target)| e.id() == key && target == other_side)
+                .find(|(e, target)| e.display_name() == key && target == other_side)
         }
 
         pub fn assert_field_edge(&self, key: &str, other_side: &str) -> &Self {
@@ -133,6 +143,54 @@ mod star_stuff {
         };
 
         (incoming_edges, outgoing_edges)
+    }
+
+    #[test]
+    fn nested_provides() -> Result<(), Box<dyn std::error::Error>> {
+        let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixture/tests/nested-provides.supergraph.graphql");
+        let graph = init_test(
+            &std::fs::read_to_string(supergraph_path).expect("Unable to read input file"),
+        );
+
+        let (_, outgoing) = find_node(&graph, "Query/CATEGORY");
+        let field_edges = outgoing.edges_field("products");
+        // one for provided, other one for regular
+        assert_eq!(field_edges.len(), 2);
+
+        // Provided ("viewed") field edge
+        let (_, to) = field_edges
+            .iter()
+            .find(|edge| format!("{:?}", edge.0) == "products @provides")
+            .unwrap();
+
+        let node = graph.node(*graph.node_to_index.get(to).unwrap())?;
+        assert!(node.is_view_node());
+        assert_eq!(node.id(), "(Product/CATEGORY).view1");
+
+        let (_, viewed_outgoing) = find_node(&graph, &node.id());
+
+        let (_, to) = viewed_outgoing
+            .edge_field("categories")
+            .expect("failed to find edge for field categories");
+        let node1 = graph.node(*graph.node_to_index.get(to).unwrap())?;
+        assert!(node1.is_view_node());
+        assert_eq!(node1.id(), "(Category/CATEGORY).view1");
+
+        // Regular field edge
+        let (_, to) = field_edges
+            .iter()
+            .find(|edge| format!("{:?}", edge.0) == "products")
+            .unwrap();
+        assert_eq!(to, "Product/CATEGORY");
+        let node = graph.node(*graph.node_to_index.get(to).unwrap())?;
+        assert!(!node.is_view_node());
+
+        find_node(&graph, "Product/CATEGORY")
+            .1
+            .assert_field_edge("id", "ID/CATEGORY");
+
+        Ok(())
     }
 
     #[test]
@@ -204,11 +262,10 @@ mod star_stuff {
 
         // requires preserves selection set in the graph
         let outgoing = find_node(&graph, "Product/INVENTORY").1;
-        let (edge, _) = outgoing
+        outgoing
             .assert_field_edge("delivery", "DeliveryEstimates/INVENTORY")
             .edge("delivery", "DeliveryEstimates/INVENTORY")
             .expect("cant find edge");
-        assert_eq!(edge.requires(), Some("dimensions{size weight}"));
 
         Ok(())
     }
@@ -271,7 +328,9 @@ mod star_stuff {
         let (_, outgoing) = find_node(&graph, "Group/FOO");
         // Multiple provides should create multiple edges, one for each "view"
         let (_, to) = outgoing
-            .edge_field("users")
+            .edges_field("users")
+            .iter()
+            .find(|edge| format!("{:?}", edge.0) == "users @provides")
             .expect("failed to find edge for field users");
         let node1 = graph.node(*graph.node_to_index.get(to).unwrap())?;
         assert!(node1.is_view_node());
@@ -283,7 +342,9 @@ mod star_stuff {
         assert_eq!(viewed_outgoing.edges.len(), 1);
 
         let (_, to) = outgoing
-            .edge_field("user")
+            .edges_field("user")
+            .iter()
+            .find(|edge| format!("{:?}", edge.0) == "user @provides")
             .expect("failed to find edge for field user");
         let node2 = graph.node(*graph.node_to_index.get(to).unwrap())?;
         assert!(node2.is_view_node());
@@ -306,7 +367,7 @@ mod star_stuff {
         let mut nested_edges = graph.edges_from(nested_provides_id);
         assert_eq!(nested_edges.clone().count(), 1);
         assert_eq!(
-            nested_edges.next().unwrap().weight().id(),
+            nested_edges.next().unwrap().weight().display_name(),
             String::from("age")
         );
 

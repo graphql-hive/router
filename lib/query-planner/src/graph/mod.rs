@@ -91,13 +91,43 @@ impl Graph {
         Ok(())
     }
 
-    pub fn pretty_print(&self, edge_index: EdgeIndex) -> String {
+    pub fn pretty_print_node(&self, node_index: &NodeIndex) -> String {
+        self.node(*node_index).unwrap().id()
+    }
+
+    pub fn pretty_print_edge(&self, edge_index: EdgeIndex, without_source: bool) -> String {
         let (source, target) = self.graph.edge_endpoints(edge_index).unwrap();
         let from = self.node(source).unwrap();
         let to = self.node(target).unwrap();
         let edge = self.edge(edge_index).unwrap();
 
-        format!("{} --[{}]-> {}", from.id(), edge.id(), to.id())
+        let key_str = match edge.key_selection() {
+            Some(_key_selection) => "🔑",
+            None => "",
+        };
+        let req_str = match edge.requirements_selections() {
+            Some(_requirement_selection) => "🧩",
+            None => "",
+        };
+
+        if without_source {
+            format!(
+                "-({}{}{})- {}",
+                key_str,
+                req_str,
+                edge.display_name(),
+                to.id()
+            )
+        } else {
+            format!(
+                "{} -({}{}{})- {}",
+                from.id(),
+                key_str,
+                req_str,
+                edge.display_name(),
+                to.id()
+            )
+        }
     }
 
     #[instrument(skip(self, state))]
@@ -271,17 +301,26 @@ impl Graph {
         for (def_name, definition) in state.definitions.iter() {
             if let Some(root_type) = definition.try_into_root_type() {
                 for graph_id in definition.subgraphs().iter() {
-                    for (field_name, field_definition) in definition.fields() {
-                        let (is_available, _) = FederationRules::check_field_subgraph_availability(
-                            field_definition,
-                            graph_id,
-                            definition,
-                        );
+                    let relevant_fields = definition
+                        .fields()
+                        .iter()
+                        .filter_map(|(field_name, field_definition)| {
+                            let (is_available, _) =
+                                FederationRules::check_field_subgraph_availability(
+                                    field_definition,
+                                    graph_id,
+                                    definition,
+                                );
 
-                        if !is_available {
-                            continue;
-                        }
+                            if is_available {
+                                Some(field_name.to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
 
+                    if !relevant_fields.is_empty() {
                         let head = match root_type {
                             RootOperationType::Query => Some(self.query_root),
                             RootOperationType::Mutation => self.mutation_root,
@@ -294,8 +333,9 @@ impl Graph {
                         self.upsert_edge(
                             head,
                             tail,
-                            Edge::RootEntrypoint {
-                                field_name: field_name.clone(),
+                            Edge::SubgraphEntrypoint {
+                                field_names: relevant_fields,
+                                graph_id: graph_id.to_string(),
                             },
                         );
                     }
@@ -325,11 +365,10 @@ impl Graph {
                             (true, Some(join_field)) => {
                                 let is_external = join_field.external.is_some_and(|v| v)
                                     && join_field.requires.is_none();
-                                let has_provides = join_field.provides.is_some();
 
-                                if is_external || has_provides {
+                                if is_external {
                                     info!(
-                                        "[ ] Field '{}.{}/{}' is external or has provides, skipping edge creation",
+                                        "[ ] Field '{}.{}/{}' is external, skipping edge creation",
                                         def_name, field_name, graph_id
                                     );
 
@@ -349,9 +388,19 @@ impl Graph {
                                 self.upsert_edge(
                                     head,
                                     tail,
+                                    // This is done in order to "reset" the provided field info, we can probably
+                                    // do this in a better way, and extract info from the JoinFieldDirective into the edges, instead of depending on
+                                    // the raw directive info.
                                     Edge::create_field_move(
                                         field_name.clone(),
-                                        Some(join_field.clone()),
+                                        Some(match join_field.provides {
+                                            Some(_) => {
+                                                let mut new = join_field.clone();
+                                                new.provides = None;
+                                                new
+                                            }
+                                            None => join_field.clone(),
+                                        }),
                                     ),
                                 );
                             }
@@ -388,6 +437,7 @@ impl Graph {
         Ok(())
     }
 
+    #[instrument(skip(self, state, parent_type_def, head), fields(selection_set, parent_type_name = parent_type_def.name()))]
     fn handle_viewed_selection_set(
         &mut self,
         state: &SupergraphState,

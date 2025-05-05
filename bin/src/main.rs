@@ -1,18 +1,22 @@
 use std::env;
 use std::process;
 
+use query_planner::consumer_schema::ConsumerSchema;
+use query_planner::graph::Graph;
+use query_planner::parse_operation;
 use query_planner::parse_schema;
-use query_planner::planner::traversal_step::Step;
-use query_planner::planner::Planner;
-use query_planner::state::supergraph_state::RootOperationType;
+use query_planner::planner::walker::walk_operation;
 use query_planner::state::supergraph_state::SupergraphState;
+use query_planner::utils::operation_utils::get_operation_to_execute;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 fn main() {
     let tree_layer = tracing_tree::HierarchicalLayer::new(2)
         .with_bracketed_fields(true)
-        .with_span_modes(false)
+        .with_deferred_spans(true)
+        .with_wraparound(15)
+        .with_indent_lines(true)
         .with_timer(tracing_tree::time::Uptime::default())
         .with_thread_names(false)
         .with_thread_ids(false)
@@ -42,31 +46,45 @@ fn main() {
 fn process_consumer_schema(path: &str) {
     let supergraph_sdl = std::fs::read_to_string(path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
-    let advisor =
-        Planner::new(SupergraphState::new(&parsed_schema)).expect("failed to build planner");
-    println!("{}", advisor.consumer_schema.document);
+    let consumer_schema = ConsumerSchema::new_from_supergraph(&parsed_schema);
+
+    println!("{}", consumer_schema.document);
 }
 
 fn process_graph(path: &str) {
     let supergraph_sdl = std::fs::read_to_string(path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
-    let advisor =
-        Planner::new(SupergraphState::new(&parsed_schema)).expect("failed to build planner");
+    let supergraph_state = SupergraphState::new(&parsed_schema);
+    let graph =
+        Graph::graph_from_supergraph_state(&supergraph_state).expect("failed to create graph");
 
-    println!("{}", advisor.graph);
+    println!("{}", graph);
 }
 
-fn process_paths(supergraph_path: &str, steps: &str) {
+fn process_paths(supergraph_path: &str, operation_path: &str) {
     let supergraph_sdl =
         std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
+    let operation_text =
+        std::fs::read_to_string(operation_path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
-    let advisor =
-        Planner::new(SupergraphState::new(&parsed_schema)).expect("failed to build planner");
-    let steps = Step::parse_field_step(steps);
+    let operation = parse_operation(&operation_text);
+    let supergraph_state = SupergraphState::new(&parsed_schema);
+    let graph =
+        Graph::graph_from_supergraph_state(&supergraph_state).expect("failed to create graph");
+    let operation = get_operation_to_execute(&operation).expect("failed to locate operation");
+    let best_paths_per_leaf = walk_operation(&graph, operation).unwrap();
 
-    advisor
-        .walk_steps(&RootOperationType::Query, &steps)
-        .expect("failed to walk");
+    for (index, best_path) in best_paths_per_leaf.iter().enumerate() {
+        println!(
+            "Path at index {} has total of {} best paths:",
+            index,
+            best_path.len(),
+        );
+
+        for path in best_path {
+            println!("    {}", path.pretty_print(&graph));
+        }
+    }
 }
 
 // fn process_plan(supergraph_path: &str, operation_path: &str) {

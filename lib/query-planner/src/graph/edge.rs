@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+use petgraph::graph::EdgeReference as GraphEdgeReference;
+
 use crate::federation_spec::directives::JoinFieldDirective;
 
 use super::selection::Selection;
@@ -11,9 +13,10 @@ pub struct EntityMove {
 
 pub enum Edge {
     /// A special edge between the root Node and then root entry point to the graph
-    /// With this helper, you can jump from Query::RootQuery --field-> Query/SomeSubgraph --> --field--> SomeType/SomeSubgraph
-    RootEntrypoint {
-        field_name: String,
+    /// With this helper, you can jump from Query::RootQuery --SomeSubgraph-> Query/SomeSubgraph --> --field--> SomeType/SomeSubgraph
+    SubgraphEntrypoint {
+        field_names: Vec<String>,
+        graph_id: String,
     },
     /// Represent a simple file move
     FieldMove {
@@ -28,6 +31,8 @@ pub enum Edge {
     // interfaceObject
     // InterfaceObjectMove(String),
 }
+
+pub type EdgeReference<'a> = GraphEdgeReference<'a, Edge>;
 
 impl Edge {
     pub fn create_entity_move(key: &str, selection: Selection) -> Self {
@@ -49,19 +54,12 @@ impl Edge {
         }
     }
 
-    pub fn id(&self) -> &str {
+    pub fn display_name(&self) -> &str {
         match self {
             Self::FieldMove { name, .. } => name,
             Self::EntityMove(EntityMove { key, .. }) => key,
             Self::AbstractMove(id) => id,
-            Self::RootEntrypoint { field_name } => field_name,
-        }
-    }
-
-    pub fn requires(&self) -> Option<&str> {
-        match self {
-            Self::FieldMove { requires, .. } => requires.as_ref().map(|req| req.as_str()),
-            _ => None,
+            Self::SubgraphEntrypoint { graph_id, .. } => graph_id,
         }
     }
 
@@ -72,19 +70,32 @@ impl Edge {
         }
     }
 
-    pub fn cost(&self) -> u64 {
+    pub fn key_selection(&self) -> Option<&str> {
         match self {
-            Self::FieldMove { .. } => 1,
-            _ => 10,
+            Self::EntityMove(entity_move) => Some(&entity_move.key),
+            _ => None,
         }
+    }
+
+    pub fn cost(&self) -> u64 {
+        let move_cost = match self {
+            Self::FieldMove { .. } => 1,
+            _ => 1000,
+        };
+
+        let requirement_cost = match self.requirements_selections() {
+            Some(selection) => selection.cost(),
+            None => 0,
+        };
+
+        move_cost + requirement_cost
     }
 }
 
 impl Debug for Edge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Edge::RootEntrypoint { field_name } => write!(f, "root({})", field_name),
-
+            Edge::SubgraphEntrypoint { graph_id, .. } => write!(f, "subgraph({})", graph_id),
             Edge::FieldMove {
                 name, join_field, ..
             } => {
@@ -125,11 +136,12 @@ impl PartialEq for Edge {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (
-                Edge::RootEntrypoint { field_name },
-                Edge::RootEntrypoint {
-                    field_name: other_field_name,
+                Edge::SubgraphEntrypoint { graph_id, .. },
+                Edge::SubgraphEntrypoint {
+                    graph_id: other_graph_id,
+                    ..
                 },
-            ) => field_name == other_field_name,
+            ) => graph_id == other_graph_id,
             (
                 Edge::FieldMove {
                     name,
