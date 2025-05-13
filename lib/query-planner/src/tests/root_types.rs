@@ -78,7 +78,7 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
       @"root(Query) -(NAME)- Query/NAME -(product)- Product/NAME -(name)- Name/NAME -(id)- ID/NAME"
     );
 
-    best_paths_per_leaf[8].sort_by(|a, b| a.pretty_print(&graph).cmp(&b.pretty_print(&graph)));
+    best_paths_per_leaf[8].sort_by_key(|a| a.pretty_print(&graph));
 
     insta::assert_snapshot!(
       best_paths_per_leaf[8][0].pretty_print(&graph),

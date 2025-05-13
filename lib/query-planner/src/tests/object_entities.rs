@@ -1,6 +1,6 @@
 use crate::{
     parse_operation,
-    planner::walker::walk_operation,
+    planner::{tree::query_tree::QueryTree, walker::walk_operation},
     tests::testkit::{init_logger, paths_to_trees, read_supergraph},
     utils::operation_utils::get_operation_to_execute,
 };
@@ -16,6 +16,7 @@ fn testing() -> Result<(), Box<dyn Error>> {
               products {
                 price {
                   amount
+                  currency
                 }
                 isAvailable
               }
@@ -23,9 +24,10 @@ fn testing() -> Result<(), Box<dyn Error>> {
     );
     let operation = get_operation_to_execute(&document).expect("failed to locate operation");
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
-    assert_eq!(best_paths_per_leaf.len(), 2);
+    assert_eq!(best_paths_per_leaf.len(), 3);
     assert_eq!(best_paths_per_leaf[0].len(), 1);
     assert_eq!(best_paths_per_leaf[1].len(), 1);
+    assert_eq!(best_paths_per_leaf[2].len(), 1);
 
     insta::assert_snapshot!(
       best_paths_per_leaf[0][0].pretty_print(&graph),
@@ -33,6 +35,10 @@ fn testing() -> Result<(), Box<dyn Error>> {
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[1][0].pretty_print(&graph),
+      @"root(Query) -(STORE)- Query/STORE -(products)- Product/STORE -(🔑🧩{uuid})- Product/COST -(price)- Price/COST -(currency)- String/COST"
+    );
+    insta::assert_snapshot!(
+      best_paths_per_leaf[2][0].pretty_print(&graph),
       @"root(Query) -(STORE)- Query/STORE -(products)- Product/STORE -(🔑🧩{uuid})- Product/COST -(price)- Price/COST -(amount)- Float/COST"
     );
 
@@ -62,6 +68,46 @@ fn testing() -> Result<(), Box<dyn Error>> {
           ]
           🔑 Product/COST
             price of Price/COST
+              currency of String/COST
+    ");
+
+    insta::assert_snapshot!(qtps[2].pretty_print(&graph)?, @r"
+    root(Query)
+      🚪 (Query/STORE)
+        products of Product/STORE
+          🧩 [
+            🧩 [
+              id of ID/STORE
+            ]
+            🔑 Product/INFO
+              uuid of ID/INFO
+          ]
+          🔑 Product/COST
+            price of Price/COST
+              amount of Float/COST
+    ");
+
+    let gqt = QueryTree::merge_trees(qtps);
+
+    insta::assert_snapshot!(gqt.pretty_print(&graph)?, @r"
+    root(Query)
+      🚪 (Query/STORE)
+        products of Product/STORE
+          🧩 [
+            id of ID/STORE
+          ]
+          🔑 Product/INFO
+            isAvailable of Boolean/INFO
+          🧩 [
+            🧩 [
+              id of ID/STORE
+            ]
+            🔑 Product/INFO
+              uuid of ID/INFO
+          ]
+          🔑 Product/COST
+            price of Price/COST
+              currency of String/COST
               amount of Float/COST
     ");
 
@@ -245,7 +291,6 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
                 pid of String/LINK
               category of Category/PRODUCTS
                 tag of String/PRODUCTS
-              category of Category/PRODUCTS
                 id of String/PRODUCTS
             ]
             🔑 Product/PRICE

@@ -44,10 +44,6 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
               ]
               🔑 Product/PRODUCTS
                 price of Int/PRODUCTS
-              🧩 [
-                upc of String/INVENTORY
-              ]
-              🔑 Product/PRODUCTS
                 weight of Int/PRODUCTS
             ]
             shippingEstimate of Int/INVENTORY
