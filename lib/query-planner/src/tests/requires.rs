@@ -206,18 +206,6 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
             nameInB of String/B
     ");
 
-    // TODO: this is incorrect, should be:
-    /*
-    root
-      Query of Query/b #9
-        b of B/b #10
-          a of A/b #12
-            🧩 #21 [
-              id of ID/b #13
-            ]
-            🔑 A/a #21
-              name of String/a #5
-    */
     insta::assert_snapshot!(qtps[1].pretty_print(&graph)?, @r"
     root(Query)
       🚪 (Query/B)
