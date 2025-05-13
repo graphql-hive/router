@@ -29,11 +29,11 @@ fn testing() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(
       best_paths_per_leaf[0][0].pretty_print(&graph),
-      @"root(Query) -(STORE)- Query/STORE -(products)- Product/STORE -(🔑🧩id)- Product/INFO -(isAvailable)- Boolean/INFO"
+      @"root(Query) -(STORE)- Query/STORE -(products)- Product/STORE -(🔑🧩{id})- Product/INFO -(isAvailable)- Boolean/INFO"
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[1][0].pretty_print(&graph),
-      @"root(Query) -(STORE)- Query/STORE -(products)- Product/STORE -(🔑🧩uuid)- Product/COST -(price)- Price/COST -(amount)- Float/COST"
+      @"root(Query) -(STORE)- Query/STORE -(products)- Product/STORE -(🔑🧩{uuid})- Product/COST -(price)- Price/COST -(amount)- Float/COST"
     );
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
@@ -91,7 +91,7 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(
       best_paths_per_leaf[0][0].pretty_print(&graph),
-      @"root(Query) -(A)- Query/A -(products)- Product/A -(🔑🧩id pid)- Product/C -(category)- Category/C -(details)- CategoryDetails/C -(products)- Int/C"
+      @"root(Query) -(A)- Query/A -(products)- Product/A -(🔑🧩{id pid})- Product/C -(category)- Category/C -(details)- CategoryDetails/C -(products)- Int/C"
     );
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
@@ -140,9 +140,9 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
     assert_eq!(best_paths_per_leaf[3].len(), 1);
     assert_eq!(best_paths_per_leaf[4].len(), 1);
 
-    insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(D)- Query/D -(productFromD)- Product/D -(🔑🧩id)- Product/A -(category)- Category/A -(details)- String/A");
-    insta::assert_snapshot!(best_paths_per_leaf[1][0].pretty_print(&graph), @"root(Query) -(D)- Query/D -(productFromD)- Product/D -(🔑🧩id)- Product/B -(category)- Category/B -(🔑🧩id)- Category/C -(name)- String/C");
-    insta::assert_snapshot!(best_paths_per_leaf[2][0].pretty_print(&graph), @"root(Query) -(D)- Query/D -(productFromD)- Product/D -(🔑🧩id)- Product/B -(category)- Category/B -(id)- ID/B");
+    insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(D)- Query/D -(productFromD)- Product/D -(🔑🧩{id})- Product/A -(category)- Category/A -(details)- String/A");
+    insta::assert_snapshot!(best_paths_per_leaf[1][0].pretty_print(&graph), @"root(Query) -(D)- Query/D -(productFromD)- Product/D -(🔑🧩{id})- Product/B -(category)- Category/B -(🔑🧩{id})- Category/C -(name)- String/C");
+    insta::assert_snapshot!(best_paths_per_leaf[2][0].pretty_print(&graph), @"root(Query) -(D)- Query/D -(productFromD)- Product/D -(🔑🧩{id})- Product/B -(category)- Category/B -(id)- ID/B");
     insta::assert_snapshot!(best_paths_per_leaf[3][0].pretty_print(&graph), @"root(Query) -(D)- Query/D -(productFromD)- Product/D -(name)- String/D");
     insta::assert_snapshot!(best_paths_per_leaf[4][0].pretty_print(&graph), @"root(Query) -(D)- Query/D -(productFromD)- Product/D -(id)- ID/D");
 
@@ -225,7 +225,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
     assert_eq!(best_paths_per_leaf[0].len(), 1);
     assert_eq!(best_paths_per_leaf[1].len(), 1);
 
-    insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(PRODUCTS)- Query/PRODUCTS -(topProducts)- ProductList/PRODUCTS -(products)- Product/PRODUCTS -(🔑🧩id pid category{id tag})- Product/PRICE -(price)- Price/PRICE -(price)- Float/PRICE");
+    insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(PRODUCTS)- Query/PRODUCTS -(topProducts)- ProductList/PRODUCTS -(products)- Product/PRODUCTS -(🔑🧩{id pid category{id tag}})- Product/PRICE -(price)- Price/PRICE -(price)- Float/PRICE");
     insta::assert_snapshot!(best_paths_per_leaf[1][0].pretty_print(&graph), @"root(Query) -(PRODUCTS)- Query/PRODUCTS -(topProducts)- ProductList/PRODUCTS -(products)- Product/PRODUCTS -(id)- String/PRODUCTS");
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);

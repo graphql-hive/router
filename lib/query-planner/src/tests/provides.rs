@@ -29,7 +29,7 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(
       best_paths_per_leaf[0][0].pretty_print(&graph),
-      @"root(Query) -(PRODUCTS)- Query/PRODUCTS -(products)- Product/PRODUCTS -(🔑🧩upc)- Product/REVIEWS -(reviews)- Review/REVIEWS -(author)- (User/REVIEWS).view1 -(username)- String/REVIEWS"
+      @"root(Query) -(PRODUCTS)- Query/PRODUCTS -(products)- Product/PRODUCTS -(🔑🧩{upc})- Product/REVIEWS -(reviews)- Review/REVIEWS -(author)- (User/REVIEWS).view1 -(username)- String/REVIEWS"
     );
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);

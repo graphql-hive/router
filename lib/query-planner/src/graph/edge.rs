@@ -8,7 +8,15 @@ use super::selection::Selection;
 
 pub struct EntityMove {
     pub key: String,
-    pub requirement: Selection,
+    pub requirements: Selection,
+}
+
+/// Represent a simple file move
+pub struct FieldMove {
+    pub name: String,
+    pub join_field: Option<JoinFieldDirective>,
+    pub requirements: Option<Selection>,
+    pub override_from: Option<String>,
 }
 
 pub enum Edge {
@@ -18,13 +26,7 @@ pub enum Edge {
         field_names: Vec<String>,
         graph_id: String,
     },
-    /// Represent a simple file move
-    FieldMove {
-        name: String,
-        join_field: Option<JoinFieldDirective>,
-        requires: Option<String>,
-        override_from: Option<String>,
-    },
+    FieldMove(FieldMove),
     EntityMove(EntityMove),
     /// join__implements
     AbstractMove(String),
@@ -38,52 +40,49 @@ impl Edge {
     pub fn create_entity_move(key: &str, selection: Selection) -> Self {
         Self::EntityMove(EntityMove {
             key: key.to_string(),
-            requirement: selection,
+            requirements: selection,
         })
     }
 
-    pub fn create_field_move(name: String, join_field: Option<JoinFieldDirective>) -> Self {
-        let requires = join_field.as_ref().and_then(|jf| jf.requires.clone());
+    pub fn create_field_move(
+        name: String,
+        join_field: Option<JoinFieldDirective>,
+        requirements: Option<Selection>,
+    ) -> Self {
         let override_from = join_field.as_ref().and_then(|jf| jf.override_value.clone());
 
-        Self::FieldMove {
+        Self::FieldMove(FieldMove {
             name: name.clone(),
             join_field,
-            requires,
+            requirements,
             override_from,
-        }
+        })
     }
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::FieldMove { name, .. } => name,
+            Self::FieldMove(FieldMove { name, .. }) => name,
             Self::EntityMove(EntityMove { key, .. }) => key,
             Self::AbstractMove(id) => id,
             Self::SubgraphEntrypoint { graph_id, .. } => graph_id,
         }
     }
 
-    pub fn requirements_selections(&self) -> Option<&Selection> {
+    pub fn requirements(&self) -> Option<&Selection> {
         match self {
-            Self::EntityMove(entity_move) => Some(&entity_move.requirement),
-            _ => None,
-        }
-    }
-
-    pub fn key_selection(&self) -> Option<&str> {
-        match self {
-            Self::EntityMove(entity_move) => Some(&entity_move.key),
+            Self::EntityMove(entity_move) => Some(&entity_move.requirements),
+            Self::FieldMove(field_move) => field_move.requirements.as_ref(),
             _ => None,
         }
     }
 
     pub fn cost(&self) -> u64 {
         let move_cost = match self {
-            Self::FieldMove { .. } => 1,
+            Self::FieldMove(FieldMove { .. }) => 1,
             _ => 1000,
         };
 
-        let requirement_cost = match self.requirements_selections() {
+        let requirement_cost = match self.requirements() {
             Some(selection) => selection.cost(),
             None => 0,
         };
@@ -98,18 +97,15 @@ impl Display for Edge {
             Edge::SubgraphEntrypoint { graph_id, .. } => write!(f, "{}", graph_id),
             Edge::EntityMove(EntityMove { .. }) => write!(f, "🔑"),
             Edge::AbstractMove(_) => write!(f, "🔮"),
-            Edge::FieldMove { name, requires, .. } => {
-                write!(
-                    f,
-                    "{}{}",
-                    name,
-                    requires
-                        .as_ref()
-                        .map(|v| format!(" 🧩{{{}}}", v))
-                        .unwrap_or("".to_string())
-                )
-            }
-        }
+            Edge::FieldMove(field_move) => write!(f, "{}", field_move.name),
+        }?;
+
+        match self.requirements() {
+            Some(reqs) => write!(f, "🧩{}", reqs)?,
+            None => {}
+        };
+
+        Ok(())
     }
 }
 
@@ -117,9 +113,9 @@ impl Debug for Edge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Edge::SubgraphEntrypoint { graph_id, .. } => write!(f, "subgraph({})", graph_id),
-            Edge::FieldMove {
+            Edge::FieldMove(FieldMove {
                 name, join_field, ..
-            } => {
+            }) => {
                 // Start with the field name
                 let mut result = write!(f, "{}", name);
 
@@ -147,7 +143,10 @@ impl Debug for Edge {
 
                 result
             }
-            Edge::EntityMove(EntityMove { key, requirement }) => {
+            Edge::EntityMove(EntityMove {
+                key,
+                requirements: requirement,
+            }) => {
                 write!(f, "🔑 {} {}", key, requirement)
             }
             Edge::AbstractMove(name) => write!(f, "🔮 {}", name),
@@ -166,16 +165,16 @@ impl PartialEq for Edge {
                 },
             ) => graph_id == other_graph_id,
             (
-                Edge::FieldMove {
+                Edge::FieldMove(FieldMove {
                     name,
                     join_field: Some(jf1),
                     ..
-                },
-                Edge::FieldMove {
+                }),
+                Edge::FieldMove(FieldMove {
                     name: other_name,
                     join_field: Some(jf2),
                     ..
-                },
+                }),
             ) => {
                 // Compare names and directive fields that affect planning
                 name == other_name
@@ -186,16 +185,16 @@ impl PartialEq for Edge {
             }
 
             (
-                Edge::FieldMove {
+                Edge::FieldMove(FieldMove {
                     name,
                     join_field: None,
                     ..
-                },
-                Edge::FieldMove {
+                }),
+                Edge::FieldMove(FieldMove {
                     name: other_name,
                     join_field: None,
                     ..
-                },
+                }),
             ) => name == other_name,
 
             (

@@ -146,7 +146,6 @@ impl QueryTreeNode {
 
         let edge_index = self.edge_from_parent.unwrap();
         let edge = graph.edge(edge_index).unwrap();
-        let move_str = format!("{}", edge);
 
         let node = graph.node(self.node_index).unwrap();
         let tail_str = format!("{}", node);
@@ -162,11 +161,19 @@ impl QueryTreeNode {
         }
 
         match edge {
-            Edge::EntityMove(_) => write!(result, "\n{}{} {}", indent, move_str, tail_str),
+            Edge::EntityMove(_) => {
+                write!(result, "\n{}🔑 {}", indent, tail_str)
+            }
             Edge::SubgraphEntrypoint { .. } => {
                 write!(result, "\n{}🚪 ({})", indent, tail_str)
             }
-            _ => write!(result, "\n{}{} of {}", indent, move_str, tail_str),
+            _ => write!(
+                result,
+                "\n{}{} of {}",
+                indent,
+                edge.display_name(),
+                tail_str
+            ),
         }?;
 
         for sub_step in self.children.iter() {

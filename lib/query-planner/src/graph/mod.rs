@@ -101,42 +101,10 @@ impl Graph {
         let to = self.node(target).unwrap();
         let edge = self.edge(edge_index).unwrap();
 
-        let key_str = match edge.key_selection() {
-            Some(_key_selection) => "🔑",
-            None => "",
-        };
-        let req_str = match edge.requirements_selections() {
-            Some(_requirement_selection) => "🧩",
-            None => "",
-        };
-
-        let requires_details = match edge {
-            Edge::FieldMove { requires, .. } => requires
-                .as_ref()
-                .map(|v| format!(" 🧩{{{}}}", v))
-                .unwrap_or("".to_string()),
-            _ => "".to_string(),
-        };
-
         if without_source {
-            format!(
-                "-({}{}{}{})- {}",
-                key_str,
-                req_str,
-                edge.display_name(),
-                requires_details,
-                to.id()
-            )
+            format!("-({})- {}", edge, to.id())
         } else {
-            format!(
-                "{} -({}{}{}{})- {}",
-                from.id(),
-                key_str,
-                req_str,
-                edge.display_name(),
-                requires_details,
-                to.id()
-            )
+            format!("{} -({})- {}", from.id(), edge, to.id())
         }
     }
 
@@ -395,6 +363,18 @@ impl Graph {
                                     def_name, field_name, graph_id, target_type
                                 );
 
+                                let requirements = match join_field.requires.as_ref() {
+                                    Some(requires_str) => {
+                                        let selection_resolver = state
+                                            .selection_resolvers_for_subgraph(
+                                                &join_field.graph_id.as_ref().unwrap(),
+                                            )?;
+
+                                        Some(selection_resolver.resolve(def_name, requires_str)?)
+                                    }
+                                    None => None,
+                                };
+
                                 self.upsert_edge(
                                     head,
                                     tail,
@@ -411,6 +391,7 @@ impl Graph {
                                             }
                                             None => join_field.clone(),
                                         }),
+                                        requirements,
                                     ),
                                 );
                             }
@@ -428,7 +409,7 @@ impl Graph {
                                 self.upsert_edge(
                                     head,
                                     tail,
-                                    Edge::create_field_move(field_name.clone(), None),
+                                    Edge::create_field_move(field_name.clone(), None, None),
                                 );
                             }
                             // The field is not available in the current subgraph
@@ -505,7 +486,7 @@ impl Graph {
                     self.upsert_edge(
                         head,
                         tail,
-                        Edge::create_field_move(field.name.to_string(), None),
+                        Edge::create_field_move(field.name.to_string(), None, None),
                     );
 
                     if !is_leaf {
@@ -576,12 +557,25 @@ impl Graph {
                                     view_id, def_name, field_name, join_type.graph_id, return_type_name
                                 );
 
+                                let requirements = match join_field.requires.as_ref() {
+                                    Some(requires_str) => {
+                                        let selection_resolver = state
+                                            .selection_resolvers_for_subgraph(
+                                                &join_field.graph_id.as_ref().unwrap(),
+                                            )?;
+
+                                        Some(selection_resolver.resolve(def_name, requires_str)?)
+                                    }
+                                    None => None,
+                                };
+
                                 self.upsert_edge(
                                     head,
                                     tail,
                                     Edge::create_field_move(
                                         field_name.to_string(),
                                         Some(join_field.clone()),
+                                        requirements,
                                     ),
                                 );
 
