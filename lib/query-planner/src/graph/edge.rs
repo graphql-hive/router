@@ -100,10 +100,7 @@ impl Display for Edge {
             Edge::FieldMove(field_move) => write!(f, "{}", field_move.name),
         }?;
 
-        match self.requirements() {
-            Some(reqs) => write!(f, "🧩{}", reqs)?,
-            None => {}
-        };
+        if let Some(reqs) = self.requirements() { write!(f, "🧩{}", reqs)? };
 
         Ok(())
     }

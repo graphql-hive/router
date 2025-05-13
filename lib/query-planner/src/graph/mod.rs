@@ -367,7 +367,7 @@ impl Graph {
                                     Some(requires_str) => {
                                         let selection_resolver = state
                                             .selection_resolvers_for_subgraph(
-                                                &join_field.graph_id.as_ref().unwrap(),
+                                                join_field.graph_id.as_ref().unwrap(),
                                             )?;
 
                                         Some(selection_resolver.resolve(def_name, requires_str)?)
@@ -561,7 +561,7 @@ impl Graph {
                                     Some(requires_str) => {
                                         let selection_resolver = state
                                             .selection_resolvers_for_subgraph(
-                                                &join_field.graph_id.as_ref().unwrap(),
+                                                join_field.graph_id.as_ref().unwrap(),
                                             )?;
 
                                         Some(selection_resolver.resolve(def_name, requires_str)?)

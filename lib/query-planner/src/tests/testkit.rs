@@ -12,12 +12,11 @@ use crate::planner::tree::query_tree::QueryTree;
 use crate::planner::walker::path::OperationPath;
 use crate::state::supergraph_state::SupergraphState;
 
-pub fn paths_to_trees(graph: &Graph, paths: &Vec<Vec<OperationPath>>) -> Vec<QueryTree> {
+pub fn paths_to_trees(graph: &Graph, paths: &[Vec<OperationPath>]) -> Vec<QueryTree> {
     paths
         .iter()
         .map(|paths| {
-            QueryTree::from_path(&graph, &paths[0])
-                .expect("expected tree to be built but it failed")
+            QueryTree::from_path(graph, &paths[0]).expect("expected tree to be built but it failed")
         })
         .collect::<Vec<_>>()
 }
