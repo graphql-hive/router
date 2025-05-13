@@ -290,8 +290,8 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
               🔑 Product/LINK
                 pid of String/LINK
               category of Category/PRODUCTS
-                id of String/PRODUCTS
                 tag of String/PRODUCTS
+                id of String/PRODUCTS
             ]
             🔑 Product/PRICE
               price of Price/PRICE
