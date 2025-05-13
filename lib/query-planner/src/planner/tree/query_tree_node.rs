@@ -34,7 +34,7 @@ fn merge_query_tree_node_list(target_list: &mut Vec<QueryTreeNode>, source_list:
     for source_node in source_list.iter() {
         let matching_target_node = target_list
             .iter_mut()
-            .find(|target_node| **target_node == *source_node);
+            .find(|target_node| *target_node == source_node);
 
         match matching_target_node {
             Some(target_node) => {
