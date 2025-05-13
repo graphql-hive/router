@@ -44,7 +44,7 @@ impl QueryTree {
         let mut accumulator = trees.remove(0);
 
         for item in trees {
-            accumulator.root = accumulator.root.merge_nodes(item.root);
+            accumulator.root = accumulator.root.merge_nodes(&item.root);
         }
 
         accumulator

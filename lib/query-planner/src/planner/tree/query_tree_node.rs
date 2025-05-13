@@ -20,6 +20,35 @@ pub struct QueryTreeNode {
     pub children: Vec<QueryTreeNode>,
 }
 
+impl PartialEq for QueryTreeNode {
+    fn eq(&self, other: &Self) -> bool {
+        self.node_index == other.node_index && self.edge_from_parent == other.edge_from_parent
+    }
+}
+
+fn merge_query_tree_node_list(target_list: &mut Vec<QueryTreeNode>, source_list: &[QueryTreeNode]) {
+    if source_list.is_empty() {
+        return; // nothing to merge from the source
+    }
+
+    for source_node in source_list.iter() {
+        let matching_target_node = target_list
+            .iter_mut()
+            .find(|target_node| **target_node == *source_node);
+
+        match matching_target_node {
+            Some(target_node) => {
+                // Match found, recursively merge the content
+                target_node.merge_nodes(source_node);
+            }
+            None => {
+                // No match found, add the source node (and its subtree) to the target list
+                target_list.push(source_node.clone());
+            }
+        }
+    }
+}
+
 impl QueryTreeNode {
     pub fn new(node_index: &NodeIndex, edge_from_parent: Option<&EdgeIndex>) -> Self {
         QueryTreeNode {
@@ -34,11 +63,16 @@ impl QueryTreeNode {
         QueryTreeNode::new(node_index, None)
     }
 
-    pub fn merge_nodes(mut self, mut other: QueryTreeNode) -> Self {
-        self.requirements.append(&mut other.requirements);
-        self.children.append(&mut other.children);
+    pub fn merge_nodes(&mut self, other: &Self) -> Self {
+        merge_query_tree_node_list(&mut self.children, &other.children);
+        merge_query_tree_node_list(&mut self.requirements, &other.requirements);
 
-        self
+        QueryTreeNode {
+            node_index: self.node_index,
+            edge_from_parent: self.edge_from_parent,
+            requirements: self.requirements.clone(),
+            children: self.children.clone(),
+        }
     }
 
     // #[instrument(skip(graph), fields(
