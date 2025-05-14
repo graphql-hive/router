@@ -15,7 +15,7 @@ use crate::{
     state::supergraph_state::{RootOperationType, SupergraphDefinition, SupergraphState},
 };
 use error::GraphError;
-use graphql_parser_hive_fork::query::{Selection, SelectionSet};
+use graphql_parser_hive_fork::query::{Selection, SelectionSet, Type};
 use graphql_tools::ast::{SchemaDocumentExtension, TypeExtension};
 use petgraph::{
     dot::Dot,
@@ -28,6 +28,20 @@ use tracing::{debug, info, instrument};
 use super::graph::{edge::Edge, node::Node};
 
 type InnerGraph = Petgraph<Node, Edge, Directed>;
+
+pub trait TypeHelpers {
+    fn is_list_like_type(&self) -> bool;
+}
+
+impl TypeHelpers for Type<'static, String> {
+    fn is_list_like_type(&self) -> bool {
+        match self {
+            Type::NamedType(_) => false,
+            Type::ListType(_) => true,
+            Type::NonNullType(child) => child.is_list_like_type(),
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct Graph {
@@ -397,6 +411,9 @@ impl Graph {
                                     // the raw directive info.
                                     Edge::create_field_move(
                                         field_name.clone(),
+                                        def_name.clone(),
+                                        state.is_scalar_type(target_type),
+                                        field_definition.source.field_type.is_list_like_type(),
                                         Some(match join_field.provides {
                                             Some(_) => {
                                                 let mut new = join_field.clone();
@@ -427,7 +444,14 @@ impl Graph {
                                 self.upsert_edge(
                                     head,
                                     tail,
-                                    Edge::create_field_move(field_name.clone(), None, None),
+                                    Edge::create_field_move(
+                                        field_name.clone(),
+                                        def_name.clone(),
+                                        state.is_scalar_type(target_type),
+                                        field_definition.source.field_type.is_list_like_type(),
+                                        None,
+                                        None,
+                                    ),
                                 );
                             }
                             // The field is not available in the current subgraph
@@ -491,7 +515,14 @@ impl Graph {
                     self.upsert_edge(
                         head,
                         tail,
-                        Edge::create_field_move(field.name.to_string(), None, None),
+                        Edge::create_field_move(
+                            field.name.to_string(),
+                            parent_type_def.name().to_string(),
+                            state.is_scalar_type(parent_type_def.name()),
+                            field_in_parent.source.field_type.is_list_like_type(),
+                            None,
+                            None,
+                        ),
                     );
 
                     if !is_leaf {
@@ -571,6 +602,11 @@ impl Graph {
                                     tail,
                                     Edge::create_field_move(
                                         field_name.to_string(),
+                                        def_name.clone(),
+                                        state.is_scalar_type(
+                                            field_definition.source.field_type.inner_type(),
+                                        ),
+                                        field_definition.source.field_type.is_list_like_type(),
                                         Some(join_field.clone()),
                                         requirements,
                                     ),

@@ -1,6 +1,9 @@
 use crate::{
     parse_operation,
-    planner::{tree::query_tree::QueryTree, walker::walk_operation},
+    planner::{
+        fetch::fetch_graph::build_fetch_graph_from_query_tree, tree::query_tree::QueryTree,
+        walker::walk_operation,
+    },
     tests::testkit::{init_logger, paths_to_trees, read_supergraph},
     utils::operation_utils::get_operation_to_execute,
 };
@@ -87,9 +90,9 @@ fn testing() -> Result<(), Box<dyn Error>> {
               amount of Float/cost
     ");
 
-    let gqt = QueryTree::merge_trees(qtps);
+    let query_tree = QueryTree::merge_trees(qtps);
 
-    insta::assert_snapshot!(gqt.pretty_print(&graph)?, @r"
+    insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
     root(Query)
       🚪 (Query/store)
         products of Product/store
@@ -109,6 +112,20 @@ fn testing() -> Result<(), Box<dyn Error>> {
             price of Price/cost
               currency of String/cost
               amount of Float/cost
+    ");
+
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree);
+
+    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
+    Nodes:
+    [1] Query/STORE {} → {products} at $.
+    [2] Product/INFO {__typename} → {isAvailable uuid} at $.products
+    [3] Product/COST {__typename} → {price} at $.products
+
+    Tree:
+    [1]
+      [2]
+        [3]
     ");
 
     Ok(())
