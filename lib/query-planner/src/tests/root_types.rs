@@ -47,115 +47,115 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(
       best_paths_per_leaf[0][0].pretty_print(&graph),
-      @"root(Query) -(PRICE)- Query/PRICE -(product)- Product/PRICE -(price)- Price/PRICE -(currency)- String/PRICE"
+      @"root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price -(currency)- String/price"
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[1][0].pretty_print(&graph),
-      @"root(Query) -(PRICE)- Query/PRICE -(product)- Product/PRICE -(price)- Price/PRICE -(amount)- Int/PRICE"
+      @"root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price -(amount)- Int/price"
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[2][0].pretty_print(&graph),
-      @"root(Query) -(PRICE)- Query/PRICE -(product)- Product/PRICE -(price)- Price/PRICE -(id)- ID/PRICE"
+      @"root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price -(id)- ID/price"
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[3][0].pretty_print(&graph),
-      @"root(Query) -(CATEGORY)- Query/CATEGORY -(product)- Product/CATEGORY -(category)- Category/CATEGORY -(name)- String/CATEGORY"
+      @"root(Query) -(category)- Query/category -(product)- Product/category -(category)- Category/category -(name)- String/category"
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[4][0].pretty_print(&graph),
-      @"root(Query) -(CATEGORY)- Query/CATEGORY -(product)- Product/CATEGORY -(category)- Category/CATEGORY -(id)- ID/CATEGORY"
+      @"root(Query) -(category)- Query/category -(product)- Product/category -(category)- Category/category -(id)- ID/category"
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[5][0].pretty_print(&graph),
-      @"root(Query) -(NAME)- Query/NAME -(product)- Product/NAME -(name)- Name/NAME -(model)- String/NAME"
+      @"root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name -(model)- String/name"
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[6][0].pretty_print(&graph),
-      @"root(Query) -(NAME)- Query/NAME -(product)- Product/NAME -(name)- Name/NAME -(brand)- String/NAME"
+      @"root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name -(brand)- String/name"
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[7][0].pretty_print(&graph),
-      @"root(Query) -(NAME)- Query/NAME -(product)- Product/NAME -(name)- Name/NAME -(id)- ID/NAME"
+      @"root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name -(id)- ID/name"
     );
 
     best_paths_per_leaf[8].sort_by_key(|a| a.pretty_print(&graph));
 
     insta::assert_snapshot!(
       best_paths_per_leaf[8][0].pretty_print(&graph),
-      @"root(Query) -(CATEGORY)- Query/CATEGORY -(product)- Product/CATEGORY -(id)- ID/CATEGORY"
+      @"root(Query) -(category)- Query/category -(product)- Product/category -(id)- ID/category"
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[8][1].pretty_print(&graph),
-      @"root(Query) -(NAME)- Query/NAME -(product)- Product/NAME -(id)- ID/NAME"
+      @"root(Query) -(name)- Query/name -(product)- Product/name -(id)- ID/name"
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[8][2].pretty_print(&graph),
-      @"root(Query) -(PRICE)- Query/PRICE -(product)- Product/PRICE -(id)- ID/PRICE"
+      @"root(Query) -(price)- Query/price -(product)- Product/price -(id)- ID/price"
     );
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
 
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/PRICE)
-        product of Product/PRICE
-          price of Price/PRICE
-            currency of String/PRICE
+      🚪 (Query/price)
+        product of Product/price
+          price of Price/price
+            currency of String/price
     ");
     insta::assert_snapshot!(qtps[1].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/PRICE)
-        product of Product/PRICE
-          price of Price/PRICE
-            amount of Int/PRICE
+      🚪 (Query/price)
+        product of Product/price
+          price of Price/price
+            amount of Int/price
     ");
     insta::assert_snapshot!(qtps[2].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/PRICE)
-        product of Product/PRICE
-          price of Price/PRICE
-            id of ID/PRICE
+      🚪 (Query/price)
+        product of Product/price
+          price of Price/price
+            id of ID/price
     ");
     insta::assert_snapshot!(qtps[3].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/CATEGORY)
-        product of Product/CATEGORY
-          category of Category/CATEGORY
-            name of String/CATEGORY
+      🚪 (Query/category)
+        product of Product/category
+          category of Category/category
+            name of String/category
     ");
     insta::assert_snapshot!(qtps[4].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/CATEGORY)
-        product of Product/CATEGORY
-          category of Category/CATEGORY
-            id of ID/CATEGORY
+      🚪 (Query/category)
+        product of Product/category
+          category of Category/category
+            id of ID/category
     ");
     insta::assert_snapshot!(qtps[5].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/NAME)
-        product of Product/NAME
-          name of Name/NAME
-            model of String/NAME
+      🚪 (Query/name)
+        product of Product/name
+          name of Name/name
+            model of String/name
     ");
     insta::assert_snapshot!(qtps[6].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/NAME)
-        product of Product/NAME
-          name of Name/NAME
-            brand of String/NAME
+      🚪 (Query/name)
+        product of Product/name
+          name of Name/name
+            brand of String/name
     ");
     insta::assert_snapshot!(qtps[7].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/NAME)
-        product of Product/NAME
-          name of Name/NAME
-            id of ID/NAME
+      🚪 (Query/name)
+        product of Product/name
+          name of Name/name
+            id of ID/name
     ");
     insta::assert_snapshot!(qtps[8].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/CATEGORY)
-        product of Product/CATEGORY
-          id of ID/CATEGORY
+      🚪 (Query/category)
+        product of Product/category
+          id of ID/category
     ");
 
     Ok(())

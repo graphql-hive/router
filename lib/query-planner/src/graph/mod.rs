@@ -173,12 +173,17 @@ impl Graph {
         for (def_name, definition) in state.definitions.iter() {
             for join_type1 in definition.join_types() {
                 for join_type2 in definition.join_types() {
-                    let head = self.upsert_node(Node::new_node(def_name, &join_type1.graph_id));
+                    let head = self.upsert_node(Node::new_node(
+                        def_name,
+                        state.resolve_graph_id(&join_type1.graph_id)?,
+                    ));
 
                     if join_type1.graph_id != join_type2.graph_id {
                         if let Some(key) = &join_type2.key {
-                            let tail =
-                                self.upsert_node(Node::new_node(def_name, &join_type2.graph_id));
+                            let tail = self.upsert_node(Node::new_node(
+                                def_name,
+                                state.resolve_graph_id(&join_type2.graph_id)?,
+                            ));
                             let selection_resolver =
                                 state.selection_resolvers_for_subgraph(&join_type2.graph_id)?;
                             let selection = selection_resolver.resolve(def_name, key)?;
@@ -220,10 +225,13 @@ impl Graph {
             .filter(|(_, d)| matches!(d, SupergraphDefinition::Object(_)))
         {
             for join_implements in definition.join_implements() {
-                let tail = self.upsert_node(Node::new_node(def_name, &join_implements.graph_id));
+                let tail = self.upsert_node(Node::new_node(
+                    def_name,
+                    state.resolve_graph_id(&join_implements.graph_id)?,
+                ));
                 let head = self.upsert_node(Node::new_node(
                     &join_implements.interface,
-                    &join_implements.graph_id,
+                    state.resolve_graph_id(&join_implements.graph_id)?,
                 ));
 
                 info!(
@@ -305,14 +313,17 @@ impl Graph {
                         }
                         .ok_or(GraphError::MissingRootType(*root_type))?;
 
-                        let tail = self.upsert_node(Node::new_node(def_name, graph_id));
+                        let tail = self.upsert_node(Node::new_node(
+                            def_name,
+                            state.resolve_graph_id(graph_id)?,
+                        ));
 
                         self.upsert_edge(
                             head,
                             tail,
                             Edge::SubgraphEntrypoint {
                                 field_names: relevant_fields,
-                                graph_id: graph_id.to_string(),
+                                name: state.resolve_graph_id(graph_id)?,
                             },
                         );
                     }
@@ -352,8 +363,14 @@ impl Graph {
                                     continue;
                                 }
 
-                                let head = self.upsert_node(Node::new_node(def_name, graph_id));
-                                let tail = self.upsert_node(Node::new_node(target_type, graph_id));
+                                let head = self.upsert_node(Node::new_node(
+                                    def_name,
+                                    state.resolve_graph_id(graph_id)?,
+                                ));
+                                let tail = self.upsert_node(Node::new_node(
+                                    target_type,
+                                    state.resolve_graph_id(graph_id)?,
+                                ));
 
                                 info!(
                                     "[x] Creating owned field move edge '{}.{}/{}' (type: {})",
@@ -393,8 +410,14 @@ impl Graph {
                                 );
                             }
                             (true, None) => {
-                                let head = self.upsert_node(Node::new_node(def_name, graph_id));
-                                let tail = self.upsert_node(Node::new_node(target_type, graph_id));
+                                let head = self.upsert_node(Node::new_node(
+                                    def_name,
+                                    state.resolve_graph_id(graph_id)?,
+                                ));
+                                let tail = self.upsert_node(Node::new_node(
+                                    target_type,
+                                    state.resolve_graph_id(graph_id)?,
+                                ));
 
                                 info!(
                                     "[x] Creating field move edge for '{}.{}/{}' (type: {})",
@@ -453,7 +476,7 @@ impl Graph {
 
                     let tail = self.upsert_node(Node::new_provides_node(
                         return_type_name,
-                        graph_id,
+                        state.resolve_graph_id(graph_id)?,
                         view_id,
                     ));
 
@@ -514,7 +537,7 @@ impl Graph {
 
                                 let head = self.upsert_node(Node::new_node(
                                     definition.name(),
-                                    &join_type.graph_id,
+                                    state.resolve_graph_id(&join_type.graph_id)?,
                                 ));
 
                                 let return_type_name =
@@ -522,7 +545,7 @@ impl Graph {
 
                                 let tail = self.upsert_node(Node::new_provides_node(
                                     return_type_name,
-                                    &join_type.graph_id,
+                                    state.resolve_graph_id(&join_type.graph_id)?,
                                     view_id,
                                 ));
 
