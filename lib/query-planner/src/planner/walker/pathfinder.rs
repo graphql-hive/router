@@ -9,7 +9,10 @@ use crate::{
         selection::{Selection, SelectionNode, SelectionNodeField},
         Graph,
     },
-    planner::walker::best_path::{find_best_paths, BestPathTracker},
+    planner::{
+        tree::query_tree_node::QueryTreeNode,
+        walker::best_path::{find_best_paths, BestPathTracker},
+    },
 };
 
 use super::{error::WalkOperationError, excluded::ExcludedFromLookup, path::OperationPath};
@@ -113,7 +116,7 @@ pub fn find_indirect_paths(
             // That's because in some other path, we will or already have checked the other edge.
             let edge = edge_ref.weight();
 
-            let requirements_already_checked = match edge.requirements_selections() {
+            let requirements_already_checked = match edge.requirements() {
                 Some(selection_requirements) => visited_key_fields.contains(selection_requirements),
                 None => false,
             };
@@ -133,17 +136,14 @@ pub fn find_indirect_paths(
                     debug!("Requirements not satisfied, continue look up...");
                     continue;
                 }
-                Some(_paths) => {
+                Some(paths) => {
                     debug!(
                         "Advancing path to {}",
                         graph.pretty_print_edge(edge_ref.id(), false)
                     );
 
-                    let next_resolution_path = path.advance(
-                        &edge_ref,
-                        // TODO: Implement QueryTreeNode::from_paths here
-                        /*QueryTreeNode::from_paths(graph, &paths)*/
-                    );
+                    let next_resolution_path =
+                        path.advance(&edge_ref, QueryTreeNode::from_paths(graph, &paths)?);
 
                     let direct_paths_excluded =
                         excluded.next(edge_tail_graph_id, &visited_key_fields, &[]);
@@ -172,7 +172,7 @@ pub fn find_indirect_paths(
                         let mut new_visited_graphs = visited_graphs.clone();
                         new_visited_graphs.insert(edge_tail_graph_id.to_string());
 
-                        let next_requirements = match edge.requirements_selections() {
+                        let next_requirements = match edge.requirements() {
                             Some(requirements) => {
                                 let mut new_visited_key_fields = visited_key_fields.clone();
                                 new_visited_key_fields.insert(requirements.clone());
@@ -221,7 +221,7 @@ pub fn find_direct_paths(
     let edges_iter =
             graph
             .edges_from(path_tail_index)
-            .filter(|e| matches!(e.weight(), Edge::FieldMove { name, .. } if name == field_name && !path.has_visited_edge(&e.id())));
+            .filter(|e| matches!(e.weight(), Edge::FieldMove(f) if f.name == field_name && !path.has_visited_edge(&e.id())));
 
     for edge_ref in edges_iter {
         debug!(
@@ -234,17 +234,15 @@ pub fn find_direct_paths(
         let can_be_satisfied = can_satisfy_edge(graph, &edge_ref, path, &new_excluded, false)?;
 
         match can_be_satisfied {
-            Some(_paths) => {
+            Some(paths) => {
                 debug!(
                     "Advancing path {} with edge {}",
                     path.pretty_print(graph),
                     graph.pretty_print_edge(edge_ref.id(), false)
                 );
 
-                let next_resolution_path = path.advance(
-                    &edge_ref,
-                    /*QueryTreeNode::from_paths(graph, &paths)*/
-                );
+                let next_resolution_path =
+                    path.advance(&edge_ref, QueryTreeNode::from_paths(graph, &paths)?);
 
                 result.push(next_resolution_path);
             }
@@ -270,7 +268,7 @@ fn can_satisfy_edge(
 ) -> Result<Option<Vec<OperationPath>>, WalkOperationError> {
     let edge = edge_ref.weight();
 
-    match edge.requirements_selections() {
+    match edge.requirements() {
         None => Ok(Some(vec![])),
         Some(selections) => {
             debug!(
