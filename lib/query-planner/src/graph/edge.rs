@@ -142,11 +142,8 @@ impl Debug for Edge {
 
                 result
             }
-            Edge::EntityMove(EntityMove {
-                key,
-                requirements: requirement,
-            }) => {
-                write!(f, "🔑 {} {}", key, requirement)
+            Edge::EntityMove(EntityMove { key, .. }) => {
+                write!(f, "🔑 {}", key)
             }
             Edge::AbstractMove(name) => write!(f, "🔮 {}", name),
         }

@@ -17,7 +17,6 @@ use crate::{
 use error::GraphError;
 use graphql_parser_hive_fork::query::{Selection, SelectionSet};
 use graphql_tools::ast::{SchemaDocumentExtension, TypeExtension};
-use node::SubgraphType;
 use petgraph::{
     dot::Dot,
     graph::{EdgeIndex, Edges, NodeIndex},
@@ -36,7 +35,7 @@ pub struct Graph {
     pub query_root: NodeIndex,
     pub mutation_root: Option<NodeIndex>,
     pub subscription_root: Option<NodeIndex>,
-    pub node_to_index: HashMap<String, NodeIndex>,
+    pub node_display_name_to_index: HashMap<String, NodeIndex>,
 }
 
 impl Graph {
@@ -45,7 +44,7 @@ impl Graph {
         supergraph_state: &SupergraphState,
     ) -> Result<Self, GraphError> {
         let mut instance = Graph {
-            node_to_index: HashMap::new(),
+            node_display_name_to_index: HashMap::new(),
             graph: InnerGraph::new(),
             ..Default::default()
         };
@@ -92,7 +91,7 @@ impl Graph {
     }
 
     pub fn pretty_print_node(&self, node_index: &NodeIndex) -> String {
-        self.node(*node_index).unwrap().id()
+        self.node(*node_index).unwrap().display_name()
     }
 
     pub fn pretty_print_edge(&self, edge_index: EdgeIndex, without_source: bool) -> String {
@@ -102,9 +101,9 @@ impl Graph {
         let edge = self.edge(edge_index).unwrap();
 
         if without_source {
-            format!("-({})- {}", edge, to.id())
+            format!("-({})- {}", edge, to.display_name())
         } else {
-            format!("{} -({})- {}", from.id(), edge, to.id())
+            format!("{} -({})- {}", from.display_name(), edge, to.display_name())
         }
     }
 
@@ -132,14 +131,16 @@ impl Graph {
     }
 
     pub fn upsert_node(&mut self, node: Node) -> NodeIndex {
-        let id = node.id();
+        let display_identifier = node.display_name();
 
-        if let Some(index) = self.node_to_index.get(&id) {
+        if let Some(index) = self.node_display_name_to_index.get(&display_identifier) {
             return *index;
         }
 
         let index = self.graph.add_node(node);
-        self.node_to_index.insert(id, index);
+        self.node_display_name_to_index
+            .insert(display_identifier, index);
+
         index
     }
 
@@ -172,13 +173,12 @@ impl Graph {
         for (def_name, definition) in state.definitions.iter() {
             for join_type1 in definition.join_types() {
                 for join_type2 in definition.join_types() {
-                    let head =
-                        self.upsert_node(Node::subgraph_type(def_name, &join_type1.graph_id));
+                    let head = self.upsert_node(Node::new_node(def_name, &join_type1.graph_id));
 
                     if join_type1.graph_id != join_type2.graph_id {
                         if let Some(key) = &join_type2.key {
-                            let tail = self
-                                .upsert_node(Node::subgraph_type(def_name, &join_type2.graph_id));
+                            let tail =
+                                self.upsert_node(Node::new_node(def_name, &join_type2.graph_id));
                             let selection_resolver =
                                 state.selection_resolvers_for_subgraph(&join_type2.graph_id)?;
                             let selection = selection_resolver.resolve(def_name, key)?;
@@ -220,9 +220,8 @@ impl Graph {
             .filter(|(_, d)| matches!(d, SupergraphDefinition::Object(_)))
         {
             for join_implements in definition.join_implements() {
-                let tail =
-                    self.upsert_node(Node::subgraph_type(def_name, &join_implements.graph_id));
-                let head = self.upsert_node(Node::subgraph_type(
+                let tail = self.upsert_node(Node::new_node(def_name, &join_implements.graph_id));
+                let head = self.upsert_node(Node::new_node(
                     &join_implements.interface,
                     &join_implements.graph_id,
                 ));
@@ -306,7 +305,7 @@ impl Graph {
                         }
                         .ok_or(GraphError::MissingRootType(*root_type))?;
 
-                        let tail = self.upsert_node(Node::subgraph_type(def_name, graph_id));
+                        let tail = self.upsert_node(Node::new_node(def_name, graph_id));
 
                         self.upsert_edge(
                             head,
@@ -353,10 +352,8 @@ impl Graph {
                                     continue;
                                 }
 
-                                let head =
-                                    self.upsert_node(Node::subgraph_type(def_name, graph_id));
-                                let tail =
-                                    self.upsert_node(Node::subgraph_type(target_type, graph_id));
+                                let head = self.upsert_node(Node::new_node(def_name, graph_id));
+                                let tail = self.upsert_node(Node::new_node(target_type, graph_id));
 
                                 info!(
                                     "[x] Creating owned field move edge '{}.{}/{}' (type: {})",
@@ -396,10 +393,8 @@ impl Graph {
                                 );
                             }
                             (true, None) => {
-                                let head =
-                                    self.upsert_node(Node::subgraph_type(def_name, graph_id));
-                                let tail =
-                                    self.upsert_node(Node::subgraph_type(target_type, graph_id));
+                                let head = self.upsert_node(Node::new_node(def_name, graph_id));
+                                let tail = self.upsert_node(Node::new_node(target_type, graph_id));
 
                                 info!(
                                     "[x] Creating field move edge for '{}.{}/{}' (type: {})",
@@ -451,29 +446,16 @@ impl Graph {
                         })?;
                     let return_type_name = field_in_parent.source.field_type.inner_type();
 
-                    let subgraph_type = SubgraphType {
-                        name: return_type_name.to_string(),
-                        subgraph: graph_id.to_string(),
-                    };
-
                     info!(
                         "Upserting graph viewed node for '{}.{}'",
                         return_type_name, graph_id,
                     );
 
-                    let tail = self.upsert_node(match is_leaf {
-                        true => Node::SubgraphType(subgraph_type),
-                        false => Node::SubgraphTypeView {
-                            view_id,
-                            node: subgraph_type,
-                            selection_set: field.selection_set.to_string(),
-                            // selection_set: SelectionNode::parse_field_selection(
-                            //     field.selection_set.to_string(),
-                            //     &field.name,
-                            //     return_type_name,
-                            // ),
-                        },
-                    });
+                    let tail = self.upsert_node(Node::new_provides_node(
+                        return_type_name,
+                        graph_id,
+                        view_id,
+                    ));
 
                     info!(
                         "Creating viewed (#{}) field edge for '{}.{}' (type: {})",
@@ -530,7 +512,7 @@ impl Graph {
                             {
                                 view_id += 1;
 
-                                let head = self.upsert_node(Node::subgraph_type(
+                                let head = self.upsert_node(Node::new_node(
                                     definition.name(),
                                     &join_type.graph_id,
                                 ));
@@ -538,19 +520,11 @@ impl Graph {
                                 let return_type_name =
                                     field_definition.source.field_type.inner_type();
 
-                                let tail = self.upsert_node(Node::SubgraphTypeView {
+                                let tail = self.upsert_node(Node::new_provides_node(
+                                    return_type_name,
+                                    &join_type.graph_id,
                                     view_id,
-                                    node: SubgraphType {
-                                        name: return_type_name.to_string(),
-                                        subgraph: join_type.graph_id.to_string(),
-                                    },
-                                    selection_set: selection_set.to_string(),
-                                    // selection_set: SelectionNode::parse_field_selection(
-                                    //     selection_set.to_string(),
-                                    //     &field_name,
-                                    //     return_type_name,
-                                    // ),
-                                });
+                                ));
 
                                 info!(
                                     "Creating viewed (#{}) link for provided field '{}.{}/{:?}' (type: {})",

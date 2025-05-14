@@ -164,7 +164,7 @@ impl OperationPath {
         let edges = self.get_edges();
 
         if edges.is_empty() {
-            graph.node(self.root_node).unwrap().id()
+            graph.node(self.root_node).unwrap().display_name()
         } else {
             edges
                 .iter()
