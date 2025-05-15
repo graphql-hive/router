@@ -408,8 +408,8 @@ fn perform_fetch_step_merge(
 ) -> Result<(), FetchGraphError> {
     // TODO: is there a way to not `clone` here?
     //       If I don't clone, the `me` variable yells at me about mutable vs immutable borrow
-    let other = fetch_graph.get_step_data(other_index)?.clone(); // TODO: Err(missing_step)
-    let me = fetch_graph.get_step_data_mut(self_index)?; // TODO: Err(missing_step)
+    let other = fetch_graph.get_step_data(other_index)?.clone();
+    let me = fetch_graph.get_step_data_mut(self_index)?;
     me.output.add_at_path(
         &other.output,
         other.response_path[me.response_path.len()..].to_vec(),
@@ -569,7 +569,7 @@ fn get_or_create_fetch_step_for_entity_move(
                 &response_path,
             );
             if let Some(selection) = key {
-                let step = fetch_graph.get_step_data_mut(step_index)?; // TODO: Err(missing_step)
+                let step = fetch_graph.get_step_data_mut(step_index)?;
                 step.input.add(selection)
             }
 
@@ -699,7 +699,7 @@ fn process_entity_move_edge(
     if parent_fetch_step_index.is_none() {
         panic!("Expected a parent fetch step");
     }
-    let edge = graph.edge(edge_index)?; // TODO: Err(GraphError)
+    let edge = graph.edge(edge_index)?;
     let requirement = match edge {
         Edge::EntityMove(em) => Selection {
             // TODO: actual selection set
@@ -723,7 +723,7 @@ fn process_entity_move_edge(
 
     let fetch_step_index = get_or_create_fetch_step_for_entity_move(
         fetch_graph,
-        parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?, // TODO: Err(empty_step_index)
+        parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?,
         SubgraphName(graph_id.to_string()),
         type_name.clone(),
         response_path.clone(),
