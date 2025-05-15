@@ -118,9 +118,9 @@ fn testing() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/STORE {} → {products} at $.
-    [2] Product/INFO {__typename} → {isAvailable uuid} at $.products
-    [3] Product/COST {__typename} → {price} at $.products
+    [1] Query/store {} → {products} at $.
+    [2] Product/info {__typename} → {isAvailable uuid} at $.products
+    [3] Product/cost {__typename} → {price} at $.products
 
     Tree:
     [1]

@@ -4,6 +4,7 @@ use crate::graph::Graph;
 use crate::planner::tree::query_tree::QueryTree;
 use crate::planner::tree::query_tree_node::QueryTreeNode;
 use crate::planner::walker::selection::{FieldSelection, SelectionItem, SelectionSet};
+use crate::state::supergraph_state::SubgraphName;
 use petgraph::graph::{DiGraph, EdgeIndex, NodeIndex, NodeIndices};
 use petgraph::visit::Bfs;
 use petgraph::visit::{EdgeRef, NodeRef};
@@ -290,7 +291,7 @@ impl Display for FetchGraph {
 
 #[derive(Debug, Clone)]
 pub struct FetchStepData {
-    pub service_name: String,
+    pub service_name: SubgraphName,
     pub response_path: Vec<String>,
     pub input: Selection,
     pub output: Selection,
@@ -419,7 +420,7 @@ pub struct FetchSteps {
 
 fn create_noop_fetch_step(fetch_graph: &mut FetchGraph) -> NodeIndex {
     fetch_graph.add_step(FetchStepData {
-        service_name: "*".to_string(),
+        service_name: SubgraphName("*".to_string()),
         response_path: vec![],
         input: Selection {
             selection_set: SelectionSet { items: vec![] },
@@ -435,7 +436,7 @@ fn create_noop_fetch_step(fetch_graph: &mut FetchGraph) -> NodeIndex {
 
 fn create_fetch_step_for_entity_move(
     fetch_graph: &mut FetchGraph,
-    subgraph_name: String,
+    subgraph_name: SubgraphName,
     type_name: String,
     response_path: &Vec<String>,
 ) -> NodeIndex {
@@ -463,7 +464,7 @@ fn create_fetch_step_for_entity_move(
 
 fn create_fetch_step_for_root_move(
     fetch_graph: &mut FetchGraph,
-    subgraph_name: String,
+    subgraph_name: SubgraphName,
     type_name: String,
 ) -> NodeIndex {
     fetch_graph.add_step(FetchStepData {
@@ -484,7 +485,7 @@ fn create_fetch_step_for_root_move(
 fn get_or_create_fetch_step_for_entity_move(
     fetch_graph: &mut FetchGraph,
     parent_fetch_step_index: NodeIndex,
-    subgraph_name: String,
+    subgraph_name: SubgraphName,
     type_name: String,
     response_path: Vec<String>,
     key: Option<Selection>,
@@ -680,16 +681,13 @@ fn process_entity_move_edge(
         Node::MutationRoot(t) => t,
         Node::SubscriptionRoot(t) => t,
         Node::SubgraphType(t) => &t.name,
-        // TODO(Dotan): view_id - no need
-        // TODO(Dotan): selection_set - no need
-        Node::SubgraphTypeView { .. } => panic!("Not sure Dotan"),
     };
     let graph_id = tail_node.graph_id().unwrap();
 
     let fetch_step_index = get_or_create_fetch_step_for_entity_move(
         fetch_graph,
         parent_fetch_step_index.unwrap(),
-        graph_id.to_string(),
+        SubgraphName(graph_id.to_string()),
         type_name.clone(),
         response_path.clone(),
         Some(requirement.clone()),
@@ -728,7 +726,7 @@ fn process_subgraph_entrypoint_edge(
     fetch_graph: &mut FetchGraph,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: Option<NodeIndex>,
-    subgraph_name: String,
+    subgraph_name: SubgraphName,
     type_name: String,
 ) {
     if parent_fetch_step_index.is_none() {
@@ -835,7 +833,7 @@ fn process_query_node(
     let edge = graph.edge(edge_index).unwrap();
 
     match edge {
-        Edge::SubgraphEntrypoint { graph_id, .. } => {
+        Edge::SubgraphEntrypoint { name, .. } => {
             let tail_node_index = graph.get_edge_tail(&edge_index).unwrap();
             let tail_node = graph.node(tail_node_index).unwrap();
             let type_name = match tail_node {
@@ -843,7 +841,6 @@ fn process_query_node(
                 Node::MutationRoot(t) => t,
                 Node::SubscriptionRoot(t) => t,
                 Node::SubgraphType(t) => &t.name,
-                _ => panic!("wat"),
             };
 
             process_subgraph_entrypoint_edge(
@@ -851,7 +848,7 @@ fn process_query_node(
                 fetch_graph,
                 query_node,
                 parent_fetch_step_index,
-                graph_id.clone(),
+                name.clone(),
                 type_name.clone(),
             )
         }

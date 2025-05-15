@@ -28,6 +28,12 @@ pub enum SupergraphStateError {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SubgraphName(pub String);
 
+impl Display for SubgraphName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Debug)]
 pub struct SupergraphState<'a> {
     /// A map all of definitions (def_name, def) that exists in the schema.
