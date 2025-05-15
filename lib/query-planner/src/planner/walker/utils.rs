@@ -1,11 +1,12 @@
 use graphql_parser_hive_fork::query::OperationDefinition;
 
 use crate::{
+    ast::selection_set::SelectionSet,
     graph::{edge::EdgeReference, Graph},
     state::supergraph_state::RootOperationType,
 };
 
-use super::{error::WalkOperationError, selection::SelectionSet};
+use super::error::WalkOperationError;
 
 pub fn get_entrypoints<'a>(
     graph: &'a Graph,

@@ -1,6 +1,7 @@
 // TODO: enable this cross-lib to avoid panics
 // #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+pub mod ast;
 pub mod consumer_schema;
 mod federation_spec;
 pub mod graph;
