@@ -53,6 +53,14 @@ impl MergePath {
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
+
+    pub fn common_prefix_len(&self, other: &MergePath) -> usize {
+        self.inner
+            .iter()
+            .zip(other.inner.iter())
+            .take_while(|(a, b)| a == b)
+            .count()
+    }
 }
 
 impl PartialEq for MergePath {

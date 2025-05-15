@@ -138,18 +138,22 @@ impl FetchGraph {
     /// A -> B -> ... -> C
     /// ```
     fn deduplicate_and_prune_fetch_steps(&mut self) -> Result<(), FetchGraphError> {
-        for step_index in self.step_indices() {
-            let step = self.get_step_data(step_index)?;
-            if step.output.selection_set.items.len() > 0
-                && self.parents_of(step_index).next().is_some()
-            {
-                continue;
-            }
+        let steps_to_remove: Vec<NodeIndex> = self
+            .step_indices()
+            .filter(|&step_index| {
+                let step = match self.get_step_data(step_index) {
+                    Ok(s) => s,
+                    Err(_) => return false,
+                };
 
-            if self.children_of(step_index).next().is_some() {
-                continue;
-            }
+                // Check if step is leaf with no output
+                step.output.selection_set.items.is_empty()
+                    && self.parents_of(step_index).next().is_some()
+                    && self.children_of(step_index).next().is_none()
+            })
+            .collect();
 
+        for step_index in steps_to_remove {
             self.remove_step(step_index);
         }
 
@@ -391,12 +395,8 @@ impl FetchStepData {
 
         let self_path = self.response_path.insert_front("*".to_string());
         let other_path = other.response_path.insert_front("*".to_string());
-        if self_path
-            .inner
-            .iter()
-            .enumerate()
-            .all(|(i, p)| p.eq(&other_path.inner[i]))
-        {
+        let prefix_len = self_path.common_prefix_len(&other_path);
+        if prefix_len == self.response_path.len() {
             return false;
         }
 
