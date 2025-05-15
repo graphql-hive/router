@@ -481,12 +481,12 @@ fn create_noop_fetch_step(fetch_graph: &mut FetchGraph) -> NodeIndex {
 
 fn create_fetch_step_for_entity_move(
     fetch_graph: &mut FetchGraph,
-    subgraph_name: SubgraphName,
-    type_name: String,
+    subgraph_name: &SubgraphName,
+    type_name: &String,
     response_path: &MergePath,
 ) -> NodeIndex {
     fetch_graph.add_step(FetchStepData {
-        service_name: subgraph_name,
+        service_name: subgraph_name.clone(),
         response_path: response_path.clone(),
         input: Selection {
             selection_set: SelectionSet {
@@ -501,7 +501,7 @@ fn create_fetch_step_for_entity_move(
         },
         output: Selection {
             selection_set: SelectionSet { items: vec![] },
-            type_name: type_name,
+            type_name: type_name.clone(),
         },
         reserved_for_requires: None,
     })
@@ -509,11 +509,11 @@ fn create_fetch_step_for_entity_move(
 
 fn create_fetch_step_for_root_move(
     fetch_graph: &mut FetchGraph,
-    subgraph_name: SubgraphName,
-    type_name: String,
+    subgraph_name: &SubgraphName,
+    type_name: &String,
 ) -> NodeIndex {
     fetch_graph.add_step(FetchStepData {
-        service_name: subgraph_name,
+        service_name: subgraph_name.clone(),
         response_path: MergePath::empty(),
         input: Selection {
             selection_set: SelectionSet { items: vec![] },
@@ -521,7 +521,7 @@ fn create_fetch_step_for_root_move(
         },
         output: Selection {
             selection_set: SelectionSet { items: vec![] },
-            type_name: type_name,
+            type_name: type_name.clone(),
         },
         reserved_for_requires: None,
     })
@@ -530,26 +530,26 @@ fn create_fetch_step_for_root_move(
 fn get_or_create_fetch_step_for_entity_move(
     fetch_graph: &mut FetchGraph,
     parent_fetch_step_index: NodeIndex,
-    subgraph_name: SubgraphName,
-    type_name: String,
-    response_path: MergePath,
-    key: Option<Selection>,
-    requires: Option<Selection>,
+    subgraph_name: &SubgraphName,
+    type_name: &String,
+    response_path: &MergePath,
+    key: Option<&Selection>,
+    requires: Option<&Selection>,
 ) -> Result<NodeIndex, FetchGraphError> {
     let matching_child_index =
         fetch_graph
             .children_of(parent_fetch_step_index)
             .find_map(|to_child_edge_ref| {
                 if let Ok(fetch_step) = fetch_graph.get_step_data(to_child_edge_ref.target()) {
-                    if fetch_step.service_name != subgraph_name {
+                    if fetch_step.service_name != *subgraph_name {
                         return None;
                     }
 
-                    if fetch_step.input.type_name != type_name {
+                    if fetch_step.input.type_name != *type_name {
                         return None;
                     }
 
-                    if fetch_step.response_path != response_path {
+                    if fetch_step.response_path != *response_path {
                         return None;
                     }
 
@@ -583,12 +583,12 @@ fn get_or_create_fetch_step_for_entity_move(
             let step_index = create_fetch_step_for_entity_move(
                 fetch_graph,
                 subgraph_name,
-                type_name.clone(),
+                type_name,
                 &response_path,
             );
             if let Some(selection) = key {
                 let step = fetch_graph.get_step_data_mut(step_index)?;
-                step.input.add(selection)
+                step.input.add(selection.clone())
             }
 
             return Ok(step_index);
@@ -684,8 +684,8 @@ fn process_noop_edge(
 
 fn add_typename_field_to_output(
     fetch_step: &mut FetchStepData,
-    type_name: String,
-    add_at: MergePath,
+    type_name: &String,
+    add_at: &MergePath,
 ) {
     fetch_step.output.add_at_path(
         &Selection {
@@ -697,9 +697,9 @@ fn add_typename_field_to_output(
                     selections: SelectionSet { items: vec![] },
                 })],
             },
-            type_name,
+            type_name: type_name.clone(),
         },
-        add_at,
+        add_at.clone(),
         true,
     );
 }
@@ -742,16 +742,16 @@ fn process_entity_move_edge(
     let fetch_step_index = get_or_create_fetch_step_for_entity_move(
         fetch_graph,
         parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?,
-        SubgraphName(graph_id.to_string()),
-        type_name.clone(),
-        response_path.clone(),
-        Some(requirement.clone()),
+        &SubgraphName(graph_id.to_string()),
+        type_name,
+        response_path,
+        Some(&requirement),
         None,
     )?;
 
     let fetch_step = fetch_graph.get_step_data_mut(fetch_step_index)?;
     fetch_step.input.add(requirement);
-    add_typename_field_to_output(fetch_step, type_name.clone(), fetch_path.clone());
+    add_typename_field_to_output(fetch_step, type_name, fetch_path);
 
     // Make the fetch step a child of the parent fetch step
     fetch_graph.connect(
@@ -786,8 +786,8 @@ fn process_subgraph_entrypoint_edge(
     fetch_graph: &mut FetchGraph,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: Option<NodeIndex>,
-    subgraph_name: SubgraphName,
-    type_name: String,
+    subgraph_name: &SubgraphName,
+    type_name: &String,
 ) -> Result<(), FetchGraphError> {
     if parent_fetch_step_index.is_none() {
         panic!("Expected a parent fetch step")
@@ -821,10 +821,10 @@ fn process_plain_field_edge(
     requiring_fetch_step_index: Option<NodeIndex>,
     response_path: &MergePath,
     fetch_path: &MergePath,
-    field_name: String,
+    field_name: &String,
     field_is_leaf: bool,
     field_is_list: bool,
-    field_type_name: String,
+    field_type_name: &String,
 ) -> Result<(), FetchGraphError> {
     let parent_fetch_step_index = parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?;
 
@@ -843,7 +843,7 @@ fn process_plain_field_edge(
                     selections: SelectionSet { items: vec![] },
                 })],
             },
-            type_name: field_type_name,
+            type_name: field_type_name.clone(),
         },
         fetch_path.clone(),
         false,
@@ -898,8 +898,8 @@ fn process_query_node(
                     fetch_graph,
                     query_node,
                     parent_fetch_step_index,
-                    name.clone(),
-                    type_name.clone(),
+                    name,
+                    type_name,
                 )?
             }
             Edge::EntityMove(_) => process_entity_move_edge(
@@ -922,10 +922,10 @@ fn process_query_node(
                         requiring_fetch_step_index,
                         response_path,
                         fetch_path,
-                        field.name.clone(),
+                        &field.name,
                         field.is_leaf.clone(),
                         field.is_list.clone(),
-                        field.type_name.clone(),
+                        &field.type_name,
                     )?
                 } else {
                     todo!("not yet supported")
