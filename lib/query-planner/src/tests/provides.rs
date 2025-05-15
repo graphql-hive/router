@@ -29,22 +29,22 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(
       best_paths_per_leaf[0][0].pretty_print(&graph),
-      @"root(Query) -(PRODUCTS)- Query/PRODUCTS -(products)- Product/PRODUCTS -(🔑🧩{upc})- Product/REVIEWS -(reviews)- Review/REVIEWS -(author)- User/REVIEWS/1 -(username)- String/REVIEWS/1"
+      @"root(Query) -(products)- Query/products -(products)- Product/products -(🔑🧩{upc})- Product/reviews -(reviews)- Review/reviews -(author)- User/reviews/1 -(username)- String/reviews/1"
     );
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
 
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/PRODUCTS)
-        products of Product/PRODUCTS
+      🚪 (Query/products)
+        products of Product/products
           🧩 [
-            upc of String/PRODUCTS
+            upc of String/products
           ]
-          🔑 Product/REVIEWS
-            reviews of Review/REVIEWS
-              author of User/REVIEWS/1
-                username of String/REVIEWS/1
+          🔑 Product/reviews
+            reviews of Review/reviews
+              author of User/reviews/1
+                username of String/reviews/1
     ");
 
     Ok(())
@@ -78,23 +78,23 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/CATEGORY)
-        products of Product/CATEGORY/1
-          categories of Category/CATEGORY/1
-            name of String/CATEGORY/1
+      🚪 (Query/category)
+        products of Product/category/1
+          categories of Category/category/1
+            name of String/category/1
     ");
     insta::assert_snapshot!(qtps[1].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/CATEGORY)
-        products of Product/CATEGORY/1
-          categories of Category/CATEGORY/1
-            id of ID/CATEGORY/1
+      🚪 (Query/category)
+        products of Product/category/1
+          categories of Category/category/1
+            id of ID/category/1
     ");
     insta::assert_snapshot!(qtps[2].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/CATEGORY)
-        products of Product/CATEGORY
-          id of ID/CATEGORY
+      🚪 (Query/category)
+        products of Product/category
+          id of ID/category
     ");
 
     Ok(())

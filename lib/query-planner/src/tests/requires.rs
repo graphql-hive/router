@@ -25,28 +25,28 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(
       best_paths_per_leaf[0][0].pretty_print(&graph),
-      @"root(Query) -(PRODUCTS)- Query/PRODUCTS -(products)- Product/PRODUCTS -(🔑🧩{upc})- Product/INVENTORY -(shippingEstimate🧩{price weight})- Int/INVENTORY"
+      @"root(Query) -(products)- Query/products -(products)- Product/products -(🔑🧩{upc})- Product/inventory -(shippingEstimate🧩{price weight})- Int/inventory"
     );
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
 
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/PRODUCTS)
-        products of Product/PRODUCTS
+      🚪 (Query/products)
+        products of Product/products
           🧩 [
-            upc of String/PRODUCTS
+            upc of String/products
           ]
-          🔑 Product/INVENTORY
+          🔑 Product/inventory
             🧩 [
               🧩 [
-                upc of String/INVENTORY
+                upc of String/inventory
               ]
-              🔑 Product/PRODUCTS
-                price of Int/PRODUCTS
-                weight of Int/PRODUCTS
+              🔑 Product/products
+                price of Int/products
+                weight of Int/products
             ]
-            shippingEstimate of Int/INVENTORY
+            shippingEstimate of Int/inventory
     ");
 
     Ok(())
@@ -71,23 +71,23 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(
       best_paths_per_leaf[0][0].pretty_print(&graph),
-      @"root(Query) -(INVENTORY)- Query/INVENTORY -(products)- Product/INVENTORY -(isExpensive🧩{price})- Boolean/INVENTORY"
+      @"root(Query) -(inventory)- Query/inventory -(products)- Product/inventory -(isExpensive🧩{price})- Boolean/inventory"
     );
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
 
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/INVENTORY)
-        products of Product/INVENTORY
+      🚪 (Query/inventory)
+        products of Product/inventory
           🧩 [
             🧩 [
-              upc of String/INVENTORY
+              upc of String/inventory
             ]
-            🔑 Product/PRODUCTS
-              price of Int/PRODUCTS
+            🔑 Product/products
+              price of Int/products
           ]
-          isExpensive of Boolean/INVENTORY
+          isExpensive of Boolean/inventory
     ");
 
     Ok(())
@@ -112,27 +112,27 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(
       best_paths_per_leaf[0][0].pretty_print(&graph),
-      @"root(Query) -(PRODUCTS)- Query/PRODUCTS -(products)- Product/PRODUCTS -(🔑🧩{upc})- Product/INVENTORY -(isExpensive🧩{price})- Boolean/INVENTORY"
+      @"root(Query) -(products)- Query/products -(products)- Product/products -(🔑🧩{upc})- Product/inventory -(isExpensive🧩{price})- Boolean/inventory"
     );
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
 
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/PRODUCTS)
-        products of Product/PRODUCTS
+      🚪 (Query/products)
+        products of Product/products
           🧩 [
-            upc of String/PRODUCTS
+            upc of String/products
           ]
-          🔑 Product/INVENTORY
+          🔑 Product/inventory
             🧩 [
               🧩 [
-                upc of String/INVENTORY
+                upc of String/inventory
               ]
-              🔑 Product/PRODUCTS
-                price of Int/PRODUCTS
+              🔑 Product/products
+                price of Int/products
             ]
-            isExpensive of Boolean/INVENTORY
+            isExpensive of Boolean/inventory
     ");
 
     Ok(())
@@ -165,68 +165,68 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(
       best_paths_per_leaf[0][0].pretty_print(&graph),
-      @"root(Query) -(B)- Query/B -(b)- B/B -(a)- A/B -(nameInB🧩{name})- String/B"
+      @"root(Query) -(b)- Query/b -(b)- B/b -(a)- A/b -(nameInB🧩{name})- String/b"
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[1][0].pretty_print(&graph),
-      @"root(Query) -(B)- Query/B -(b)- B/B -(a)- A/B -(🔑🧩{pId})- A/A -(name)- String/A"
+      @"root(Query) -(b)- Query/b -(b)- B/b -(a)- A/b -(🔑🧩{pId})- A/a -(name)- String/a"
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[2][0].pretty_print(&graph),
-      @"root(Query) -(B)- Query/B -(b)- B/B -(a)- A/B -(id)- ID/B"
+      @"root(Query) -(b)- Query/b -(b)- B/b -(a)- A/b -(id)- ID/b"
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[3][0].pretty_print(&graph),
-      @"root(Query) -(B)- Query/B -(b)- B/B -(id)- ID/B"
+      @"root(Query) -(b)- Query/b -(b)- B/b -(id)- ID/b"
     );
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
 
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/B)
-        b of B/B
-          a of A/B
+      🚪 (Query/b)
+        b of B/b
+          a of A/b
             🧩 [
               🧩 [
-                pId of ID/B
+                pId of ID/b
               ]
-              🔑 A/A
-                name of String/A
+              🔑 A/a
+                name of String/a
               🧩 [
-                id of ID/B
+                id of ID/b
               ]
-              🔑 A/A
-                name of String/A
+              🔑 A/a
+                name of String/a
             ]
-            nameInB of String/B
+            nameInB of String/b
     ");
 
     insta::assert_snapshot!(qtps[1].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/B)
-        b of B/B
-          a of A/B
+      🚪 (Query/b)
+        b of B/b
+          a of A/b
             🧩 [
-              pId of ID/B
+              pId of ID/b
             ]
-            🔑 A/A
-              name of String/A
+            🔑 A/a
+              name of String/a
     ");
 
     insta::assert_snapshot!(qtps[2].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/B)
-        b of B/B
-          a of A/B
-            id of ID/B
+      🚪 (Query/b)
+        b of B/b
+          a of A/b
+            id of ID/b
     ");
 
     insta::assert_snapshot!(qtps[3].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/B)
-        b of B/B
-          id of ID/B
+      🚪 (Query/b)
+        b of B/b
+          id of ID/b
     ");
 
     Ok(())

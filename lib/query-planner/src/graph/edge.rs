@@ -2,7 +2,9 @@ use std::fmt::{Debug, Display};
 
 use petgraph::graph::EdgeReference as GraphEdgeReference;
 
-use crate::federation_spec::directives::JoinFieldDirective;
+use crate::{
+    federation_spec::directives::JoinFieldDirective, state::supergraph_state::SubgraphName,
+};
 
 use super::selection::Selection;
 
@@ -24,7 +26,7 @@ pub enum Edge {
     /// With this helper, you can jump from Query::RootQuery --SomeSubgraph-> Query/SomeSubgraph --> --field--> SomeType/SomeSubgraph
     SubgraphEntrypoint {
         field_names: Vec<String>,
-        graph_id: String,
+        name: SubgraphName,
     },
     FieldMove(FieldMove),
     EntityMove(EntityMove),
@@ -64,7 +66,7 @@ impl Edge {
             Self::FieldMove(FieldMove { name, .. }) => name,
             Self::EntityMove(EntityMove { key, .. }) => key,
             Self::AbstractMove(id) => id,
-            Self::SubgraphEntrypoint { graph_id, .. } => graph_id,
+            Self::SubgraphEntrypoint { name, .. } => &name.0,
         }
     }
 
@@ -94,7 +96,7 @@ impl Edge {
 impl Display for Edge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Edge::SubgraphEntrypoint { graph_id, .. } => write!(f, "{}", graph_id),
+            Edge::SubgraphEntrypoint { name, .. } => write!(f, "{}", name.0),
             Edge::EntityMove(EntityMove { .. }) => write!(f, "🔑"),
             Edge::AbstractMove(_) => write!(f, "🔮"),
             Edge::FieldMove(field_move) => write!(f, "{}", field_move.name),
@@ -111,7 +113,7 @@ impl Display for Edge {
 impl Debug for Edge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Edge::SubgraphEntrypoint { graph_id, .. } => write!(f, "subgraph({})", graph_id),
+            Edge::SubgraphEntrypoint { name, .. } => write!(f, "subgraph({})", name.0),
             Edge::FieldMove(FieldMove {
                 name, join_field, ..
             }) => {
@@ -154,9 +156,9 @@ impl PartialEq for Edge {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (
-                Edge::SubgraphEntrypoint { graph_id, .. },
+                Edge::SubgraphEntrypoint { name: graph_id, .. },
                 Edge::SubgraphEntrypoint {
-                    graph_id: other_graph_id,
+                    name: other_graph_id,
                     ..
                 },
             ) => graph_id == other_graph_id,

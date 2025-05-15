@@ -25,6 +25,9 @@ pub enum SupergraphStateError {
     SubgraphNotFound(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SubgraphName(pub String);
+
 #[derive(Debug)]
 pub struct SupergraphState<'a> {
     /// A map all of definitions (def_name, def) that exists in the schema.
@@ -60,6 +63,13 @@ impl<'a> SupergraphState<'a> {
         }
 
         instance
+    }
+
+    pub fn resolve_graph_id(&self, graph_id: &str) -> Result<SubgraphName, SupergraphStateError> {
+        self.known_subgraphs
+            .get(graph_id)
+            .map(|subgraph_name| SubgraphName(subgraph_name.clone()))
+            .ok_or_else(|| SupergraphStateError::SubgraphNotFound(graph_id.to_string()))
     }
 
     pub fn subgraph_state(

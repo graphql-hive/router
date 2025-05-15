@@ -31,84 +31,84 @@ fn testing() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(
       best_paths_per_leaf[0][0].pretty_print(&graph),
-      @"root(Query) -(STORE)- Query/STORE -(products)- Product/STORE -(🔑🧩{id})- Product/INFO -(isAvailable)- Boolean/INFO"
+      @"root(Query) -(store)- Query/store -(products)- Product/store -(🔑🧩{id})- Product/info -(isAvailable)- Boolean/info"
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[1][0].pretty_print(&graph),
-      @"root(Query) -(STORE)- Query/STORE -(products)- Product/STORE -(🔑🧩{uuid})- Product/COST -(price)- Price/COST -(currency)- String/COST"
+      @"root(Query) -(store)- Query/store -(products)- Product/store -(🔑🧩{uuid})- Product/cost -(price)- Price/cost -(currency)- String/cost"
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[2][0].pretty_print(&graph),
-      @"root(Query) -(STORE)- Query/STORE -(products)- Product/STORE -(🔑🧩{uuid})- Product/COST -(price)- Price/COST -(amount)- Float/COST"
+      @"root(Query) -(store)- Query/store -(products)- Product/store -(🔑🧩{uuid})- Product/cost -(price)- Price/cost -(amount)- Float/cost"
     );
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
 
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/STORE)
-        products of Product/STORE
+      🚪 (Query/store)
+        products of Product/store
           🧩 [
-            id of ID/STORE
+            id of ID/store
           ]
-          🔑 Product/INFO
-            isAvailable of Boolean/INFO
+          🔑 Product/info
+            isAvailable of Boolean/info
     ");
 
     insta::assert_snapshot!(qtps[1].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/STORE)
-        products of Product/STORE
+      🚪 (Query/store)
+        products of Product/store
           🧩 [
             🧩 [
-              id of ID/STORE
+              id of ID/store
             ]
-            🔑 Product/INFO
-              uuid of ID/INFO
+            🔑 Product/info
+              uuid of ID/info
           ]
-          🔑 Product/COST
-            price of Price/COST
-              currency of String/COST
+          🔑 Product/cost
+            price of Price/cost
+              currency of String/cost
     ");
 
     insta::assert_snapshot!(qtps[2].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/STORE)
-        products of Product/STORE
+      🚪 (Query/store)
+        products of Product/store
           🧩 [
             🧩 [
-              id of ID/STORE
+              id of ID/store
             ]
-            🔑 Product/INFO
-              uuid of ID/INFO
+            🔑 Product/info
+              uuid of ID/info
           ]
-          🔑 Product/COST
-            price of Price/COST
-              amount of Float/COST
+          🔑 Product/cost
+            price of Price/cost
+              amount of Float/cost
     ");
 
     let gqt = QueryTree::merge_trees(qtps);
 
     insta::assert_snapshot!(gqt.pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/STORE)
-        products of Product/STORE
+      🚪 (Query/store)
+        products of Product/store
           🧩 [
-            id of ID/STORE
+            id of ID/store
           ]
-          🔑 Product/INFO
-            isAvailable of Boolean/INFO
+          🔑 Product/info
+            isAvailable of Boolean/info
           🧩 [
             🧩 [
-              id of ID/STORE
+              id of ID/store
             ]
-            🔑 Product/INFO
-              uuid of ID/INFO
+            🔑 Product/info
+              uuid of ID/info
           ]
-          🔑 Product/COST
-            price of Price/COST
-              currency of String/COST
-              amount of Float/COST
+          🔑 Product/cost
+            price of Price/cost
+              currency of String/cost
+              amount of Float/cost
     ");
 
     Ok(())
@@ -137,23 +137,23 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(
       best_paths_per_leaf[0][0].pretty_print(&graph),
-      @"root(Query) -(A)- Query/A -(products)- Product/A -(🔑🧩{id pid})- Product/C -(category)- Category/C -(details)- CategoryDetails/C -(products)- Int/C"
+      @"root(Query) -(a)- Query/a -(products)- Product/a -(🔑🧩{id pid})- Product/c -(category)- Category/c -(details)- CategoryDetails/c -(products)- Int/c"
     );
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
 
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/A)
-        products of Product/A
+      🚪 (Query/a)
+        products of Product/a
           🧩 [
-            id of ID/A
-            pid of ID/A
+            id of ID/a
+            pid of ID/a
           ]
-          🔑 Product/C
-            category of Category/C
-              details of CategoryDetails/C
-                products of Int/C
+          🔑 Product/c
+            category of Category/c
+              details of CategoryDetails/c
+                products of Int/c
     ");
 
     Ok(())
@@ -186,63 +186,63 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
     assert_eq!(best_paths_per_leaf[3].len(), 1);
     assert_eq!(best_paths_per_leaf[4].len(), 1);
 
-    insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(D)- Query/D -(productFromD)- Product/D -(🔑🧩{id})- Product/A -(category)- Category/A -(details)- String/A");
-    insta::assert_snapshot!(best_paths_per_leaf[1][0].pretty_print(&graph), @"root(Query) -(D)- Query/D -(productFromD)- Product/D -(🔑🧩{id})- Product/B -(category)- Category/B -(🔑🧩{id})- Category/C -(name)- String/C");
-    insta::assert_snapshot!(best_paths_per_leaf[2][0].pretty_print(&graph), @"root(Query) -(D)- Query/D -(productFromD)- Product/D -(🔑🧩{id})- Product/B -(category)- Category/B -(id)- ID/B");
-    insta::assert_snapshot!(best_paths_per_leaf[3][0].pretty_print(&graph), @"root(Query) -(D)- Query/D -(productFromD)- Product/D -(name)- String/D");
-    insta::assert_snapshot!(best_paths_per_leaf[4][0].pretty_print(&graph), @"root(Query) -(D)- Query/D -(productFromD)- Product/D -(id)- ID/D");
+    insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(d)- Query/d -(productFromD)- Product/d -(🔑🧩{id})- Product/a -(category)- Category/a -(details)- String/a");
+    insta::assert_snapshot!(best_paths_per_leaf[1][0].pretty_print(&graph), @"root(Query) -(d)- Query/d -(productFromD)- Product/d -(🔑🧩{id})- Product/b -(category)- Category/b -(🔑🧩{id})- Category/c -(name)- String/c");
+    insta::assert_snapshot!(best_paths_per_leaf[2][0].pretty_print(&graph), @"root(Query) -(d)- Query/d -(productFromD)- Product/d -(🔑🧩{id})- Product/b -(category)- Category/b -(id)- ID/b");
+    insta::assert_snapshot!(best_paths_per_leaf[3][0].pretty_print(&graph), @"root(Query) -(d)- Query/d -(productFromD)- Product/d -(name)- String/d");
+    insta::assert_snapshot!(best_paths_per_leaf[4][0].pretty_print(&graph), @"root(Query) -(d)- Query/d -(productFromD)- Product/d -(id)- ID/d");
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
 
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/D)
-        productFromD of Product/D
+      🚪 (Query/d)
+        productFromD of Product/d
           🧩 [
-            id of ID/D
+            id of ID/d
           ]
-          🔑 Product/A
-            category of Category/A
-              details of String/A
+          🔑 Product/a
+            category of Category/a
+              details of String/a
     ");
 
     insta::assert_snapshot!(qtps[1].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/D)
-        productFromD of Product/D
+      🚪 (Query/d)
+        productFromD of Product/d
           🧩 [
-            id of ID/D
+            id of ID/d
           ]
-          🔑 Product/B
-            category of Category/B
+          🔑 Product/b
+            category of Category/b
               🧩 [
-                id of ID/B
+                id of ID/b
               ]
-              🔑 Category/C
-                name of String/C
+              🔑 Category/c
+                name of String/c
     ");
     insta::assert_snapshot!(qtps[2].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/D)
-        productFromD of Product/D
+      🚪 (Query/d)
+        productFromD of Product/d
           🧩 [
-            id of ID/D
+            id of ID/d
           ]
-          🔑 Product/B
-            category of Category/B
-              id of ID/B
+          🔑 Product/b
+            category of Category/b
+              id of ID/b
     ");
     insta::assert_snapshot!(qtps[3].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/D)
-        productFromD of Product/D
-          name of String/D
+      🚪 (Query/d)
+        productFromD of Product/d
+          name of String/d
     ");
     insta::assert_snapshot!(qtps[4].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/D)
-        productFromD of Product/D
-          id of ID/D
+      🚪 (Query/d)
+        productFromD of Product/d
+          id of ID/d
     ");
 
     Ok(())
@@ -271,39 +271,39 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
     assert_eq!(best_paths_per_leaf[0].len(), 1);
     assert_eq!(best_paths_per_leaf[1].len(), 1);
 
-    insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(PRODUCTS)- Query/PRODUCTS -(topProducts)- ProductList/PRODUCTS -(products)- Product/PRODUCTS -(🔑🧩{id pid category{id tag}})- Product/PRICE -(price)- Price/PRICE -(price)- Float/PRICE");
-    insta::assert_snapshot!(best_paths_per_leaf[1][0].pretty_print(&graph), @"root(Query) -(PRODUCTS)- Query/PRODUCTS -(topProducts)- ProductList/PRODUCTS -(products)- Product/PRODUCTS -(id)- String/PRODUCTS");
+    insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(products)- Query/products -(topProducts)- ProductList/products -(products)- Product/products -(🔑🧩{id pid category{id tag}})- Product/price -(price)- Price/price -(price)- Float/price");
+    insta::assert_snapshot!(best_paths_per_leaf[1][0].pretty_print(&graph), @"root(Query) -(products)- Query/products -(topProducts)- ProductList/products -(products)- Product/products -(id)- String/products");
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
 
     // TODO: Understand why "tag" and "id" are not both under the same "category of Category/PRODUCTS"
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/PRODUCTS)
-        topProducts of ProductList/PRODUCTS
-          products of Product/PRODUCTS
+      🚪 (Query/products)
+        topProducts of ProductList/products
+          products of Product/products
             🧩 [
-              id of String/PRODUCTS
+              id of String/products
               🧩 [
-                id of String/PRODUCTS
+                id of String/products
               ]
-              🔑 Product/LINK
-                pid of String/LINK
-              category of Category/PRODUCTS
-                tag of String/PRODUCTS
-                id of String/PRODUCTS
+              🔑 Product/link
+                pid of String/link
+              category of Category/products
+                tag of String/products
+                id of String/products
             ]
-            🔑 Product/PRICE
-              price of Price/PRICE
-                price of Float/PRICE
+            🔑 Product/price
+              price of Price/price
+                price of Float/price
     ");
 
     insta::assert_snapshot!(qtps[1].pretty_print(&graph)?, @r"
     root(Query)
-      🚪 (Query/PRODUCTS)
-        topProducts of ProductList/PRODUCTS
-          products of Product/PRODUCTS
-            id of String/PRODUCTS
+      🚪 (Query/products)
+        topProducts of ProductList/products
+          products of Product/products
+            id of String/products
     ");
 
     Ok(())

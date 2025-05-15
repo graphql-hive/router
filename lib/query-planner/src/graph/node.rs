@@ -1,9 +1,11 @@
 use std::fmt::{Debug, Display};
 
+use crate::state::supergraph_state::SubgraphName;
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SubgraphType {
     pub name: String,
-    pub subgraph: String,
+    pub subgraph: SubgraphName,
     provides_identifier: Option<u64>,
 }
 
@@ -23,8 +25,8 @@ impl Node {
             Node::MutationRoot(name) => format!("root({})", name),
             Node::SubscriptionRoot(name) => format!("root({})", name),
             Node::SubgraphType(st) => match st.provides_identifier {
-                Some(provides_id) => format!("{}/{}/{}", st.name, st.subgraph, provides_id),
-                None => format!("{}/{}", st.name, st.subgraph),
+                Some(provides_id) => format!("{}/{}/{}", st.name, st.subgraph.0, provides_id),
+                None => format!("{}/{}", st.name, st.subgraph.0),
             },
         }
     }
@@ -38,18 +40,18 @@ impl Node {
         }
     }
 
-    pub fn new_node(name: &str, subgraph: &str) -> Node {
+    pub fn new_node(name: &str, subgraph: SubgraphName) -> Node {
         Node::SubgraphType(SubgraphType {
             name: name.to_string(),
-            subgraph: subgraph.to_string(),
+            subgraph,
             provides_identifier: None,
         })
     }
 
-    pub fn new_provides_node(name: &str, subgraph: &str, provides_id: u64) -> Node {
+    pub fn new_provides_node(name: &str, subgraph: SubgraphName, provides_id: u64) -> Node {
         Node::SubgraphType(SubgraphType {
             name: name.to_string(),
-            subgraph: subgraph.to_string(),
+            subgraph,
             provides_identifier: Some(provides_id),
         })
     }
@@ -59,7 +61,7 @@ impl Node {
             Node::QueryRoot(_) => None,
             Node::MutationRoot(_) => None,
             Node::SubscriptionRoot(_) => None,
-            Node::SubgraphType(st) => Some(&st.subgraph),
+            Node::SubgraphType(st) => Some(&st.subgraph.0),
         }
     }
 }
