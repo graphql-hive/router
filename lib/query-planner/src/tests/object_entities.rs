@@ -173,6 +173,19 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
                 products of Int/c
     ");
 
+    let query_tree = QueryTree::merge_trees(qtps);
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+
+    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
+    Nodes:
+    [1] Query/a {} → {products} at $.
+    [2] Product/c {__typename} → {category} at $.products.@
+
+    Tree:
+    [1]
+      [2]
+    ");
+
     Ok(())
 }
 
@@ -262,6 +275,23 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
           id of ID/d
     ");
 
+    let query_tree = QueryTree::merge_trees(qtps);
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+
+    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
+    Nodes:
+    [1] Query/d {} → {productFromD} at $.
+    [2] Product/a {__typename} → {category} at $.productFromD
+    [3] Product/b {__typename} → {category} at $.productFromD
+    [4] Category/c {__typename} → {name} at $.productFromD.category
+
+    Tree:
+    [1]
+      [2]
+      [3]
+        [4]
+    ");
+
     Ok(())
 }
 
@@ -321,6 +351,21 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
         topProducts of ProductList/products
           products of Product/products
             id of String/products
+    ");
+
+    let query_tree = QueryTree::merge_trees(qtps);
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+
+    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
+    Nodes:
+    [1] Query/products {} → {topProducts} at $.
+    [2] Product/price {__typename} → {price} at $.topProducts.products.@
+    [3] Product/link {__typename} → {pid} at $.topProducts.products.@
+
+    Tree:
+    [1]
+      [3]
+        [2]
     ");
 
     Ok(())

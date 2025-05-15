@@ -1,6 +1,9 @@
 use crate::{
     parse_operation,
-    planner::walker::walk_operation,
+    planner::{
+        fetch::fetch_graph::build_fetch_graph_from_query_tree, tree::query_tree::QueryTree,
+        walker::walk_operation,
+    },
     tests::testkit::{init_logger, paths_to_trees, read_supergraph},
     utils::operation_utils::get_operation_to_execute,
 };
@@ -45,6 +48,19 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
             reviews of Review/reviews
               author of User/reviews/1
                 username of String/reviews/1
+    ");
+
+    let query_tree = QueryTree::merge_trees(qtps);
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+
+    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
+    Nodes:
+    [1] Query/products {} → {products} at $.
+    [2] Product/reviews {__typename} → {reviews} at $.products.@
+
+    Tree:
+    [1]
+      [2]
     ");
 
     Ok(())
@@ -95,6 +111,17 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
       🚪 (Query/category)
         products of Product/category
           id of ID/category
+    ");
+
+    let query_tree = QueryTree::merge_trees(qtps);
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+
+    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
+    Nodes:
+    [1] Query/category {} → {products} at $.
+
+    Tree:
+    [1]
     ");
 
     Ok(())
