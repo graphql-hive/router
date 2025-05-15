@@ -56,6 +56,27 @@ impl FetchGraph {
             .ok_or(FetchGraphError::MissingStep(index.index()))
     }
 
+    pub fn get_pair_of_steps_mut(
+        &mut self,
+        index1: NodeIndex,
+        index2: NodeIndex,
+    ) -> Result<(&mut FetchStepData, &mut FetchStepData), FetchGraphError> {
+        // `index_twice_mut` panics when indexes are equal
+        if index1 == index2 {
+            return Err(FetchGraphError::SameNodeIndex(index1.index()));
+        }
+
+        // `index_twice_mut` panics when nodes do not exist
+        if let None = self.graph.node_weight(index1) {
+            return Err(FetchGraphError::MissingStep(index1.index()));
+        }
+        if let None = self.graph.node_weight(index2) {
+            return Err(FetchGraphError::MissingStep(index2.index()));
+        }
+
+        Ok(self.graph.index_twice_mut(index1, index2))
+    }
+
     pub fn connect(&mut self, parent_index: NodeIndex, child_index: NodeIndex) -> EdgeIndex {
         self.graph.add_edge(parent_index, child_index, ())
     }
@@ -406,10 +427,7 @@ fn perform_fetch_step_merge(
     other_index: NodeIndex,
     fetch_graph: &mut FetchGraph,
 ) -> Result<(), FetchGraphError> {
-    // TODO: is there a way to not `clone` here?
-    //       If I don't clone, the `me` variable yells at me about mutable vs immutable borrow
-    let other = fetch_graph.get_step_data(other_index)?.clone();
-    let me = fetch_graph.get_step_data_mut(self_index)?;
+    let (me, other) = fetch_graph.get_pair_of_steps_mut(self_index, other_index)?;
     me.output.add_at_path(
         &other.output,
         other.response_path[me.response_path.len()..].to_vec(),

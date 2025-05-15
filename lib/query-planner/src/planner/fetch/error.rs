@@ -12,6 +12,8 @@ pub enum FetchGraphError {
     MissingSubgraphName(Node),
     #[error("Expected to have one root step, but found: {0}")]
     NonSingleRootStep(usize),
+    #[error("Expected different indexes: {0}")]
+    SameNodeIndex(usize),
 }
 
 impl From<GraphError> for FetchGraphError {
