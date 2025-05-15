@@ -114,7 +114,7 @@ fn testing() -> Result<(), Box<dyn Error>> {
               amount of Float/cost
     ");
 
-    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree);
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
