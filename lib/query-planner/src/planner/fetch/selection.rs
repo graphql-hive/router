@@ -1,5 +1,65 @@
 use crate::planner::walker::selection::{SelectionItem, SelectionSet};
-use std::fmt::{self, Debug, Display};
+use std::{
+    fmt::{self, Debug, Display},
+    sync::Arc,
+};
+
+#[derive(Clone, Debug)] // Clone is cheap with Arc inside
+pub struct MergePath {
+    pub inner: Arc<[String]>,
+}
+
+impl MergePath {
+    pub fn new(path: Vec<String>) -> Self {
+        Self { inner: path.into() }
+    }
+
+    pub fn slice_from(&self, start: usize) -> Self {
+        Self {
+            inner: Arc::from(&self.inner[start..]),
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            inner: Arc::new([]),
+        }
+    }
+
+    pub fn join(&self, sep: &str) -> String {
+        self.inner.join(sep)
+    }
+
+    /// Insert a string at the beginning of the path
+    pub fn insert_front(&self, segment: impl Into<String>) -> Self {
+        let mut new_segments = Vec::with_capacity(self.inner.len() + 1);
+        new_segments.push(segment.into());
+        new_segments.extend_from_slice(&self.inner);
+        Self::new(new_segments)
+    }
+
+    /// Inserts a string at the end of the path
+    pub fn push(&self, segment: impl Into<String>) -> Self {
+        let mut new_segments = Vec::with_capacity(self.inner.len() + 1);
+        new_segments.extend_from_slice(&self.inner);
+        new_segments.push(segment.into());
+        Self::new(new_segments)
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+}
+
+impl PartialEq for MergePath {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Selection {
@@ -75,11 +135,11 @@ fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_firs
 
 fn find_selection_set_by_path_mut<'a>(
     root_selection_set: &'a mut SelectionSet,
-    path: &[String],
+    path: MergePath,
 ) -> Option<&'a mut SelectionSet> {
     let mut current_selection_set = root_selection_set;
 
-    for path_element in path.iter() {
+    for path_element in path.inner.iter() {
         if path_element == "@" {
             continue;
         }
@@ -129,9 +189,8 @@ impl Selection {
         merge_selection_set(&mut self.selection_set, &to_add.selection_set, false);
     }
 
-    pub fn add_at_path(&mut self, to_add: &Selection, add_at_path: Vec<String>, as_first: bool) {
-        if let Some(source) = find_selection_set_by_path_mut(&mut self.selection_set, &add_at_path)
-        {
+    pub fn add_at_path(&mut self, to_add: &Selection, add_at_path: MergePath, as_first: bool) {
+        if let Some(source) = find_selection_set_by_path_mut(&mut self.selection_set, add_at_path) {
             merge_selection_set(source, &to_add.selection_set, as_first);
         }
     }

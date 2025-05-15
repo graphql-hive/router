@@ -14,6 +14,7 @@ use std::collections::{HashSet, VecDeque};
 use std::fmt::{Debug, Display};
 
 use super::error::FetchGraphError;
+use super::selection::MergePath;
 use super::selection::Selection;
 
 pub struct FetchGraph {
@@ -338,7 +339,7 @@ impl Display for FetchGraph {
 #[derive(Debug, Clone)]
 pub struct FetchStepData {
     pub service_name: SubgraphName,
-    pub response_path: Vec<String>,
+    pub response_path: MergePath,
     pub input: Selection,
     pub output: Selection,
     pub reserved_for_requires: Option<Selection>,
@@ -388,14 +389,13 @@ impl FetchStepData {
         // we should prevent merging steps with more than 1 parent
         // we should merge only if the parent of both is identical
 
-        let mut self_path = self.response_path.clone();
-        self_path.insert(0, "*".to_string());
-        let mut other_path = other.response_path.clone();
-        other_path.insert(0, "*".to_string());
+        let self_path = self.response_path.insert_front("*".to_string());
+        let other_path = other.response_path.insert_front("*".to_string());
         if self_path
+            .inner
             .iter()
             .enumerate()
-            .all(|(i, p)| p.eq(&other_path[i]))
+            .all(|(i, p)| p.eq(&other_path.inner[i]))
         {
             return false;
         }
@@ -430,7 +430,7 @@ fn perform_fetch_step_merge(
     let (me, other) = fetch_graph.get_pair_of_steps_mut(self_index, other_index)?;
     me.output.add_at_path(
         &other.output,
-        other.response_path[me.response_path.len()..].to_vec(),
+        other.response_path.slice_from(me.response_path.len()),
         false,
     );
 
@@ -466,7 +466,7 @@ pub struct FetchSteps {
 fn create_noop_fetch_step(fetch_graph: &mut FetchGraph) -> NodeIndex {
     fetch_graph.add_step(FetchStepData {
         service_name: SubgraphName("*".to_string()),
-        response_path: vec![],
+        response_path: MergePath::empty(),
         input: Selection {
             selection_set: SelectionSet { items: vec![] },
             type_name: "*".to_string(),
@@ -483,7 +483,7 @@ fn create_fetch_step_for_entity_move(
     fetch_graph: &mut FetchGraph,
     subgraph_name: SubgraphName,
     type_name: String,
-    response_path: &Vec<String>,
+    response_path: &MergePath,
 ) -> NodeIndex {
     fetch_graph.add_step(FetchStepData {
         service_name: subgraph_name,
@@ -514,7 +514,7 @@ fn create_fetch_step_for_root_move(
 ) -> NodeIndex {
     fetch_graph.add_step(FetchStepData {
         service_name: subgraph_name,
-        response_path: vec![],
+        response_path: MergePath::empty(),
         input: Selection {
             selection_set: SelectionSet { items: vec![] },
             type_name: type_name.clone(),
@@ -532,7 +532,7 @@ fn get_or_create_fetch_step_for_entity_move(
     parent_fetch_step_index: NodeIndex,
     subgraph_name: SubgraphName,
     type_name: String,
-    response_path: Vec<String>,
+    response_path: MergePath,
     key: Option<Selection>,
     requires: Option<Selection>,
 ) -> Result<NodeIndex, FetchGraphError> {
@@ -601,8 +601,8 @@ fn process_children_for_fetch_steps(
     fetch_graph: &mut FetchGraph,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: Option<NodeIndex>,
-    response_path: &Vec<String>,
-    fetch_path: &Vec<String>,
+    response_path: &MergePath,
+    fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
 ) -> Result<(), FetchGraphError> {
     if query_node.children.is_empty() {
@@ -630,8 +630,8 @@ fn process_requirements_for_fetch_steps(
     query_node: &QueryTreeNode,
     parent_fetch_step_index: Option<NodeIndex>,
     requiring_fetch_step_index: Option<NodeIndex>,
-    response_path: &Vec<String>,
-    fetch_path: &Vec<String>,
+    response_path: &MergePath,
+    fetch_path: &MergePath,
 ) -> Result<(), FetchGraphError> {
     if query_node.requirements.is_empty() {
         return Ok(());
@@ -661,8 +661,8 @@ fn process_noop_edge(
     fetch_graph: &mut FetchGraph,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: Option<NodeIndex>,
-    response_path: &Vec<String>,
-    fetch_path: &Vec<String>,
+    response_path: &MergePath,
+    fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
 ) -> Result<(), FetchGraphError> {
     // We're at the root
@@ -685,7 +685,7 @@ fn process_noop_edge(
 fn add_typename_field_to_output(
     fetch_step: &mut FetchStepData,
     type_name: String,
-    add_at: Vec<String>,
+    add_at: MergePath,
 ) {
     fetch_step.output.add_at_path(
         &Selection {
@@ -709,8 +709,8 @@ fn process_entity_move_edge(
     fetch_graph: &mut FetchGraph,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: Option<NodeIndex>,
-    response_path: &Vec<String>,
-    fetch_path: &Vec<String>,
+    response_path: &MergePath,
+    fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
     edge_index: EdgeIndex,
 ) -> Result<(), FetchGraphError> {
@@ -774,7 +774,7 @@ fn process_entity_move_edge(
         query_node,
         Some(fetch_step_index),
         response_path,
-        &vec![],
+        &MergePath::empty(),
         requiring_fetch_step_index,
     )?;
 
@@ -800,8 +800,8 @@ fn process_subgraph_entrypoint_edge(
         fetch_graph,
         query_node,
         Some(fetch_step_index),
-        &vec![],
-        &vec![],
+        &MergePath::empty(),
+        &MergePath::empty(),
         None,
     )?;
 
@@ -819,8 +819,8 @@ fn process_plain_field_edge(
     query_node: &QueryTreeNode,
     parent_fetch_step_index: Option<NodeIndex>,
     requiring_fetch_step_index: Option<NodeIndex>,
-    response_path: &Vec<String>,
-    fetch_path: &Vec<String>,
+    response_path: &MergePath,
+    fetch_path: &MergePath,
     field_name: String,
     field_is_leaf: bool,
     field_is_list: bool,
@@ -849,14 +849,12 @@ fn process_plain_field_edge(
         false,
     );
 
-    let mut child_response_path = response_path.clone();
-    let mut child_fetch_path = fetch_path.clone();
-    child_response_path.push(field_name.clone());
-    child_fetch_path.push(field_name.clone());
+    let mut child_response_path = response_path.push(field_name.clone());
+    let mut child_fetch_path = fetch_path.push(field_name.clone());
 
     if field_is_list {
-        child_response_path.push("@".to_string());
-        child_fetch_path.push("@".to_string());
+        child_response_path = child_response_path.push("@".to_string());
+        child_fetch_path = child_fetch_path.push("@".to_string());
     }
 
     process_children_for_fetch_steps(
@@ -877,8 +875,8 @@ fn process_query_node(
     fetch_graph: &mut FetchGraph,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: Option<NodeIndex>,
-    response_path: &Vec<String>,
-    fetch_path: &Vec<String>,
+    response_path: &MergePath,
+    fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
 ) -> Result<(), FetchGraphError> {
     if let Some(edge_index) = query_node.edge_from_parent {
@@ -978,8 +976,8 @@ pub fn build_fetch_graph_from_query_tree(
         &mut fetch_graph,
         &query_tree.root,
         None,
-        &vec![],
-        &vec![],
+        &MergePath::empty(),
+        &MergePath::empty(),
         None,
     )?;
 
