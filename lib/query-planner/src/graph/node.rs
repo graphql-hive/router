@@ -4,6 +4,7 @@ use std::fmt::{Debug, Display};
 pub struct SubgraphType {
     pub name: String,
     pub subgraph: String,
+    provides_identifier: Option<u64>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -13,42 +14,43 @@ pub enum Node {
     SubscriptionRoot(String),
     /// Represent an entity type or a scalar living in a specific subgraph
     SubgraphType(SubgraphType),
-    /// Represent an sub-set (view) of an entity, for cases like `@provides` where only some
-    /// fields on the type are really available.
-    SubgraphTypeView {
-        view_id: u64,
-        node: SubgraphType,
-        selection_set: String,
-    },
 }
 
 impl Node {
-    pub fn id(&self) -> String {
+    pub fn display_name(&self) -> String {
         match self {
             Node::QueryRoot(name) => format!("root({})", name),
             Node::MutationRoot(name) => format!("root({})", name),
             Node::SubscriptionRoot(name) => format!("root({})", name),
-            Node::SubgraphType(st) => format!("{}/{}", st.name, st.subgraph),
-            Node::SubgraphTypeView { node, view_id, .. } => {
-                format!("({}/{}).view{view_id}", node.name, node.subgraph)
-            }
+            Node::SubgraphType(st) => match st.provides_identifier {
+                Some(provides_id) => format!("{}/{}/{}", st.name, st.subgraph, provides_id),
+                None => format!("{}/{}", st.name, st.subgraph),
+            },
         }
     }
 
-    pub fn is_view_node(&self) -> bool {
+    pub fn is_using_provides(&self) -> bool {
         match self {
             Node::QueryRoot(_) => false,
             Node::MutationRoot(_) => false,
             Node::SubscriptionRoot(_) => false,
-            Node::SubgraphType(_) => false,
-            Node::SubgraphTypeView { .. } => true,
+            Node::SubgraphType(st) => st.provides_identifier.is_some(),
         }
     }
 
-    pub fn subgraph_type(name: &str, subgraph: &str) -> Node {
+    pub fn new_node(name: &str, subgraph: &str) -> Node {
         Node::SubgraphType(SubgraphType {
             name: name.to_string(),
             subgraph: subgraph.to_string(),
+            provides_identifier: None,
+        })
+    }
+
+    pub fn new_provides_node(name: &str, subgraph: &str, provides_id: u64) -> Node {
+        Node::SubgraphType(SubgraphType {
+            name: name.to_string(),
+            subgraph: subgraph.to_string(),
+            provides_identifier: Some(provides_id),
         })
     }
 
@@ -58,19 +60,18 @@ impl Node {
             Node::MutationRoot(_) => None,
             Node::SubscriptionRoot(_) => None,
             Node::SubgraphType(st) => Some(&st.subgraph),
-            Node::SubgraphTypeView { node, .. } => Some(&node.subgraph),
         }
     }
 }
 
 impl Debug for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.id())
+        write!(f, "{}", self.display_name())
     }
 }
 
 impl Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.id())
+        write!(f, "{}", self.display_name())
     }
 }

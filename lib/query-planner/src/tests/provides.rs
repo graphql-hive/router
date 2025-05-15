@@ -29,7 +29,7 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(
       best_paths_per_leaf[0][0].pretty_print(&graph),
-      @"root(Query) -(PRODUCTS)- Query/PRODUCTS -(products)- Product/PRODUCTS -(🔑🧩{upc})- Product/REVIEWS -(reviews)- Review/REVIEWS -(author)- (User/REVIEWS).view1 -(username)- String/REVIEWS"
+      @"root(Query) -(PRODUCTS)- Query/PRODUCTS -(products)- Product/PRODUCTS -(🔑🧩{upc})- Product/REVIEWS -(reviews)- Review/REVIEWS -(author)- User/REVIEWS/1 -(username)- String/REVIEWS/1"
     );
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
@@ -43,8 +43,8 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
           ]
           🔑 Product/REVIEWS
             reviews of Review/REVIEWS
-              author of (User/REVIEWS).view1
-                username of String/REVIEWS
+              author of User/REVIEWS/1
+                username of String/REVIEWS/1
     ");
 
     Ok(())
@@ -79,16 +79,16 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
       🚪 (Query/CATEGORY)
-        products of (Product/CATEGORY).view1
-          categories of (Category/CATEGORY).view1
-            name of String/CATEGORY
+        products of Product/CATEGORY/1
+          categories of Category/CATEGORY/1
+            name of String/CATEGORY/1
     ");
     insta::assert_snapshot!(qtps[1].pretty_print(&graph)?, @r"
     root(Query)
       🚪 (Query/CATEGORY)
-        products of (Product/CATEGORY).view1
-          categories of (Category/CATEGORY).view1
-            id of ID/CATEGORY
+        products of Product/CATEGORY/1
+          categories of Category/CATEGORY/1
+            id of ID/CATEGORY/1
     ");
     insta::assert_snapshot!(qtps[2].pretty_print(&graph)?, @r"
     root(Query)

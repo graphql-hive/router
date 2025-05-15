@@ -1,11 +1,18 @@
 #[cfg(test)]
 mod graph_tests {
     use crate::{
-        graph::{edge::Edge, node::Node, Graph},
+        graph::{
+            edge::{Edge, EdgeReference},
+            node::Node,
+            Graph,
+        },
         parse_schema,
         state::supergraph_state::SupergraphState,
     };
-    use petgraph::visit::{EdgeRef, NodeRef};
+    use petgraph::{
+        graph::NodeIndex,
+        visit::{EdgeRef, NodeRef},
+    };
     use std::path::PathBuf;
 
     fn init_test(supergraph_sdl: &str) -> Graph {
@@ -17,7 +24,8 @@ mod graph_tests {
 
     #[derive(Debug)]
     struct FoundEdges<'a> {
-        pub edges: Vec<(&'a Edge, String)>,
+        pub edges: Vec<(EdgeReference<'a>, NodeIndex)>,
+        pub graph: &'a Graph,
     }
 
     impl FoundEdges<'_> {
@@ -35,7 +43,10 @@ mod graph_tests {
         }
 
         pub fn no_field_edge(&self, key: &str) -> &Self {
-            let edge = self.edges.iter().find(|(e, _)| e.display_name() == key);
+            let edge = self
+                .edges
+                .iter()
+                .find(|(edge_ref, _)| edge_ref.weight().display_name() == key);
 
             assert!(edge.is_none(), "Field edge {} found", key);
 
@@ -55,34 +66,46 @@ mod graph_tests {
             self
         }
 
-        pub fn edge_field(&self, key: &str) -> Option<&(&Edge, String)> {
+        pub fn edge_field(&self, key: &str) -> Option<&(EdgeReference, NodeIndex)> {
             let mut r = self
                 .edges
                 .iter()
-                .filter(|(e, _target)| e.display_name() == key);
+                .filter(|(edge_ref, _to)| edge_ref.weight().display_name() == key);
             assert_eq!(
                 r.clone().count(),
                 1,
                 "expected to find exactly one edge field named '{}', found {}, available fields: {:?}",
                 key,
                 r.clone().count(),
-                self.edges.iter().map(|(e, _)| e.display_name()).collect::<Vec<_>>()
+                self.edges.iter().map(|(e, _)| e.weight().display_name()).collect::<Vec<_>>()
             );
 
             r.nth(0)
         }
 
-        pub fn edges_field(&self, key: &str) -> Vec<&(&Edge, String)> {
+        pub fn edges_field(&self, key: &str) -> Vec<&(EdgeReference, NodeIndex)> {
             self.edges
                 .iter()
-                .filter(|(e, _target)| e.display_name() == key)
+                .filter(|(edge_ref, _to)| match edge_ref.weight() {
+                    Edge::FieldMove(fm) => fm.name == key,
+                    _ => false,
+                })
                 .collect()
         }
 
-        pub fn edge(&self, key: &str, other_side: &str) -> Option<&(&Edge, String)> {
-            self.edges
-                .iter()
-                .find(|(e, target)| e.display_name() == key && target == other_side)
+        pub fn edge(&self, key: &str, other_side: &str) -> Option<&(EdgeReference, NodeIndex)> {
+            self.edges.iter().find(|(edge_ref, node_id)| {
+                let edge = edge_ref.weight();
+                let node = self.graph.node(*node_id).unwrap();
+                let formatted_node = format!("{}", node);
+
+                if node.is_using_provides() {
+                    return edge.display_name() == key
+                        && formatted_node.contains(&format!("{}/", other_side));
+                }
+
+                edge.display_name() == key && formatted_node == other_side
+            })
         }
 
         pub fn assert_field_edge(&self, key: &str, other_side: &str) -> &Self {
@@ -113,7 +136,7 @@ mod graph_tests {
     }
 
     fn find_node_doesnt_exists(graph: &Graph, node_id: &str) {
-        let node_res = graph.node_to_index.get(node_id);
+        let node_res = graph.node_display_name_to_index.get(node_id);
 
         assert!(
             node_res.is_none(),
@@ -123,7 +146,7 @@ mod graph_tests {
     }
 
     fn find_node<'a>(graph: &'a Graph, node_id: &str) -> (FoundEdges<'a>, FoundEdges<'a>) {
-        let node_res = graph.node_to_index.get(node_id);
+        let node_res = graph.node_display_name_to_index.get(node_id);
 
         assert!(node_res.is_some(), "failed to find node {}", node_id);
 
@@ -132,14 +155,16 @@ mod graph_tests {
         let incoming_edges = FoundEdges {
             edges: graph
                 .edges_to(*node_index)
-                .map(|v| (v.weight(), graph.graph[v.source().id()].id()))
+                .map(|edge_ref| (edge_ref, edge_ref.source().id()))
                 .collect(),
+            graph,
         };
         let outgoing_edges = FoundEdges {
             edges: graph
                 .edges_from(*node_index)
-                .map(|v| (v.weight(), graph.graph[v.target().id()].id()))
+                .map(|edge_ref| (edge_ref, edge_ref.target().id()))
                 .collect(),
+            graph,
         };
 
         (incoming_edges, outgoing_edges)
@@ -161,30 +186,30 @@ mod graph_tests {
         // Provided ("viewed") field edge
         let (_, to) = field_edges
             .iter()
-            .find(|edge| format!("{:?}", edge.0) == "products @provides")
+            .find(|(edge_ref, _to)| format!("{:?}", edge_ref.weight()) == "products @provides")
             .unwrap();
 
-        let node = graph.node(*graph.node_to_index.get(to).unwrap())?;
-        assert!(node.is_view_node());
-        assert_eq!(node.id(), "(Product/CATEGORY).view1");
+        let node = graph.node(*to)?;
+        assert!(node.is_using_provides());
+        assert_eq!(node.display_name(), "Product/CATEGORY/1");
 
-        let (_, viewed_outgoing) = find_node(&graph, &node.id());
+        let (_, viewed_outgoing) = find_node(&graph, &node.display_name());
 
         let (_, to) = viewed_outgoing
             .edge_field("categories")
             .expect("failed to find edge for field categories");
-        let node1 = graph.node(*graph.node_to_index.get(to).unwrap())?;
-        assert!(node1.is_view_node());
-        assert_eq!(node1.id(), "(Category/CATEGORY).view1");
+        let node1 = graph.node(*to)?;
+        assert!(node1.is_using_provides());
+        assert_eq!(node1.display_name(), "Category/CATEGORY/1");
 
         // Regular field edge
-        let (_, to) = field_edges
+        let (_, to_index) = field_edges
             .iter()
-            .find(|edge| format!("{:?}", edge.0) == "products")
+            .find(|(edge_ref, _to)| format!("{:?}", edge_ref.weight()) == "products")
             .unwrap();
-        assert_eq!(to, "Product/CATEGORY");
-        let node = graph.node(*graph.node_to_index.get(to).unwrap())?;
-        assert!(!node.is_view_node());
+        let node = graph.node(*to_index)?;
+        assert_eq!(node.display_name(), "Product/CATEGORY");
+        assert!(!node.is_using_provides());
 
         find_node(&graph, "Product/CATEGORY")
             .1
@@ -330,13 +355,13 @@ mod graph_tests {
         let (_, to) = outgoing
             .edges_field("users")
             .iter()
-            .find(|edge| format!("{:?}", edge.0) == "users @provides")
+            .find(|(edge_ref, _to)| format!("{:?}", edge_ref.weight()) == "users @provides")
             .expect("failed to find edge for field users");
-        let node1 = graph.node(*graph.node_to_index.get(to).unwrap())?;
-        assert!(node1.is_view_node());
+        let node1 = graph.node(*to)?;
+        assert!(node1.is_using_provides());
 
         // Verify that each provided path points only to the relevant, provided fields
-        let (viewed_incoming, viewed_outgoing) = find_node(&graph, &node1.id());
+        let (viewed_incoming, viewed_outgoing) = find_node(&graph, &node1.display_name());
         viewed_outgoing.assert_field_edge("id", "String/FOO");
         assert_eq!(viewed_incoming.edges.len(), 1);
         assert_eq!(viewed_outgoing.edges.len(), 1);
@@ -344,25 +369,26 @@ mod graph_tests {
         let (_, to) = outgoing
             .edges_field("user")
             .iter()
-            .find(|edge| format!("{:?}", edge.0) == "user @provides")
+            .find(|(edge_ref, _to)| format!("{:?}", edge_ref.weight()) == "user @provides")
             .expect("failed to find edge for field user");
-        let node2 = graph.node(*graph.node_to_index.get(to).unwrap())?;
-        assert!(node2.is_view_node());
+        let node2 = graph.node(*to)?;
+        assert!(node2.is_using_provides());
 
         // Verify that each provided path points only to the relevant, provided fields
-        let (viewed_incoming, viewed_outgoing) = find_node(&graph, &node2.id());
+        let (viewed_incoming, viewed_outgoing) = find_node(&graph, &node2.display_name());
         viewed_outgoing.assert_field_edge("name", "String/FOO");
         assert_eq!(viewed_incoming.edges.len(), 1);
         assert_eq!(viewed_outgoing.edges.len(), 2);
 
-        let nested_provides_id = viewed_outgoing
+        let (nested_provides_id, nested_provides_node) = viewed_outgoing
             .edge_field("profile")
-            .map(|(_, key)| *graph.node_to_index.get(key).unwrap())
+            .map(|(_, node_index)| (*node_index, graph.node(*node_index).unwrap()))
             .expect("failed to located viewed node from profile field");
 
-        let nested_provides_node = graph.node(nested_provides_id)?;
-        assert!(nested_provides_node.is_view_node());
-        assert!(nested_provides_node.id().starts_with("(Profile/FOO)"));
+        assert!(nested_provides_node.is_using_provides());
+        assert!(nested_provides_node
+            .display_name()
+            .starts_with("Profile/FOO/"));
 
         let mut nested_edges = graph.edges_from(nested_provides_id);
         assert_eq!(nested_edges.clone().count(), 1);
