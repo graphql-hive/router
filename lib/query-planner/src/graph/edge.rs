@@ -3,14 +3,13 @@ use std::fmt::{Debug, Display};
 use petgraph::graph::EdgeReference as GraphEdgeReference;
 
 use crate::{
-    federation_spec::directives::JoinFieldDirective, state::supergraph_state::SubgraphName,
+    ast::type_aware_selection::TypeAwareSelection, federation_spec::directives::JoinFieldDirective,
+    state::supergraph_state::SubgraphName,
 };
-
-use super::selection::Selection;
 
 pub struct EntityMove {
     pub key: String,
-    pub requirements: Selection,
+    pub requirements: TypeAwareSelection,
 }
 
 /// Represent a simple file move
@@ -20,7 +19,7 @@ pub struct FieldMove {
     pub is_leaf: bool,
     pub is_list: bool,
     pub join_field: Option<JoinFieldDirective>,
-    pub requirements: Option<Selection>,
+    pub requirements: Option<TypeAwareSelection>,
     pub override_from: Option<String>,
 }
 
@@ -42,7 +41,7 @@ pub enum Edge {
 pub type EdgeReference<'a> = GraphEdgeReference<'a, Edge>;
 
 impl Edge {
-    pub fn create_entity_move(key: &str, selection: Selection) -> Self {
+    pub fn create_entity_move(key: &str, selection: TypeAwareSelection) -> Self {
         Self::EntityMove(EntityMove {
             key: key.to_string(),
             requirements: selection,
@@ -55,7 +54,7 @@ impl Edge {
         is_leaf: bool,
         is_list: bool,
         join_field: Option<JoinFieldDirective>,
-        requirements: Option<Selection>,
+        requirements: Option<TypeAwareSelection>,
     ) -> Self {
         let override_from = join_field.as_ref().and_then(|jf| jf.override_value.clone());
 
@@ -79,7 +78,7 @@ impl Edge {
         }
     }
 
-    pub fn requirements(&self) -> Option<&Selection> {
+    pub fn requirements(&self) -> Option<&TypeAwareSelection> {
         match self {
             Self::EntityMove(entity_move) => Some(&entity_move.requirements),
             Self::FieldMove(field_move) => field_move.requirements.as_ref(),
@@ -112,7 +111,7 @@ impl Display for Edge {
         }?;
 
         if let Some(reqs) = self.requirements() {
-            write!(f, "🧩{}", reqs)?
+            write!(f, "🧩{}", reqs.selection_set)?
         };
 
         Ok(())

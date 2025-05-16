@@ -4,9 +4,12 @@ use petgraph::visit::{EdgeRef, NodeRef};
 use tracing::{debug, instrument};
 
 use crate::{
+    ast::{
+        selection_item::SelectionItem, selection_set::FieldSelection,
+        type_aware_selection::TypeAwareSelection,
+    },
     graph::{
         edge::{Edge, EdgeReference},
-        selection::{Selection, SelectionNode, SelectionNodeField},
         Graph,
     },
     planner::{
@@ -20,7 +23,7 @@ use super::{error::WalkOperationError, excluded::ExcludedFromLookup, path::Opera
 pub type VisitedGraphs = HashSet<String>;
 
 struct IndirectPathsLookupQueue {
-    queue: Vec<(VisitedGraphs, HashSet<Selection>, OperationPath)>,
+    queue: Vec<(VisitedGraphs, HashSet<TypeAwareSelection>, OperationPath)>,
 }
 
 impl IndirectPathsLookupQueue {
@@ -41,13 +44,13 @@ impl IndirectPathsLookupQueue {
     pub fn add(
         &mut self,
         visited_graphs: VisitedGraphs,
-        selections: HashSet<Selection>,
+        selections: HashSet<TypeAwareSelection>,
         path: OperationPath,
     ) {
         self.queue.push((visited_graphs, selections, path));
     }
 
-    pub fn pop(&mut self) -> Option<(VisitedGraphs, HashSet<Selection>, OperationPath)> {
+    pub fn pop(&mut self) -> Option<(VisitedGraphs, HashSet<TypeAwareSelection>, OperationPath)> {
         self.queue.pop()
     }
 }
@@ -280,7 +283,7 @@ fn can_satisfy_edge(
             let mut requirements: Vec<MoveRequirement> = vec![];
             let mut paths_to_requirements: Vec<OperationPath> = vec![];
 
-            for selection in selections.selection_set.iter() {
+            for selection in selections.selection_set.items.iter() {
                 requirements.splice(
                     0..0,
                     vec![MoveRequirement {
@@ -293,7 +296,7 @@ fn can_satisfy_edge(
             // it's important to pop from the end as we want to process the last added requirement first
             while let Some(requirement) = requirements.pop() {
                 match &requirement.selection {
-                    SelectionNode::Field(selection_field_requirement) => {
+                    SelectionItem::Field(selection_field_requirement) => {
                         let result = validate_field_requirement(
                             graph,
                             &requirement,
@@ -331,7 +334,7 @@ fn can_satisfy_edge(
                             }
                         };
                     }
-                    SelectionNode::Fragment { .. } => {
+                    SelectionItem::Fragment { .. } => {
                         unimplemented!("fragment not supported yet")
                     }
                 }
@@ -349,7 +352,7 @@ fn can_satisfy_edge(
 #[derive(Debug)]
 pub struct MoveRequirement {
     pub paths: Vec<OperationPath>,
-    pub selection: SelectionNode,
+    pub selection: SelectionItem,
 }
 
 type FieldRequirementsResult = Option<(Vec<OperationPath>, Vec<MoveRequirement>)>;
@@ -358,11 +361,11 @@ type FieldRequirementsResult = Option<(Vec<OperationPath>, Vec<MoveRequirement>)
 fn validate_field_requirement(
     graph: &Graph,
     move_requirement: &MoveRequirement,
-    field_move_requirement: &SelectionNodeField,
+    field_move_requirement: &FieldSelection,
     excluded: &ExcludedFromLookup,
     use_only_direct_edges: bool,
 ) -> Result<FieldRequirementsResult, WalkOperationError> {
-    let field_name = &field_move_requirement.field_name;
+    let field_name = &field_move_requirement.name;
     let mut next_paths: Vec<OperationPath> = Vec::new();
 
     for path in move_requirement.paths.iter() {

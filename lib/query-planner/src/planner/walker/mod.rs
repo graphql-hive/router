@@ -7,14 +7,13 @@ pub mod error;
 pub mod path;
 pub mod selection;
 
-use crate::graph::Graph;
+use crate::{ast::selection_item::SelectionItem, graph::Graph};
 use best_path::{find_best_paths, BestPathTracker};
 use error::WalkOperationError;
 use excluded::ExcludedFromLookup;
 use graphql_parser_hive_fork::query::OperationDefinition;
 use path::OperationPath;
 use pathfinder::{find_direct_paths, find_indirect_paths};
-use selection::SelectionItem;
 use tracing::{debug, instrument, span, warn, Level};
 use utils::{get_entrypoints, operation_to_parts};
 
@@ -57,7 +56,7 @@ pub fn walk_operation(
                     Level::INFO,
                     "process_selection",
                     field = &field.name,
-                    leaf = selection_item.is_leaf()
+                    leaf = field.is_leaf()
                 );
                 let _enter = field_span.enter();
 
@@ -111,7 +110,7 @@ pub fn walk_operation(
                     return Err(WalkOperationError::NoPathsFound(selection_item.clone()));
                 }
 
-                if selection_item.is_leaf() {
+                if field.is_leaf() {
                     paths_per_leaf.push(find_best_paths(next_paths));
                 } else {
                     debug!("Found {} paths", next_paths.len());

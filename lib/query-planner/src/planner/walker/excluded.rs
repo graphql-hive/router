@@ -2,12 +2,12 @@ use std::collections::HashSet;
 
 use petgraph::graph::EdgeIndex;
 
-use crate::graph::selection::Selection;
+use crate::ast::type_aware_selection::TypeAwareSelection;
 
 // TODO: Consider interior mutability with Rc<RefCell<ExcludedFromLookup>> to avoid full clone while traversing
 pub struct ExcludedFromLookup {
     pub graph_ids: HashSet<String>,
-    pub requirement: HashSet<Selection>,
+    pub requirement: HashSet<TypeAwareSelection>,
     pub edge_indices: Vec<EdgeIndex>,
 }
 
@@ -34,7 +34,7 @@ impl ExcludedFromLookup {
     pub fn next(
         &self,
         graph_id: &str,
-        requirements: &HashSet<Selection>,
+        requirements: &HashSet<TypeAwareSelection>,
         edges_indices: &[EdgeIndex],
     ) -> ExcludedFromLookup {
         let mut graph_ids = self.graph_ids.clone();

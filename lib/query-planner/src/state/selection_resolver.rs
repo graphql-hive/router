@@ -1,7 +1,12 @@
-use graphql_parser_hive_fork::query::{Field, SelectionSet};
+use graphql_parser_hive_fork::query::{Field, SelectionSet as ParserSelectionSet};
 use graphql_tools::static_graphql::query::Selection as OperationSelectionKind;
 
-use crate::graph::selection::{parse_selection_set, Selection, SelectionNode, SelectionNodeField};
+use crate::ast::{
+    parse_selection_set,
+    selection_item::SelectionItem,
+    selection_set::{FieldSelection, SelectionSet},
+    type_aware_selection::TypeAwareSelection,
+};
 
 use super::subgraph_state::SubgraphState;
 
@@ -29,7 +34,7 @@ impl SelectionResolver {
         &self,
         type_name: &str,
         key_fields: &str,
-    ) -> Result<Selection, SelectionResolverError> {
+    ) -> Result<TypeAwareSelection, SelectionResolverError> {
         let subgraph_type_def = self
             .subgraph_state
             .definitions
@@ -39,20 +44,17 @@ impl SelectionResolver {
         let selection_set = parse_selection_set(&format!("{{ {} }}", key_fields));
         let selection_nodes =
             self.resolve_selection_set(subgraph_type_def.name(), &selection_set)?;
-        let fields = Selection::new(
-            subgraph_type_def.name().to_string(),
-            key_fields.to_string(),
-            selection_nodes,
-        );
+        let selection =
+            TypeAwareSelection::new(subgraph_type_def.name().to_string(), selection_nodes);
 
-        Ok(fields)
+        Ok(selection)
     }
 
     fn resolve_field_selection(
         &self,
         type_name: &str,
         selection_field: &Field<'static, String>,
-    ) -> Result<SelectionNode, SelectionResolverError> {
+    ) -> Result<SelectionItem, SelectionResolverError> {
         let type_state = self
             .subgraph_state
             .definitions
@@ -79,19 +81,18 @@ impl SelectionResolver {
             )?)
         };
 
-        Ok(SelectionNode::Field(SelectionNodeField {
-            field_name: field_in_type_def.name.clone(),
-            type_name: type_name.to_string(),
-            selections,
+        Ok(SelectionItem::Field(FieldSelection {
+            name: field_in_type_def.name.clone(),
+            selections: selections.unwrap_or_default(),
         }))
     }
 
     fn resolve_selection_set(
         &self,
         type_name: &str,
-        selection_set: &SelectionSet<'static, String>,
-    ) -> Result<Vec<SelectionNode>, SelectionResolverError> {
-        let mut result: Vec<SelectionNode> = vec![];
+        selection_set: &ParserSelectionSet<'static, String>,
+    ) -> Result<SelectionSet, SelectionResolverError> {
+        let mut result: Vec<SelectionItem> = vec![];
 
         for selection in &selection_set.items {
             match selection {
@@ -110,6 +111,6 @@ impl SelectionResolver {
 
         result.sort();
 
-        Ok(result)
+        Ok(SelectionSet { items: result })
     }
 }

@@ -1,8 +1,9 @@
 use petgraph::graph::NodeIndex;
 
-use crate::{graph::error::GraphError, state::supergraph_state::RootOperationType};
-
-use super::selection::SelectionItem;
+use crate::{
+    ast::selection_item::SelectionItem, graph::error::GraphError,
+    state::supergraph_state::RootOperationType,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WalkOperationError {
