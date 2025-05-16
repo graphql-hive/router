@@ -146,10 +146,17 @@ impl FetchGraph {
                     Err(_) => return false,
                 };
 
-                // Check if step is leaf with no output
-                step.output.selection_set.items.is_empty()
+                if !step.output.selection_set.items.is_empty()
                     && self.parents_of(step_index).next().is_some()
-                    && self.children_of(step_index).next().is_none()
+                {
+                    return false;
+                }
+
+                if self.children_of(step_index).next().is_some() {
+                    return false;
+                }
+
+                return true;
             })
             .collect();
 
@@ -187,7 +194,11 @@ impl FetchGraph {
                 self.parents_of(*step_index).find_map(|parent_edge| {
                     self.children_of(parent_edge.source())
                         .find_map(|sibling_edge| {
-                            let sibling_index = sibling_edge.source();
+                            let sibling_index = sibling_edge.target();
+                            // avoid merging with itself
+                            if sibling_index == *step_index {
+                                return None;
+                            }
                             if let Ok(sibling) = self.get_step_data(sibling_index) {
                                 if sibling.can_merge(sibling_index, *step_index, step_data, self) {
                                     return Some((sibling_index, *step_index));
@@ -395,22 +406,21 @@ impl FetchStepData {
 
         let self_path = self.response_path.insert_front("*".to_string());
         let other_path = other.response_path.insert_front("*".to_string());
-        let prefix_len = self_path.common_prefix_len(&other_path);
-        if prefix_len == self.response_path.len() {
+        if !other_path.starts_with(&self_path) {
             return false;
         }
 
         // if the `other` FetchStep has a single parent and it's `this` FetchStep
-        if fetch_graph.parents_of(self_index).count() == 1
+        if fetch_graph.parents_of(other_index).count() == 1
             && fetch_graph
                 .parents_of(other_index)
                 .any(|edge| edge.source() == self_index)
         {
-            return false;
+            return true;
         }
 
         // if they do not share parents, they can't be merged
-        if fetch_graph.parents_of(self_index).all(|self_edge| {
+        if !fetch_graph.parents_of(self_index).all(|self_edge| {
             fetch_graph
                 .parents_of(other_index)
                 .any(|other_edge| other_edge.source() == self_edge.source())
@@ -1025,14 +1035,12 @@ pub fn is_reachable_via_alternative_upstream_path(
     child_index: NodeIndex,
     target_ancestor_index: NodeIndex,
 ) -> Result<bool, FetchGraphError> {
-    // Use a VecDeque for efficient queue operations (push_back, pop_front)
     let mut queue: VecDeque<NodeIndex> = VecDeque::new();
-    // Use a HashSet to keep track of visited nodes during this specific search
     let mut visited: HashSet<NodeIndex> = HashSet::new();
 
     // Start BFS queue with all parents of `child_index` except `target_ancestor_index`
     for edge_ref in graph.parents_of(child_index) {
-        let parent_index = edge_ref.source(); // Get the source node of the incoming edge
+        let parent_index = edge_ref.source();
 
         if parent_index != target_ancestor_index {
             queue.push_back(parent_index);
@@ -1040,15 +1048,13 @@ pub fn is_reachable_via_alternative_upstream_path(
         }
     }
 
-    // If no "other" parents were found to start the search from,
-    // there's no indirect path, so return false immediately.
     if queue.is_empty() {
         return Ok(false);
     }
 
     // Perform BFS upwards (following incoming edges)
     while let Some(current_index) = queue.pop_front() {
-        // If we reached the target ancestor indirectly, return true
+        // If we reached the target ancestor indirectly
         if current_index == target_ancestor_index {
             return Ok(true);
         }

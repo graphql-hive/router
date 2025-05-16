@@ -61,6 +61,13 @@ impl MergePath {
             .take_while(|(a, b)| a == b)
             .count()
     }
+
+    pub fn starts_with(&self, other: &MergePath) -> bool {
+        if other.len() > self.len() {
+            return false;
+        }
+        self.common_prefix_len(other) == other.len()
+    }
 }
 
 impl PartialEq for MergePath {
