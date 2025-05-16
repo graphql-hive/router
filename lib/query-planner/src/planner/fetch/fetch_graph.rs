@@ -183,26 +183,26 @@ impl FetchGraph {
         let mut merges_to_perform: Vec<(NodeIndex, NodeIndex)> = Vec::new();
 
         self.bfs(root_step_index, |step_index, step_data| {
-            let mut found = false;
-            for parent_edge in self.parents_of(*step_index) {
-                if found {
-                    break;
-                }
+            let result: Option<(NodeIndex, NodeIndex)> =
+                self.parents_of(*step_index).find_map(|parent_edge| {
+                    self.children_of(parent_edge.source())
+                        .find_map(|sibling_edge| {
+                            let sibling_index = sibling_edge.source();
+                            if let Ok(sibling) = self.get_step_data(sibling_index) {
+                                if sibling.can_merge(sibling_index, *step_index, step_data, self) {
+                                    return Some((sibling_index, *step_index));
+                                }
+                            }
 
-                let parent_index = parent_edge.source();
-                for sibling_edge in self.children_of(parent_index) {
-                    let sibling_index = sibling_edge.source();
-                    if let Ok(sibling) = self.get_step_data(sibling_index) {
-                        if sibling.can_merge(sibling_index, *step_index, step_data, self) {
-                            merges_to_perform.push((sibling_index, *step_index));
-                            found = true;
-                            break;
-                        }
-                    }
-                }
+                            None
+                        })
+                });
+
+            if let Some((ancestor_index, step_index)) = result {
+                merges_to_perform.push((ancestor_index, step_index));
             }
 
-            found
+            false // returning false means we never stop the BFS before it finishes
         });
 
         for (ancestor_index, step_index) in merges_to_perform {
