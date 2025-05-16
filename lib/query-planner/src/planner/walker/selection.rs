@@ -46,6 +46,49 @@ impl SelectionItem {
     }
 }
 
+impl PartialEq for SelectionItem {
+    fn eq(&self, other: &SelectionItem) -> bool {
+        match (self, other) {
+            (SelectionItem::Field(self_field), SelectionItem::Field(other_field)) => {
+                if self_field.name != other_field.name {
+                    return false;
+                }
+
+                return self_field.selections == other_field.selections;
+            }
+            // TODO: compare fragments too
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq for SelectionSet {
+    fn eq(&self, other: &SelectionSet) -> bool {
+        if self.items.len() != other.items.len() {
+            return false;
+        }
+
+        self.items
+            .iter()
+            .all(|self_item| other.items.iter().any(|other_item| self_item == other_item))
+    }
+}
+
+impl Display for SelectionSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{")?;
+        for (i, item) in self.items.iter().enumerate() {
+            if i + 1 == self.items.len() {
+                write!(f, "{}", item)?;
+            } else {
+                write!(f, "{} ", item)?;
+            }
+        }
+        write!(f, "}}")?;
+        Ok(())
+    }
+}
+
 impl Display for SelectionItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

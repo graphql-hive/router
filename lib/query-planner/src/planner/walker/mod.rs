@@ -1,11 +1,11 @@
 mod best_path;
 mod excluded;
 mod pathfinder;
-mod selection;
 mod utils;
 
 pub mod error;
 pub mod path;
+pub mod selection;
 
 use crate::graph::Graph;
 use best_path::{find_best_paths, BestPathTracker};

@@ -16,6 +16,9 @@ pub struct EntityMove {
 /// Represent a simple file move
 pub struct FieldMove {
     pub name: String,
+    pub type_name: String,
+    pub is_leaf: bool,
+    pub is_list: bool,
     pub join_field: Option<JoinFieldDirective>,
     pub requirements: Option<Selection>,
     pub override_from: Option<String>,
@@ -48,6 +51,9 @@ impl Edge {
 
     pub fn create_field_move(
         name: String,
+        type_name: String,
+        is_leaf: bool,
+        is_list: bool,
         join_field: Option<JoinFieldDirective>,
         requirements: Option<Selection>,
     ) -> Self {
@@ -55,6 +61,9 @@ impl Edge {
 
         Self::FieldMove(FieldMove {
             name: name.clone(),
+            type_name: type_name.clone(),
+            is_leaf,
+            is_list,
             join_field,
             requirements,
             override_from,
