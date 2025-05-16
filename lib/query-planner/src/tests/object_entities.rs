@@ -1,7 +1,8 @@
 use crate::{
     parse_operation,
     planner::{
-        fetch::fetch_graph::build_fetch_graph_from_query_tree, tree::query_tree::QueryTree,
+        fetch::fetch_graph::build_fetch_graph_from_query_tree,
+        query_plan::build_query_plan_from_fetch_graph, tree::query_tree::QueryTree,
         walker::walk_operation,
     },
     tests::testkit::{init_logger, paths_to_trees, read_supergraph},
@@ -128,6 +129,34 @@ fn testing() -> Result<(), Box<dyn Error>> {
         [3]
     ");
 
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "store") {
+          } =>
+          {
+          }
+        },
+        Flatten(path: "products") {
+          Fetch(service: "info") {
+            } =>
+            {
+            }
+          },
+        },
+        Flatten(path: "products") {
+          Fetch(service: "cost") {
+            } =>
+            {
+            }
+          },
+        },
+      },
+    },
+    "#);
+
     Ok(())
 }
 
@@ -185,6 +214,27 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
     [1]
       [2]
     ");
+
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          } =>
+          {
+          }
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "c") {
+            } =>
+            {
+            }
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -292,6 +342,44 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
         [4]
     ");
 
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "d") {
+          } =>
+          {
+          }
+        },
+        Parallel {
+          Sequence {
+            Flatten(path: "productFromD") {
+              Fetch(service: "b") {
+                } =>
+                {
+                }
+              },
+            },
+            Flatten(path: "productFromD.category") {
+              Fetch(service: "c") {
+                } =>
+                {
+                }
+              },
+            },
+          },
+          Flatten(path: "productFromD") {
+            Fetch(service: "a") {
+              } =>
+              {
+              }
+            },
+          },
+        },
+      },
+    },
+    "#);
+
     Ok(())
 }
 
@@ -367,6 +455,33 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
       [3]
         [2]
     ");
+
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          } =>
+          {
+          }
+        },
+        Flatten(path: "topProducts.products.@") {
+          Fetch(service: "link") {
+            } =>
+            {
+            }
+          },
+        },
+        Flatten(path: "topProducts.products.@") {
+          Fetch(service: "price") {
+            } =>
+            {
+            }
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
