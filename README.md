@@ -1,9 +1,8 @@
 # Getting Started
 
-## Scripts
+## Try it out
 
-- produce graph based on supergraph: `cargo run graph supergraph.graphql`
-- explore graph in playground: `./playground.sh supergraph.graphql` (link will be copied to clipboard)
+See [bin/README.md](bin/README.md) for instructions to quickly use the dev-cli for seeing the QP in action.
 
 ## Testing
 

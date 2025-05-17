@@ -94,12 +94,12 @@ fn process_trees(supergraph_path: &str, operation_path: &str) {
             println!("== #{}: {} ==", tree_index, path.pretty_print(&graph));
             println!(
                 "{}",
-                QueryTree::from_path(&graph, &path)
+                QueryTree::from_path(&graph, path)
                     .expect("expected tree to be built but it failed")
                     .pretty_print(&graph)
                     .expect("failed to print tree")
             );
-            println!("");
+            println!();
         }
     }
 }
