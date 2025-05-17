@@ -708,6 +708,7 @@ fn add_typename_field_to_output(
     );
 }
 
+// TODO: simplfy args
 fn process_entity_move_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
@@ -817,6 +818,7 @@ fn process_subgraph_entrypoint_edge(
     Ok(())
 }
 
+// TODO: simplfy args
 fn process_plain_field_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
