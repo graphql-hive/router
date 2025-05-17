@@ -123,27 +123,16 @@ impl Debug for SelectionItem {
 impl PartialEq for SelectionItem {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (
-                SelectionItem::Field(FieldSelection {
-                    name: field_name, ..
-                }),
-                SelectionItem::Field(FieldSelection {
-                    name: other_field_name,
-                    ..
-                }),
-            ) => field_name == other_field_name,
-            (
-                SelectionItem::Fragment(FragmentSelection {
-                    type_name,
-                    selections,
-                    ..
-                }),
-                SelectionItem::Fragment(FragmentSelection {
-                    type_name: other_type_name,
-                    selections: other_selections,
-                    ..
-                }),
-            ) => type_name == other_type_name && selections.items == other_selections.items,
+            (SelectionItem::Field(f1), SelectionItem::Field(f2)) => {
+                if f1.name != f2.name {
+                    return false;
+                }
+
+                f1.selections == f2.selections
+            }
+            (SelectionItem::Fragment(f1), SelectionItem::Fragment(f2)) => {
+                f1.type_name == f2.type_name && f1.selections.items == f2.selections.items
+            }
             _ => false,
         }
     }

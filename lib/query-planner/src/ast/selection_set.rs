@@ -14,6 +14,14 @@ pub struct SelectionSet {
     pub items: Vec<SelectionItem>,
 }
 
+impl PartialEq for SelectionSet {
+    fn eq(&self, other: &Self) -> bool {
+        self.items == other.items
+    }
+}
+
+impl Eq for SelectionSet {}
+
 impl Display for SelectionSet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.items.is_empty() {
