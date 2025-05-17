@@ -23,7 +23,9 @@ impl Hash for SelectionItem {
 impl Display for SelectionItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SelectionItem::Field(field_selection) => write!(f, "{}", field_selection),
+            // Using the following instead of "field_selection.name" will print the full, nested selection set here
+            // SelectionItem::Field(field_selection) => write!(f, "{}", field_selection),
+            SelectionItem::Field(field_selection) => write!(f, "{}", field_selection.name),
             SelectionItem::Fragment(fragment_selection) => write!(f, "{}", fragment_selection),
         }
     }

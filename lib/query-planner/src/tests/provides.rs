@@ -55,8 +55,8 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/products {} → {products{upc}} at $.
-    [2] Product/reviews {__typename} → {reviews{author{username}}} at $.products.@
+    [1] Query/products {} → {products} at $.
+    [2] Product/reviews {__typename} → {reviews} at $.products.@
 
     Tree:
     [1]
@@ -118,7 +118,7 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/category {} → {products{categories{name id} products id}} at $.
+    [1] Query/category {} → {products} at $.
 
     Tree:
     [1]

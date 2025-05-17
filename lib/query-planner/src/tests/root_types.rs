@@ -166,9 +166,9 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/price {} → {product{price{currency amount id}}} at $.
-    [2] Query/category {} → {product{category{name id} id}} at $.
-    [3] Query/name {} → {product{name{model brand id}}} at $.
+    [1] Query/price {} → {product} at $.
+    [2] Query/category {} → {product} at $.
+    [3] Query/name {} → {product} at $.
 
     Tree:
     [1]

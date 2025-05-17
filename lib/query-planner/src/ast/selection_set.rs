@@ -29,18 +29,15 @@ impl Display for SelectionSet {
         }
 
         write!(f, "{{")?;
-
-        write!(
-            f,
-            "{}",
-            self.items
-                .iter()
-                .map(|v| format!("{}", v))
-                .collect::<Vec<_>>()
-                .join(" ")
-        )?;
-
-        write!(f, "}}")
+        for (i, item) in self.items.iter().enumerate() {
+            if i + 1 == self.items.len() {
+                write!(f, "{}", item)?;
+            } else {
+                write!(f, "{} ", item)?;
+            }
+        }
+        write!(f, "}}")?;
+        Ok(())
     }
 }
 
