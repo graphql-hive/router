@@ -57,10 +57,7 @@ impl TypeAwareSelection {
             return false;
         }
 
-        return selection_items_are_subset_of(
-            &self.selection_set.items,
-            &other.selection_set.items,
-        );
+        selection_items_are_subset_of(&self.selection_set.items, &other.selection_set.items)
     }
 
     pub fn add(&mut self, to_add: Self) {
@@ -75,7 +72,7 @@ impl TypeAwareSelection {
 }
 
 fn selection_item_is_subset_of(source: &SelectionItem, target: &SelectionItem) -> bool {
-    return match (source, target) {
+    match (source, target) {
         (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) => {
             if source_field.name != target_field.name {
                 return false;
@@ -85,22 +82,22 @@ fn selection_item_is_subset_of(source: &SelectionItem, target: &SelectionItem) -
                 return false;
             }
 
-            return selection_items_are_subset_of(
+            selection_items_are_subset_of(
                 &source_field.selections.items,
                 &target_field.selections.items,
-            );
+            )
         }
         // TODO: support fragments
         _ => false,
-    };
+    }
 }
 
-fn selection_items_are_subset_of(source: &Vec<SelectionItem>, target: &Vec<SelectionItem>) -> bool {
-    return target.iter().all(|target_node| {
+fn selection_items_are_subset_of(source: &[SelectionItem], target: &[SelectionItem]) -> bool {
+    target.iter().all(|target_node| {
         source
             .iter()
             .any(|source_node| selection_item_is_subset_of(source_node, target_node))
-    });
+    })
 }
 
 fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_first: bool) {
@@ -132,7 +129,7 @@ fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_firs
     if !pending_items.is_empty() {
         if as_first {
             let mut new_items = pending_items;
-            new_items.extend(target.items.drain(..));
+            new_items.append(&mut target.items);
             target.items = new_items;
         } else {
             target.items.extend(pending_items);
@@ -140,10 +137,10 @@ fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_firs
     }
 }
 
-fn find_selection_set_by_path_mut<'a>(
-    root_selection_set: &'a mut SelectionSet,
+fn find_selection_set_by_path_mut(
+    root_selection_set: &mut SelectionSet,
     path: MergePath,
-) -> Option<&'a mut SelectionSet> {
+) -> Option<&mut SelectionSet> {
     let mut current_selection_set = root_selection_set;
 
     for path_element in path.inner.iter() {
