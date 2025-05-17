@@ -1,9 +1,15 @@
-query products {
-    allProducts {
-        product {
-            price {
-                price
-            }
-        }
+query topProducts {
+  topProducts {
+    products {
+      id
+      pid
+      category {
+        id
+        tag
+      }
+      price {
+        price
+      }
     }
+  }
 }
