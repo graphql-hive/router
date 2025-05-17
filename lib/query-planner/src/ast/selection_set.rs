@@ -14,6 +14,14 @@ pub struct SelectionSet {
     pub items: Vec<SelectionItem>,
 }
 
+impl PartialEq for SelectionSet {
+    fn eq(&self, other: &Self) -> bool {
+        self.items == other.items
+    }
+}
+
+impl Eq for SelectionSet {}
+
 impl Display for SelectionSet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.items.is_empty() {
@@ -21,18 +29,15 @@ impl Display for SelectionSet {
         }
 
         write!(f, "{{")?;
-
-        write!(
-            f,
-            "{}",
-            self.items
-                .iter()
-                .map(|v| format!("{}", v))
-                .collect::<Vec<_>>()
-                .join(" ")
-        )?;
-
-        write!(f, "}}")
+        for (i, item) in self.items.iter().enumerate() {
+            if i + 1 == self.items.len() {
+                write!(f, "{}", item)?;
+            } else {
+                write!(f, "{} ", item)?;
+            }
+        }
+        write!(f, "}}")?;
+        Ok(())
     }
 }
 
@@ -52,6 +57,8 @@ impl Hash for SelectionSet {
 pub struct FieldSelection {
     pub name: String,
     pub selections: SelectionSet,
+    pub alias: Option<String>,
+    pub is_leaf: bool,
 }
 
 impl Hash for FieldSelection {
@@ -63,7 +70,16 @@ impl Hash for FieldSelection {
 
 impl FieldSelection {
     pub fn is_leaf(&self) -> bool {
-        self.selections.items.is_empty()
+        self.is_leaf
+    }
+
+    pub fn new_typename() -> Self {
+        FieldSelection {
+            name: "__typename".to_string(),
+            alias: None,
+            is_leaf: true,
+            selections: SelectionSet::default(),
+        }
     }
 }
 
@@ -111,8 +127,8 @@ impl From<&ParserSelection<'_, String>> for SelectionItem {
         match parser_selection {
             ParserSelection::Field(field) => SelectionItem::Field(FieldSelection {
                 name: field.name.to_string(),
-                // alias: field.alias.as_ref().map(|alias| alias.to_string()),
-                // is_leaf: field.selection_set.items.is_empty(),
+                alias: field.alias.as_ref().map(|alias| alias.to_string()),
+                is_leaf: field.selection_set.items.is_empty(),
                 selections: (&field.selection_set).into(),
             }),
             ParserSelection::InlineFragment(inline_fragment) => {

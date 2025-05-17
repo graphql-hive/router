@@ -318,7 +318,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
     assert_eq!(best_paths_per_leaf[0].len(), 1);
     assert_eq!(best_paths_per_leaf[1].len(), 1);
 
-    insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(products)- Query/products -(topProducts)- ProductList/products -(products)- Product/products -(🔑🧩{category{id tag} id pid})- Product/price -(price)- Price/price -(price)- Float/price");
+    insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(products)- Query/products -(topProducts)- ProductList/products -(products)- Product/products -(🔑🧩{category id pid})- Product/price -(price)- Price/price -(price)- Float/price");
     insta::assert_snapshot!(best_paths_per_leaf[1][0].pretty_print(&graph), @"root(Query) -(products)- Query/products -(topProducts)- ProductList/products -(products)- Product/products -(id)- String/products");
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);

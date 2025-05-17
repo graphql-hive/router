@@ -1,9 +1,12 @@
+use crate::ast::merge_path::MergePath;
+use crate::ast::selection_item::SelectionItem;
+use crate::ast::selection_set::{FieldSelection, SelectionSet};
+use crate::ast::type_aware_selection::TypeAwareSelection;
 use crate::graph::edge::Edge;
 use crate::graph::node::Node;
 use crate::graph::Graph;
 use crate::planner::tree::query_tree::QueryTree;
 use crate::planner::tree::query_tree_node::QueryTreeNode;
-use crate::planner::walker::selection::{FieldSelection, SelectionItem, SelectionSet};
 use crate::state::supergraph_state::SubgraphName;
 use petgraph::graph::{DiGraph, EdgeIndex, NodeIndex, NodeIndices};
 use petgraph::visit::Bfs;
@@ -14,11 +17,15 @@ use std::collections::{HashSet, VecDeque};
 use std::fmt::{Debug, Display};
 
 use super::error::FetchGraphError;
-use super::selection::MergePath;
-use super::selection::Selection;
 
 pub struct FetchGraph {
     graph: DiGraph<FetchStepData, ()>,
+}
+
+impl Default for FetchGraph {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FetchGraph {
@@ -68,10 +75,10 @@ impl FetchGraph {
         }
 
         // `index_twice_mut` panics when nodes do not exist
-        if let None = self.graph.node_weight(index1) {
+        if self.graph.node_weight(index1).is_none() {
             return Err(FetchGraphError::MissingStep(index1.index()));
         }
-        if let None = self.graph.node_weight(index2) {
+        if self.graph.node_weight(index2).is_none() {
             return Err(FetchGraphError::MissingStep(index2.index()));
         }
 
@@ -83,11 +90,11 @@ impl FetchGraph {
     }
 
     pub fn disconnect(&mut self, edge_index: EdgeIndex) -> bool {
-        self.graph.remove_edge(edge_index).map_or(false, |_| true)
+        self.graph.remove_edge(edge_index).is_some_and(|_| true)
     }
 
     pub fn remove_step(&mut self, index: NodeIndex) -> bool {
-        self.graph.remove_node(index).map_or(false, |_| true)
+        self.graph.remove_node(index).is_some_and(|_| true)
     }
 
     pub fn add_step(&mut self, data: FetchStepData) -> NodeIndex {
@@ -98,9 +105,7 @@ impl FetchGraph {
     where
         F: FnMut(&NodeIndex, &FetchStepData) -> bool,
     {
-        if self.graph.node_weight(root_index).is_none() {
-            return None;
-        }
+        self.graph.node_weight(root_index)?;
 
         let mut bfs = Bfs::new(&self.graph, root_index);
 
@@ -156,7 +161,7 @@ impl FetchGraph {
                     return false;
                 }
 
-                return true;
+                true
             })
             .collect();
 
@@ -264,7 +269,7 @@ impl FetchGraph {
         let mut iter = self.children_of(root_fetch_step_index);
         let mut current = iter.next();
 
-        while let Some(next_edge) = iter.next() {
+        for next_edge in iter {
             if let Some(curr_edge) = current {
                 let current_node_index = curr_edge.target().id();
                 let next_node_index = next_edge.target().id();
@@ -299,7 +304,7 @@ impl Display for FetchGraph {
             let fetch_step = self.graph.node_weight(node_index).expect("node to exist");
 
             fetch_step.pretty_write(f, node_index)?;
-            write!(f, "\n")?;
+            writeln!(f)?;
         }
 
         writeln!(f, "\nTree:")?;
@@ -355,17 +360,16 @@ impl Display for FetchGraph {
 pub struct FetchStepData {
     pub service_name: SubgraphName,
     pub response_path: MergePath,
-    pub input: Selection,
-    pub output: Selection,
-    pub reserved_for_requires: Option<Selection>,
+    pub input: TypeAwareSelection,
+    pub output: TypeAwareSelection,
+    pub reserved_for_requires: Option<TypeAwareSelection>,
 }
 
 impl FetchStepData {
-    pub fn is_reserved_for_requires(&self, selection: &Selection) -> bool {
-        return self
-            .reserved_for_requires
+    pub fn is_reserved_for_requires(&self, selection: &TypeAwareSelection) -> bool {
+        self.reserved_for_requires
             .as_ref()
-            .is_some_and(|requires| requires.eq(&selection));
+            .is_some_and(|requires| requires.eq(selection))
     }
 
     pub fn pretty_write(
@@ -428,7 +432,7 @@ impl FetchStepData {
             return false;
         }
 
-        return true;
+        true
     }
 }
 
@@ -475,14 +479,14 @@ pub struct FetchSteps {
 
 fn create_noop_fetch_step(fetch_graph: &mut FetchGraph) -> NodeIndex {
     fetch_graph.add_step(FetchStepData {
-        service_name: SubgraphName("*".to_string()),
-        response_path: MergePath::empty(),
-        input: Selection {
-            selection_set: SelectionSet { items: vec![] },
+        service_name: SubgraphName::any(),
+        response_path: MergePath::default(),
+        input: TypeAwareSelection {
+            selection_set: SelectionSet::default(),
             type_name: "*".to_string(),
         },
-        output: Selection {
-            selection_set: SelectionSet { items: vec![] },
+        output: TypeAwareSelection {
+            selection_set: SelectionSet::default(),
             type_name: "*".to_string(),
         },
         reserved_for_requires: None,
@@ -492,26 +496,21 @@ fn create_noop_fetch_step(fetch_graph: &mut FetchGraph) -> NodeIndex {
 fn create_fetch_step_for_entity_move(
     fetch_graph: &mut FetchGraph,
     subgraph_name: &SubgraphName,
-    type_name: &String,
+    type_name: &str,
     response_path: &MergePath,
 ) -> NodeIndex {
     fetch_graph.add_step(FetchStepData {
         service_name: subgraph_name.clone(),
         response_path: response_path.clone(),
-        input: Selection {
+        input: TypeAwareSelection {
             selection_set: SelectionSet {
-                items: vec![SelectionItem::Field(FieldSelection {
-                    name: "__typename".to_string(),
-                    alias: None,
-                    is_leaf: true,
-                    selections: SelectionSet { items: vec![] },
-                })],
+                items: vec![SelectionItem::Field(FieldSelection::new_typename())],
             },
-            type_name: type_name.clone(),
+            type_name: type_name.to_string(),
         },
-        output: Selection {
-            selection_set: SelectionSet { items: vec![] },
-            type_name: type_name.clone(),
+        output: TypeAwareSelection {
+            selection_set: SelectionSet::default(),
+            type_name: type_name.to_string(),
         },
         reserved_for_requires: None,
     })
@@ -520,18 +519,18 @@ fn create_fetch_step_for_entity_move(
 fn create_fetch_step_for_root_move(
     fetch_graph: &mut FetchGraph,
     subgraph_name: &SubgraphName,
-    type_name: &String,
+    type_name: &str,
 ) -> NodeIndex {
     fetch_graph.add_step(FetchStepData {
         service_name: subgraph_name.clone(),
-        response_path: MergePath::empty(),
-        input: Selection {
-            selection_set: SelectionSet { items: vec![] },
-            type_name: type_name.clone(),
+        response_path: MergePath::default(),
+        input: TypeAwareSelection {
+            selection_set: SelectionSet::default(),
+            type_name: type_name.to_string(),
         },
-        output: Selection {
-            selection_set: SelectionSet { items: vec![] },
-            type_name: type_name.clone(),
+        output: TypeAwareSelection {
+            selection_set: SelectionSet::default(),
+            type_name: type_name.to_string(),
         },
         reserved_for_requires: None,
     })
@@ -543,8 +542,8 @@ fn get_or_create_fetch_step_for_entity_move(
     subgraph_name: &SubgraphName,
     type_name: &String,
     response_path: &MergePath,
-    key: Option<&Selection>,
-    requires: Option<&Selection>,
+    key: Option<&TypeAwareSelection>,
+    requires: Option<&TypeAwareSelection>,
 ) -> Result<NodeIndex, FetchGraphError> {
     let matching_child_index =
         fetch_graph
@@ -564,7 +563,7 @@ fn get_or_create_fetch_step_for_entity_move(
                     }
 
                     if let Some(key) = &key {
-                        if !fetch_step.input.contains(&key) {
+                        if !fetch_step.input.contains(key) {
                             // requested key fields are not part of the input
                             return None;
                         }
@@ -576,7 +575,7 @@ fn get_or_create_fetch_step_for_entity_move(
                     // If the FetchStep has no requirement,
                     //  then attaching required fields to it may postpone/affect the resolution of other fields.
                     if let Some(requires) = &requires {
-                        if !fetch_step.is_reserved_for_requires(&requires) {
+                        if !fetch_step.is_reserved_for_requires(requires) {
                             return None;
                         }
                     }
@@ -587,23 +586,23 @@ fn get_or_create_fetch_step_for_entity_move(
                 None
             });
 
-    return match matching_child_index {
+    match matching_child_index {
         Some(idx) => Ok(idx),
         None => {
             let step_index = create_fetch_step_for_entity_move(
                 fetch_graph,
                 subgraph_name,
                 type_name,
-                &response_path,
+                response_path,
             );
             if let Some(selection) = key {
                 let step = fetch_graph.get_step_data_mut(step_index)?;
                 step.input.add(selection.clone())
             }
 
-            return Ok(step_index);
+            Ok(step_index)
         }
-    };
+    }
 }
 
 fn process_children_for_fetch_steps(
@@ -694,26 +693,23 @@ fn process_noop_edge(
 
 fn add_typename_field_to_output(
     fetch_step: &mut FetchStepData,
-    type_name: &String,
+    type_name: &str,
     add_at: &MergePath,
 ) {
     fetch_step.output.add_at_path(
-        &Selection {
+        &TypeAwareSelection {
             selection_set: SelectionSet {
-                items: vec![SelectionItem::Field(FieldSelection {
-                    name: "__typename".to_string(),
-                    alias: None,
-                    is_leaf: true,
-                    selections: SelectionSet { items: vec![] },
-                })],
+                items: vec![SelectionItem::Field(FieldSelection::new_typename())],
             },
-            type_name: type_name.clone(),
+            type_name: type_name.to_string(),
         },
         add_at.clone(),
         true,
     );
 }
 
+// TODO: simplfy args
+#[allow(clippy::too_many_arguments)]
 fn process_entity_move_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
@@ -729,9 +725,9 @@ fn process_entity_move_edge(
     }
     let edge = graph.edge(edge_index)?;
     let requirement = match edge {
-        Edge::EntityMove(em) => Selection {
+        Edge::EntityMove(em) => TypeAwareSelection {
             // TODO: actual selection set
-            selection_set: SelectionSet { items: vec![] },
+            selection_set: SelectionSet::default(),
             type_name: em.requirements.type_name.clone(),
         },
         _ => panic!("Expected an entity move"),
@@ -784,7 +780,7 @@ fn process_entity_move_edge(
         query_node,
         Some(fetch_step_index),
         response_path,
-        &MergePath::empty(),
+        &MergePath::default(),
         requiring_fetch_step_index,
     )?;
 
@@ -797,7 +793,7 @@ fn process_subgraph_entrypoint_edge(
     query_node: &QueryTreeNode,
     parent_fetch_step_index: Option<NodeIndex>,
     subgraph_name: &SubgraphName,
-    type_name: &String,
+    type_name: &str,
 ) -> Result<(), FetchGraphError> {
     if parent_fetch_step_index.is_none() {
         panic!("Expected a parent fetch step")
@@ -810,8 +806,8 @@ fn process_subgraph_entrypoint_edge(
         fetch_graph,
         query_node,
         Some(fetch_step_index),
-        &MergePath::empty(),
-        &MergePath::empty(),
+        &MergePath::default(),
+        &MergePath::default(),
         None,
     )?;
 
@@ -823,6 +819,8 @@ fn process_subgraph_entrypoint_edge(
     Ok(())
 }
 
+// TODO: simplfy args
+#[allow(clippy::too_many_arguments)]
 fn process_plain_field_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
@@ -831,10 +829,10 @@ fn process_plain_field_edge(
     requiring_fetch_step_index: Option<NodeIndex>,
     response_path: &MergePath,
     fetch_path: &MergePath,
-    field_name: &String,
+    field_name: &str,
     field_is_leaf: bool,
     field_is_list: bool,
-    field_type_name: &String,
+    field_type_name: &str,
 ) -> Result<(), FetchGraphError> {
     let parent_fetch_step_index = parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?;
 
@@ -844,23 +842,23 @@ fn process_plain_field_edge(
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
     parent_fetch_step.output.add_at_path(
-        &Selection {
+        &TypeAwareSelection {
             selection_set: SelectionSet {
                 items: vec![SelectionItem::Field(FieldSelection {
-                    name: field_name.clone(),
+                    name: field_name.to_string(),
                     alias: None,
                     is_leaf: field_is_leaf,
-                    selections: SelectionSet { items: vec![] },
+                    selections: SelectionSet::default(),
                 })],
             },
-            type_name: field_type_name.clone(),
+            type_name: field_type_name.to_string(),
         },
         fetch_path.clone(),
         false,
     );
 
-    let mut child_response_path = response_path.push(field_name.clone());
-    let mut child_fetch_path = fetch_path.push(field_name.clone());
+    let mut child_response_path = response_path.push(field_name);
+    let mut child_fetch_path = fetch_path.push(field_name);
 
     if field_is_list {
         child_response_path = child_response_path.push("@".to_string());
@@ -933,8 +931,8 @@ fn process_query_node(
                         response_path,
                         fetch_path,
                         &field.name,
-                        field.is_leaf.clone(),
-                        field.is_list.clone(),
+                        field.is_leaf,
+                        field.is_list,
                         &field.type_name,
                     )?
                 } else {
@@ -986,8 +984,8 @@ pub fn build_fetch_graph_from_query_tree(
         &mut fetch_graph,
         &query_tree.root,
         None,
-        &MergePath::empty(),
-        &MergePath::empty(),
+        &MergePath::default(),
+        &MergePath::default(),
         None,
     )?;
 

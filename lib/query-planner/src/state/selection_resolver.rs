@@ -83,7 +83,9 @@ impl SelectionResolver {
 
         Ok(SelectionItem::Field(FieldSelection {
             name: field_in_type_def.name.clone(),
+            is_leaf: selections.is_none(),
             selections: selections.unwrap_or_default(),
+            alias: None,
         }))
     }
 

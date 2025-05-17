@@ -34,6 +34,12 @@ impl Display for SubgraphName {
     }
 }
 
+impl SubgraphName {
+    pub fn any() -> Self {
+        Self("*".to_string())
+    }
+}
+
 #[derive(Debug)]
 pub struct SupergraphState<'a> {
     /// A map all of definitions (def_name, def) that exists in the schema.

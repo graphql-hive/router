@@ -29,13 +29,24 @@ jobs:
         run: wasm-pack build -t nodejs -d pkg-node
         working-directory: ./lib/wasm-lib
 
-  rustfmt:
-    name: rustfmt
+  fmt:
+    name: fmt
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9 # v1
         with:
           components: rustfmt
-      - name: rustfmt Check
+      - name: cargo fmt
         uses: actions-rust-lang/rustfmt@559aa3035a47390ba96088dffa783b5d26da9326 # v1
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9 # v1
+        with:
+          components: clippy
+      - name: cargo clippy
+        run: cargo clippy --all
