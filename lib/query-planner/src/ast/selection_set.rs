@@ -75,6 +75,15 @@ impl FieldSelection {
     pub fn is_leaf(&self) -> bool {
         self.is_leaf
     }
+
+    pub fn new_typename() -> Self {
+        FieldSelection {
+            name: "__typename".to_string(),
+            alias: None,
+            is_leaf: true,
+            selections: SelectionSet::default(),
+        }
+    }
 }
 
 #[derive(Clone)]

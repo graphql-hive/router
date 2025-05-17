@@ -5,7 +5,6 @@ mod utils;
 
 pub mod error;
 pub mod path;
-pub mod selection;
 
 use crate::{ast::selection_item::SelectionItem, graph::Graph};
 use best_path::{find_best_paths, BestPathTracker};

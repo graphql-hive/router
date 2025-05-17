@@ -1,11 +1,12 @@
+pub mod merge_path;
+pub mod selection_item;
+pub mod selection_set;
+pub mod type_aware_selection;
+
 use graphql_parser_hive_fork::{
     parse_query,
     query::{Definition, OperationDefinition},
 };
-
-pub mod selection_item;
-pub mod selection_set;
-pub mod type_aware_selection;
 
 pub fn parse_selection_set(
     selection_set_str: &str,
