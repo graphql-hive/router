@@ -52,6 +52,8 @@ impl Hash for SelectionSet {
 pub struct FieldSelection {
     pub name: String,
     pub selections: SelectionSet,
+    pub alias: Option<String>,
+    pub is_leaf: bool,
 }
 
 impl Hash for FieldSelection {
@@ -63,7 +65,7 @@ impl Hash for FieldSelection {
 
 impl FieldSelection {
     pub fn is_leaf(&self) -> bool {
-        self.selections.items.is_empty()
+        self.is_leaf
     }
 }
 
@@ -111,8 +113,8 @@ impl From<&ParserSelection<'_, String>> for SelectionItem {
         match parser_selection {
             ParserSelection::Field(field) => SelectionItem::Field(FieldSelection {
                 name: field.name.to_string(),
-                // alias: field.alias.as_ref().map(|alias| alias.to_string()),
-                // is_leaf: field.selection_set.items.is_empty(),
+                alias: field.alias.as_ref().map(|alias| alias.to_string()),
+                is_leaf: field.selection_set.items.is_empty(),
                 selections: (&field.selection_set).into(),
             }),
             ParserSelection::InlineFragment(inline_fragment) => {
