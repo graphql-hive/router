@@ -10,6 +10,8 @@ To run a specific test, or a specific test suite, please use:
 
 ```
 cargo test_qp file_or_fn_name
+# OR
+cargo test_qp tests::file_name::test_name
 ```
 
 ## Logging
