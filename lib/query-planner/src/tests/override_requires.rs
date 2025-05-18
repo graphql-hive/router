@@ -1,9 +1,6 @@
 use crate::{
     parse_operation,
-    planner::{
-        fetch::fetch_graph::build_fetch_graph_from_query_tree, tree::query_tree::QueryTree,
-        walker::walk_operation,
-    },
+    planner::{tree::query_tree::QueryTree, walker::walk_operation},
     tests::testkit::{init_logger, paths_to_trees, read_supergraph},
     utils::operation_utils::get_operation_to_execute,
 };
