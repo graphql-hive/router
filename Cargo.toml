@@ -5,3 +5,8 @@ default-members = ["bin"]
 
 [profile.dev]
 debug = "full"
+
+# See PROFILING.md
+[profile.profiling]
+inherits = "release"
+debug = true

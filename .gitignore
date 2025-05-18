@@ -1,3 +1,4 @@
 /target
 .digraph
 *.pending-snap
+profile.json.gz
