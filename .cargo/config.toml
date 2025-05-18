@@ -1,3 +1,4 @@
+# The following are aliases you can use with "cargo command_name"
 [alias]
 test_all = "test --workspace"
 test_qp = "test --package query-planner -- --nocapture"
