@@ -1,4 +1,4 @@
-use graphql_parser_hive_fork::schema::Directive;
+use graphql_parser::schema::Directive;
 
 use super::directives::FederationDirective;
 

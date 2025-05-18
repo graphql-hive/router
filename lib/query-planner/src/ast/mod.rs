@@ -3,14 +3,14 @@ pub mod selection_item;
 pub mod selection_set;
 pub mod type_aware_selection;
 
-use graphql_parser_hive_fork::{
+use graphql_parser::{
     parse_query,
     query::{Definition, OperationDefinition},
 };
 
 pub fn parse_selection_set(
     selection_set_str: &str,
-) -> graphql_parser_hive_fork::query::SelectionSet<'static, String> {
+) -> graphql_parser::query::SelectionSet<'static, String> {
     let parsed_doc = parse_query(selection_set_str).unwrap().into_static();
     let parsed_definition = parsed_doc
         .definitions

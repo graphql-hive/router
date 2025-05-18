@@ -1,4 +1,4 @@
-use graphql_parser_hive_fork::query::OperationDefinition;
+use graphql_parser::query::OperationDefinition;
 
 use crate::{
     ast::selection_set::SelectionSet,

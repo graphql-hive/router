@@ -10,7 +10,7 @@ use crate::{ast::selection_item::SelectionItem, graph::Graph};
 use best_path::{find_best_paths, BestPathTracker};
 use error::WalkOperationError;
 use excluded::ExcludedFromLookup;
-use graphql_parser_hive_fork::query::OperationDefinition;
+use graphql_parser::query::OperationDefinition;
 use path::OperationPath;
 use pathfinder::{find_direct_paths, find_indirect_paths};
 use tracing::{debug, instrument, span, warn, Level};

@@ -3,9 +3,7 @@ use std::{
     hash::Hash,
 };
 
-use graphql_parser_hive_fork::query::{
-    Selection as ParserSelection, SelectionSet as ParserSelectionSet,
-};
+use graphql_parser::query::{Selection as ParserSelection, SelectionSet as ParserSelectionSet};
 
 use super::selection_item::SelectionItem;
 

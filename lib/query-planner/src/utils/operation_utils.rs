@@ -1,4 +1,4 @@
-use graphql_parser_hive_fork::query::{Definition, Document, OperationDefinition};
+use graphql_parser::query::{Definition, Document, OperationDefinition};
 
 // TODO: improve
 pub fn get_operation_to_execute<'a>(

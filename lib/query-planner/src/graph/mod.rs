@@ -14,7 +14,7 @@ use crate::{
     state::supergraph_state::{RootOperationType, SupergraphDefinition, SupergraphState},
 };
 use error::GraphError;
-use graphql_parser_hive_fork::query::{Selection, SelectionSet, Type};
+use graphql_parser::query::{Selection, SelectionSet, Type};
 use graphql_tools::ast::{SchemaDocumentExtension, TypeExtension};
 use petgraph::{
     dot::Dot,

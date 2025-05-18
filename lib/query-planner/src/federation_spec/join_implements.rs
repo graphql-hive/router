@@ -1,4 +1,4 @@
-use graphql_parser_hive_fork::query::Directive;
+use graphql_parser::query::Directive;
 
 use super::directives::FederationDirective;
 
@@ -26,16 +26,12 @@ impl<'a> FederationDirective<'a> for JoinImplementsDirective {
         for (arg_name, arg_value) in &directive.arguments {
             if arg_name.eq("graph") {
                 match arg_value {
-                    graphql_parser_hive_fork::schema::Value::String(value) => {
-                        result.graph_id = value.clone()
-                    }
-                    graphql_parser_hive_fork::schema::Value::Enum(value) => {
-                        result.graph_id = value.clone()
-                    }
+                    graphql_parser::schema::Value::String(value) => result.graph_id = value.clone(),
+                    graphql_parser::schema::Value::Enum(value) => result.graph_id = value.clone(),
                     _ => {}
                 }
             } else if arg_name.eq("interface") {
-                if let graphql_parser_hive_fork::schema::Value::String(value) = arg_value {
+                if let graphql_parser::schema::Value::String(value) = arg_value {
                     result.interface = value.clone()
                 }
             }

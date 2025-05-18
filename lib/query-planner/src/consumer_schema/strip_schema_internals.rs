@@ -1,5 +1,5 @@
-use graphql_parser_hive_fork::query::Text;
-use graphql_parser_hive_fork::schema::*;
+use graphql_parser::query::Text;
+use graphql_parser::schema::*;
 
 use crate::{
     federation_spec::{
@@ -317,7 +317,7 @@ enum ShippingClass @join__type(graph: INVENTORY) @join__type(graph: PRODUCTS) {
 }
   "#;
 
-        let schema = graphql_parser_hive_fork::parse_schema(schema).unwrap();
+        let schema = graphql_parser::parse_schema(schema).unwrap();
         let schema = StripSchemaInternals::strip_schema_internals(&schema);
         let schema_str = format!("{}", schema);
 

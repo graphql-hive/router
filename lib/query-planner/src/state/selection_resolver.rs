@@ -1,4 +1,4 @@
-use graphql_parser_hive_fork::query::{Field, SelectionSet as ParserSelectionSet};
+use graphql_parser::query::{Field, SelectionSet as ParserSelectionSet};
 use graphql_tools::static_graphql::query::Selection as OperationSelectionKind;
 
 use crate::ast::{

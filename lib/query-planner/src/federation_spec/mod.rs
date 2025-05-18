@@ -1,5 +1,5 @@
 use directives::JoinFieldDirective;
-use graphql_parser_hive_fork::{
+use graphql_parser::{
     parse_query,
     query::{Definition, OperationDefinition, SelectionSet},
 };

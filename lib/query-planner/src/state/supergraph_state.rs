@@ -3,8 +3,8 @@ use std::{
     fmt::{Debug, Display},
 };
 
-use graphql_parser_hive_fork::query::Directive;
-use graphql_parser_hive_fork::schema as input;
+use graphql_parser::query::Directive;
+use graphql_parser::schema as input;
 use graphql_tools::ast::SchemaDocumentExtension;
 use tracing::instrument;
 

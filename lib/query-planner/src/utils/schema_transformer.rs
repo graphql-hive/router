@@ -1,4 +1,4 @@
-use graphql_parser_hive_fork::{
+use graphql_parser::{
     query::{Directive, Text, Value},
     schema::{
         Definition, DirectiveDefinition, Document, EnumType, EnumValue, Field, InputObjectType,

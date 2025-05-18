@@ -1,7 +1,7 @@
 pub mod prune_inacessible;
 pub mod strip_schema_internals;
 
-use graphql_parser_hive_fork::schema::*;
+use graphql_parser::schema::*;
 use prune_inacessible::PruneInaccessible;
 use strip_schema_internals::StripSchemaInternals;
 

@@ -189,10 +189,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
-name = "graphql-parser-hive-fork"
-version = "0.5.0"
+name = "graphql-parser"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a0137d5de726e9c6ddb3e6abcddc4fc3fd1c1cfcf23667388b6ccec9fa6433f"
+checksum = "7a818c0d883d7c0801df27be910917750932be279c7bc82dc541b8769425f409"
 dependencies = [
  "combine",
  "thiserror 1.0.69",
@@ -204,7 +204,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68fb22726aceab7a8933cdcff4201e1cdbcc7c7394df5bc1ebdcf27b44376433"
 dependencies = [
- "graphql-parser-hive-fork",
+ "graphql-parser",
  "lazy_static",
  "serde",
  "serde_json",
@@ -430,7 +430,7 @@ dependencies = [
 name = "query-planner"
 version = "0.0.1"
 dependencies = [
- "graphql-parser-hive-fork",
+ "graphql-parser",
  "graphql-tools",
  "insta",
  "lazy_static",
@@ -445,7 +445,7 @@ dependencies = [
 name = "query-planner-bin"
 version = "0.0.1"
 dependencies = [
- "graphql-parser-hive-fork",
+ "graphql-parser",
  "query-planner",
  "tracing-subscriber",
  "tracing-tree",
