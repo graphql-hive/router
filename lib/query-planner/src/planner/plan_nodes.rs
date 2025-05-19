@@ -62,7 +62,8 @@ impl From<&FetchStepData> for FetchNode {
     fn from(step: &FetchStepData) -> Self {
         FetchNode {
             service_name: step.service_name.0.clone(),
-            operation: step.output.selection_set.to_string(),
+            // TOOD: print the actual output selection set
+            operation: "todo".to_string(),
             // TODO: make sure it's correct
             operation_type: RootOperationType::Query,
             requires: match step.input.selection_set.is_empty() {

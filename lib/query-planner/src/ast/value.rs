@@ -20,13 +20,16 @@ impl From<&ParserValue<'_, String>> for Value {
     fn from(value: &ParserValue<'_, String>) -> Self {
         match value {
             ParserValue::Variable(name) => Value::Variable(name.to_owned()),
-            ParserValue::Int(i) => Value::Int(i.as_i64().unwrap()),
-            ParserValue::Float(f) => Value::Float(f.to_owned()),
+            // TODO: Consider `TryFrom` and handle this in a better way
+            ParserValue::Int(i) => {
+                Value::Int(i.as_i64().expect("GraphQL integer value out of i64 range"))
+            }
+            ParserValue::Float(f) => Value::Float(*f),
             ParserValue::String(s) => Value::String(s.to_owned()),
-            ParserValue::Boolean(b) => Value::Boolean(b.to_owned()),
+            ParserValue::Boolean(b) => Value::Boolean(*b),
             ParserValue::Null => Value::Null,
             ParserValue::Enum(e) => Value::Enum(e.to_owned()),
-            ParserValue::List(l) => Value::List(l.into_iter().map(Value::from).collect()),
+            ParserValue::List(l) => Value::List(l.iter().map(Value::from).collect()),
             ParserValue::Object(o) => {
                 let mut map = BTreeMap::new();
                 for (k, v) in o {

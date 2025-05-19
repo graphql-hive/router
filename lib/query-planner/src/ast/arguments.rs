@@ -20,21 +20,18 @@ impl From<(String, Value)> for ArgumentsMap {
 
 impl From<Vec<(String, Value)>> for ArgumentsMap {
     fn from(args: Vec<(String, Value)>) -> Self {
-        let mut arguments_map = BTreeMap::new();
-        for (key, value) in args {
-            arguments_map.insert(key, value);
+        Self {
+            arguments_map: args.into_iter().collect(),
         }
-        Self { arguments_map }
     }
 }
 
 impl From<&Vec<(String, ParserValue<'_, String>)>> for ArgumentsMap {
     fn from(args: &Vec<(String, ParserValue<'_, String>)>) -> Self {
-        let mut arguments_map = BTreeMap::new();
-        for (key, value) in args {
-            let value = Value::from(value);
-            arguments_map.insert(key.to_string(), value);
-        }
+        let arguments_map = args
+            .iter()
+            .map(|(key, value)| (key.clone(), Value::from(value)))
+            .collect();
         Self { arguments_map }
     }
 }
@@ -63,16 +60,16 @@ impl ArgumentsMap {
 
 impl Display for ArgumentsMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if !self.arguments_map.is_empty() {
-            let args: Vec<String> = self
-                .arguments_map
-                .iter()
-                .map(|(k, v)| format!("{}: {}", k, v))
-                .collect();
-
-            return write!(f, "{}", args.join(", "));
+        if self.arguments_map.is_empty() {
+            return Ok(());
         }
 
-        Ok(())
+        let args: Vec<String> = self
+            .arguments_map
+            .iter()
+            .map(|(k, v)| format!("{}: {}", k, v))
+            .collect();
+
+        write!(f, "{}", args.join(", "))
     }
 }
