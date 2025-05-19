@@ -862,6 +862,10 @@ fn process_plain_field_edge(
         false,
     );
 
+    if !field_is_leaf && !parent_fetch_step.input.has_typename_at_path(fetch_path) {
+        add_typename_field_to_output(parent_fetch_step, field_type_name, fetch_path);
+    }
+
     let mut child_response_path = response_path.push(field_name);
     let mut child_fetch_path = fetch_path.push(field_name);
 

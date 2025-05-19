@@ -69,6 +69,10 @@ impl TypeAwareSelection {
             merge_selection_set(source, &to_add.selection_set, as_first);
         }
     }
+
+    pub fn has_typename_at_path(&self, lookup_path: &MergePath) -> bool {
+        find_selection_set_by_path(&self.selection_set, &lookup_path.push("__typename")).is_some()
+    }
 }
 
 fn selection_item_is_subset_of(source: &SelectionItem, target: &SelectionItem) -> bool {
@@ -138,6 +142,45 @@ fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_firs
             target.items.extend(pending_items);
         }
     }
+}
+
+fn find_selection_set_by_path<'a>(
+    root_selection_set: &'a SelectionSet,
+    path: &MergePath,
+) -> Option<&'a SelectionSet> {
+    let mut current_selection_set = root_selection_set;
+
+    for path_element in path.inner.iter() {
+        if path_element == "@" {
+            continue;
+        }
+
+        let next_selection_set_option =
+            current_selection_set
+                .items
+                .iter()
+                .find_map(|item| match item {
+                    SelectionItem::Field(field) => {
+                        if field.name.eq(path_element) {
+                            Some(&field.selections)
+                        } else {
+                            None
+                        }
+                    }
+                    SelectionItem::Fragment(..) => None,
+                });
+
+        match next_selection_set_option {
+            Some(next_set) => {
+                current_selection_set = next_set;
+            }
+            None => {
+                return None;
+            }
+        }
+    }
+
+    Some(current_selection_set)
 }
 
 fn find_selection_set_by_path_mut(

@@ -23,7 +23,7 @@ pub enum QueryPlanNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FetchNode {
     pub service_name: String,
-    pub operation: String,
+    pub operation: SelectionSet,
     pub operation_type: RootOperationType,
     pub requires: Option<SelectionSet>,
 }
@@ -62,8 +62,7 @@ impl From<&FetchStepData> for FetchNode {
     fn from(step: &FetchStepData) -> Self {
         FetchNode {
             service_name: step.service_name.0.clone(),
-            // TOOD: print the actual output selection set
-            operation: "todo".to_string(),
+            operation: step.output.selection_set.clone(),
             // TODO: make sure it's correct
             operation_type: RootOperationType::Query,
             requires: match step.input.selection_set.is_empty() {
@@ -130,11 +129,7 @@ impl PrettyDisplay for FetchNode {
             requires.pretty_fmt(f, depth + 2)?;
             writeln!(f, "{indent}  }} =>")?;
         }
-        writeln!(f, "{indent}  {{")?;
-        for line in self.operation.lines() {
-            writeln!(f, "{indent}    {line}")?;
-        }
-        writeln!(f, "{indent}  }}")?;
+        writeln!(f, "{indent}  {}", self.operation)?;
         writeln!(f, "{indent}}},")?;
 
         Ok(())

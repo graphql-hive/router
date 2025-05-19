@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use tracing::{debug, instrument};
+use tracing::instrument;
 
 use crate::{
     graph::{error::GraphError, Graph},
@@ -19,13 +19,10 @@ impl QueryTree {
         QueryTree { root }
     }
 
-    #[instrument(skip(graph))]
+    #[instrument(skip(graph), fields(
+        root_node = graph.pretty_print_node(&path.root_node)
+    ))]
     pub fn from_path(graph: &Graph, path: &OperationPath) -> Result<Self, GraphError> {
-        debug!(
-            "building tree directly from path starting at: {}",
-            graph.pretty_print_node(&path.root_node)
-        );
-
         let edges = path.get_edges();
         let requirements_tree = path.get_requirement_tree();
 
