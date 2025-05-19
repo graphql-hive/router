@@ -8,7 +8,7 @@ use graphql_parser::query::{Selection as ParserSelection, SelectionSet as Parser
 
 use crate::utils::pretty_display::{get_indent, PrettyDisplay};
 
-use super::selection_item::SelectionItem;
+use super::{arguments::ArgumentsMap, selection_item::SelectionItem};
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct SelectionSet {
@@ -60,6 +60,7 @@ pub struct FieldSelection {
     pub selections: SelectionSet,
     pub alias: Option<String>,
     pub is_leaf: bool,
+    pub arguments: ArgumentsMap,
 }
 
 impl Hash for FieldSelection {
@@ -80,6 +81,7 @@ impl FieldSelection {
             alias: None,
             is_leaf: true,
             selections: SelectionSet::default(),
+            arguments: ArgumentsMap::default(),
         }
     }
 }
@@ -163,6 +165,7 @@ impl From<&ParserSelection<'_, String>> for SelectionItem {
                 alias: field.alias.as_ref().map(|alias| alias.to_string()),
                 is_leaf: field.selection_set.items.is_empty(),
                 selections: (&field.selection_set).into(),
+                arguments: (&field.arguments).into(),
             }),
             ParserSelection::InlineFragment(inline_fragment) => {
                 SelectionItem::Fragment(FragmentSelection {

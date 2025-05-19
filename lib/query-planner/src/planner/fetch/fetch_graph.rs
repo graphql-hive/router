@@ -1,3 +1,4 @@
+use crate::ast::arguments::ArgumentsMap;
 use crate::ast::merge_path::MergePath;
 use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::{FieldSelection, SelectionSet};
@@ -851,6 +852,8 @@ fn process_plain_field_edge(
                     alias: None,
                     is_leaf: field_is_leaf,
                     selections: SelectionSet::default(),
+                    // TODO: replace with a proper type
+                    arguments: ArgumentsMap::default(),
                 })],
             },
             type_name: field_type_name.to_string(),
