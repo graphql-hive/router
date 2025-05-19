@@ -1,7 +1,8 @@
 use crate::{
     parse_operation,
     planner::{
-        fetch::fetch_graph::build_fetch_graph_from_query_tree, tree::query_tree::QueryTree,
+        fetch::fetch_graph::build_fetch_graph_from_query_tree,
+        query_plan::build_query_plan_from_fetch_graph, tree::query_tree::QueryTree,
         walker::walk_operation,
     },
     tests::testkit::{init_logger, paths_to_trees, read_supergraph},
@@ -175,6 +176,29 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
     [2]
     [3]
     ");
+
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Parallel {
+        Fetch(service: "name") {
+          } =>
+          {
+          }
+        },
+        Fetch(service: "category") {
+          } =>
+          {
+          }
+        },
+        Fetch(service: "price") {
+          } =>
+          {
+          }
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }

@@ -435,6 +435,7 @@ dependencies = [
  "insta",
  "lazy_static",
  "petgraph",
+ "serde",
  "thiserror 2.0.12",
  "tracing",
  "tracing-subscriber",

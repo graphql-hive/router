@@ -6,6 +6,7 @@ use std::{
 use graphql_parser::query::Directive;
 use graphql_parser::schema as input;
 use graphql_tools::ast::SchemaDocumentExtension;
+use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use crate::federation_spec::directives::{
@@ -375,7 +376,7 @@ impl<'a> SupergraphState<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum RootOperationType {
     Query,
     Mutation,

@@ -20,6 +20,7 @@ use super::error::FetchGraphError;
 
 pub struct FetchGraph {
     graph: DiGraph<FetchStepData, ()>,
+    pub root_index: Option<NodeIndex>,
 }
 
 impl Default for FetchGraph {
@@ -32,6 +33,7 @@ impl FetchGraph {
     pub fn new() -> Self {
         Self {
             graph: DiGraph::new(),
+            root_index: None,
         }
     }
 }
@@ -86,7 +88,7 @@ impl FetchGraph {
     }
 
     pub fn connect(&mut self, parent_index: NodeIndex, child_index: NodeIndex) -> EdgeIndex {
-        self.graph.add_edge(parent_index, child_index, ())
+        self.graph.update_edge(parent_index, child_index, ())
     }
 
     pub fn disconnect(&mut self, edge_index: EdgeIndex) -> bool {
@@ -125,6 +127,7 @@ impl FetchGraph {
     }
 
     pub fn optimize(&mut self, root_step_index: NodeIndex) -> Result<(), FetchGraphError> {
+        self.root_index = Some(root_step_index);
         self.deduplicate_and_prune_fetch_steps()?;
         self.merge_children_with_parents(root_step_index)?;
         self.merge_siblings(root_step_index)?;

@@ -1,11 +1,11 @@
+use super::selection_set::{FieldSelection, FragmentSelection};
+use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display},
     hash::Hash,
 };
 
-use super::selection_set::{FieldSelection, FragmentSelection};
-
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Serialize)]
 pub enum SelectionItem {
     Field(FieldSelection),
     Fragment(FragmentSelection),

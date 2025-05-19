@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display},
     hash::Hash,
@@ -7,7 +8,7 @@ use graphql_parser::query::{Selection as ParserSelection, SelectionSet as Parser
 
 use super::selection_item::SelectionItem;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct SelectionSet {
     pub items: Vec<SelectionItem>,
 }
@@ -51,7 +52,7 @@ impl Hash for SelectionSet {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct FieldSelection {
     pub name: String,
     pub selections: SelectionSet,
@@ -81,7 +82,7 @@ impl FieldSelection {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct FragmentSelection {
     pub type_name: String,
     pub selections: SelectionSet,

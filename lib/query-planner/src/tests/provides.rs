@@ -1,7 +1,8 @@
 use crate::{
     parse_operation,
     planner::{
-        fetch::fetch_graph::build_fetch_graph_from_query_tree, tree::query_tree::QueryTree,
+        fetch::fetch_graph::build_fetch_graph_from_query_tree,
+        query_plan::build_query_plan_from_fetch_graph, tree::query_tree::QueryTree,
         walker::walk_operation,
     },
     tests::testkit::{init_logger, paths_to_trees, read_supergraph},
@@ -63,6 +64,26 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
       [2]
     ");
 
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          } =>
+          {
+          }
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "reviews") {
+            } =>
+            {
+            }
+          },
+        },
+      },
+    },
+    "#);
+
     Ok(())
 }
 
@@ -123,6 +144,17 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
     Tree:
     [1]
     ");
+
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "category") {
+        } =>
+        {
+        }
+      },
+    },
+    "#);
 
     Ok(())
 }
