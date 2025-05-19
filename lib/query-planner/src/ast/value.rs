@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt::Display};
 
 use graphql_parser::query::Value as ParserValue;
 use serde::{Deserialize, Serialize};
@@ -35,5 +35,73 @@ impl From<&ParserValue<'_, String>> for Value {
                 Value::Object(map)
             }
         }
+    }
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Variable(name) => write!(f, "${}", name),
+            Value::Int(i) => write!(f, "{}", i),
+            Value::Float(fl) => write!(f, "{}", fl),
+            Value::String(s) => write!(f, "\"{}\"", s),
+            Value::Boolean(b) => write!(f, "{}", b),
+            Value::Null => write!(f, "null"),
+            Value::Enum(e) => write!(f, "{}", e),
+            Value::List(l) => {
+                let values: Vec<String> = l.iter().map(|v| v.to_string()).collect();
+                write!(f, "[{}]", values.join(", "))
+            }
+            Value::Object(o) => {
+                let entries: Vec<String> =
+                    o.iter().map(|(k, v)| format!("\"{}\": {}", k, v)).collect();
+                write!(f, "{{{}}}", entries.join(", "))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn test_value_display() {
+        use super::Value;
+
+        insta::assert_snapshot!(
+          Value::Int(42),
+          @r#"42"#);
+
+        insta::assert_snapshot!(
+          Value::Float(42.2),
+          @r#"42.2"#);
+
+        insta::assert_snapshot!(
+          Value::String("test".to_string()),
+          @r#""test""#);
+
+        insta::assert_snapshot!(
+          Value::Boolean(false),
+          @r#"false"#);
+
+        insta::assert_snapshot!(
+          Value::Enum("SOME".to_string()),
+          @r#"SOME"#);
+
+        insta::assert_snapshot!(
+          Value::Variable("test".to_string()),
+          @r#"$test"#);
+
+        insta::assert_snapshot!(
+          Value::Object(BTreeMap::from([
+            ("key1".to_string(), Value::Int(42)),
+            ("key2".to_string(), Value::String("value".to_string())),
+          ])),
+          @r#"{"key1": 42, "key2": "value"}"#);
+
+        insta::assert_snapshot!(
+          Value::List(vec![Value::Int(42), Value::Int(10)]),
+          @"[42, 10]");
     }
 }

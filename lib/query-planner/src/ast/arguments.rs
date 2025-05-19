@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt::Display};
 
 use serde::{Deserialize, Serialize};
 
@@ -8,6 +8,24 @@ use graphql_parser::query::Value as ParserValue;
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct ArgumentsMap {
     arguments_map: BTreeMap<String, Value>,
+}
+
+impl From<(String, Value)> for ArgumentsMap {
+    fn from((key, value): (String, Value)) -> Self {
+        let mut arguments_map = BTreeMap::new();
+        arguments_map.insert(key, value);
+        Self { arguments_map }
+    }
+}
+
+impl From<Vec<(String, Value)>> for ArgumentsMap {
+    fn from(args: Vec<(String, Value)>) -> Self {
+        let mut arguments_map = BTreeMap::new();
+        for (key, value) in args {
+            arguments_map.insert(key, value);
+        }
+        Self { arguments_map }
+    }
 }
 
 impl From<&Vec<(String, ParserValue<'_, String>)>> for ArgumentsMap {
@@ -36,5 +54,25 @@ impl ArgumentsMap {
 
     pub fn get_argument(&self, key: &str) -> Option<&Value> {
         self.arguments_map.get(key)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.arguments_map.is_empty()
+    }
+}
+
+impl Display for ArgumentsMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.arguments_map.is_empty() {
+            let args: Vec<String> = self
+                .arguments_map
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, v))
+                .collect();
+
+            return write!(f, "{}", args.join(", "));
+        }
+
+        Ok(())
     }
 }
