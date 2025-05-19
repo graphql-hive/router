@@ -729,8 +729,7 @@ fn process_entity_move_edge(
     let edge = graph.edge(edge_index)?;
     let requirement = match edge {
         Edge::EntityMove(em) => TypeAwareSelection {
-            // TODO: actual selection set
-            selection_set: SelectionSet::default(),
+            selection_set: em.requirements.selection_set.clone(),
             type_name: em.requirements.type_name.clone(),
         },
         _ => panic!("Expected an entity move"),

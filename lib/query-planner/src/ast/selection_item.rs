@@ -1,3 +1,5 @@
+use crate::utils::pretty_display::PrettyDisplay;
+
 use super::selection_set::{FieldSelection, FragmentSelection};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -23,11 +25,22 @@ impl Hash for SelectionItem {
 impl Display for SelectionItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            // Using the following instead of "field_selection.name" will print the full, nested selection set here
-            // SelectionItem::Field(field_selection) => write!(f, "{}", field_selection),
-            SelectionItem::Field(field_selection) => write!(f, "{}", field_selection.name),
+            SelectionItem::Field(field_selection) => write!(f, "{}", field_selection),
             SelectionItem::Fragment(fragment_selection) => write!(f, "{}", fragment_selection),
         }
+    }
+}
+
+impl PrettyDisplay for SelectionItem {
+    fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
+        match self {
+            SelectionItem::Field(field_selection) => field_selection.pretty_fmt(f, depth)?,
+            SelectionItem::Fragment(fragment_selection) => {
+                fragment_selection.pretty_fmt(f, depth)?
+            }
+        }
+
+        Ok(())
     }
 }
 

@@ -106,25 +106,28 @@ fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_firs
     }
 
     let mut pending_items = Vec::with_capacity(source.items.len());
-
-    source.items.iter().for_each(|source_item| {
-        let matching_target_item = target.items.iter_mut().find(|target_item| {
-            matches!(
-                (target_item, source_item),
-                (SelectionItem::Field(target_field), SelectionItem::Field(source_field))
-                if target_field.name == source_field.name
-            )
-        });
-
-        match matching_target_item {
-            Some(target_item) => {
-                if let SelectionItem::Field(target_field) = target_item {
-                    merge_selection_set(&mut target_field.selections, source, as_first);
+    for source_item in source.items.iter() {
+        let mut found = false;
+        for target_item in target.items.iter_mut() {
+            if let (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) =
+                (source_item, target_item)
+            {
+                if source_field.name == target_field.name {
+                    found = true;
+                    merge_selection_set(
+                        &mut target_field.selections,
+                        &source_field.selections,
+                        as_first,
+                    );
+                    break;
                 }
             }
-            None => pending_items.push(source_item.clone()),
         }
-    });
+
+        if !found {
+            pending_items.push(source_item.clone())
+        }
+    }
 
     if !pending_items.is_empty() {
         if as_first {
