@@ -71,8 +71,12 @@ impl PartialEq for MergePath {
 
 impl Display for MergePath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for segment in self.inner.iter() {
-            write!(f, "{segment}")?;
+        for (index, segment) in self.inner.iter().enumerate() {
+            if index == self.inner.len() - 1 {
+                write!(f, "{segment}")?;
+            } else {
+                write!(f, "{segment}.")?;
+            }
         }
 
         Ok(())

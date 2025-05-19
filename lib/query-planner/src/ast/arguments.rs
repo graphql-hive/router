@@ -11,6 +11,12 @@ pub struct ArgumentsMap {
     arguments_map: BTreeMap<String, Value>,
 }
 
+impl PartialEq for ArgumentsMap {
+    fn eq(&self, other: &Self) -> bool {
+        self.arguments_map == other.arguments_map
+    }
+}
+
 impl From<(String, Value)> for ArgumentsMap {
     fn from((key, value): (String, Value)) -> Self {
         let mut arguments_map = BTreeMap::new();
@@ -56,6 +62,10 @@ impl ArgumentsMap {
 
     pub fn is_empty(&self) -> bool {
         self.arguments_map.is_empty()
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &Value> {
+        self.arguments_map.values()
     }
 }
 

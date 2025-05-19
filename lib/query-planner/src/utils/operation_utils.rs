@@ -97,7 +97,11 @@ fn transform_selection_set(
                     .push(SelectionItem::Field(FieldSelection {
                         name: field.name.clone(),
                         alias: field.alias.clone(),
-                        arguments: (&field.arguments).into(),
+                        arguments: if field.arguments.is_empty() {
+                            None
+                        } else {
+                            Some((&field.arguments).into())
+                        },
                         selections: transform_selection_set(&field.selection_set, known_fragments),
                     }));
             }

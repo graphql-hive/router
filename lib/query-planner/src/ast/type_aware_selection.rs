@@ -64,8 +64,10 @@ impl TypeAwareSelection {
         merge_selection_set(&mut self.selection_set, &to_add.selection_set, false);
     }
 
-    pub fn add_at_path(&mut self, to_add: &Self, add_at_path: MergePath, as_first: bool) {
-        if let Some(source) = find_selection_set_by_path_mut(&mut self.selection_set, add_at_path) {
+    pub fn add_at_path(&mut self, to_add: &Self, add_at_fetch_path: MergePath, as_first: bool) {
+        if let Some(source) =
+            find_selection_set_by_path_mut(&mut self.selection_set, add_at_fetch_path)
+        {
             merge_selection_set(source, &to_add.selection_set, as_first);
         }
     }
@@ -116,7 +118,7 @@ fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_firs
             if let (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) =
                 (source_item, target_item)
             {
-                if source_field.name == target_field.name {
+                if source_field == target_field {
                     found = true;
                     merge_selection_set(
                         &mut target_field.selections,
@@ -200,7 +202,9 @@ fn find_selection_set_by_path_mut(
                 .iter_mut()
                 .find_map(|item| match item {
                     SelectionItem::Field(field) => {
-                        if field.name.eq(path_element) {
+                        let field_identifier = field.alias.as_ref().unwrap_or(&field.name);
+
+                        if field_identifier == path_element {
                             Some(&mut field.selections)
                         } else {
                             None

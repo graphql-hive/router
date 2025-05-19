@@ -409,22 +409,22 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
 
-    insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
+    insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r#"
     root(Query)
       🚪 (Query/d)
-        productFromD of Product/d
+        productFromD(id: "1") of Product/d
           🧩 [
             id of ID/d
           ]
           🔑 Product/a
             category of Category/a
               details of String/a
-    ");
+    "#);
 
-    insta::assert_snapshot!(qtps[1].pretty_print(&graph)?, @r"
+    insta::assert_snapshot!(qtps[1].pretty_print(&graph)?, @r#"
     root(Query)
       🚪 (Query/d)
-        productFromD of Product/d
+        productFromD(id: "1") of Product/d
           🧩 [
             id of ID/d
           ]
@@ -435,32 +435,58 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
               ]
               🔑 Category/c
                 name of String/c
-    ");
-    insta::assert_snapshot!(qtps[2].pretty_print(&graph)?, @r"
+    "#);
+    insta::assert_snapshot!(qtps[2].pretty_print(&graph)?, @r#"
     root(Query)
       🚪 (Query/d)
-        productFromD of Product/d
+        productFromD(id: "1") of Product/d
           🧩 [
             id of ID/d
           ]
           🔑 Product/b
             category of Category/b
               id of ID/b
-    ");
-    insta::assert_snapshot!(qtps[3].pretty_print(&graph)?, @r"
+    "#);
+    insta::assert_snapshot!(qtps[3].pretty_print(&graph)?, @r#"
     root(Query)
       🚪 (Query/d)
-        productFromD of Product/d
+        productFromD(id: "1") of Product/d
           name of String/d
-    ");
-    insta::assert_snapshot!(qtps[4].pretty_print(&graph)?, @r"
+    "#);
+    insta::assert_snapshot!(qtps[4].pretty_print(&graph)?, @r#"
     root(Query)
       🚪 (Query/d)
-        productFromD of Product/d
+        productFromD(id: "1") of Product/d
           id of ID/d
-    ");
+    "#);
 
     let query_tree = QueryTree::merge_trees(qtps);
+
+    insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r#"
+    root(Query)
+      🚪 (Query/d)
+        productFromD(id: "1") of Product/d
+          🧩 [
+            id of ID/d
+          ]
+          🔑 Product/a
+            category of Category/a
+              details of String/a
+          🧩 [
+            id of ID/d
+          ]
+          🔑 Product/b
+            category of Category/b
+              🧩 [
+                id of ID/b
+              ]
+              🔑 Category/c
+                name of String/c
+              id of ID/b
+          name of String/d
+          id of ID/d
+    "#);
+
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
@@ -468,7 +494,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
       Sequence {
         Fetch(service: "d") {
           {
-            productFromD {
+            productFromD(id: "1") {
               __typename
               id
               name
@@ -537,7 +563,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "d",
             "operationKind": "query",
-            "operation": "{productFromD{__typename id name}}"
+            "operation": "{productFromD(id: \"1\"){__typename id name}}"
           },
           {
             "kind": "Parallel",

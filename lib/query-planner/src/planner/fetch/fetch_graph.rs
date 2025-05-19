@@ -1,9 +1,8 @@
-use crate::ast::arguments::ArgumentsMap;
 use crate::ast::merge_path::MergePath;
 use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::{FieldSelection, SelectionSet};
 use crate::ast::type_aware_selection::TypeAwareSelection;
-use crate::graph::edge::Edge;
+use crate::graph::edge::{Edge, FieldMove};
 use crate::graph::node::Node;
 use crate::graph::Graph;
 use crate::planner::tree::query_tree::QueryTree;
@@ -944,9 +943,14 @@ fn process_subgraph_entrypoint_edge(
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip_all, fields(
-  type_name = field_type_name,
-  field = field_name,
-  leaf = field_is_leaf,
+  type_name = field_move.type_name,
+  field = field_move.name,
+  alias = query_node.selection_attributes.as_ref().and_then(|v| v.alias.as_ref()),
+  arguments = query_node.selection_attributes.as_ref().and_then(|v| v.arguments.as_ref()).map(|v| format!("{}", v)),
+  leaf = field_move.is_leaf,
+  list = field_move.is_list,
+  response_path = response_path.to_string(),
+  fetch_path = fetch_path.to_string()
 ))]
 fn process_plain_field_edge(
     graph: &Graph,
@@ -956,11 +960,7 @@ fn process_plain_field_edge(
     requiring_fetch_step_index: Option<NodeIndex>,
     response_path: &MergePath,
     fetch_path: &MergePath,
-    field_name: &str,
-    field_alias: Option<&str>,
-    field_is_leaf: bool,
-    field_is_list: bool,
-    field_type_name: &str,
+    field_move: &FieldMove,
 ) -> Result<(), FetchGraphError> {
     let parent_fetch_step_index = parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?;
 
@@ -970,29 +970,31 @@ fn process_plain_field_edge(
     }
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
-    debug!("adding output field '{}' to parent fetch step", field_name);
+    debug!(
+        "adding output field '{}' to parent fetch step",
+        field_move.name
+    );
     parent_fetch_step.output.add_at_path(
         &TypeAwareSelection {
             selection_set: SelectionSet {
                 items: vec![SelectionItem::Field(FieldSelection {
-                    name: field_name.to_string(),
-                    alias: field_alias.map(|a| a.to_string()),
+                    name: field_move.name.to_string(),
+                    alias: query_node.selection_alias().map(|a| a.to_string()),
                     selections: SelectionSet::default(),
-                    // TODO: replace with a proper type
-                    arguments: ArgumentsMap::default(),
+                    arguments: query_node.selection_arguments().cloned(),
                 })],
             },
-            type_name: field_type_name.to_string(),
+            type_name: field_move.type_name.to_string(),
         },
         fetch_path.clone(),
         false,
     );
 
-    let merge_path_name = field_alias.unwrap_or(field_name).to_string();
-    let mut child_response_path = response_path.push(merge_path_name);
-    let mut child_fetch_path = fetch_path.push(field_name);
+    let response_path_name = query_node.selection_alias().unwrap_or(&field_move.name);
+    let mut child_response_path = response_path.push(response_path_name.to_string());
+    let mut child_fetch_path = fetch_path.push(response_path_name.to_string());
 
-    if field_is_list {
+    if field_move.is_list {
         child_response_path = child_response_path.push("@".to_string());
         child_fetch_path = child_fetch_path.push("@".to_string());
     }
@@ -1124,7 +1126,6 @@ fn process_tree_of_requires(
         .edge_from_parent
         .expect("Expected an edge from parent");
     let child_edge_from_parent = graph.edge(child_edge_from_parent_index)?;
-
     let child_graph_node = graph.node(child.node_index)?;
 
     let entity_key = match child_edge_from_parent {
@@ -1151,6 +1152,7 @@ fn process_tree_of_requires(
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
 
+    // Use actual RootQuery name instead of "Query"
     if parent_fetch_step.input.type_name == "Query" {
         // todo: support Mutation and Subscription?
         add_typename_field_to_output(parent_fetch_step, graph_node_type_name, response_path);
@@ -1234,9 +1236,10 @@ fn process_tree_of_requires(
 #[instrument(skip_all, fields(
   subgraph = subgraph_name.0,
   type_name = type_name,
-  field = field_name,
+  field = field_move.name,
   requirements = requires.to_string(),
-  leaf = field_is_leaf,
+  leaf = field_move.is_leaf,
+  list = field_move.is_list,
 ))]
 fn process_requires_field_edge(
     graph: &Graph,
@@ -1248,9 +1251,7 @@ fn process_requires_field_edge(
     fetch_path: &MergePath,
     subgraph_name: &SubgraphName,
     type_name: &String,
-    field_name: &str,
-    field_is_leaf: bool,
-    field_is_list: bool,
+    field_move: &FieldMove,
     requires: &TypeAwareSelection,
 ) -> Result<(), FetchGraphError> {
     let parent_fetch_step_index = parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?;
@@ -1285,13 +1286,13 @@ fn process_requires_field_edge(
     step_for_field_with_requires.reserved_for_requires = Some(requires.clone());
     debug!(
         "adding requires output field '{}/{}' to fetch step",
-        type_name, field_name
+        type_name, field_move.name
     );
     step_for_field_with_requires.output.add_at_path(
         &TypeAwareSelection {
             selection_set: SelectionSet {
                 items: vec![SelectionItem::Field(FieldSelection {
-                    name: field_name.to_owned(),
+                    name: field_move.name.to_owned(),
                     alias: None,
                     selections: SelectionSet { items: vec![] },
                     arguments: Default::default(),
@@ -1338,10 +1339,10 @@ fn process_requires_field_edge(
         response_path,
     )?;
 
-    let mut child_response_path = response_path.push(field_name.to_owned());
-    let mut child_fetch_path = fetch_path.push(field_name.to_owned());
+    let mut child_response_path = response_path.push(field_move.name.to_owned());
+    let mut child_fetch_path = fetch_path.push(field_move.name.to_owned());
 
-    if field_is_list {
+    if field_move.is_list {
         child_response_path = child_response_path.push("@".to_string());
         child_fetch_path = child_fetch_path.push("@".to_string());
     }
@@ -1401,23 +1402,18 @@ fn process_query_node(
                 requiring_fetch_step_index,
                 edge_index,
             )?,
-            Edge::FieldMove(field) => {
-                if field.requirements.is_none() {
-                    process_plain_field_edge(
-                        graph,
-                        fetch_graph,
-                        query_node,
-                        parent_fetch_step_index,
-                        requiring_fetch_step_index,
-                        response_path,
-                        fetch_path,
-                        &field.name,
-                        query_node.alias.as_deref(),
-                        field.is_leaf,
-                        field.is_list,
-                        &field.type_name,
-                    )?
-                } else {
+            Edge::FieldMove(field) => match &field.requirements {
+                None => process_plain_field_edge(
+                    graph,
+                    fetch_graph,
+                    query_node,
+                    parent_fetch_step_index,
+                    requiring_fetch_step_index,
+                    response_path,
+                    fetch_path,
+                    field,
+                )?,
+                Some(requirements) => {
                     let head_index = graph.get_edge_head(&edge_index)?;
                     let head = graph.node(head_index)?;
 
@@ -1439,13 +1435,11 @@ fn process_query_node(
                         fetch_path,
                         subgraph_name,
                         type_name,
-                        &field.name,
-                        field.is_leaf,
-                        field.is_list,
-                        &field.requirements.clone().unwrap(),
+                        field,
+                        requirements,
                     )?
                 }
-            }
+            },
             Edge::AbstractMove(_) => {
                 panic!("AbstractMove is not supported yet")
             }

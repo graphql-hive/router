@@ -6,10 +6,25 @@ use petgraph::{
 };
 
 use crate::{
+    ast::arguments::ArgumentsMap,
     ast::selection_set::FieldSelection,
     graph::{edge::EdgeReference, Graph},
     planner::tree::query_tree_node::QueryTreeNode,
 };
+
+/// This structure contains attributes from the original selection set that was part of the incoming operation.
+#[derive(Debug, Clone, Default)]
+pub struct SelectionAttributes {
+    pub alias: Option<String>,
+    pub arguments: Option<ArgumentsMap>,
+    // TODO: Add custom directives, @skip/@include conditions
+}
+
+impl PartialEq for SelectionAttributes {
+    fn eq(&self, other: &Self) -> bool {
+        self.alias == other.alias && self.arguments == other.arguments
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct PathSegment {
@@ -19,7 +34,7 @@ pub struct PathSegment {
     tail_node: NodeIndex,
     cumulative_cost: u64,
     pub requirement_tree: Option<QueryTreeNode>,
-    pub field: Option<FieldSelection>,
+    pub selection_attributes: Option<SelectionAttributes>,
 }
 
 impl PathSegment {
@@ -30,7 +45,7 @@ impl PathSegment {
             tail_node: edge.target(),
             cumulative_cost: edge.weight().cost(),
             requirement_tree: None,
-            field: None,
+            selection_attributes: None,
         }
     }
 }
@@ -107,7 +122,10 @@ impl OperationPath {
             edge_index: edge_ref.id(),
             cumulative_cost: new_cost,
             requirement_tree: requirement,
-            field: Some(field.clone()),
+            selection_attributes: Some(SelectionAttributes {
+                alias: field.alias.clone(),
+                arguments: field.arguments.clone(),
+            }),
         };
 
         OperationPath::new(self.root_node, Some(new_segment), new_visited)
@@ -242,7 +260,7 @@ impl OperationPath {
                 edge_index: original_segment.edge_index,
                 requirement_tree: original_segment.requirement_tree.clone(),
                 tail_node: original_segment.tail_node,
-                field: original_segment.field.clone(),
+                selection_attributes: original_segment.selection_attributes.clone(),
             };
 
             previous_new_segment = Some(Box::new(new_segment));

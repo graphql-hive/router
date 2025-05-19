@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, fmt::Display};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Display,
+};
 
 use graphql_parser::query::Value as ParserValue;
 use serde::{Deserialize, Serialize};
@@ -14,6 +17,17 @@ pub enum Value {
     Enum(String),
     List(Vec<Value>),
     Object(BTreeMap<String, Value>),
+}
+
+impl Value {
+    pub fn variable_usages(&self) -> BTreeSet<String> {
+        match self {
+            Value::Variable(name) => BTreeSet::from([name.clone()]),
+            Value::List(values) => values.iter().flat_map(Value::variable_usages).collect(),
+            Value::Object(map) => map.values().flat_map(Value::variable_usages).collect(),
+            _ => BTreeSet::new(),
+        }
+    }
 }
 
 impl From<&ParserValue<'_, String>> for Value {

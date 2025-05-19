@@ -3,6 +3,7 @@ use crate::utils::pretty_display::PrettyDisplay;
 use super::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeSet,
     fmt::{Debug, Display},
     hash::Hash,
 };
@@ -81,6 +82,12 @@ impl PartialOrd for SelectionItem {
 }
 
 impl SelectionItem {
+    pub fn variable_usages(&self) -> BTreeSet<String> {
+        match self {
+            SelectionItem::Field(field_selection) => field_selection.variable_usages(),
+            SelectionItem::InlineFragment(_fragment_selection) => BTreeSet::new(),
+        }
+    }
     pub fn selections(&self) -> Option<&Vec<SelectionItem>> {
         match self {
             SelectionItem::Field(FieldSelection { selections, .. }) => Some(&selections.items),

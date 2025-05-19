@@ -1,5 +1,6 @@
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
 use std::{
+    collections::BTreeSet,
     fmt::{Debug, Display},
     hash::Hash,
 };
@@ -44,6 +45,13 @@ impl SelectionSet {
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
+
+    pub fn variable_usages(&self) -> BTreeSet<String> {
+        self.items
+            .iter()
+            .flat_map(|item| item.variable_usages())
+            .collect()
+    }
 }
 
 impl Hash for SelectionSet {
@@ -72,14 +80,22 @@ pub struct FieldSelection {
     pub selections: SelectionSet,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
-    #[serde(skip_serializing_if = "ArgumentsMap::is_empty")]
-    pub arguments: ArgumentsMap,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<ArgumentsMap>,
 }
 
 impl Hash for FieldSelection {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.name.hash(state);
         self.selections.hash(state);
+    }
+}
+
+impl PartialEq for FieldSelection {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.alias == other.alias
+            && self.arguments() == other.arguments()
     }
 }
 
@@ -93,12 +109,34 @@ impl FieldSelection {
             name: "__typename".to_string(),
             alias: None,
             selections: SelectionSet::default(),
-            arguments: ArgumentsMap::default(),
+            arguments: None,
         }
     }
 
-    pub fn has_arguments(&self) -> bool {
-        !self.arguments.is_empty()
+    pub fn variable_usages(&self) -> BTreeSet<String> {
+        let mut usages = BTreeSet::new();
+
+        if let Some(arguments) = &self.arguments {
+            for value in arguments.values() {
+                usages.extend(value.variable_usages());
+            }
+        }
+
+        usages.extend(self.selections.variable_usages());
+        usages
+    }
+
+    pub fn arguments(&self) -> Option<&ArgumentsMap> {
+        match &self.arguments {
+            Some(arguments) => {
+                if arguments.is_empty() {
+                    None
+                } else {
+                    Some(arguments)
+                }
+            }
+            None => None,
+        }
     }
 }
 
@@ -124,8 +162,8 @@ impl Display for FieldSelection {
 
         write!(f, "{}", self.name)?;
 
-        if self.has_arguments() {
-            write!(f, "({})", self.arguments)?;
+        if let Some(arguments) = &self.arguments() {
+            write!(f, "({})", arguments)?;
         }
 
         write!(f, "{}", self.selections)
@@ -141,11 +179,16 @@ impl PrettyDisplay for FieldSelection {
             None => String::new(),
         };
 
+        let args_str = match &self.arguments() {
+            Some(arguments) => format!("({})", arguments),
+            None => String::new(),
+        };
+
         if self.is_leaf() {
-            return writeln!(f, "{indent}{}{}", alias_str, self.name);
+            return writeln!(f, "{indent}{}{}{}", alias_str, self.name, args_str);
         }
 
-        writeln!(f, "{indent}{}{} {{", alias_str, self.name)?;
+        writeln!(f, "{indent}{}{}{} {{", alias_str, self.name, args_str)?;
         self.selections.pretty_fmt(f, depth + 1)?;
         writeln!(f, "{indent}}}")
     }
@@ -191,7 +234,7 @@ mod tests {
                     name: "field1".to_string(),
                     selections: SelectionSet::default(),
                     alias: Some("f".to_string()),
-                    arguments: ArgumentsMap::default(),
+                    arguments: None,
                 }),
                 SelectionItem::Field(FieldSelection {
                     name: "field2".to_string(),
@@ -200,11 +243,11 @@ mod tests {
                             name: "nested".to_string(),
                             selections: SelectionSet::default(),
                             alias: Some("n".to_string()),
-                            arguments: ("a".to_string(), Value::Int(1)).into(),
+                            arguments: Some(("a".to_string(), Value::Int(1)).into()),
                         })],
                     },
                     alias: Some("f2".to_string()),
-                    arguments: ArgumentsMap::default(),
+                    arguments: None,
                 }),
             ],
         };
@@ -222,7 +265,7 @@ mod tests {
                 name: "field1".to_string(),
                 selections: SelectionSet::default(),
                 alias: None,
-                arguments: ArgumentsMap::default(),
+                arguments: None,
             })],
         };
 
@@ -239,7 +282,7 @@ mod tests {
                 name: "field1".to_string(),
                 selections: SelectionSet::default(),
                 alias: None,
-                arguments: vec![("id".to_string(), Value::Int(1))].into(),
+                arguments: Some(vec![("id".to_string(), Value::Int(1))].into()),
             })],
         };
 
@@ -256,23 +299,25 @@ mod tests {
                 name: "field1".to_string(),
                 selections: SelectionSet::default(),
                 alias: None,
-                arguments: vec![
-                    ("id".to_string(), Value::Int(1)),
-                    ("name".to_string(), Value::String("test".to_string())),
-                    (
-                        "list".to_string(),
-                        Value::List(vec![Value::Int(1), Value::Int(2)]),
-                    ),
-                    (
-                        "obj".to_string(),
-                        Value::Object(
-                            vec![("key".to_string(), Value::String("value".to_string()))]
-                                .into_iter()
-                                .collect(),
+                arguments: Some(
+                    vec![
+                        ("id".to_string(), Value::Int(1)),
+                        ("name".to_string(), Value::String("test".to_string())),
+                        (
+                            "list".to_string(),
+                            Value::List(vec![Value::Int(1), Value::Int(2)]),
                         ),
-                    ),
-                ]
-                .into(),
+                        (
+                            "obj".to_string(),
+                            Value::Object(
+                                vec![("key".to_string(), Value::String("value".to_string()))]
+                                    .into_iter()
+                                    .collect(),
+                            ),
+                        ),
+                    ]
+                    .into(),
+                ),
             })],
         };
 

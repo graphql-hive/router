@@ -12,7 +12,10 @@ use crate::{
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
 use serde::{Deserialize, Serialize};
-use std::fmt::{Display, Formatter as FmtFormatter, Result as FmtResult};
+use std::{
+    collections::BTreeSet,
+    fmt::{Display, Formatter as FmtFormatter, Result as FmtResult},
+};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -38,8 +41,8 @@ pub enum PlanNode {
 #[serde(rename_all = "camelCase")]
 pub struct FetchNode {
     pub service_name: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub variable_usages: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub variable_usages: BTreeSet<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_kind: Option<OperationKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -186,11 +189,13 @@ fn create_output_operation(type_aware_selection: &TypeAwareSelection) -> Subgrap
                     })],
                 },
                 alias: None,
-                arguments: (
-                    "representations".to_string(),
-                    Value::Variable("representations".to_string()),
-                )
-                    .into(),
+                arguments: Some(
+                    (
+                        "representations".to_string(),
+                        Value::Variable("representations".to_string()),
+                    )
+                        .into(),
+                ),
             })],
         },
     })
@@ -201,7 +206,7 @@ impl From<&FetchStepData> for FetchNode {
         match step.input.selection_set.is_empty() {
             true => FetchNode {
                 service_name: step.service_name.0.clone(),
-                variable_usages: vec![],
+                variable_usages: step.output.selection_set.variable_usages(),
                 operation_kind: Some(OperationKind::Query),
                 operation_name: None,
                 operation: SubgraphFetchOperation(OperationDefinition {
@@ -216,7 +221,7 @@ impl From<&FetchStepData> for FetchNode {
             },
             false => FetchNode {
                 service_name: step.service_name.0.clone(),
-                variable_usages: vec![],
+                variable_usages: step.output.selection_set.variable_usages(),
                 operation_kind: Some(OperationKind::Query),
                 operation_name: None,
                 operation: create_output_operation(&step.output),
