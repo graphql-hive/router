@@ -65,9 +65,7 @@ impl TypeAwareSelection {
     }
 
     pub fn add_at_path(&mut self, to_add: &Self, add_at_path: MergePath, as_first: bool) {
-        if let Some(source) =
-            find_selection_set_by_path_mut(&mut self.selection_set, add_at_path.clone())
-        {
+        if let Some(source) = find_selection_set_by_path_mut(&mut self.selection_set, add_at_path) {
             merge_selection_set(source, &to_add.selection_set, as_first);
         }
     }
