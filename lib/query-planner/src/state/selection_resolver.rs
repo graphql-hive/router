@@ -2,6 +2,7 @@ use graphql_parser::query::{Field, SelectionSet as ParserSelectionSet};
 use graphql_tools::static_graphql::query::Selection as OperationSelectionKind;
 
 use crate::ast::{
+    arguments::ArgumentsMap,
     parse_selection_set,
     selection_item::SelectionItem,
     selection_set::{FieldSelection, SelectionSet},
@@ -86,6 +87,8 @@ impl SelectionResolver {
             is_leaf: selections.is_none(),
             selections: selections.unwrap_or_default(),
             alias: None,
+            // TODO: implement
+            arguments: ArgumentsMap::default(),
         }))
     }
 

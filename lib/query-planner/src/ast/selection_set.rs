@@ -8,7 +8,7 @@ use graphql_parser::query::{Selection as ParserSelection, SelectionSet as Parser
 
 use crate::utils::pretty_display::{get_indent, PrettyDisplay};
 
-use super::selection_item::SelectionItem;
+use super::{arguments::ArgumentsMap, selection_item::SelectionItem};
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct SelectionSet {
@@ -60,6 +60,7 @@ pub struct FieldSelection {
     pub selections: SelectionSet,
     pub alias: Option<String>,
     pub is_leaf: bool,
+    pub arguments: ArgumentsMap,
 }
 
 impl Hash for FieldSelection {
@@ -80,7 +81,12 @@ impl FieldSelection {
             alias: None,
             is_leaf: true,
             selections: SelectionSet::default(),
+            arguments: ArgumentsMap::default(),
         }
+    }
+
+    pub fn has_arguments(&self) -> bool {
+        !self.arguments.is_empty()
     }
 }
 
@@ -100,6 +106,11 @@ impl Hash for FragmentSelection {
 impl Display for FieldSelection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.name)?;
+
+        if self.has_arguments() {
+            write!(f, "({})", self.arguments)?;
+        }
+
         write!(f, "{}", self.selections)
     }
 }
@@ -163,6 +174,7 @@ impl From<&ParserSelection<'_, String>> for SelectionItem {
                 alias: field.alias.as_ref().map(|alias| alias.to_string()),
                 is_leaf: field.selection_set.items.is_empty(),
                 selections: (&field.selection_set).into(),
+                arguments: (&field.arguments).into(),
             }),
             ParserSelection::InlineFragment(inline_fragment) => {
                 SelectionItem::Fragment(FragmentSelection {
@@ -178,5 +190,82 @@ impl From<&ParserSelection<'_, String>> for SelectionItem {
                 unimplemented!("FragmentSpread is not supported")
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ast::value::Value;
+
+    use super::*;
+
+    #[test]
+    fn print_simple_selection_set() {
+        let selection_set = SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection {
+                name: "field1".to_string(),
+                selections: SelectionSet::default(),
+                alias: None,
+                is_leaf: true,
+                arguments: ArgumentsMap::default(),
+            })],
+        };
+
+        insta::assert_snapshot!(
+          selection_set,
+          @"{field1}"
+        )
+    }
+
+    #[test]
+    fn selection_set_with_arguments() {
+        let selection_set = SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection {
+                name: "field1".to_string(),
+                selections: SelectionSet::default(),
+                alias: None,
+                is_leaf: true,
+                arguments: vec![("id".to_string(), Value::Int(1))].into(),
+            })],
+        };
+
+        insta::assert_snapshot!(
+          selection_set,
+          @"{field1(id: 1)}"
+        )
+    }
+
+    #[test]
+    fn complex_selection_set() {
+        let selection_set = SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection {
+                name: "field1".to_string(),
+                selections: SelectionSet::default(),
+                alias: None,
+                is_leaf: true,
+                arguments: vec![
+                    ("id".to_string(), Value::Int(1)),
+                    ("name".to_string(), Value::String("test".to_string())),
+                    (
+                        "list".to_string(),
+                        Value::List(vec![Value::Int(1), Value::Int(2)]),
+                    ),
+                    (
+                        "obj".to_string(),
+                        Value::Object(
+                            vec![("key".to_string(), Value::String("value".to_string()))]
+                                .into_iter()
+                                .collect(),
+                        ),
+                    ),
+                ]
+                .into(),
+            })],
+        };
+
+        insta::assert_snapshot!(
+          selection_set,
+          @r#"{field1(id: 1, list: [1, 2], name: "test", obj: {"key": "value"})}"#
+        )
     }
 }
