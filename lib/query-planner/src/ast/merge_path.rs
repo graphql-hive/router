@@ -1,4 +1,7 @@
-use std::{fmt::Debug, sync::Arc};
+use std::{
+    fmt::{Debug, Display},
+    sync::Arc,
+};
 
 #[derive(Clone, Debug, Default)] // Clone is cheap with Arc inside
 pub struct MergePath {
@@ -63,5 +66,15 @@ impl MergePath {
 impl PartialEq for MergePath {
     fn eq(&self, other: &Self) -> bool {
         self.inner == other.inner
+    }
+}
+
+impl Display for MergePath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for segment in self.inner.iter() {
+            write!(f, "{segment}")?;
+        }
+
+        Ok(())
     }
 }

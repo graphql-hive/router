@@ -119,9 +119,9 @@ fn testing() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/store {} → {products} at $.
-    [2] Product/info {__typename} → {isAvailable uuid} at $.products
-    [3] Product/cost {__typename} → {price} at $.products
+    [1] Query/store {} → {products{id}} at $.
+    [2] Product/info {__typename id} → {isAvailable uuid} at $.products
+    [3] Product/cost {__typename uuid} → {price{currency amount}} at $.products
 
     Tree:
     [1]
@@ -135,21 +135,27 @@ fn testing() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "store") {
-          } =>
           {
+            todo
           }
         },
         Flatten(path: "products") {
           Fetch(service: "info") {
+              __typename
+              id
             } =>
             {
+              todo
             }
           },
         },
         Flatten(path: "products") {
           Fetch(service: "cost") {
+              __typename
+              uuid
             } =>
             {
+              todo
             }
           },
         },
@@ -207,8 +213,8 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/a {} → {products} at $.
-    [2] Product/c {__typename} → {category} at $.products.@
+    [1] Query/a {} → {products{id pid}} at $.
+    [2] Product/c {__typename id pid} → {category{details{products}}} at $.products.@
 
     Tree:
     [1]
@@ -221,14 +227,18 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          } =>
           {
+            todo
           }
         },
         Flatten(path: "products.@") {
           Fetch(service: "c") {
+              __typename
+              id
+              pid
             } =>
             {
+              todo
             }
           },
         },
@@ -330,10 +340,10 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/d {} → {productFromD} at $.
-    [2] Product/a {__typename} → {category} at $.productFromD
-    [3] Product/b {__typename} → {category} at $.productFromD
-    [4] Category/c {__typename} → {name} at $.productFromD.category
+    [1] Query/d {} → {productFromD{id name}} at $.
+    [2] Product/a {__typename id} → {category{details}} at $.productFromD
+    [3] Product/b {__typename id} → {category{id}} at $.productFromD
+    [4] Category/c {__typename id} → {name} at $.productFromD.category
 
     Tree:
     [1]
@@ -347,31 +357,40 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "d") {
-          } =>
           {
+            todo
           }
         },
         Parallel {
           Sequence {
             Flatten(path: "productFromD") {
               Fetch(service: "b") {
+                  __typename
+                  id
                 } =>
                 {
+                  todo
                 }
               },
             },
             Flatten(path: "productFromD.category") {
               Fetch(service: "c") {
+                  __typename
+                  id
                 } =>
                 {
+                  todo
                 }
               },
             },
           },
           Flatten(path: "productFromD") {
             Fetch(service: "a") {
+                __typename
+                id
               } =>
               {
+                todo
               }
             },
           },
@@ -406,7 +425,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
     assert_eq!(best_paths_per_leaf[0].len(), 1);
     assert_eq!(best_paths_per_leaf[1].len(), 1);
 
-    insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(products)- Query/products -(topProducts)- ProductList/products -(products)- Product/products -(🔑🧩{category id pid})- Product/price -(price)- Price/price -(price)- Float/price");
+    insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(products)- Query/products -(topProducts)- ProductList/products -(products)- Product/products -(🔑🧩{category{id tag} id pid})- Product/price -(price)- Price/price -(price)- Float/price");
     insta::assert_snapshot!(best_paths_per_leaf[1][0].pretty_print(&graph), @"root(Query) -(products)- Query/products -(topProducts)- ProductList/products -(products)- Product/products -(id)- String/products");
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
@@ -446,9 +465,9 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/products {} → {topProducts} at $.
-    [2] Product/price {__typename} → {price} at $.topProducts.products.@
-    [3] Product/link {__typename} → {pid} at $.topProducts.products.@
+    [1] Query/products {} → {topProducts{products{id category{tag id}}}} at $.
+    [2] Product/price {__typename category{id tag} id pid} → {price{price}} at $.topProducts.products.@
+    [3] Product/link {__typename id} → {pid} at $.topProducts.products.@
 
     Tree:
     [1]
@@ -461,21 +480,32 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "products") {
-          } =>
           {
+            todo
           }
         },
         Flatten(path: "topProducts.products.@") {
           Fetch(service: "link") {
+              __typename
+              id
             } =>
             {
+              todo
             }
           },
         },
         Flatten(path: "topProducts.products.@") {
           Fetch(service: "price") {
+              __typename
+              category {
+                id
+                tag
+              }
+              id
+              pid
             } =>
             {
+              todo
             }
           },
         },

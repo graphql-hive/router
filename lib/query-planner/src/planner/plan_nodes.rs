@@ -1,7 +1,8 @@
 use super::fetch::fetch_graph::FetchStepData;
 use crate::{
-    ast::{merge_path::MergePath, selection_item::SelectionItem},
+    ast::{merge_path::MergePath, selection_set::SelectionSet},
     state::supergraph_state::RootOperationType,
+    utils::pretty_display::{get_indent, PrettyDisplay},
 };
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter as FmtFormatter, Result as FmtResult};
@@ -24,7 +25,7 @@ pub struct FetchNode {
     pub service_name: String,
     pub operation: String,
     pub operation_type: RootOperationType,
-    pub requires: Option<SelectionItem>,
+    pub requires: Option<SelectionSet>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,12 +62,13 @@ impl From<&FetchStepData> for FetchNode {
     fn from(step: &FetchStepData) -> Self {
         FetchNode {
             service_name: step.service_name.0.clone(),
-            // TODO: yeah
             operation: "todo".to_string(),
             // TODO: make sure it's correct
             operation_type: RootOperationType::Query,
-            // TODO: of course adjust it
-            requires: None,
+            requires: match step.input.selection_set.is_empty() {
+                true => None,
+                false => Some(step.input.selection_set.clone()),
+            },
         }
     }
 }
@@ -109,14 +111,6 @@ impl Display for FlattenNode {
     }
 }
 
-fn get_indent(depth: usize) -> String {
-    "  ".repeat(depth)
-}
-
-pub trait PrettyDisplay {
-    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult;
-}
-
 impl PrettyDisplay for QueryPlan {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
@@ -131,10 +125,14 @@ impl PrettyDisplay for FetchNode {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
         writeln!(f, "{indent}Fetch(service: \"{}\") {{", self.service_name)?;
-        // input
-        writeln!(f, "{indent}  }} =>")?;
+        if let Some(requires) = &self.requires {
+            requires.pretty_fmt(f, depth + 2)?;
+            writeln!(f, "{indent}  }} =>")?;
+        }
         writeln!(f, "{indent}  {{")?;
-        // output
+        for line in self.operation.lines() {
+            writeln!(f, "{indent}    {line}")?;
+        }
         writeln!(f, "{indent}  }}")?;
         writeln!(f, "{indent}}},")?;
 

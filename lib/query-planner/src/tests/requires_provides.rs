@@ -71,9 +71,9 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
     // TODO: [3] is missing "upc" in input
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/accounts {} → {me} at $.
-    [2] User/reviews {__typename} → {reviews} at $.me
-    [3] Product/inventory {__typename} → {inStock} at $.me.reviews.@.product
+    [1] Query/accounts {} → {me{id}} at $.
+    [2] User/reviews {__typename id} → {reviews{product{upc} author{username id} id}} at $.me
+    [3] Product/inventory {__typename upc} → {inStock} at $.me.reviews.@.product
 
     Tree:
     [1]

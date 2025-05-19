@@ -44,7 +44,7 @@ fn single_simple_overrides() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/b {} → {feed} at $.
+    [1] Query/b {} → {feed{createdAt}} at $.
 
     Tree:
     [1]
@@ -122,9 +122,9 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
     // `id` is missing now.
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/b {} → {bFeed} at $.
-    [2] Query/a {} → {aFeed} at $.
-    [3] Post/b {__typename} → {createdAt} at $.aFeed.@
+    [1] Query/b {} → {bFeed{createdAt}} at $.
+    [2] Query/a {} → {aFeed{id}} at $.
+    [3] Post/b {__typename id} → {createdAt} at $.aFeed.@
 
     Tree:
     [1]

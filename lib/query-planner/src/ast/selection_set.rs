@@ -6,6 +6,8 @@ use std::{
 
 use graphql_parser::query::{Selection as ParserSelection, SelectionSet as ParserSelectionSet};
 
+use crate::utils::pretty_display::{get_indent, PrettyDisplay};
+
 use super::selection_item::SelectionItem;
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -102,10 +104,42 @@ impl Display for FieldSelection {
     }
 }
 
+impl PrettyDisplay for FieldSelection {
+    fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
+        let indent = get_indent(depth);
+        if self.is_leaf {
+            return writeln!(f, "{indent}{}", self.name);
+        }
+
+        writeln!(f, "{indent}{} {{", self.name)?;
+        self.selections.pretty_fmt(f, depth + 1)?;
+        writeln!(f, "{indent}}}")
+    }
+}
+
+impl PrettyDisplay for SelectionSet {
+    fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
+        for item in self.items.iter() {
+            item.pretty_fmt(f, depth)?;
+        }
+
+        Ok(())
+    }
+}
+
 impl Display for FragmentSelection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "... on {}", self.type_name)?;
         write!(f, "{}", self.selections)
+    }
+}
+
+impl PrettyDisplay for FragmentSelection {
+    fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
+        let indent = get_indent(depth);
+        writeln!(f, "{indent}... on {} {{", self.type_name)?;
+        self.selections.pretty_fmt(f, depth + 1)?;
+        writeln!(f, "{indent}}}")
     }
 }
 
