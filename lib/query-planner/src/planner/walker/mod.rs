@@ -17,7 +17,7 @@ use tracing::{debug, instrument, span, warn, Level};
 use utils::{get_entrypoints, operation_to_parts};
 
 // TODO: Make a better struct
-type BestPathsPerLeaf = Vec<Vec<OperationPath>>;
+pub type BestPathsPerLeaf = Vec<Vec<OperationPath>>;
 
 // TODO: Consider to use VecDeque(fixed_size) if we can predict it?
 // TODO: Consider to drop this IR layer and just go with QTP directly.
