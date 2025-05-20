@@ -1144,7 +1144,6 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
 
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
-
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {

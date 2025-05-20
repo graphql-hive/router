@@ -5,6 +5,8 @@ use crate::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum FetchGraphError {
+    #[error("Internal Error: {0}")]
+    Internal(String),
     #[error("Graph error: {0}")]
     GraphFailure(GraphError),
     #[error("Missing FetchStep: {0} {1}")]
