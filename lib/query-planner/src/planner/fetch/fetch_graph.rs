@@ -657,7 +657,7 @@ fn get_or_create_fetch_step_for_entity_move(
     match matching_child_index {
         Some(idx) => {
             debug!(
-                "found existing fetch step for entity move for requirement '{:?}'",
+                "found existing fetch step for entity move for requirement '{}'",
                 requires.map(|r| r.to_string()).unwrap_or_default()
             );
             Ok(idx)
@@ -1159,7 +1159,7 @@ fn process_tree_of_requires(
     let fetch_step_to_get_required_fields =
         fetch_graph.get_step_data_mut(fetch_step_to_get_required_fields_index)?;
     debug!(
-        "Adding entity key to fetch step to get required fields input: '{:?}'",
+        "Adding entity key to fetch step to get required fields input: '{}'",
         entity_key
     );
     fetch_step_to_get_required_fields.input.add(entity_key);
