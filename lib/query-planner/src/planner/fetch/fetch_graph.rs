@@ -241,12 +241,14 @@ impl FetchGraph {
                                 // and then iterate to the next sibling and schedule a merge of 2 with 1.
                                 if !merges_to_perform
                                     .iter()
-                                    .any(|(f, t)| (t, f) == (&sibling_index, step_index)) && sibling.can_merge(
+                                    .any(|(f, t)| (t, f) == (&sibling_index, step_index))
+                                    && sibling.can_merge(
                                         sibling_index,
                                         *step_index,
                                         step_data,
                                         self,
-                                    ) {
+                                    )
+                                {
                                     return Some((sibling_index, *step_index));
                                 }
                             }
