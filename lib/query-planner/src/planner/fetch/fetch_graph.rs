@@ -154,6 +154,7 @@ impl FetchGraph {
         None
     }
 
+    #[instrument(skip_all)]
     pub fn optimize(&mut self, root_step_index: NodeIndex) -> Result<(), FetchGraphError> {
         self.root_index = Some(root_step_index);
 
@@ -174,6 +175,7 @@ impl FetchGraph {
     /// out:
     /// A -> B -> ... -> C
     /// ```
+    #[instrument(skip_all)]
     fn deduplicate_and_prune_fetch_steps(&mut self) -> Result<(), FetchGraphError> {
         let steps_to_remove: Vec<NodeIndex> = self
             .step_indices()
@@ -192,6 +194,8 @@ impl FetchGraph {
                 if self.children_of(step_index).next().is_some() {
                     return false;
                 }
+
+                debug!("optimization found: remove '{}'", step);
 
                 true
             })
@@ -223,6 +227,7 @@ impl FetchGraph {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     fn merge_siblings(&mut self, root_step_index: NodeIndex) -> Result<(), FetchGraphError> {
         let mut merges_to_perform: Vec<(NodeIndex, NodeIndex)> = Vec::new();
 
@@ -250,6 +255,11 @@ impl FetchGraph {
                                         self,
                                     )
                                 {
+                                    debug!(
+                                        "optimization found: merge sibling '{}' with '{}'",
+                                        sibling, step_data
+                                    );
+
                                     return Some((sibling_index, *step_index));
                                 }
                             }
@@ -272,6 +282,7 @@ impl FetchGraph {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     fn merge_children_with_parents(
         &mut self,
         root_step_index: NodeIndex,
@@ -285,6 +296,11 @@ impl FetchGraph {
                 let ancestor_index = ancestor_edge.source();
                 if let Ok(ancestor) = self.get_step_data(ancestor_index) {
                     if ancestor.can_merge(ancestor_index, *step_index, step_data, self) {
+                        debug!(
+                            "optimization found: merge parent '{}' with child '{}'",
+                            ancestor, step_data
+                        );
+
                         merges_to_perform.push((ancestor_index, *step_index));
                     }
                 }
@@ -300,6 +316,7 @@ impl FetchGraph {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     fn turn_mutations_into_sequence(
         &mut self,
         root_fetch_step_index: NodeIndex,
