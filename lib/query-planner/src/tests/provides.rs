@@ -56,8 +56,8 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/products {} → {products{upc}} at $.
-    [2] Product/reviews {__typename upc} → {reviews{author{username}}} at $.products.@
+    [1] Query/products {} → {__typename products{upc}} at $.
+    [2] Product/reviews {__typename upc} → {reviews{__typename author{__typename username}}} at $.products.@
 
     Tree:
     [1]
@@ -69,18 +69,14 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "products") {
-          {
-            todo
-          }
+          {__typename products{upc}}
         },
         Flatten(path: "products.@") {
           Fetch(service: "reviews") {
               __typename
               upc
             } =>
-            {
-              todo
-            }
+            {reviews{__typename author{__typename username}}}
           },
         },
       },
@@ -142,7 +138,7 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/category {} → {products{categories{name id} id}} at $.
+    [1] Query/category {} → {__typename products{__typename categories{__typename name id} id}} at $.
 
     Tree:
     [1]
@@ -152,9 +148,7 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Fetch(service: "category") {
-        {
-          todo
-        }
+        {__typename products{__typename categories{__typename name id} id}}
       },
     },
     "#);

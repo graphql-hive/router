@@ -119,7 +119,7 @@ fn testing() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/store {} → {products{id}} at $.
+    [1] Query/store {} → {__typename products{id}} at $.
     [2] Product/info {__typename id} → {isAvailable uuid} at $.products
     [3] Product/cost {__typename uuid} → {price{currency amount}} at $.products
 
@@ -135,18 +135,14 @@ fn testing() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "store") {
-          {
-            todo
-          }
+          {__typename products{id}}
         },
         Flatten(path: "products") {
           Fetch(service: "info") {
               __typename
               id
             } =>
-            {
-              todo
-            }
+            {isAvailable uuid}
           },
         },
         Flatten(path: "products") {
@@ -154,9 +150,7 @@ fn testing() -> Result<(), Box<dyn Error>> {
               __typename
               uuid
             } =>
-            {
-              todo
-            }
+            {price{currency amount}}
           },
         },
       },
@@ -213,8 +207,8 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/a {} → {products{id pid}} at $.
-    [2] Product/c {__typename id pid} → {category{details{products}}} at $.products.@
+    [1] Query/a {} → {__typename products{id pid}} at $.
+    [2] Product/c {__typename id pid} → {category{__typename details{products}}} at $.products.@
 
     Tree:
     [1]
@@ -227,9 +221,7 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          {
-            todo
-          }
+          {__typename products{id pid}}
         },
         Flatten(path: "products.@") {
           Fetch(service: "c") {
@@ -237,9 +229,7 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
               id
               pid
             } =>
-            {
-              todo
-            }
+            {category{__typename details{products}}}
           },
         },
       },
@@ -340,7 +330,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/d {} → {productFromD{id name}} at $.
+    [1] Query/d {} → {__typename productFromD{id name}} at $.
     [2] Product/a {__typename id} → {category{details}} at $.productFromD
     [3] Product/b {__typename id} → {category{id}} at $.productFromD
     [4] Category/c {__typename id} → {name} at $.productFromD.category
@@ -357,9 +347,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "d") {
-          {
-            todo
-          }
+          {__typename productFromD{id name}}
         },
         Parallel {
           Sequence {
@@ -368,9 +356,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
                   __typename
                   id
                 } =>
-                {
-                  todo
-                }
+                {category{id}}
               },
             },
             Flatten(path: "productFromD.category") {
@@ -378,9 +364,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
                   __typename
                   id
                 } =>
-                {
-                  todo
-                }
+                {name}
               },
             },
           },
@@ -389,9 +373,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
                 __typename
                 id
               } =>
-              {
-                todo
-              }
+              {category{details}}
             },
           },
         },
@@ -465,7 +447,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/products {} → {topProducts{products{id category{tag id}}}} at $.
+    [1] Query/products {} → {__typename topProducts{__typename products{__typename id category{tag id}}}} at $.
     [2] Product/price {__typename category{id tag} id pid} → {price{price}} at $.topProducts.products.@
     [3] Product/link {__typename id} → {pid} at $.topProducts.products.@
 
@@ -480,18 +462,14 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "products") {
-          {
-            todo
-          }
+          {__typename topProducts{__typename products{__typename id category{tag id}}}}
         },
         Flatten(path: "topProducts.products.@") {
           Fetch(service: "link") {
               __typename
               id
             } =>
-            {
-              todo
-            }
+            {pid}
           },
         },
         Flatten(path: "topProducts.products.@") {
@@ -504,9 +482,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
               id
               pid
             } =>
-            {
-              todo
-            }
+            {price{price}}
           },
         },
       },
