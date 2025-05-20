@@ -51,7 +51,7 @@ impl MergePath {
         self.inner
             .iter()
             .zip(other.inner.iter())
-            .take_while(|(a, b)| a == b)
+            .take_while(|(s, o)| s == o)
             .count()
     }
 

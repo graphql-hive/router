@@ -8,8 +8,11 @@ use crate::graph::node::Node;
 use crate::graph::Graph;
 use crate::planner::tree::query_tree::QueryTree;
 use crate::planner::tree::query_tree_node::QueryTreeNode;
+use crate::planner::walker::path::OperationPath;
+use crate::planner::walker::pathfinder::can_satisfy_edge;
 use crate::state::supergraph_state::SubgraphName;
-use petgraph::graph::{DiGraph, EdgeIndex, NodeIndex, NodeIndices};
+use petgraph::graph::EdgeReference;
+use petgraph::stable_graph::{EdgeIndex, NodeIndex, NodeIndices, StableDiGraph};
 use petgraph::visit::Bfs;
 use petgraph::visit::{EdgeRef, NodeRef};
 use petgraph::Directed;
@@ -20,7 +23,7 @@ use std::fmt::{Debug, Display};
 use super::error::FetchGraphError;
 
 pub struct FetchGraph {
-    graph: DiGraph<FetchStepData, ()>,
+    graph: StableDiGraph<FetchStepData, ()>,
     pub root_index: Option<NodeIndex>,
 }
 
@@ -33,29 +36,32 @@ impl Default for FetchGraph {
 impl FetchGraph {
     pub fn new() -> Self {
         Self {
-            graph: DiGraph::new(),
+            graph: StableDiGraph::new(),
             root_index: None,
         }
     }
 }
 
 impl FetchGraph {
-    pub fn parents_of(&self, index: NodeIndex) -> petgraph::graph::Edges<'_, (), Directed> {
+    pub fn parents_of(&self, index: NodeIndex) -> petgraph::stable_graph::Edges<'_, (), Directed> {
         self.graph.edges_directed(index, Direction::Incoming)
     }
 
-    pub fn children_of(&self, index: NodeIndex) -> petgraph::graph::Edges<'_, (), Directed> {
+    pub fn children_of(&self, index: NodeIndex) -> petgraph::stable_graph::Edges<'_, (), Directed> {
         self.graph.edges_directed(index, Direction::Outgoing)
     }
 
-    pub fn step_indices(&self) -> NodeIndices {
+    pub fn step_indices(&self) -> NodeIndices<FetchStepData> {
         self.graph.node_indices()
     }
 
     pub fn get_step_data(&self, index: NodeIndex) -> Result<&FetchStepData, FetchGraphError> {
         self.graph
             .node_weight(index)
-            .ok_or(FetchGraphError::MissingStep(index.index()))
+            .ok_or(FetchGraphError::MissingStep(
+                index.index(),
+                String::from("when getting step data"),
+            ))
     }
 
     pub fn get_step_data_mut(
@@ -64,7 +70,10 @@ impl FetchGraph {
     ) -> Result<&mut FetchStepData, FetchGraphError> {
         self.graph
             .node_weight_mut(index)
-            .ok_or(FetchGraphError::MissingStep(index.index()))
+            .ok_or(FetchGraphError::MissingStep(
+                index.index(),
+                String::from("when getting mutable step data"),
+            ))
     }
 
     pub fn get_pair_of_steps_mut(
@@ -79,10 +88,16 @@ impl FetchGraph {
 
         // `index_twice_mut` panics when nodes do not exist
         if self.graph.node_weight(index1).is_none() {
-            return Err(FetchGraphError::MissingStep(index1.index()));
+            return Err(FetchGraphError::MissingStep(
+                index1.index(),
+                String::from("when checking existence"),
+            ));
         }
         if self.graph.node_weight(index2).is_none() {
-            return Err(FetchGraphError::MissingStep(index2.index()));
+            return Err(FetchGraphError::MissingStep(
+                index2.index(),
+                String::from("when checking existence"),
+            ));
         }
 
         Ok(self.graph.index_twice_mut(index1, index2))
@@ -92,7 +107,18 @@ impl FetchGraph {
         self.graph.update_edge(parent_index, child_index, ())
     }
 
-    pub fn disconnect(&mut self, edge_index: EdgeIndex) -> bool {
+    pub fn disconnect(&mut self, parent_index: NodeIndex, child_index: NodeIndex) -> bool {
+        if let Some(edge) = self
+            .parents_of(child_index)
+            .find(|edge| edge.source() == parent_index)
+        {
+            return self.remove_edge(edge.id());
+        }
+
+        false
+    }
+
+    pub fn remove_edge(&mut self, edge_index: EdgeIndex) -> bool {
         self.graph.remove_edge(edge_index).is_some_and(|_| true)
     }
 
@@ -129,9 +155,10 @@ impl FetchGraph {
 
     pub fn optimize(&mut self, root_step_index: NodeIndex) -> Result<(), FetchGraphError> {
         self.root_index = Some(root_step_index);
-        self.deduplicate_and_prune_fetch_steps()?;
+
         self.merge_children_with_parents(root_step_index)?;
         self.merge_siblings(root_step_index)?;
+        self.deduplicate_and_prune_fetch_steps()?;
         self.turn_mutations_into_sequence(root_step_index)?;
 
         Ok(())
@@ -189,7 +216,7 @@ impl FetchGraph {
         }
 
         for edge_index in edges_to_remove {
-            self.disconnect(edge_index);
+            self.remove_edge(edge_index);
         }
 
         Ok(())
@@ -209,7 +236,19 @@ impl FetchGraph {
                                 return None;
                             }
                             if let Ok(sibling) = self.get_step_data(sibling_index) {
-                                if sibling.can_merge(sibling_index, *step_index, step_data, self) {
+                                // do not push if previously scheduled in reversed order.
+                                // It may happen as we could merge sibling 1 with sibling 2,
+                                // and then iterate to the next sibling and schedule a merge of 2 with 1.
+                                if !merges_to_perform
+                                    .iter()
+                                    .any(|(f, t)| (t, f) == (&sibling_index, step_index))
+                                    && sibling.can_merge(
+                                        sibling_index,
+                                        *step_index,
+                                        step_data,
+                                        self,
+                                    )
+                                {
                                     return Some((sibling_index, *step_index));
                                 }
                             }
@@ -290,7 +329,7 @@ impl FetchGraph {
         }
 
         for edge_id in edge_ids_to_remove {
-            self.disconnect(edge_id);
+            self.remove_edge(edge_id);
         }
 
         Ok(())
@@ -345,7 +384,7 @@ impl Display for FetchGraph {
             }
 
             let indent = "  ".repeat(depth);
-            writeln!(f, "{}[{}]", indent, node_index.index())?;
+            writeln!(f, "{indent}[{}]", node_index.index())?;
 
             for child_index in self
                 .graph
@@ -422,7 +461,7 @@ impl FetchStepData {
         if fetch_graph.parents_of(other_index).count() == 1
             && fetch_graph
                 .parents_of(other_index)
-                .any(|edge| edge.source() == self_index)
+                .all(|edge| edge.source() == self_index)
         {
             return true;
         }
@@ -452,6 +491,14 @@ fn perform_fetch_step_merge(
         false,
     );
 
+    if me.input.type_name == other.input.type_name {
+        if me.response_path != other.response_path {
+            panic!("input types are equal but resonse_path are different, should not happen");
+        }
+
+        me.input.add(&other.input);
+    }
+
     let mut children_indexes: Vec<NodeIndex> = vec![];
     let mut parents_indexes: Vec<NodeIndex> = vec![];
     for edge_ref in fetch_graph.children_of(other_index) {
@@ -459,7 +506,10 @@ fn perform_fetch_step_merge(
     }
 
     for edge_ref in fetch_graph.parents_of(other_index) {
-        parents_indexes.push(edge_ref.source().id());
+        // We ignore self_index
+        if edge_ref.source().id() != self_index {
+            parents_indexes.push(edge_ref.source().id());
+        }
     }
 
     // Replace parents:
@@ -522,10 +572,11 @@ fn create_fetch_step_for_entity_move(
 
 fn create_fetch_step_for_root_move(
     fetch_graph: &mut FetchGraph,
+    root_step_index: NodeIndex,
     subgraph_name: &SubgraphName,
     type_name: &str,
 ) -> NodeIndex {
-    fetch_graph.add_step(FetchStepData {
+    let idx = fetch_graph.add_step(FetchStepData {
         service_name: subgraph_name.clone(),
         response_path: MergePath::default(),
         input: TypeAwareSelection {
@@ -537,7 +588,11 @@ fn create_fetch_step_for_root_move(
             type_name: type_name.to_string(),
         },
         reserved_for_requires: None,
-    })
+    });
+
+    fetch_graph.connect(root_step_index, idx);
+
+    idx
 }
 
 fn get_or_create_fetch_step_for_entity_move(
@@ -601,7 +656,7 @@ fn get_or_create_fetch_step_for_entity_move(
             );
             if let Some(selection) = key {
                 let step = fetch_graph.get_step_data_mut(step_index)?;
-                step.input.add(selection.clone())
+                step.input.add(selection)
             }
 
             Ok(step_index)
@@ -738,20 +793,16 @@ fn process_entity_move_edge(
 
     let tail_node_index = graph.get_edge_tail(&edge_index)?;
     let tail_node = graph.node(tail_node_index)?;
-    let type_name = match tail_node {
-        Node::QueryRoot(t) => t,
-        Node::MutationRoot(t) => t,
-        Node::SubscriptionRoot(t) => t,
-        Node::SubgraphType(t) => &t.name,
+    let (type_name, subgraph_name) = match tail_node {
+        Node::SubgraphType(t) => (&t.name, &t.subgraph),
+        // todo: FetchGraphError::MissingSubgraphName(tail_node.clone())
+        _ => panic!("Expected a subgraph type, not root type"),
     };
-    let graph_id = tail_node
-        .graph_id()
-        .ok_or(FetchGraphError::MissingSubgraphName(tail_node.clone()))?;
 
     let fetch_step_index = get_or_create_fetch_step_for_entity_move(
         fetch_graph,
         parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?,
-        &SubgraphName(graph_id.to_string()),
+        subgraph_name,
         type_name,
         response_path,
         Some(&requirement),
@@ -759,8 +810,10 @@ fn process_entity_move_edge(
     )?;
 
     let fetch_step = fetch_graph.get_step_data_mut(fetch_step_index)?;
-    fetch_step.input.add(requirement);
-    add_typename_field_to_output(fetch_step, type_name, fetch_path);
+    fetch_step.input.add(&requirement);
+    let parent_fetch_step = fetch_graph
+        .get_step_data_mut(parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?)?;
+    add_typename_field_to_output(parent_fetch_step, type_name, fetch_path);
 
     // Make the fetch step a child of the parent fetch step
     fetch_graph.connect(
@@ -802,7 +855,12 @@ fn process_subgraph_entrypoint_edge(
         panic!("Expected a parent fetch step")
     }
 
-    let fetch_step_index = create_fetch_step_for_root_move(fetch_graph, subgraph_name, type_name);
+    let fetch_step_index = create_fetch_step_for_root_move(
+        fetch_graph,
+        parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?,
+        subgraph_name,
+        type_name,
+    );
 
     process_children_for_fetch_steps(
         graph,
@@ -862,10 +920,6 @@ fn process_plain_field_edge(
         false,
     );
 
-    if !field_is_leaf && !parent_fetch_step.input.has_typename_at_path(fetch_path) {
-        add_typename_field_to_output(parent_fetch_step, field_type_name, fetch_path);
-    }
-
     let mut child_response_path = response_path.push(field_name);
     let mut child_fetch_path = fetch_path.push(field_name);
 
@@ -879,6 +933,335 @@ fn process_plain_field_edge(
         fetch_graph,
         query_node,
         Some(parent_fetch_step_index),
+        &child_response_path,
+        &child_fetch_path,
+        requiring_fetch_step_index,
+    )?;
+
+    Ok(())
+}
+
+/// A field marked with `@requires` tells us that in order to resolve it,
+/// the subgraph needs data from another subgraph.
+///
+/// This interaction ALWAYS involves an entity call,
+/// but the trigger for resolving the field differs:
+///
+/// 1.  Cross-Subgraph: If the field annotated with `@requires` is being
+///     fetched after an `EntityMove` brought us to the current subgraph from another,
+///     the `EntityMove` itself already handled fetching the necessary `@key` fields.
+///     We don't need to think about it, we just need to add the field set of `@requires(fields:)`
+///     to the `FetchStep` input.
+///
+/// 2.  Root: If the field annotated with `@requires` is being fetched locally,
+///     because the query started from the root type,
+///     the `EntityMove` is needed, but the data to satisfy the key fields is all local.
+///     The subgraph effectively makes an "internal" entity call to itself.
+///     - We first fetch the fields needed to satisfy some resolvable `@key` of the
+///       entity type within this subgraph.
+///     - Then, we use that to resolve the fields specified in the `@requires(fields:)`.
+///     - This effectively splits the resolution within the subgraph: part comes from the
+///       main query path, part comes via the internal entity resolution triggered by `@requires`.
+///
+/// The key fields need to be added to the output of the parent,
+/// and input of the entity move.
+fn find_satisfiable_key<'a>(
+    graph: &'a Graph,
+    query_node: &QueryTreeNode,
+) -> Result<Option<&'a TypeAwareSelection>, FetchGraphError> {
+    // This could be improved...
+    // We added a flag to `canSatisfyEdge` and increased the complexity.
+
+    let edge_from_parent_index = query_node
+        .edge_from_parent
+        .expect("Expected an edge from parent");
+    let head = graph.get_edge_head(&edge_from_parent_index)?;
+    let tail = graph.get_edge_tail(&edge_from_parent_index)?;
+    let mut entity_moves_edges_to_self: Vec<EdgeReference<crate::graph::edge::Edge>> = graph
+        .edges_from(tail)
+        .filter(|edge_reference| {
+            let edge = graph.edge(edge_reference.id()).unwrap();
+            matches!(edge, Edge::EntityMove(_))
+        })
+        .collect();
+    entity_moves_edges_to_self.sort_by_key(|edge| std::cmp::Reverse(edge.weight().cost()));
+
+    for edge_ref in entity_moves_edges_to_self {
+        if can_satisfy_edge(
+            graph,
+            &edge_ref,
+            &OperationPath {
+                root_node: head,
+                last_segment: None,
+                visited_edge_indices: Default::default(),
+                cost: 0,
+            },
+            &Default::default(),
+            true,
+        )
+        .map_err(FetchGraphError::SatisfiableKeyFailure)?
+        .is_some()
+        {
+            return Ok(edge_ref.weight().requirements());
+        }
+    }
+
+    Ok(None)
+}
+
+fn process_tree_of_requires(
+    graph: &Graph,
+    fetch_graph: &mut FetchGraph,
+    query_node: &QueryTreeNode,
+    step_for_field_with_requires_index: NodeIndex,
+    requires: &TypeAwareSelection,
+    response_path: &MergePath,
+    // subgraph_name: &SubgraphName,
+    // type_name: &String,
+) -> Result<(), FetchGraphError> {
+    if query_node.children.len() != 1 {
+        return Err(FetchGraphError::ManyChildrenOfRequirement);
+    }
+
+    let child = query_node.children.first().unwrap();
+
+    // maybe we should handle a case where there are more? Not sure yet.
+    if fetch_graph
+        .parents_of(step_for_field_with_requires_index)
+        .count()
+        != 1
+    {
+        // todo: different error
+        return Err(FetchGraphError::ManyChildrenOfRequirement);
+    }
+
+    let parent_fetch_step_index = fetch_graph
+        .parents_of(step_for_field_with_requires_index)
+        .next()
+        .map(|edge| edge.source())
+        .ok_or(FetchGraphError::MissingParent(
+            step_for_field_with_requires_index.index(),
+        ))?;
+
+    if child.edge_from_parent.is_none() {
+        panic!("Expected an edge from parent");
+    }
+
+    let child_edge_from_parent_index = child
+        .edge_from_parent
+        .expect("Expected an edge from parent");
+    let child_edge_from_parent = graph.edge(child_edge_from_parent_index)?;
+
+    let child_graph_node = graph.node(child.node_index)?;
+
+    let entity_key = match child_edge_from_parent {
+        Edge::EntityMove(m) => &m.requirements,
+        _ => panic!("Expected an edge with requirements - EntityMove"),
+    };
+
+    let tail_details: Option<(&String, &SubgraphName)> = match child_graph_node {
+        Node::SubgraphType(t) => Some((&t.name, &t.subgraph)),
+        _ => None,
+    };
+
+    let (graph_node_type_name, subgraph_name) = tail_details.unwrap();
+
+    let fetch_step_to_get_required_fields_index = get_or_create_fetch_step_for_entity_move(
+        fetch_graph,
+        parent_fetch_step_index,
+        subgraph_name,
+        graph_node_type_name,
+        response_path,
+        Some(entity_key),
+        Some(requires),
+    )?;
+
+    let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
+
+    if parent_fetch_step.input.type_name == "Query" {
+        // todo: support Mutation and Subscription?
+        add_typename_field_to_output(parent_fetch_step, graph_node_type_name, response_path);
+    }
+
+    if let Some(key) = find_satisfiable_key(graph, child)? {
+        let graph_node_type_name: Option<&String> = match graph.node(child.node_index)? {
+            Node::SubgraphType(t) => Some(&t.name),
+            _ => None,
+        };
+
+        if graph_node_type_name.is_none() {
+            panic!("oopsie");
+        }
+
+        // fix: should be type_name
+        if &parent_fetch_step.output.type_name != graph_node_type_name.unwrap() {
+            // Add the key fields to the output of the parent
+            parent_fetch_step
+                .output
+                .add_at_path(key, response_path.clone(), false);
+        }
+        // Add the key fields to the input of the requiring FetchStep
+        let step_for_field_with_requires =
+            fetch_graph.get_step_data_mut(step_for_field_with_requires_index)?;
+        step_for_field_with_requires.input.add(key);
+    }
+
+    let fetch_step_to_get_required_fields =
+        fetch_graph.get_step_data_mut(fetch_step_to_get_required_fields_index)?;
+    fetch_step_to_get_required_fields.input.add(entity_key);
+
+    //
+    // Given `f0 { f1 @requires(fields: f2) }`
+    // - fetch_step_to_get_required_fields_index  -> f2
+    // - step_for_field_with_requires_index       -> f1
+    // - parent_index                             -> f0
+    //
+    // Before:
+    //                 fetch_step_to_get_required_fields_index
+    //                /
+    // parent_index ->
+    //                \
+    //                 step_for_field_with_requires_index
+    //
+    // After:
+    //
+    // parent_index -> fetch_step_to_get_required_fields_index -> step_for_field_with_requires_index
+    //
+    // f0 -> f2 -> f1
+    //
+
+    fetch_graph.connect(
+        parent_fetch_step_index,
+        fetch_step_to_get_required_fields_index,
+    );
+    fetch_graph.disconnect(parent_fetch_step_index, step_for_field_with_requires_index);
+    fetch_graph.connect(
+        fetch_step_to_get_required_fields_index,
+        step_for_field_with_requires_index,
+    );
+
+    process_children_for_fetch_steps(
+        graph,
+        fetch_graph,
+        child,
+        Some(fetch_step_to_get_required_fields_index),
+        response_path,
+        &MergePath::default(),
+        Some(step_for_field_with_requires_index),
+    )
+}
+
+// todo: simplify args
+#[allow(clippy::too_many_arguments)]
+fn process_requires_field_edge(
+    graph: &Graph,
+    fetch_graph: &mut FetchGraph,
+    query_node: &QueryTreeNode,
+    parent_fetch_step_index: Option<NodeIndex>,
+    requiring_fetch_step_index: Option<NodeIndex>,
+    response_path: &MergePath,
+    fetch_path: &MergePath,
+    subgraph_name: &SubgraphName,
+    type_name: &String,
+    field_name: &str,
+    field_is_leaf: bool,
+    field_is_list: bool,
+    requires: &TypeAwareSelection,
+) -> Result<(), FetchGraphError> {
+    let parent_fetch_step_index = parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?;
+
+    if fetch_graph.parents_of(parent_fetch_step_index).count() != 1 {
+        return Err(FetchGraphError::NonSingleParent);
+    }
+
+    let parent_parent_index = fetch_graph
+        .parents_of(parent_fetch_step_index)
+        .next()
+        .map(|edge| edge.source())
+        .unwrap();
+
+    // When a field (foo) is annotated with `@requires(fields: "bar")`
+    // We want to create new FetchStep (entity move) for that field (foo)
+    // or reuse an existing one if the requirement matches
+    // The new FetchStep will have `foo` as the output and `bar` as the input.
+    // The `bar` should be fetched by one of the parents.
+    let step_for_field_with_requires_index = get_or_create_fetch_step_for_entity_move(
+        fetch_graph,
+        parent_parent_index,
+        subgraph_name,
+        type_name,
+        response_path,
+        None,
+        Some(requires),
+    )?;
+    let step_for_field_with_requires =
+        fetch_graph.get_step_data_mut(step_for_field_with_requires_index)?;
+
+    step_for_field_with_requires.reserved_for_requires = Some(requires.clone());
+    step_for_field_with_requires.output.add_at_path(
+        &TypeAwareSelection {
+            selection_set: SelectionSet {
+                items: vec![SelectionItem::Field(FieldSelection {
+                    name: field_name.to_owned(),
+                    alias: None,
+                    is_leaf: field_is_leaf,
+                    selections: SelectionSet { items: vec![] },
+                    arguments: Default::default(),
+                })],
+            },
+            type_name: type_name.clone(),
+        },
+        MergePath::default(),
+        false,
+    );
+    step_for_field_with_requires.input.add(requires);
+
+    if let Some(requiring_fetch_step_index) = requiring_fetch_step_index {
+        fetch_graph.connect(
+            step_for_field_with_requires_index,
+            requiring_fetch_step_index,
+        );
+        fetch_graph.disconnect(parent_fetch_step_index, requiring_fetch_step_index);
+    }
+
+    // if it's a top level noop fetch step
+    if fetch_graph.parents_of(parent_parent_index).count() == 0 {
+        fetch_graph.connect(parent_fetch_step_index, step_for_field_with_requires_index);
+    } else {
+        // In case of a field with `@requires`, the parent will be the current subgraph we're in.
+        // That's why we want to move up, to the parent of the current fetch step.
+        fetch_graph.connect(parent_parent_index, step_for_field_with_requires_index);
+    }
+
+    if query_node.requirements.len() != 1 {
+        return Err(FetchGraphError::MissingRequirement);
+    }
+
+    process_tree_of_requires(
+        graph,
+        fetch_graph,
+        query_node
+            .requirements
+            .first()
+            .ok_or(FetchGraphError::MissingRequirement)?,
+        step_for_field_with_requires_index,
+        requires,
+        response_path,
+    )?;
+
+    let mut child_response_path = response_path.push(field_name.to_owned());
+    let mut child_fetch_path = fetch_path.push(field_name.to_owned());
+
+    if field_is_list {
+        child_response_path = child_response_path.push("@".to_string());
+        child_fetch_path = child_fetch_path.push("@".to_string());
+    }
+
+    process_children_for_fetch_steps(
+        graph,
+        fetch_graph,
+        query_node,
+        Some(step_for_field_with_requires_index),
         &child_response_path,
         &child_fetch_path,
         requiring_fetch_step_index,
@@ -945,7 +1328,32 @@ fn process_query_node(
                         &field.type_name,
                     )?
                 } else {
-                    todo!("not yet supported")
+                    let head_index = graph.get_edge_head(&edge_index)?;
+                    let head = graph.node(head_index)?;
+
+                    let type_details: Option<(&String, &SubgraphName)> = match head {
+                        Node::SubgraphType(t) => Some((&t.name, &t.subgraph)),
+                        _ => None,
+                    };
+
+                    let (type_name, subgraph_name) =
+                        type_details.expect("Expected a Node::SubgraphType");
+
+                    process_requires_field_edge(
+                        graph,
+                        fetch_graph,
+                        query_node,
+                        parent_fetch_step_index,
+                        requiring_fetch_step_index,
+                        response_path,
+                        fetch_path,
+                        subgraph_name,
+                        type_name,
+                        &field.name,
+                        field.is_leaf,
+                        field.is_list,
+                        &field.requirements.clone().unwrap(),
+                    )?
                 }
             }
             Edge::AbstractMove(_) => {

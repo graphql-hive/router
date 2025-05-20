@@ -167,9 +167,9 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", fetch_graph), @r"
     Nodes:
-    [1] Query/price {} → {__typename product{__typename price{currency amount id}}} at $.
-    [2] Query/category {} → {__typename product{__typename category{name id} id}} at $.
-    [3] Query/name {} → {__typename product{__typename name{model brand id}}} at $.
+    [1] Query/price {} → {product{price{currency amount id}}} at $.
+    [2] Query/category {} → {product{category{name id} id}} at $.
+    [3] Query/name {} → {product{name{model brand id}}} at $.
 
     Tree:
     [1]
@@ -182,13 +182,13 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Parallel {
         Fetch(service: "name") {
-          {__typename product{__typename name{model brand id}}}
+          {product{name{model brand id}}}
         },
         Fetch(service: "category") {
-          {__typename product{__typename category{name id} id}}
+          {product{category{name id} id}}
         },
         Fetch(service: "price") {
-          {__typename product{__typename price{currency amount id}}}
+          {product{price{currency amount id}}}
         },
       },
     },

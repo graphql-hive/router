@@ -1,6 +1,6 @@
 mod best_path;
 mod excluded;
-mod pathfinder;
+pub mod pathfinder;
 mod utils;
 
 pub mod error;

@@ -262,7 +262,7 @@ pub fn find_direct_paths(
   path = path.pretty_print(graph),
   edge = edge_ref.weight().display_name(),
 ))]
-fn can_satisfy_edge(
+pub fn can_satisfy_edge(
     graph: &Graph,
     edge_ref: &EdgeReference,
     path: &OperationPath,

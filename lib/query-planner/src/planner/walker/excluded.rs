@@ -5,6 +5,7 @@ use petgraph::graph::EdgeIndex;
 use crate::ast::type_aware_selection::TypeAwareSelection;
 
 // TODO: Consider interior mutability with Rc<RefCell<ExcludedFromLookup>> to avoid full clone while traversing
+#[derive(Default)]
 pub struct ExcludedFromLookup {
     pub graph_ids: HashSet<String>,
     pub requirement: HashSet<TypeAwareSelection>,
@@ -13,11 +14,7 @@ pub struct ExcludedFromLookup {
 
 impl ExcludedFromLookup {
     pub fn new() -> ExcludedFromLookup {
-        ExcludedFromLookup {
-            graph_ids: HashSet::new(),
-            requirement: HashSet::new(),
-            edge_indices: Vec::new(),
-        }
+        Default::default()
     }
 
     pub fn next_with_graph_id(&self, graph_id: &str) -> ExcludedFromLookup {
