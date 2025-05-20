@@ -241,16 +241,13 @@ impl FetchGraph {
                                 // and then iterate to the next sibling and schedule a merge of 2 with 1.
                                 if !merges_to_perform
                                     .iter()
-                                    .any(|(f, t)| (t, f) == (&sibling_index, step_index))
-                                {
-                                    if sibling.can_merge(
+                                    .any(|(f, t)| (t, f) == (&sibling_index, step_index)) && sibling.can_merge(
                                         sibling_index,
                                         *step_index,
                                         step_data,
                                         self,
                                     ) {
-                                        return Some((sibling_index, *step_index));
-                                    }
+                                    return Some((sibling_index, *step_index));
                                 }
                             }
 
@@ -982,13 +979,13 @@ fn find_satisfiable_key<'a>(
         .edges_from(tail)
         .filter(|edge_reference| {
             let edge = graph.edge(edge_reference.id()).unwrap();
-            return matches!(edge, Edge::EntityMove(_));
+            matches!(edge, Edge::EntityMove(_))
         })
         .collect();
-    entity_moves_edges_to_self.sort_by(|a, b| b.weight().cost().cmp(&a.weight().cost()));
+    entity_moves_edges_to_self.sort_by_key(|edge| std::cmp::Reverse(edge.weight().cost()));
 
     for edge_ref in entity_moves_edges_to_self {
-        if let Some(_) = can_satisfy_edge(
+        if can_satisfy_edge(
             graph,
             &edge_ref,
             &OperationPath {
@@ -1000,7 +997,8 @@ fn find_satisfiable_key<'a>(
             &Default::default(),
             true,
         )
-        .map_err(|error| FetchGraphError::SatisfiableKeyFailure(error))?
+        .map_err(FetchGraphError::SatisfiableKeyFailure)?
+        .is_some()
         {
             return Ok(edge_ref.weight().requirements());
         }
@@ -1070,7 +1068,7 @@ fn process_tree_of_requires(
         fetch_graph,
         parent_fetch_step_index,
         subgraph_name,
-        &graph_node_type_name,
+        graph_node_type_name,
         response_path,
         Some(entity_key),
         Some(requires),
@@ -1098,7 +1096,7 @@ fn process_tree_of_requires(
             // Add the key fields to the output of the parent
             parent_fetch_step
                 .output
-                .add_at_path(&key, response_path.clone(), false);
+                .add_at_path(key, response_path.clone(), false);
         }
         // Add the key fields to the input of the requiring FetchStep
         let step_for_field_with_requires =
@@ -1151,6 +1149,8 @@ fn process_tree_of_requires(
     )
 }
 
+// todo: simplify args
+#[allow(clippy::too_many_arguments)]
 fn process_requires_field_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
@@ -1161,7 +1161,7 @@ fn process_requires_field_edge(
     fetch_path: &MergePath,
     subgraph_name: &SubgraphName,
     type_name: &String,
-    field_name: &String,
+    field_name: &str,
     field_is_leaf: bool,
     field_is_list: bool,
     requires: &TypeAwareSelection,
@@ -1200,7 +1200,7 @@ fn process_requires_field_edge(
         &TypeAwareSelection {
             selection_set: SelectionSet {
                 items: vec![SelectionItem::Field(FieldSelection {
-                    name: field_name.clone(),
+                    name: field_name.to_owned(),
                     alias: None,
                     is_leaf: field_is_leaf,
                     selections: SelectionSet { items: vec![] },
@@ -1247,8 +1247,8 @@ fn process_requires_field_edge(
         response_path,
     )?;
 
-    let mut child_response_path = response_path.push(field_name.clone());
-    let mut child_fetch_path = fetch_path.push(field_name.clone());
+    let mut child_response_path = response_path.push(field_name.to_owned());
+    let mut child_fetch_path = fetch_path.push(field_name.to_owned());
 
     if field_is_list {
         child_response_path = child_response_path.push("@".to_string());
@@ -1345,11 +1345,11 @@ fn process_query_node(
                         requiring_fetch_step_index,
                         response_path,
                         fetch_path,
-                        &subgraph_name,
-                        &type_name,
+                        subgraph_name,
+                        type_name,
                         &field.name,
-                        field.is_leaf.clone(),
-                        field.is_list.clone(),
+                        field.is_leaf,
+                        field.is_list,
                         &field.requirements.clone().unwrap(),
                     )?
                 }
