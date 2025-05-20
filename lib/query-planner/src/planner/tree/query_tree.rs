@@ -36,7 +36,9 @@ impl QueryTree {
         Ok(QueryTree::new(root_node))
     }
 
-    #[instrument]
+    #[instrument(skip_all, fields(
+      tree_count = trees.len()
+    ))]
     pub fn merge_trees(mut trees: Vec<QueryTree>) -> QueryTree {
         let mut accumulator = trees.remove(0);
 

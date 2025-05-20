@@ -1,6 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+};
 
 use petgraph::{graph::NodeIndex, visit::EdgeRef};
+use tracing::instrument;
 
 use super::{
     error::QueryPlanError,
@@ -47,9 +51,10 @@ impl InDegree {
             let current = self.state.get(&child_index);
 
             if let Some(in_degree) = current {
-                if in_degree == &0 {
+                if *in_degree == 0 {
                     panic!("In-degree was 0");
                 }
+
                 self.state.insert(child_index, in_degree - 1);
             } else {
                 panic!("Attempt to decrease an in-degree of a non-existing step");
@@ -75,6 +80,7 @@ impl InDegree {
 ///
 /// Initially, I used a different approach when I also tried to find the end of each Sequence,
 /// but I did hit an issue with a FetchStep depending on more than one parent.
+#[instrument(skip_all)]
 pub fn build_query_plan_from_fetch_graph(
     fetch_graph: FetchGraph,
 ) -> Result<QueryPlan, QueryPlanError> {
@@ -106,7 +112,14 @@ struct FetchResult {
     pending_steps: Vec<NodeIndex>,
 }
 
+impl Debug for FetchResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.node)
+    }
+}
+
 /// Plans an individual `FetchStepData`
+#[instrument(skip_all, ret(Debug))]
 fn plan_fetch_step(
     in_degree: &mut InDegree,
     step_index: NodeIndex,
@@ -169,6 +182,10 @@ struct ParallelResult {
 /// Accepts
 /// - `concurrent_ready_steps` - Steps that are all ready to be processed in parallel
 /// - `previously_pending_steps` - Steps that were pending from previous processing stages
+#[instrument(skip_all, fields(
+  concurrent_ready_steps_count = concurrent_ready_steps.len(),
+  previously_pending_steps_count = previously_pending_steps.len()
+))]
 fn plan_parallel_step_layer(
     in_degree: &mut InDegree,
     concurrent_ready_steps: Vec<NodeIndex>,
@@ -217,6 +234,10 @@ struct SequenceResult {
 ///
 /// - `initial_ready_steps` - The initial set of FetchSteps that are ready to be processed.
 /// - `initial_pending_steps` - Any FetchSteps that are already pending from a higher context.
+#[instrument(skip_all, fields(
+  initial_ready_steps_count = initial_ready_steps.len(),
+  initial_pending_steps_count = initial_pending_steps.len()
+))]
 fn orchestrate_layer_processing(
     in_degree: &mut InDegree,
     initial_ready_steps: Vec<NodeIndex>,

@@ -19,6 +19,7 @@ use petgraph::Directed;
 use petgraph::Direction;
 use std::collections::{HashSet, VecDeque};
 use std::fmt::{Debug, Display};
+use tracing::{debug, instrument};
 
 use super::error::FetchGraphError;
 
@@ -153,6 +154,7 @@ impl FetchGraph {
         None
     }
 
+    #[instrument(skip_all)]
     pub fn optimize(&mut self, root_step_index: NodeIndex) -> Result<(), FetchGraphError> {
         self.root_index = Some(root_step_index);
 
@@ -173,6 +175,7 @@ impl FetchGraph {
     /// out:
     /// A -> B -> ... -> C
     /// ```
+    #[instrument(skip_all)]
     fn deduplicate_and_prune_fetch_steps(&mut self) -> Result<(), FetchGraphError> {
         let steps_to_remove: Vec<NodeIndex> = self
             .step_indices()
@@ -191,6 +194,8 @@ impl FetchGraph {
                 if self.children_of(step_index).next().is_some() {
                     return false;
                 }
+
+                debug!("optimization found: remove '{}'", step);
 
                 true
             })
@@ -222,6 +227,7 @@ impl FetchGraph {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     fn merge_siblings(&mut self, root_step_index: NodeIndex) -> Result<(), FetchGraphError> {
         let mut merges_to_perform: Vec<(NodeIndex, NodeIndex)> = Vec::new();
 
@@ -249,6 +255,11 @@ impl FetchGraph {
                                         self,
                                     )
                                 {
+                                    debug!(
+                                        "optimization found: merge sibling '{}' with '{}'",
+                                        sibling, step_data
+                                    );
+
                                     return Some((sibling_index, *step_index));
                                 }
                             }
@@ -271,6 +282,7 @@ impl FetchGraph {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     fn merge_children_with_parents(
         &mut self,
         root_step_index: NodeIndex,
@@ -284,6 +296,11 @@ impl FetchGraph {
                 let ancestor_index = ancestor_edge.source();
                 if let Ok(ancestor) = self.get_step_data(ancestor_index) {
                     if ancestor.can_merge(ancestor_index, *step_index, step_data, self) {
+                        debug!(
+                            "optimization found: merge parent '{}' with child '{}'",
+                            ancestor, step_data
+                        );
+
                         merges_to_perform.push((ancestor_index, *step_index));
                     }
                 }
@@ -299,6 +316,7 @@ impl FetchGraph {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     fn turn_mutations_into_sequence(
         &mut self,
         root_fetch_step_index: NodeIndex,
@@ -408,6 +426,20 @@ pub struct FetchStepData {
     pub reserved_for_requires: Option<TypeAwareSelection>,
 }
 
+impl Display for FetchStepData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}/{} {} → {} at $.{}",
+            self.input.type_name,
+            self.service_name,
+            self.input,
+            self.output,
+            self.response_path.join("."),
+        )
+    }
+}
+
 impl FetchStepData {
     pub fn is_reserved_for_requires(&self, selection: &TypeAwareSelection) -> bool {
         self.reserved_for_requires
@@ -420,17 +452,7 @@ impl FetchStepData {
         writer: &mut std::fmt::Formatter<'_>,
         index: NodeIndex,
     ) -> Result<(), std::fmt::Error> {
-        write!(
-            writer,
-            "[{}] {}/{} {} → {} at $.{}",
-            index.index(),
-            self.input.type_name,
-            self.service_name,
-            self.input,
-            self.output,
-            self.response_path.join("."),
-        )?;
-        Ok(())
+        write!(writer, "[{}] {}", index.index(), self)
     }
 
     pub fn can_merge(
@@ -479,12 +501,16 @@ impl FetchStepData {
     }
 }
 
+#[instrument(skip_all)]
 fn perform_fetch_step_merge(
     self_index: NodeIndex,
     other_index: NodeIndex,
     fetch_graph: &mut FetchGraph,
 ) -> Result<(), FetchGraphError> {
     let (me, other) = fetch_graph.get_pair_of_steps_mut(self_index, other_index)?;
+
+    debug!("merging fetch steps '{}' and '{}'", me, other);
+
     me.output.add_at_path(
         &other.output,
         other.response_path.slice_from(me.response_path.len()),
@@ -646,8 +672,19 @@ fn get_or_create_fetch_step_for_entity_move(
             });
 
     match matching_child_index {
-        Some(idx) => Ok(idx),
+        Some(idx) => {
+            debug!(
+                "found existing fetch step for entity move for requirement '{}'",
+                requires.map(|r| r.to_string()).unwrap_or_default()
+            );
+            Ok(idx)
+        }
         None => {
+            debug!(
+                "creating a new fetch step for entity move for requirement '{}'",
+                requires.map(|r| r.to_string()).unwrap_or_default()
+            );
+
             let step_index = create_fetch_step_for_entity_move(
                 fetch_graph,
                 subgraph_name,
@@ -664,6 +701,9 @@ fn get_or_create_fetch_step_for_entity_move(
     }
 }
 
+#[instrument(skip_all, fields(
+  count = query_node.children.len()
+))]
 fn process_children_for_fetch_steps(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
@@ -724,6 +764,7 @@ fn process_requirements_for_fetch_steps(
     Ok(())
 }
 
+#[instrument(skip_all)]
 fn process_noop_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
@@ -755,6 +796,8 @@ fn add_typename_field_to_output(
     type_name: &str,
     add_at: &MergePath,
 ) {
+    debug!("adding __typename field to output for type '{}'", type_name);
+
     fetch_step.output.add_at_path(
         &TypeAwareSelection {
             selection_set: SelectionSet {
@@ -769,6 +812,9 @@ fn add_typename_field_to_output(
 
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
+#[instrument(skip_all, fields(
+  edge = graph.pretty_print_edge(edge_index, false),
+))]
 fn process_entity_move_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
@@ -810,12 +856,15 @@ fn process_entity_move_edge(
     )?;
 
     let fetch_step = fetch_graph.get_step_data_mut(fetch_step_index)?;
+    debug!("adding input requirement '{}' to fetch step", requirement);
     fetch_step.input.add(&requirement);
+
     let parent_fetch_step = fetch_graph
         .get_step_data_mut(parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?)?;
     add_typename_field_to_output(parent_fetch_step, type_name, fetch_path);
 
     // Make the fetch step a child of the parent fetch step
+    debug!("connecting fetch step to parent");
     fetch_graph.connect(
         parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?,
         fetch_step_index,
@@ -843,6 +892,10 @@ fn process_entity_move_edge(
     Ok(())
 }
 
+#[instrument(skip_all, fields(
+  subgraph = subgraph_name.0,
+  type_name = type_name,
+))]
 fn process_subgraph_entrypoint_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
@@ -882,6 +935,11 @@ fn process_subgraph_entrypoint_edge(
 
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
+#[instrument(skip_all, fields(
+  type_name = field_type_name,
+  field = field_name,
+  leaf = field_is_leaf,
+))]
 fn process_plain_field_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
@@ -898,10 +956,12 @@ fn process_plain_field_edge(
     let parent_fetch_step_index = parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?;
 
     if let Some(requiring_fetch_step_index) = requiring_fetch_step_index {
+        debug!("connecting parent fetch step to requiring fetch step");
         fetch_graph.connect(parent_fetch_step_index, requiring_fetch_step_index);
     }
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
+    debug!("adding output field '{}' to parent fetch step", field_name);
     parent_fetch_step.output.add_at_path(
         &TypeAwareSelection {
             selection_set: SelectionSet {
@@ -965,12 +1025,15 @@ fn process_plain_field_edge(
 ///
 /// The key fields need to be added to the output of the parent,
 /// and input of the entity move.
+#[instrument(skip_all, fields(
+  edge_from_parent = query_node.edge_from_parent.map(|e| graph.pretty_print_edge(e, false))
+), ret())]
 fn find_satisfiable_key<'a>(
     graph: &'a Graph,
     query_node: &QueryTreeNode,
 ) -> Result<Option<&'a TypeAwareSelection>, FetchGraphError> {
     // This could be improved...
-    // We added a flag to `canSatisfyEdge` and increased the complexity.
+    // We added a flag to `can_satisfy_edge` and increased the complexity.
 
     let edge_from_parent_index = query_node
         .edge_from_parent
@@ -1009,6 +1072,9 @@ fn find_satisfiable_key<'a>(
     Ok(None)
 }
 
+#[instrument(skip_all, fields(
+  requirement = %requires
+))]
 fn process_tree_of_requires(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
@@ -1103,11 +1169,16 @@ fn process_tree_of_requires(
         // Add the key fields to the input of the requiring FetchStep
         let step_for_field_with_requires =
             fetch_graph.get_step_data_mut(step_for_field_with_requires_index)?;
+        debug!("Adding key to fetch step input: '{}'", key);
         step_for_field_with_requires.input.add(key);
     }
 
     let fetch_step_to_get_required_fields =
         fetch_graph.get_step_data_mut(fetch_step_to_get_required_fields_index)?;
+    debug!(
+        "Adding entity key to fetch step to get required fields input: '{}'",
+        entity_key
+    );
     fetch_step_to_get_required_fields.input.add(entity_key);
 
     //
@@ -1153,6 +1224,13 @@ fn process_tree_of_requires(
 
 // todo: simplify args
 #[allow(clippy::too_many_arguments)]
+#[instrument(skip_all, fields(
+  subgraph = subgraph_name.0,
+  type_name = type_name,
+  field = field_name,
+  requirements = requires.to_string(),
+  leaf = field_is_leaf,
+))]
 fn process_requires_field_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
@@ -1198,6 +1276,10 @@ fn process_requires_field_edge(
         fetch_graph.get_step_data_mut(step_for_field_with_requires_index)?;
 
     step_for_field_with_requires.reserved_for_requires = Some(requires.clone());
+    debug!(
+        "adding requires output field '{}/{}' to fetch step",
+        type_name, field_name
+    );
     step_for_field_with_requires.output.add_at_path(
         &TypeAwareSelection {
             selection_set: SelectionSet {
@@ -1214,6 +1296,7 @@ fn process_requires_field_edge(
         MergePath::default(),
         false,
     );
+    debug!("adding requires input '{}' to fetch step", requires);
     step_for_field_with_requires.input.add(requires);
 
     if let Some(requiring_fetch_step_index) = requiring_fetch_step_index {
@@ -1390,6 +1473,10 @@ pub fn find_graph_roots(graph: &FetchGraph) -> Vec<NodeIndex> {
     roots
 }
 
+#[instrument(skip(graph, query_tree), fields(
+    requirements_count = query_tree.root.requirements.len(),
+    children_count = query_tree.root.children.len(),
+))]
 pub fn build_fetch_graph_from_query_tree(
     graph: &Graph,
     query_tree: QueryTree,
