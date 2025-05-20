@@ -182,13 +182,13 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Parallel {
         Fetch(service: "name") {
-          {__typename product{__typename name{model brand id}}}
+          {product{name{model brand id}}}
         },
         Fetch(service: "category") {
-          {__typename product{__typename category{name id} id}}
+          {product{category{name id} id}}
         },
         Fetch(service: "price") {
-          {__typename product{__typename price{currency amount id}}}
+          {product{price{currency amount id}}}
         },
       },
     },

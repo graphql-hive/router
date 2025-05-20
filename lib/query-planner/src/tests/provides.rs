@@ -148,7 +148,7 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Fetch(service: "category") {
-        {__typename products{__typename categories{__typename name id} id}}
+        {products{categories{name id} id}}
       },
     },
     "#);
