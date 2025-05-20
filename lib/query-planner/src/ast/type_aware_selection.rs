@@ -60,7 +60,7 @@ impl TypeAwareSelection {
         selection_items_are_subset_of(&self.selection_set.items, &other.selection_set.items)
     }
 
-    pub fn add(&mut self, to_add: Self) {
+    pub fn add(&mut self, to_add: &Self) {
         merge_selection_set(&mut self.selection_set, &to_add.selection_set, false);
     }
 

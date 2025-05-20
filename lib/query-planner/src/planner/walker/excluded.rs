@@ -11,13 +11,19 @@ pub struct ExcludedFromLookup {
     pub edge_indices: Vec<EdgeIndex>,
 }
 
-impl ExcludedFromLookup {
-    pub fn new() -> ExcludedFromLookup {
-        ExcludedFromLookup {
+impl Default for ExcludedFromLookup {
+    fn default() -> Self {
+        Self {
             graph_ids: HashSet::new(),
             requirement: HashSet::new(),
             edge_indices: Vec::new(),
         }
+    }
+}
+
+impl ExcludedFromLookup {
+    pub fn new() -> ExcludedFromLookup {
+        Default::default()
     }
 
     pub fn next_with_graph_id(&self, graph_id: &str) -> ExcludedFromLookup {

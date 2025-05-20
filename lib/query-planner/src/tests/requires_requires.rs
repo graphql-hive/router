@@ -1,6 +1,10 @@
 use crate::{
     parse_operation,
-    planner::{tree::query_tree::QueryTree, walker::walk_operation},
+    planner::{
+        fetch::fetch_graph::build_fetch_graph_from_query_tree,
+        query_plan::build_query_plan_from_fetch_graph, tree::query_tree::QueryTree,
+        walker::walk_operation,
+    },
     tests::testkit::{init_logger, paths_to_trees, read_supergraph},
     utils::operation_utils::get_operation_to_execute,
 };
@@ -52,9 +56,48 @@ fn one() -> Result<(), Box<dyn Error>> {
             canAffordWithDiscount of Boolean/d
     ");
 
-    // TODO: run when we support "requires"
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+
+    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
+    Nodes:
+    [1] Query/b {} → {product{__typename id hasDiscount}} at $.
+    [3] Product/d {__typename isExpensiveWithDiscount id} → {canAffordWithDiscount} at $.product
+    [4] Product/c {__typename id hasDiscount} → {isExpensiveWithDiscount} at $.product
+
+    Tree:
+    [1]
+      [4]
+        [3]
+    ");
+
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {product{__typename id hasDiscount}}
+        },
+        Flatten(path: "product") {
+          Fetch(service: "c") {
+              __typename
+              id
+              hasDiscount
+            } =>
+            {isExpensiveWithDiscount}
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "d") {
+              __typename
+              isExpensiveWithDiscount
+              id
+            } =>
+            {canAffordWithDiscount}
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -609,7 +652,6 @@ fn many() -> Result<(), Box<dyn Error>> {
           id of ID/b
     ");
 
-    // TODO: run when we support "requires"
     // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
     // insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
 

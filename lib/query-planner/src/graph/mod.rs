@@ -79,6 +79,13 @@ impl Graph {
             .ok_or(GraphError::EdgeNotFound(edge_index))
     }
 
+    pub fn get_edge_head(&self, edge_index: &EdgeIndex) -> Result<NodeIndex, GraphError> {
+        self.graph
+            .edge_endpoints(*edge_index)
+            .ok_or(GraphError::EdgeNotFound(*edge_index))
+            .map(|v| v.0)
+    }
+
     pub fn get_edge_tail(&self, edge_index: &EdgeIndex) -> Result<NodeIndex, GraphError> {
         self.graph
             .edge_endpoints(*edge_index)
