@@ -25,7 +25,7 @@ fn init_test_logger_internal() {
     let tree_layer = tracing_tree::HierarchicalLayer::new(2)
         .with_bracketed_fields(true)
         .with_deferred_spans(true)
-        .with_wraparound(15)
+        .with_wraparound(25)
         .with_indent_lines(true)
         .with_timer(tracing_tree::time::Uptime::default())
         .with_thread_names(false)
