@@ -264,14 +264,10 @@ impl SubgraphDefinition {
 
     pub fn is_entity_type(&self) -> bool {
         match self {
-            SubgraphDefinition::Object(obj) => {
-                obj.join_types
-                    .iter()
-                    .any(|jt| match (&jt.resolvable, &jt.key) {
-                        (Some(resolvable), Some(_key)) => *resolvable,
-                        _ => false,
-                    })
-            }
+            SubgraphDefinition::Object(obj) => obj
+                .join_types
+                .iter()
+                .any(|jt| matches!((&jt.resolvable, &jt.key), (true, Some(_key)))),
             _ => false,
         }
     }

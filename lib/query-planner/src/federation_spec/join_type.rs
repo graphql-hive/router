@@ -2,13 +2,25 @@ use graphql_parser::schema::{Directive, Value};
 
 use super::directives::FederationDirective;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct JoinTypeDirective {
     pub graph_id: String,
     pub key: Option<String>,
-    pub extension: Option<bool>,
-    pub resolvable: Option<bool>,
-    pub is_interface_object: Option<bool>,
+    pub extension: bool,
+    pub resolvable: bool,
+    pub is_interface_object: bool,
+}
+
+impl Default for JoinTypeDirective {
+    fn default() -> Self {
+        Self {
+            graph_id: Default::default(),
+            key: None,
+            extension: false,
+            resolvable: true,
+            is_interface_object: false,
+        }
+    }
 }
 
 impl JoinTypeDirective {
@@ -39,15 +51,15 @@ impl<'a> FederationDirective<'a> for JoinTypeDirective {
                 }
             } else if arg_name.eq("extension") {
                 if let Value::Boolean(value) = arg_value {
-                    result.extension = Some(*value)
+                    result.extension = *value
                 }
             } else if arg_name.eq("resolvable") {
                 if let Value::Boolean(value) = arg_value {
-                    result.resolvable = Some(*value)
+                    result.resolvable = *value
                 }
             } else if arg_name.eq("is_interface_object") {
                 if let Value::Boolean(value) = arg_value {
-                    result.is_interface_object = Some(*value)
+                    result.is_interface_object = *value
                 }
             }
         }

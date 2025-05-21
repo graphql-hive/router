@@ -345,7 +345,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 4);
     assert_eq!(best_paths_per_leaf[0].len(), 1);
-    assert_eq!(best_paths_per_leaf[1].len(), 2);
+    assert_eq!(best_paths_per_leaf[1].len(), 1);
     assert_eq!(best_paths_per_leaf[2].len(), 1);
     assert_eq!(best_paths_per_leaf[3].len(), 1);
 
@@ -355,7 +355,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[1][0].pretty_print(&graph),
-      @"root(Query) -(b)- Query/b -(b)- B/b -(a)- A/b -(🔑🧩{pId})- A/a -(name)- String/a"
+      @"root(Query) -(b)- Query/b -(b)- B/b -(a)- A/b -(🔑🧩{id})- A/a -(name)- String/a"
     );
     insta::assert_snapshot!(
       best_paths_per_leaf[2][0].pretty_print(&graph),
@@ -375,11 +375,6 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
           a of A/b
             🧩 [
               🧩 [
-                pId of ID/b
-              ]
-              🔑 A/a
-                name of String/a
-              🧩 [
                 id of ID/b
               ]
               🔑 A/a
@@ -394,7 +389,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
         b of B/b
           a of A/b
             🧩 [
-              pId of ID/b
+              id of ID/b
             ]
             🔑 A/a
               name of String/a
@@ -424,11 +419,6 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
           a of A/b
             🧩 [
               🧩 [
-                pId of ID/b
-              ]
-              🔑 A/a
-                name of String/a
-              🧩 [
                 id of ID/b
               ]
               🔑 A/a
@@ -436,7 +426,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
             ]
             nameInB of String/b
             🧩 [
-              pId of ID/b
+              id of ID/b
             ]
             🔑 A/a
               name of String/a
