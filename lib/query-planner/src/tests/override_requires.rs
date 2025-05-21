@@ -1,6 +1,10 @@
 use crate::{
     parse_operation,
-    planner::{tree::query_tree::QueryTree, walker::walk_operation},
+    planner::{
+        fetch::fetch_graph::build_fetch_graph_from_query_tree,
+        query_plan::build_query_plan_from_fetch_graph, tree::query_tree::QueryTree,
+        walker::walk_operation,
+    },
     tests::testkit::{init_logger, paths_to_trees, read_supergraph},
     utils::operation_utils::get_operation_to_execute,
 };
@@ -143,9 +147,106 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
           id of ID/a
     ");
 
-    // TODO: make sure this one works, by adding requires support.
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"...");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Parallel {
+        Sequence {
+          Fetch(service: "a") {
+            {userInA{__typename id}}
+          },
+          Flatten(path: "userInA") {
+            Fetch(service: "b") {
+                __typename
+                id
+              } =>
+              {name}
+            },
+          },
+          Parallel {
+            Flatten(path: "userInA") {
+              Fetch(service: "c") {
+                  __typename
+                  name
+                  id
+                } =>
+                {cName}
+              },
+            },
+            Flatten(path: "userInA") {
+              Fetch(service: "a") {
+                  __typename
+                  name
+                  id
+                } =>
+                {aName}
+              },
+            },
+          },
+        },
+        Sequence {
+          Fetch(service: "b") {
+            {userInB{__typename id name}}
+          },
+          Parallel {
+            Flatten(path: "userInB") {
+              Fetch(service: "c") {
+                  __typename
+                  name
+                  id
+                } =>
+                {cName}
+              },
+            },
+            Flatten(path: "userInB") {
+              Fetch(service: "a") {
+                  __typename
+                  name
+                  id
+                } =>
+                {aName}
+              },
+            },
+          },
+        },
+        Sequence {
+          Fetch(service: "c") {
+            {userInC{__typename id}}
+          },
+          Flatten(path: "userInC") {
+            Fetch(service: "b") {
+                __typename
+                id
+              } =>
+              {name}
+            },
+          },
+          Parallel {
+            Flatten(path: "userInC") {
+              Fetch(service: "c") {
+                  __typename
+                  name
+                  id
+                } =>
+                {cName}
+              },
+            },
+            Flatten(path: "userInC") {
+              Fetch(service: "a") {
+                  __typename
+                  name
+                  id
+                } =>
+                {aName}
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -182,9 +283,35 @@ fn override_with_requires_cname_in_c() -> Result<(), Box<dyn Error>> {
           cName of String/c
     ");
 
-    // TODO: make sure this one works, by adding requires support.
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"...");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "c") {
+          {userInC{__typename id}}
+        },
+        Flatten(path: "userInC") {
+          Fetch(service: "b") {
+              __typename
+              id
+            } =>
+            {name}
+          },
+        },
+        Flatten(path: "userInC") {
+          Fetch(service: "c") {
+              __typename
+              name
+              id
+            } =>
+            {cName}
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -225,9 +352,35 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
             cName of String/c
     ");
 
-    // TODO: make sure this one works, by adding requires support.
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"...");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {userInA{__typename id}}
+        },
+        Flatten(path: "userInA") {
+          Fetch(service: "b") {
+              __typename
+              id
+            } =>
+            {name}
+          },
+        },
+        Flatten(path: "userInA") {
+          Fetch(service: "c") {
+              __typename
+              name
+              id
+            } =>
+            {cName}
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -264,9 +417,35 @@ fn override_with_requires_aname_in_a() -> Result<(), Box<dyn Error>> {
           aName of String/a
     ");
 
-    // TODO: make sure this one works, by adding requires support.
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"...");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {userInA{__typename id}}
+        },
+        Flatten(path: "userInA") {
+          Fetch(service: "b") {
+              __typename
+              id
+            } =>
+            {name}
+          },
+        },
+        Flatten(path: "userInA") {
+          Fetch(service: "a") {
+              __typename
+              name
+              id
+            } =>
+            {aName}
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }

@@ -57,19 +57,6 @@ fn one() -> Result<(), Box<dyn Error>> {
     ");
 
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-
-    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
-    Nodes:
-    [1] Query/b {} → {product{__typename id hasDiscount}} at $.
-    [3] Product/d {__typename isExpensiveWithDiscount id} → {canAffordWithDiscount} at $.product
-    [4] Product/c {__typename id hasDiscount} → {isExpensiveWithDiscount} at $.product
-
-    Tree:
-    [1]
-      [4]
-        [3]
-    ");
-
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -80,8 +67,8 @@ fn one() -> Result<(), Box<dyn Error>> {
         Flatten(path: "product") {
           Fetch(service: "c") {
               __typename
-              id
               hasDiscount
+              id
             } =>
             {isExpensiveWithDiscount}
           },
@@ -153,9 +140,48 @@ fn one_with_one_local() -> Result<(), Box<dyn Error>> {
             fieldInD of String/d
     ");
 
-    // TODO: run when we support "requires"
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {product{__typename id hasDiscount}}
+        },
+        Parallel {
+          Sequence {
+            Flatten(path: "product") {
+              Fetch(service: "c") {
+                  __typename
+                  hasDiscount
+                  id
+                } =>
+                {isExpensiveWithDiscount}
+              },
+            },
+            Flatten(path: "product") {
+              Fetch(service: "d") {
+                  __typename
+                  isExpensiveWithDiscount
+                  id
+                } =>
+                {canAffordWithDiscount}
+              },
+            },
+          },
+          Flatten(path: "product") {
+            Fetch(service: "d") {
+                __typename
+                id
+              } =>
+              {fieldInD}
+            },
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -225,9 +251,36 @@ fn two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>> {
             canAffordWithDiscount of Boolean/d
     ");
 
-    // TODO: run when we support "requires"
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {product{__typename id hasDiscount}}
+        },
+        Flatten(path: "product") {
+          Fetch(service: "c") {
+              __typename
+              hasDiscount
+              id
+            } =>
+            {isExpensiveWithDiscount}
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "d") {
+              __typename
+              isExpensiveWithDiscount
+              id
+            } =>
+            {canAffordWithDiscount canAffordWithDiscount2}
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -279,9 +332,44 @@ fn one_more() -> Result<(), Box<dyn Error>> {
             canAfford of Boolean/d
     ");
 
-    // TODO: run when we support "requires"
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {product{__typename id}}
+        },
+        Flatten(path: "product") {
+          Fetch(service: "a") {
+              __typename
+              id
+            } =>
+            {price}
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "c") {
+              __typename
+              price
+              id
+            } =>
+            {isExpensive}
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "d") {
+              __typename
+              isExpensive
+              id
+            } =>
+            {canAfford}
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -351,9 +439,44 @@ fn another_two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>>
             canAfford of Boolean/d
     ");
 
-    // TODO: run when we support "requires"
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {product{__typename id}}
+        },
+        Flatten(path: "product") {
+          Fetch(service: "a") {
+              __typename
+              id
+            } =>
+            {price}
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "c") {
+              __typename
+              price
+              id
+            } =>
+            {isExpensive}
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "d") {
+              __typename
+              isExpensive
+              id
+            } =>
+            {canAfford canAfford2}
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -423,9 +546,68 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
             canAffordWithDiscount of Boolean/d
     ");
 
-    // TODO: run when we support "requires"
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {product{__typename id hasDiscount}}
+        },
+        Parallel {
+          Sequence {
+            Flatten(path: "product") {
+              Fetch(service: "c") {
+                  __typename
+                  hasDiscount
+                  id
+                } =>
+                {isExpensiveWithDiscount}
+              },
+            },
+            Flatten(path: "product") {
+              Fetch(service: "d") {
+                  __typename
+                  isExpensiveWithDiscount
+                  id
+                } =>
+                {canAffordWithDiscount}
+              },
+            },
+          },
+          Sequence {
+            Flatten(path: "product") {
+              Fetch(service: "a") {
+                  __typename
+                  id
+                } =>
+                {price}
+              },
+            },
+            Flatten(path: "product") {
+              Fetch(service: "c") {
+                  __typename
+                  price
+                  id
+                } =>
+                {isExpensive}
+              },
+            },
+            Flatten(path: "product") {
+              Fetch(service: "d") {
+                  __typename
+                  isExpensive
+                  id
+                } =>
+                {canAfford}
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -511,9 +693,68 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
             canAffordWithAndWithoutDiscount of Boolean/d
     ");
 
-    // TODO: run when we support "requires"
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {product{__typename id hasDiscount}}
+        },
+        Parallel {
+          Flatten(path: "product") {
+            Fetch(service: "c") {
+                __typename
+                hasDiscount
+                id
+              } =>
+              {isExpensiveWithDiscount}
+            },
+          },
+          Sequence {
+            Flatten(path: "product") {
+              Fetch(service: "a") {
+                  __typename
+                  id
+                } =>
+                {price}
+              },
+            },
+            Flatten(path: "product") {
+              Fetch(service: "c") {
+                  __typename
+                  price
+                  id
+                } =>
+                {isExpensive}
+              },
+            },
+            Flatten(path: "product") {
+              Fetch(service: "d") {
+                  __typename
+                  isExpensive
+                  isExpensiveWithDiscount
+                  id
+                } =>
+                {canAffordWithAndWithoutDiscount canAffordWithAndWithoutDiscount2}
+              },
+            },
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "d") {
+              __typename
+              isExpensive
+              isExpensiveWithDiscount
+              id
+            } =>
+            {canAffordWithAndWithoutDiscount canAffordWithAndWithoutDiscount2}
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -652,8 +893,68 @@ fn many() -> Result<(), Box<dyn Error>> {
           id of ID/b
     ");
 
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {product{__typename id hasDiscount}}
+        },
+        Parallel {
+          Sequence {
+            Flatten(path: "product") {
+              Fetch(service: "c") {
+                  __typename
+                  hasDiscount
+                  id
+                } =>
+                {isExpensiveWithDiscount}
+              },
+            },
+            Flatten(path: "product") {
+              Fetch(service: "d") {
+                  __typename
+                  isExpensiveWithDiscount
+                  id
+                } =>
+                {canAffordWithDiscount canAffordWithDiscount2}
+              },
+            },
+          },
+          Sequence {
+            Flatten(path: "product") {
+              Fetch(service: "a") {
+                  __typename
+                  id
+                } =>
+                {price}
+              },
+            },
+            Flatten(path: "product") {
+              Fetch(service: "c") {
+                  __typename
+                  price
+                  id
+                } =>
+                {isExpensive}
+              },
+            },
+            Flatten(path: "product") {
+              Fetch(service: "d") {
+                  __typename
+                  isExpensive
+                  id
+                } =>
+                {canAfford canAfford2}
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }

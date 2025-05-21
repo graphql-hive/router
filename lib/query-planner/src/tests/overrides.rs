@@ -1,7 +1,8 @@
 use crate::{
     parse_operation,
     planner::{
-        fetch::fetch_graph::build_fetch_graph_from_query_tree, tree::query_tree::QueryTree,
+        fetch::fetch_graph::build_fetch_graph_from_query_tree,
+        query_plan::build_query_plan_from_fetch_graph, tree::query_tree::QueryTree,
         walker::walk_operation,
     },
     tests::testkit::{init_logger, paths_to_trees, read_supergraph},
@@ -41,14 +42,15 @@ fn single_simple_overrides() -> Result<(), Box<dyn Error>> {
 
     let query_tree = QueryTree::merge_trees(qtps);
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
 
-    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
-    Nodes:
-    [1] Query/b {} → {feed{createdAt}} at $.
-
-    Tree:
-    [1]
-    ");
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        {feed{createdAt}}
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -117,20 +119,30 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
     ");
 
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
 
-    // TODO: [3] should be "[b] Post {__typename id} → {createdAt} at $.aFeed.@"
-    // `id` is missing now.
-    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
-    Nodes:
-    [1] Query/b {} → {bFeed{createdAt}} at $.
-    [2] Query/a {} → {aFeed{__typename id}} at $.
-    [3] Post/b {__typename id} → {createdAt} at $.aFeed.@
-
-    Tree:
-    [1]
-    [2]
-      [3]
-    ");
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Parallel {
+        Sequence {
+          Fetch(service: "a") {
+            {aFeed{__typename id}}
+          },
+          Flatten(path: "aFeed.@") {
+            Fetch(service: "b") {
+                __typename
+                id
+              } =>
+              {createdAt}
+            },
+          },
+        },
+        Fetch(service: "b") {
+          {bFeed{createdAt}}
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
