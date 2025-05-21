@@ -137,8 +137,8 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
               __typename
-              price
               upc
+              price
             } =>
             {isExpensive}
           },
@@ -203,10 +203,10 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
               __typename
-              price
               upc
+              price
             } =>
-            {isExpensive isAvailable}
+            {isAvailable isExpensive}
           },
         },
       },
@@ -272,9 +272,9 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
               __typename
+              upc
               price
               weight
-              upc
             } =>
             {shippingEstimate}
           },
@@ -433,9 +433,9 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
               __typename
+              upc
               price
               weight
-              upc
             } =>
             {shippingEstimate{price}}
           },
@@ -563,23 +563,28 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "store") {
-          {products{__typename id}}
+        Fetch(service: "b") {
+          {b{a{__typename compositeId{three two} id} id}}
         },
-        Flatten(path: "products") {
-          Fetch(service: "info") {
+        Flatten(path: "b.a.@") {
+          Fetch(service: "a") {
               __typename
               id
             } =>
-            {isAvailable uuid}
+            {name}
           },
         },
-        Flatten(path: "products") {
-          Fetch(service: "cost") {
+        Flatten(path: "b.a.@") {
+          Fetch(service: "b") {
               __typename
-              uuid
+              name
+              compositeId {
+                three
+                two
+              }
+              id
             } =>
-            {price{currency amount}}
+            {nameInB}
           },
         },
       },

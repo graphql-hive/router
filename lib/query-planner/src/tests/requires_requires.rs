@@ -67,8 +67,8 @@ fn one() -> Result<(), Box<dyn Error>> {
         Flatten(path: "product") {
           Fetch(service: "c") {
               __typename
-              hasDiscount
               id
+              hasDiscount
             } =>
             {isExpensiveWithDiscount}
           },
@@ -154,8 +154,8 @@ fn one_with_one_local() -> Result<(), Box<dyn Error>> {
             Flatten(path: "product") {
               Fetch(service: "c") {
                   __typename
-                  hasDiscount
                   id
+                  hasDiscount
                 } =>
                 {isExpensiveWithDiscount}
               },
@@ -456,22 +456,46 @@ fn another_two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>>
             {price}
           },
         },
-        Flatten(path: "product") {
-          Fetch(service: "c") {
-              __typename
-              price
-              id
-            } =>
-            {isExpensive}
+        Parallel {
+          Sequence {
+            Flatten(path: "product") {
+              Fetch(service: "c") {
+                  __typename
+                  price
+                  id
+                } =>
+                {isExpensive}
+              },
+            },
+            Flatten(path: "product") {
+              Fetch(service: "d") {
+                  __typename
+                  isExpensive
+                  id
+                } =>
+                {canAfford}
+              },
+            },
           },
-        },
-        Flatten(path: "product") {
-          Fetch(service: "d") {
-              __typename
-              isExpensive
-              id
-            } =>
-            {canAfford canAfford2}
+          Sequence {
+            Flatten(path: "product") {
+              Fetch(service: "c") {
+                  __typename
+                  price
+                  id
+                } =>
+                {isExpensive}
+              },
+            },
+            Flatten(path: "product") {
+              Fetch(service: "d") {
+                  __typename
+                  isExpensive
+                  id
+                } =>
+                {canAfford2}
+              },
+            },
           },
         },
       },
