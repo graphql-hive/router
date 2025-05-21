@@ -2,15 +2,32 @@ use graphql_parser::schema::{Directive, Value};
 
 use super::directives::FederationDirective;
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct JoinFieldDirective {
     pub graph_id: Option<String>,
     pub requires: Option<String>,
     pub provides: Option<String>,
     pub type_in_graph: Option<String>,
-    pub external: Option<bool>,
+    pub external: bool,
     pub override_value: Option<String>,
-    pub used_overridden: Option<bool>,
+    pub used_overridden: bool,
+}
+
+// Kamil: I added allow(clippy), because I prefer to define the defaults explicitly,
+// instead of relying on Default macro. It's not obvious that a default for `bool` is `false`.
+#[allow(clippy::derivable_impls)]
+impl Default for JoinFieldDirective {
+    fn default() -> Self {
+        Self {
+            graph_id: Default::default(),
+            requires: None,
+            provides: None,
+            type_in_graph: None,
+            external: false,
+            override_value: None,
+            used_overridden: false,
+        }
+    }
 }
 
 impl JoinFieldDirective {
@@ -49,7 +66,7 @@ impl<'a> FederationDirective<'a> for JoinFieldDirective {
                 }
             } else if arg_name.eq("external") {
                 if let Value::Boolean(value) = arg_value {
-                    result.external = Some(*value)
+                    result.external = *value
                 }
             } else if arg_name.eq("override") {
                 if let Value::String(value) = arg_value {
@@ -57,7 +74,7 @@ impl<'a> FederationDirective<'a> for JoinFieldDirective {
                 }
             } else if arg_name.eq("usedOverridden") {
                 if let Value::Boolean(value) = arg_value {
-                    result.used_overridden = Some(*value)
+                    result.used_overridden = *value
                 }
             }
         }

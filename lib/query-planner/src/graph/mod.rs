@@ -199,7 +199,7 @@ impl Graph {
                     ));
 
                     if join_type1.graph_id != join_type2.graph_id {
-                        if let Some(key) = &join_type2.key {
+                        if let (true, Some(key)) = (&join_type2.resolvable, &join_type2.key) {
                             let tail = self.upsert_node(Node::new_node(
                                 def_name,
                                 state.resolve_graph_id(&join_type2.graph_id)?,
@@ -215,7 +215,7 @@ impl Graph {
 
                             self.upsert_edge(head, tail, Edge::create_entity_move(key, selection));
                         }
-                    } else if let Some(key) = &join_type1.key {
+                    } else if let (true, Some(key)) = (&join_type1.resolvable, &join_type1.key) {
                         let selection_resolver =
                             state.selection_resolvers_for_subgraph(&join_type1.graph_id)?;
                         let selection = selection_resolver.resolve(def_name, key)?;
@@ -371,8 +371,8 @@ impl Graph {
 
                         match (is_available, maybe_join_field) {
                             (true, Some(join_field)) => {
-                                let is_external = join_field.external.is_some_and(|v| v)
-                                    && join_field.requires.is_none();
+                                let is_external =
+                                    join_field.external && join_field.requires.is_none();
 
                                 if is_external {
                                     info!(

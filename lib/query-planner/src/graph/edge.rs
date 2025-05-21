@@ -140,7 +140,7 @@ impl Debug for Edge {
                     }
 
                     // Add other relevant directives like external, override, etc.
-                    if jf.external.unwrap_or(false) {
+                    if jf.external {
                         result = result.and_then(|_| write!(f, " @external"));
                     }
 
