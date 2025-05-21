@@ -137,8 +137,8 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
               __typename
-              upc
               price
+              upc
             } =>
             {isExpensive}
           },
@@ -203,10 +203,10 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
               __typename
-              upc
               price
+              upc
             } =>
-            {isAvailable isExpensive}
+            {isExpensive isAvailable}
           },
         },
       },
@@ -272,9 +272,9 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
               __typename
-              upc
               price
               weight
+              upc
             } =>
             {shippingEstimate}
           },
@@ -433,9 +433,9 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
               __typename
-              upc
               price
               weight
+              upc
             } =>
             {shippingEstimate{price}}
           },

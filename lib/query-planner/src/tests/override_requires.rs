@@ -167,21 +167,21 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
           },
           Parallel {
             Flatten(path: "userInA") {
-              Fetch(service: "a") {
-                  __typename
-                  name
-                  id
-                } =>
-                {aName}
-              },
-            },
-            Flatten(path: "userInA") {
               Fetch(service: "c") {
                   __typename
                   name
                   id
                 } =>
                 {cName}
+              },
+            },
+            Flatten(path: "userInA") {
+              Fetch(service: "a") {
+                  __typename
+                  name
+                  id
+                } =>
+                {aName}
               },
             },
           },
@@ -192,21 +192,21 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
           },
           Parallel {
             Flatten(path: "userInB") {
-              Fetch(service: "a") {
+              Fetch(service: "c") {
                   __typename
-                  id
                   name
+                  id
                 } =>
-                {aName}
+                {cName}
               },
             },
             Flatten(path: "userInB") {
-              Fetch(service: "c") {
+              Fetch(service: "a") {
                   __typename
-                  id
                   name
+                  id
                 } =>
-                {cName}
+                {aName}
               },
             },
           },
@@ -225,21 +225,21 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
           },
           Parallel {
             Flatten(path: "userInC") {
-              Fetch(service: "a") {
-                  __typename
-                  name
-                  id
-                } =>
-                {aName}
-              },
-            },
-            Flatten(path: "userInC") {
               Fetch(service: "c") {
                   __typename
                   name
                   id
                 } =>
                 {cName}
+              },
+            },
+            Flatten(path: "userInC") {
+              Fetch(service: "a") {
+                  __typename
+                  name
+                  id
+                } =>
+                {aName}
               },
             },
           },
