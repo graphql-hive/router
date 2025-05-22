@@ -334,7 +334,7 @@ pub fn can_satisfy_edge(
                             }
                         };
                     }
-                    SelectionItem::Fragment { .. } => {
+                    SelectionItem::InlineFragment { .. } => {
                         unimplemented!("fragment not supported yet")
                     }
                 }

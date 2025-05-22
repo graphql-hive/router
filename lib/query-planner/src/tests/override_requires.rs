@@ -155,86 +155,150 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
       Sequence {
         Parallel {
           Fetch(service: "a") {
-            {userInA{__typename id}}
+            {
+              userInA {
+                __typename
+                id
+              }
+            }
           },
           Fetch(service: "b") {
-            {userInB{__typename id name}}
+            {
+              userInB {
+                __typename
+                id
+                name
+              }
+            }
           },
           Fetch(service: "c") {
-            {userInC{__typename id}}
+            {
+              userInC {
+                __typename
+                id
+              }
+            }
           },
         },
         Parallel {
           Flatten(path: "userInA") {
             Fetch(service: "b") {
-                __typename
-                id
+                ... on User {
+                  __typename
+                  id
+                }
               } =>
-              {name}
+              {
+                ... on User {
+                  name
+                }
+              }
             },
           },
           Flatten(path: "userInB") {
             Fetch(service: "c") {
-                __typename
-                name
-                id
+                ... on User {
+                  __typename
+                  name
+                  id
+                }
               } =>
-              {cName}
+              {
+                ... on User {
+                  cName
+                }
+              }
             },
           },
           Flatten(path: "userInB") {
             Fetch(service: "a") {
-                __typename
-                name
-                id
+                ... on User {
+                  __typename
+                  name
+                  id
+                }
               } =>
-              {aName}
+              {
+                ... on User {
+                  aName
+                }
+              }
             },
           },
           Flatten(path: "userInC") {
             Fetch(service: "b") {
-                __typename
-                id
+                ... on User {
+                  __typename
+                  id
+                }
               } =>
-              {name}
+              {
+                ... on User {
+                  name
+                }
+              }
             },
           },
         },
         Parallel {
           Flatten(path: "userInA") {
             Fetch(service: "c") {
-                __typename
-                name
-                id
+                ... on User {
+                  __typename
+                  name
+                  id
+                }
               } =>
-              {cName}
+              {
+                ... on User {
+                  cName
+                }
+              }
             },
           },
           Flatten(path: "userInA") {
             Fetch(service: "a") {
-                __typename
-                name
-                id
+                ... on User {
+                  __typename
+                  name
+                  id
+                }
               } =>
-              {aName}
+              {
+                ... on User {
+                  aName
+                }
+              }
             },
           },
           Flatten(path: "userInC") {
             Fetch(service: "c") {
-                __typename
-                name
-                id
+                ... on User {
+                  __typename
+                  name
+                  id
+                }
               } =>
-              {cName}
+              {
+                ... on User {
+                  cName
+                }
+              }
             },
           },
           Flatten(path: "userInC") {
             Fetch(service: "a") {
-                __typename
-                name
-                id
+                ... on User {
+                  __typename
+                  name
+                  id
+                }
               } =>
-              {aName}
+              {
+                ... on User {
+                  aName
+                }
+              }
             },
           },
         },
@@ -284,23 +348,40 @@ fn override_with_requires_cname_in_c() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "c") {
-          {userInC{__typename id}}
+          {
+            userInC {
+              __typename
+              id
+            }
+          }
         },
         Flatten(path: "userInC") {
           Fetch(service: "b") {
-              __typename
-              id
+              ... on User {
+                __typename
+                id
+              }
             } =>
-            {name}
+            {
+              ... on User {
+                name
+              }
+            }
           },
         },
         Flatten(path: "userInC") {
           Fetch(service: "c") {
-              __typename
-              name
-              id
+              ... on User {
+                __typename
+                name
+                id
+              }
             } =>
-            {cName}
+            {
+              ... on User {
+                cName
+              }
+            }
           },
         },
       },
@@ -353,23 +434,40 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          {userInA{__typename id}}
+          {
+            userInA {
+              __typename
+              id
+            }
+          }
         },
         Flatten(path: "userInA") {
           Fetch(service: "b") {
-              __typename
-              id
+              ... on User {
+                __typename
+                id
+              }
             } =>
-            {name}
+            {
+              ... on User {
+                name
+              }
+            }
           },
         },
         Flatten(path: "userInA") {
           Fetch(service: "c") {
-              __typename
-              name
-              id
+              ... on User {
+                __typename
+                name
+                id
+              }
             } =>
-            {cName}
+            {
+              ... on User {
+                cName
+              }
+            }
           },
         },
       },
@@ -418,23 +516,40 @@ fn override_with_requires_aname_in_a() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          {userInA{__typename id}}
+          {
+            userInA {
+              __typename
+              id
+            }
+          }
         },
         Flatten(path: "userInA") {
           Fetch(service: "b") {
-              __typename
-              id
+              ... on User {
+                __typename
+                id
+              }
             } =>
-            {name}
+            {
+              ... on User {
+                name
+              }
+            }
           },
         },
         Flatten(path: "userInA") {
           Fetch(service: "a") {
-              __typename
-              name
-              id
+              ... on User {
+                __typename
+                name
+                id
+              }
             } =>
-            {aName}
+            {
+              ... on User {
+                aName
+              }
+            }
           },
         },
       },

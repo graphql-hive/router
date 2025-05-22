@@ -58,14 +58,30 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "products") {
-          {products{__typename upc}}
+          {
+            products {
+              __typename
+              upc
+            }
+          }
         },
         Flatten(path: "products.@") {
           Fetch(service: "reviews") {
-              __typename
-              upc
+              ... on Product {
+                __typename
+                upc
+              }
             } =>
-            {reviews{author{username}}}
+            {
+              ... on Product {
+                reviews {
+                  author {
+                    username {
+                    }
+                  }
+                }
+              }
+            }
           },
         },
       },
@@ -128,7 +144,17 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Fetch(service: "category") {
-        {products{categories{name id} id}}
+        {
+          products {
+            categories {
+              name {
+              }
+              id {
+              }
+            }
+            id
+          }
+        }
       },
     },
     "#);

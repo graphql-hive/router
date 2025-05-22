@@ -1,6 +1,6 @@
 use crate::utils::pretty_display::PrettyDisplay;
 
-use super::selection_set::{FieldSelection, FragmentSelection};
+use super::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display},
@@ -10,14 +10,14 @@ use std::{
 #[derive(Clone, Deserialize, Serialize)]
 pub enum SelectionItem {
     Field(FieldSelection),
-    Fragment(FragmentSelection),
+    InlineFragment(InlineFragmentSelection),
 }
 
 impl Hash for SelectionItem {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match self {
             SelectionItem::Field(field) => field.hash(state),
-            SelectionItem::Fragment(fragment) => fragment.hash(state),
+            SelectionItem::InlineFragment(fragment) => fragment.hash(state),
         }
     }
 }
@@ -26,7 +26,9 @@ impl Display for SelectionItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SelectionItem::Field(field_selection) => write!(f, "{}", field_selection),
-            SelectionItem::Fragment(fragment_selection) => write!(f, "{}", fragment_selection),
+            SelectionItem::InlineFragment(fragment_selection) => {
+                write!(f, "{}", fragment_selection)
+            }
         }
     }
 }
@@ -35,7 +37,7 @@ impl PrettyDisplay for SelectionItem {
     fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
         match self {
             SelectionItem::Field(field_selection) => field_selection.pretty_fmt(f, depth)?,
-            SelectionItem::Fragment(fragment_selection) => {
+            SelectionItem::InlineFragment(fragment_selection) => {
                 fragment_selection.pretty_fmt(f, depth)?
             }
         }
@@ -52,15 +54,15 @@ impl Ord for SelectionItem {
                 SelectionItem::Field(FieldSelection { .. }),
             ) => self.sort_key().cmp(&other.sort_key()),
             (
-                SelectionItem::Fragment(FragmentSelection { type_name: a, .. }),
-                SelectionItem::Fragment(FragmentSelection { type_name: b, .. }),
+                SelectionItem::InlineFragment(InlineFragmentSelection { type_name: a, .. }),
+                SelectionItem::InlineFragment(InlineFragmentSelection { type_name: b, .. }),
             ) => a.cmp(b),
             (
                 SelectionItem::Field(FieldSelection { .. }),
-                SelectionItem::Fragment(FragmentSelection { .. }),
+                SelectionItem::InlineFragment(InlineFragmentSelection { .. }),
             ) => std::cmp::Ordering::Less,
             (
-                SelectionItem::Fragment(FragmentSelection { .. }),
+                SelectionItem::InlineFragment(InlineFragmentSelection { .. }),
                 SelectionItem::Field(FieldSelection { .. }),
             ) => std::cmp::Ordering::Greater,
         }
@@ -77,9 +79,16 @@ impl SelectionItem {
     pub fn selections(&self) -> Option<&Vec<SelectionItem>> {
         match self {
             SelectionItem::Field(FieldSelection { selections, .. }) => Some(&selections.items),
-            SelectionItem::Fragment(FragmentSelection { selections, .. }) => {
+            SelectionItem::InlineFragment(InlineFragmentSelection { selections, .. }) => {
                 Some(&selections.items)
             }
+        }
+    }
+
+    pub fn selection_set(&self) -> &SelectionSet {
+        match self {
+            SelectionItem::Field(FieldSelection { selections, .. }) => selections,
+            SelectionItem::InlineFragment(InlineFragmentSelection { selections, .. }) => selections,
         }
     }
 
@@ -88,7 +97,9 @@ impl SelectionItem {
             SelectionItem::Field(FieldSelection {
                 name: field_name, ..
             }) => field_name.to_string(),
-            SelectionItem::Fragment(FragmentSelection { type_name, .. }) => type_name.to_string(),
+            SelectionItem::InlineFragment(InlineFragmentSelection { type_name, .. }) => {
+                type_name.to_string()
+            }
         }
     }
 
@@ -105,7 +116,7 @@ impl SelectionItem {
     }
 
     pub fn is_fragment(&self) -> bool {
-        matches!(self, SelectionItem::Fragment(_))
+        matches!(self, SelectionItem::InlineFragment(_))
     }
 
     pub fn is_field(&self) -> bool {
@@ -123,7 +134,7 @@ impl Debug for SelectionItem {
                 .field("name", name)
                 .field("selections", selections)
                 .finish(),
-            SelectionItem::Fragment(FragmentSelection {
+            SelectionItem::InlineFragment(InlineFragmentSelection {
                 type_name,
                 selections,
             }) => f
@@ -145,7 +156,7 @@ impl PartialEq for SelectionItem {
 
                 f1.selections == f2.selections
             }
-            (SelectionItem::Fragment(f1), SelectionItem::Fragment(f2)) => {
+            (SelectionItem::InlineFragment(f1), SelectionItem::InlineFragment(f2)) => {
                 f1.type_name == f2.type_name && f1.selections.items == f2.selections.items
             }
             _ => false,

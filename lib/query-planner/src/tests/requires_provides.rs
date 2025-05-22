@@ -73,22 +73,50 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "accounts") {
-          {me{__typename id}}
+          {
+            me {
+              __typename
+              id
+            }
+          }
         },
         Flatten(path: "me") {
           Fetch(service: "reviews") {
-              __typename
-              id
+              ... on User {
+                __typename
+                id
+              }
             } =>
-            {reviews{product{__typename upc} author{username id} id}}
+            {
+              ... on User {
+                reviews {
+                  product {
+                    __typename
+                    upc
+                  }
+                  author {
+                    username {
+                    }
+                    id
+                  }
+                  id
+                }
+              }
+            }
           },
         },
         Flatten(path: "me.reviews.@.product") {
           Fetch(service: "inventory") {
-              __typename
-              upc
+              ... on Product {
+                __typename
+                upc
+              }
             } =>
-            {inStock}
+            {
+              ... on Product {
+                inStock
+              }
+            }
           },
         },
       },

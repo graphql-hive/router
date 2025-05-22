@@ -167,7 +167,7 @@ fn find_selection_set_by_path<'a>(
                             None
                         }
                     }
-                    SelectionItem::Fragment(..) => None,
+                    SelectionItem::InlineFragment(..) => None,
                 });
 
         match next_selection_set_option {
@@ -206,7 +206,7 @@ fn find_selection_set_by_path_mut(
                             None
                         }
                     }
-                    SelectionItem::Fragment(..) => None,
+                    SelectionItem::InlineFragment(..) => None,
                 });
 
         match next_selection_set_option {

@@ -56,23 +56,40 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "inventory") {
-          {products{__typename upc}}
+          {
+            products {
+              __typename
+              upc
+            }
+          }
         },
         Flatten(path: "products.@") {
           Fetch(service: "products") {
-              __typename
-              upc
+              ... on Product {
+                __typename
+                upc
+              }
             } =>
-            {price}
+            {
+              ... on Product {
+                price
+              }
+            }
           },
         },
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
-              __typename
-              price
-              upc
+              ... on Product {
+                __typename
+                price
+                upc
+              }
             } =>
-            {isExpensive}
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
           },
         },
       },
@@ -132,15 +149,27 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "products") {
-          {products{__typename upc price}}
+          {
+            products {
+              __typename
+              upc
+              price
+            }
+          }
         },
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
-              __typename
-              price
-              upc
+              ... on Product {
+                __typename
+                price
+                upc
+              }
             } =>
-            {isExpensive}
+            {
+              ... on Product {
+                isExpensive
+              }
+            }
           },
         },
       },
@@ -198,15 +227,28 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "products") {
-          {products{__typename upc price}}
+          {
+            products {
+              __typename
+              upc
+              price
+            }
+          }
         },
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
-              __typename
-              price
-              upc
+              ... on Product {
+                __typename
+                price
+                upc
+              }
             } =>
-            {isExpensive isAvailable}
+            {
+              ... on Product {
+                isExpensive
+                isAvailable
+              }
+            }
           },
         },
       },
@@ -267,16 +309,29 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "products") {
-          {products{__typename upc price weight}}
+          {
+            products {
+              __typename
+              upc
+              price
+              weight
+            }
+          }
         },
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
-              __typename
-              price
-              weight
-              upc
+              ... on Product {
+                __typename
+                price
+                weight
+                upc
+              }
             } =>
-            {shippingEstimate}
+            {
+              ... on Product {
+                shippingEstimate
+              }
+            }
           },
         },
       },
@@ -355,16 +410,30 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "products") {
-          {products{__typename upc price weight}}
+          {
+            products {
+              __typename
+              upc
+              price
+              weight
+            }
+          }
         },
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
-              __typename
-              price
-              weight
-              upc
+              ... on Product {
+                __typename
+                price
+                weight
+                upc
+              }
             } =>
-            {shippingEstimate2 shippingEstimate}
+            {
+              ... on Product {
+                shippingEstimate2
+                shippingEstimate
+              }
+            }
           },
         },
       },
@@ -428,16 +497,31 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "products") {
-          {products{__typename upc price weight}}
+          {
+            products {
+              __typename
+              upc
+              price
+              weight
+            }
+          }
         },
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
-              __typename
-              price
-              weight
-              upc
+              ... on Product {
+                __typename
+                price
+                weight
+                upc
+              }
             } =>
-            {shippingEstimate{price}}
+            {
+              ... on Product {
+                shippingEstimate {
+                  price
+                }
+              }
+            }
           },
         },
       },
@@ -564,27 +648,51 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "b") {
-          {b{a{__typename compositeId{three two} id} id}}
+          {
+            b {
+              a {
+                __typename
+                compositeId {
+                  three
+                  two
+                }
+                id
+              }
+              id
+            }
+          }
         },
         Flatten(path: "b.a.@") {
           Fetch(service: "a") {
-              __typename
-              id
+              ... on A {
+                __typename
+                id
+              }
             } =>
-            {name}
+            {
+              ... on A {
+                name
+              }
+            }
           },
         },
         Flatten(path: "b.a.@") {
           Fetch(service: "b") {
-              __typename
-              name
-              compositeId {
-                three
-                two
+              ... on A {
+                __typename
+                name
+                compositeId {
+                  three
+                  two
+                }
+                id
               }
-              id
             } =>
-            {nameInB}
+            {
+              ... on A {
+                nameInB
+              }
+            }
           },
         },
       },
