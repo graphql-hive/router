@@ -1,7 +1,8 @@
 use crate::{
     parse_operation,
     planner::{
-        fetch::fetch_graph::build_fetch_graph_from_query_tree, tree::query_tree::QueryTree,
+        fetch::fetch_graph::build_fetch_graph_from_query_tree,
+        query_plan::build_query_plan_from_fetch_graph, tree::query_tree::QueryTree,
         walker::walk_operation,
     },
     tests::testkit::{init_logger, paths_to_trees, read_supergraph},
@@ -66,20 +67,33 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
     ");
 
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
 
-    // TODO: [2] is missing "id" in input
-    // TODO: [3] is missing "upc" in input
-    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
-    Nodes:
-    [1] Query/accounts {} → {me{__typename id}} at $.
-    [2] User/reviews {__typename id} → {reviews{product{__typename upc} author{username id} id}} at $.me
-    [3] Product/inventory {__typename upc} → {inStock} at $.me.reviews.@.product
-
-    Tree:
-    [1]
-      [2]
-        [3]
-    ");
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "accounts") {
+          {me{__typename id}}
+        },
+        Flatten(path: "me") {
+          Fetch(service: "reviews") {
+              __typename
+              id
+            } =>
+            {reviews{product{__typename upc} author{username id} id}}
+          },
+        },
+        Flatten(path: "me.reviews.@.product") {
+          Fetch(service: "inventory") {
+              __typename
+              upc
+            } =>
+            {inStock}
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }

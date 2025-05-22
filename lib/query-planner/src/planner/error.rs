@@ -10,6 +10,8 @@ pub enum QueryPlanError {
     EmptyPlan,
     #[error("Query planning finished with unresolved pending steps")]
     UnexpectedPendingState,
+    #[error("Internal Error: {0}")]
+    Internal(String),
 }
 
 impl From<FetchGraphError> for QueryPlanError {

@@ -1,6 +1,10 @@
 use crate::{
     parse_operation,
-    planner::{tree::query_tree::QueryTree, walker::walk_operation},
+    planner::{
+        fetch::fetch_graph::build_fetch_graph_from_query_tree,
+        query_plan::build_query_plan_from_fetch_graph, tree::query_tree::QueryTree,
+        walker::walk_operation,
+    },
     tests::testkit::{init_logger, paths_to_trees, read_supergraph},
     utils::operation_utils::get_operation_to_execute,
 };
@@ -45,9 +49,35 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
           isExpensive of Boolean/inventory
     ");
 
-    // TODO: Test this when requires support is added
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "inventory") {
+          {products{__typename upc}}
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "products") {
+              __typename
+              upc
+            } =>
+            {price}
+          },
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "inventory") {
+              __typename
+              price
+              upc
+            } =>
+            {isExpensive}
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -95,9 +125,27 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
             isExpensive of Boolean/inventory
     ");
 
-    // TODO: Test this when requires support is added
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {products{__typename upc price}}
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "inventory") {
+              __typename
+              price
+              upc
+            } =>
+            {isExpensive}
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -143,9 +191,27 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
             isExpensive of Boolean/inventory
     ");
 
-    // TODO: Test this when requires support is added
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {products{__typename upc price}}
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "inventory") {
+              __typename
+              price
+              upc
+            } =>
+            {isExpensive isAvailable}
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -194,9 +260,28 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
             shippingEstimate of Int/inventory
     ");
 
-    // TODO: Test this when requires support is added
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {products{__typename upc price weight}}
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "inventory") {
+              __typename
+              price
+              weight
+              upc
+            } =>
+            {shippingEstimate}
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -263,9 +348,28 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
             shippingEstimate of Int/inventory
     ");
 
-    // TODO: Test this when requires support is added
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {products{__typename upc price weight}}
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "inventory") {
+              __typename
+              price
+              weight
+              upc
+            } =>
+            {shippingEstimate2 shippingEstimate}
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -317,9 +421,28 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
               price of Int/inventory
     ");
 
-    // TODO: Test this when requires support is added
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {products{__typename upc price weight}}
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "inventory") {
+              __typename
+              price
+              weight
+              upc
+            } =>
+            {shippingEstimate{price}}
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
@@ -434,9 +557,39 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
           id of ID/b
     ");
 
-    // TODO: Test this when requires support is added
-    // let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    // insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {b{a{__typename compositeId{three two} id} id}}
+        },
+        Flatten(path: "b.a.@") {
+          Fetch(service: "a") {
+              __typename
+              id
+            } =>
+            {name}
+          },
+        },
+        Flatten(path: "b.a.@") {
+          Fetch(service: "b") {
+              __typename
+              name
+              compositeId {
+                three
+                two
+              }
+              id
+            } =>
+            {nameInB}
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }

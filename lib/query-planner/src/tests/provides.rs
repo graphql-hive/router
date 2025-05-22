@@ -53,17 +53,6 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
 
     let query_tree = QueryTree::merge_trees(qtps);
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-
-    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
-    Nodes:
-    [1] Query/products {} → {products{__typename upc}} at $.
-    [2] Product/reviews {__typename upc} → {reviews{author{username}}} at $.products.@
-
-    Tree:
-    [1]
-      [2]
-    ");
-
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -135,15 +124,6 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
 
     let query_tree = QueryTree::merge_trees(qtps);
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-
-    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
-    Nodes:
-    [1] Query/category {} → {products{categories{name id} id}} at $.
-
-    Tree:
-    [1]
-    ");
-
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {

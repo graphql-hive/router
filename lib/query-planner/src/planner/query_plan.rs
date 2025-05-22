@@ -1,10 +1,6 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-};
+use std::collections::{HashMap, VecDeque};
 
 use petgraph::{graph::NodeIndex, visit::EdgeRef};
-use tracing::instrument;
 
 use super::{
     error::QueryPlanError,
@@ -16,13 +12,13 @@ use super::{
 /// The in-degree of a step is the number of its prerequisite parent steps
 /// that have not yet been processed. A step is "fulfilled" (ready to be processed)
 /// when its in-degree becomes zero.
-pub struct InDegree {
+pub struct InDegree<'a> {
     state: HashMap<NodeIndex, usize>,
-    fetch_graph: FetchGraph,
+    fetch_graph: &'a FetchGraph,
 }
 
-impl InDegree {
-    pub fn new(fetch_graph: FetchGraph) -> Result<Self, QueryPlanError> {
+impl<'a> InDegree<'a> {
+    pub fn new(fetch_graph: &'a FetchGraph) -> Result<Self, QueryPlanError> {
         let mut state: HashMap<NodeIndex, usize> = HashMap::new();
         let root_index = fetch_graph.root_index.ok_or(QueryPlanError::NoRoot)?;
 
@@ -71,230 +67,98 @@ impl InDegree {
     }
 }
 
-/// The entire process of planning the FetchSteps is a topological sort.
-/// The goal is to process steps only after their prerequisite parent steps are completed.
-/// I modified Kahn's algorithm a bit and used the InDegree class to keep track of which Nodes (FetchSteps)
-/// are ready to be placed in the QueryPlan.
-///
-/// We're basically transforming a Directed Acyclic Graph into a Tree.
-///
-/// Initially, I used a different approach when I also tried to find the end of each Sequence,
-/// but I did hit an issue with a FetchStep depending on more than one parent.
-#[instrument(skip_all)]
+#[tracing::instrument(skip_all, fields(graph = %fetch_graph))]
 pub fn build_query_plan_from_fetch_graph(
     fetch_graph: FetchGraph,
 ) -> Result<QueryPlan, QueryPlanError> {
-    let initial_parallel_steps: Vec<NodeIndex> = fetch_graph
-        .children_of(fetch_graph.root_index.ok_or(QueryPlanError::NoRoot)?)
-        .map(|edge| edge.target())
-        .collect();
+    let root_index = fetch_graph.root_index.ok_or(QueryPlanError::NoRoot)?;
 
-    let mut in_degree = InDegree::new(fetch_graph)?;
-    let overall_plan_result =
-        orchestrate_layer_processing(&mut in_degree, initial_parallel_steps, vec![])?;
+    let mut in_degrees = InDegree::new(&fetch_graph)?;
+    let mut queue: VecDeque<NodeIndex> = VecDeque::new();
+    let mut planned_nodes_count = 0;
 
-    if !overall_plan_result.pending_steps.is_empty() {
-        return Err(QueryPlanError::UnexpectedPendingState);
-    }
-
-    if overall_plan_result.nodes.is_empty() {
-        return Err(QueryPlanError::EmptyPlan);
-    }
-
-    Ok(QueryPlan {
-        root: flatten_sequence(overall_plan_result.nodes),
-    })
-}
-
-struct FetchResult {
-    /// Final Node for a given step
-    node: QueryPlanNode,
-    pending_steps: Vec<NodeIndex>,
-}
-
-impl Debug for FetchResult {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.node)
-    }
-}
-
-/// Plans an individual `FetchStepData`
-#[instrument(skip_all, ret(Debug))]
-fn plan_fetch_step(
-    in_degree: &mut InDegree,
-    step_index: NodeIndex,
-) -> Result<FetchResult, QueryPlanError> {
-    let mut ready_steps: Vec<NodeIndex> = vec![];
-    let mut pending_steps: Vec<NodeIndex> = vec![];
-
-    in_degree.mark_as_processed(step_index);
-
-    for child_edge in in_degree.fetch_graph.children_of(step_index) {
-        // If the child belongs to more than one parent
-        // we need to defer its process.
-        //    S0
-        // P1   P2   | P - Parallel
-        //  \   /    | S - Step
-        //   \ /
-        //    S  (S.parents.length == 2)
-        // We can't add S as a child of P1 or P2, it needs to be a child of all parents.
-        let child_index = child_edge.target();
-        if in_degree.is_fulfilled(child_index)
-            && in_degree.fetch_graph.parents_of(child_index).count() == 1
-        {
-            ready_steps.push(child_index);
+    // Initialize the queue with direct children of the root_index.
+    // Their in-degrees (calculated in InDegree::new) should be 0.
+    for edge in fetch_graph.children_of(root_index) {
+        let child_index = edge.target();
+        if in_degrees.is_fulfilled(child_index) {
+            queue.push_back(child_index);
         } else {
-            pending_steps.push(child_index);
+            return Err(QueryPlanError::Internal(format!(
+                "Root's child ({}) has more than one parent",
+                child_index.index()
+            )));
         }
     }
 
-    // it's a leaf node in the sequence
-    if ready_steps.is_empty() {
-        return Ok(FetchResult {
-            node: in_degree.fetch_graph.get_step_data(step_index)?.into(),
-            pending_steps,
-        });
-    }
+    let mut overall_plan_sequence: Vec<QueryPlanNode> = Vec::new();
 
-    let result = orchestrate_layer_processing(in_degree, ready_steps, pending_steps)?;
+    while !queue.is_empty() {
+        let mut current_wave_nodes: Vec<QueryPlanNode> = Vec::new();
+        let wave_size = queue.len();
 
-    let mut nodes: Vec<QueryPlanNode> =
-        vec![in_degree.fetch_graph.get_step_data(step_index)?.into()];
-    nodes.extend(result.nodes);
+        for _ in 0..wave_size {
+            let step_index = queue
+                .pop_front()
+                .ok_or(QueryPlanError::Internal(String::from(
+                    "Failed to pop a step from the queue. Queue should not be empty",
+                )))?;
 
-    Ok(FetchResult {
-        node: flatten_sequence(nodes),
-        pending_steps: result.pending_steps,
-    })
-}
+            let step_data = fetch_graph.get_step_data(step_index)?;
+            current_wave_nodes.push(step_data.into());
+            planned_nodes_count += 1;
+            in_degrees.mark_as_processed(step_index);
 
-struct ParallelResult {
-    /// Node representation of the layer
-    node: QueryPlanNode,
-    /// Steps that become ready after the layer was processed.
-    ready_steps: Vec<NodeIndex>,
-    /// Steps that remain pending after the layer was processed.
-    pending_steps: Vec<NodeIndex>,
-}
+            for child_edge in fetch_graph.children_of(step_index) {
+                let child_index = child_edge.target();
+                if child_index == root_index {
+                    return Err(QueryPlanError::Internal(String::from(
+                        "Visited child step is a root step. It should not happen",
+                    )));
+                }
 
-/// Plans a single layer of concurrently executable `FetchStepData`s.
-///
-/// Accepts
-/// - `concurrent_ready_steps` - Steps that are all ready to be processed in parallel
-/// - `previously_pending_steps` - Steps that were pending from previous processing stages
-#[instrument(skip_all, fields(
-  concurrent_ready_steps_count = concurrent_ready_steps.len(),
-  previously_pending_steps_count = previously_pending_steps.len()
-))]
-fn plan_parallel_step_layer(
-    in_degree: &mut InDegree,
-    concurrent_ready_steps: Vec<NodeIndex>,
-    previously_pending_steps: Vec<NodeIndex>,
-) -> Result<ParallelResult, QueryPlanError> {
-    let mut new_pending_steps: HashSet<NodeIndex> = HashSet::new();
-    for pending in previously_pending_steps {
-        new_pending_steps.insert(pending);
-    }
-
-    let mut nodes: Vec<QueryPlanNode> = Vec::with_capacity(concurrent_ready_steps.len());
-    for step_index in concurrent_ready_steps {
-        let fetch_result = plan_fetch_step(in_degree, step_index)?;
-        nodes.push(fetch_result.node);
-        for pending in fetch_result.pending_steps {
-            new_pending_steps.insert(pending);
+                if in_degrees.is_fulfilled(child_index) {
+                    queue.push_back(child_index);
+                }
+            }
         }
-    }
 
-    let mut next_ready_steps: Vec<NodeIndex> = vec![];
-    let mut remaining_pending_steps: Vec<NodeIndex> = vec![];
-    for step in new_pending_steps.iter() {
-        if in_degree.is_fulfilled(*step) {
-            next_ready_steps.push(*step);
+        if current_wave_nodes.is_empty() {
+            return Err(QueryPlanError::Internal(String::from(
+                "Wave was empty. It should not happen as the queue was non-empty.",
+            )));
+        } else if current_wave_nodes.len() == 1 {
+            overall_plan_sequence.push(current_wave_nodes.into_iter().next().ok_or(
+                QueryPlanError::Internal(String::from("Was was expected to be of length 1")),
+            )?);
         } else {
-            remaining_pending_steps.push(*step);
+            overall_plan_sequence.push(QueryPlanNode::Parallel(current_wave_nodes));
         }
     }
 
-    Ok(ParallelResult {
-        node: flatten_parallel(nodes),
-        ready_steps: next_ready_steps,
-        pending_steps: remaining_pending_steps,
-    })
-}
+    let total_fetch_nodes = fetch_graph
+        .step_indices()
+        .filter(|&idx| idx != root_index)
+        .count();
 
-struct SequenceResult {
-    /// A list of `QueryPlanNode`s, each representing a processed layer, forming a sequence.
-    nodes: Vec<QueryPlanNode>,
-    pending_steps: Vec<NodeIndex>,
-}
-
-/// Orchestrates the processing of FetchSteps layer by layer, building a sequence of plan nodes.
-/// It repeatedly calls `plan_parallel_step_layer` for batches of ready steps until no more
-/// steps can be processed.
-///
-/// - `initial_ready_steps` - The initial set of FetchSteps that are ready to be processed.
-/// - `initial_pending_steps` - Any FetchSteps that are already pending from a higher context.
-#[instrument(skip_all, fields(
-  initial_ready_steps_count = initial_ready_steps.len(),
-  initial_pending_steps_count = initial_pending_steps.len()
-))]
-fn orchestrate_layer_processing(
-    in_degree: &mut InDegree,
-    initial_ready_steps: Vec<NodeIndex>,
-    initial_pending_steps: Vec<NodeIndex>,
-) -> Result<SequenceResult, QueryPlanError> {
-    if initial_ready_steps.is_empty() {
-        return Ok(SequenceResult {
-            nodes: vec![],
-            pending_steps: initial_pending_steps,
-        });
+    if planned_nodes_count != total_fetch_nodes {
+        return Err(QueryPlanError::Internal("Cycle detected".to_string()));
     }
 
-    let parallel_result =
-        plan_parallel_step_layer(in_degree, initial_ready_steps, initial_pending_steps)?;
-    let next_layer_result = orchestrate_layer_processing(
-        in_degree,
-        parallel_result.ready_steps,
-        parallel_result.pending_steps,
-    )?;
-
-    let mut nodes = vec![parallel_result.node];
-    nodes.extend(next_layer_result.nodes);
-
-    Ok(SequenceResult {
-        nodes,
-        pending_steps: next_layer_result.pending_steps,
-    })
-}
-
-fn flatten_sequence(nodes: Vec<QueryPlanNode>) -> QueryPlanNode {
-    let flattened: Vec<QueryPlanNode> = nodes
-        .into_iter()
-        .flat_map(|node| match node {
-            QueryPlanNode::Sequence(nested) => flatten_sequence(nested).into_nodes(),
-            other => vec![other],
-        })
-        .collect();
-
-    match flattened.len() {
-        0 => QueryPlanNode::Sequence(vec![]),
-        1 => flattened.into_iter().next().unwrap(),
-        _ => QueryPlanNode::Sequence(flattened),
+    if overall_plan_sequence.is_empty() {
+        if total_fetch_nodes == 0 {
+            return Err(QueryPlanError::EmptyPlan);
+        } else {
+            return Err(QueryPlanError::Internal(
+                "Plan is empty, but graph reported task nodes that were not planned.".to_string(),
+            ));
+        }
     }
-}
 
-fn flatten_parallel(nodes: Vec<QueryPlanNode>) -> QueryPlanNode {
-    let flattened: Vec<QueryPlanNode> = nodes
-        .into_iter()
-        .flat_map(|node| match node {
-            QueryPlanNode::Parallel(nested) => flatten_parallel(nested).into_nodes(),
-            other => vec![other],
-        })
-        .collect();
+    let root_node = match overall_plan_sequence.len() == 1 {
+        true => overall_plan_sequence.into_iter().next().unwrap(),
+        false => QueryPlanNode::Sequence(overall_plan_sequence),
+    };
 
-    match flattened.len() {
-        0 => QueryPlanNode::Parallel(vec![]),
-        1 => flattened.into_iter().next().unwrap(),
-        _ => QueryPlanNode::Parallel(flattened),
-    }
+    Ok(QueryPlan { root: root_node })
 }

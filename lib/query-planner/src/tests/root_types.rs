@@ -164,19 +164,6 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
 
     let query_tree = QueryTree::merge_trees(qtps);
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-
-    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
-    Nodes:
-    [1] Query/price {} → {product{price{currency amount id}}} at $.
-    [2] Query/category {} → {product{category{name id} id}} at $.
-    [3] Query/name {} → {product{name{model brand id}}} at $.
-
-    Tree:
-    [1]
-    [2]
-    [3]
-    ");
-
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {

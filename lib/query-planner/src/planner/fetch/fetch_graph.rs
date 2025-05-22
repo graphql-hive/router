@@ -17,7 +17,7 @@ use petgraph::visit::Bfs;
 use petgraph::visit::{EdgeRef, NodeRef};
 use petgraph::Directed;
 use petgraph::Direction;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::{Debug, Display};
 use tracing::{debug, instrument};
 
@@ -229,54 +229,55 @@ impl FetchGraph {
 
     #[instrument(skip_all)]
     fn merge_siblings(&mut self, root_step_index: NodeIndex) -> Result<(), FetchGraphError> {
-        let mut merges_to_perform: Vec<(NodeIndex, NodeIndex)> = Vec::new();
+        // Breadth-First Search (BFS) starting from the root node.
+        let mut queue = VecDeque::from([root_step_index]);
+        while let Some(parent_index) = queue.pop_front() {
+            // Store pairs of sibling nodes that can be merged.
+            let mut merges_to_perform: Vec<(NodeIndex, NodeIndex)> = Vec::new();
+            // HashMap to keep track of node index mappings, especially after merges.
+            // Key: original index, Value: potentially updated index after merges.
+            let mut node_indexes: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+            let children: Vec<_> = self
+                .graph
+                .neighbors_directed(parent_index, Direction::Outgoing)
+                .collect();
 
-        self.bfs(root_step_index, |step_index, step_data| {
-            let result: Option<(NodeIndex, NodeIndex)> =
-                self.parents_of(*step_index).find_map(|parent_edge| {
-                    self.children_of(parent_edge.source())
-                        .find_map(|sibling_edge| {
-                            let sibling_index = sibling_edge.target();
-                            // avoid merging with itself
-                            if sibling_index == *step_index {
-                                return None;
-                            }
-                            if let Ok(sibling) = self.get_step_data(sibling_index) {
-                                // do not push if previously scheduled in reversed order.
-                                // It may happen as we could merge sibling 1 with sibling 2,
-                                // and then iterate to the next sibling and schedule a merge of 2 with 1.
-                                if !merges_to_perform
-                                    .iter()
-                                    .any(|(f, t)| (t, f) == (&sibling_index, step_index))
-                                    && sibling.can_merge(
-                                        sibling_index,
-                                        *step_index,
-                                        step_data,
-                                        self,
-                                    )
-                                {
-                                    debug!(
-                                        "optimization found: merge sibling '{}' with '{}'",
-                                        sibling, step_data
-                                    );
+            for (i, child_index) in children.iter().enumerate() {
+                // Add the current child to the queue for further processing (BFS).
+                queue.push_back(*child_index);
+                let child = self.get_step_data(*child_index)?;
 
-                                    return Some((sibling_index, *step_index));
-                                }
-                            }
+                // Iterate through the remaining children (siblings) to check for merge possibilities.
+                for other_child_index in children.iter().skip(i + 1) {
+                    let other_child = self.get_step_data(*other_child_index)?;
 
-                            None
-                        })
-                });
-
-            if let Some((ancestor_index, step_index)) = result {
-                merges_to_perform.push((ancestor_index, step_index));
+                    if child.can_merge(*child_index, *other_child_index, other_child, self) {
+                        // Register their original indexes in the map.
+                        node_indexes.insert(*child_index, *child_index);
+                        node_indexes.insert(*other_child_index, *other_child_index);
+                        merges_to_perform.push((*child_index, *other_child_index));
+                        // Since a merge is possible, move to the next child to avoid redundant checks.
+                        break;
+                    }
+                }
             }
 
-            false // returning false means we never stop the BFS before it finishes
-        });
+            for (child_index, other_child_index) in merges_to_perform {
+                // Get the latest indexes for the nodes, accounting for previous merges.
+                let child_index_latest = node_indexes
+                    .get(&child_index)
+                    .expect("Index mapping got lost");
+                let other_child_index_latest = node_indexes
+                    .get(&other_child_index)
+                    .expect("Index mapping got lost");
 
-        for (ancestor_index, step_index) in merges_to_perform {
-            perform_fetch_step_merge(ancestor_index, step_index, self)?;
+                perform_fetch_step_merge(*child_index_latest, *other_child_index_latest, self)?;
+
+                // Because `other_child` was merged into `child`,
+                // then everything that was pointing to `other_child`
+                // has to point to the `child`.
+                node_indexes.insert(*other_child_index_latest, *child_index_latest);
+            }
         }
 
         Ok(())
@@ -287,6 +288,9 @@ impl FetchGraph {
         &mut self,
         root_step_index: NodeIndex,
     ) -> Result<(), FetchGraphError> {
+        // Stores the before (merging) and after (merging) index
+        let mut node_indexes: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+
         // Let's look from root to bottom
         // but also at parents at each level and try to merge those
         let mut merges_to_perform: Vec<(NodeIndex, NodeIndex)> = Vec::new();
@@ -301,6 +305,8 @@ impl FetchGraph {
                             ancestor, step_data
                         );
 
+                        node_indexes.insert(ancestor_index, ancestor_index);
+                        node_indexes.insert(*step_index, *step_index);
                         merges_to_perform.push((ancestor_index, *step_index));
                     }
                 }
@@ -310,7 +316,12 @@ impl FetchGraph {
         });
 
         for (ancestor_index, step_index) in merges_to_perform {
-            perform_fetch_step_merge(ancestor_index, step_index, self)?;
+            // get up to date indexes
+            let ancestor_index_latest = node_indexes.get(&ancestor_index).expect("Should exist");
+            let step_index_latest = node_indexes.get(&step_index).expect("Should exist");
+            perform_fetch_step_merge(*ancestor_index_latest, *step_index_latest, self)?;
+            // update step
+            node_indexes.insert(*step_index_latest, *ancestor_index_latest);
         }
 
         Ok(())
@@ -1082,8 +1093,6 @@ fn process_tree_of_requires(
     step_for_field_with_requires_index: NodeIndex,
     requires: &TypeAwareSelection,
     response_path: &MergePath,
-    // subgraph_name: &SubgraphName,
-    // type_name: &String,
 ) -> Result<(), FetchGraphError> {
     if query_node.children.len() != 1 {
         return Err(FetchGraphError::ManyChildrenOfRequirement);
