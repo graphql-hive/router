@@ -123,22 +123,22 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
-      Parallel {
-        Sequence {
+      Sequence {
+        Parallel {
           Fetch(service: "a") {
             {aFeed{__typename id}}
           },
-          Flatten(path: "aFeed.@") {
-            Fetch(service: "b") {
-                __typename
-                id
-              } =>
-              {createdAt}
-            },
+          Fetch(service: "b") {
+            {bFeed{createdAt}}
           },
         },
-        Fetch(service: "b") {
-          {bFeed{createdAt}}
+        Flatten(path: "aFeed.@") {
+          Fetch(service: "b") {
+              __typename
+              id
+            } =>
+            {createdAt}
+          },
         },
       },
     },

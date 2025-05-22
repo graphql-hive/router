@@ -311,22 +311,12 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
           {productFromD{__typename id name}}
         },
         Parallel {
-          Sequence {
-            Flatten(path: "productFromD") {
-              Fetch(service: "b") {
-                  __typename
-                  id
-                } =>
-                {category{__typename id}}
-              },
-            },
-            Flatten(path: "productFromD.category") {
-              Fetch(service: "c") {
-                  __typename
-                  id
-                } =>
-                {name}
-              },
+          Flatten(path: "productFromD") {
+            Fetch(service: "b") {
+                __typename
+                id
+              } =>
+              {category{__typename id}}
             },
           },
           Flatten(path: "productFromD") {
@@ -336,6 +326,14 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
               } =>
               {category{details}}
             },
+          },
+        },
+        Flatten(path: "productFromD.category") {
+          Fetch(service: "c") {
+              __typename
+              id
+            } =>
+            {name}
           },
         },
       },

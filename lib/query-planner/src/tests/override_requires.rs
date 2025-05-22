@@ -152,11 +152,19 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
-      Parallel {
-        Sequence {
+      Sequence {
+        Parallel {
           Fetch(service: "a") {
             {userInA{__typename id}}
           },
+          Fetch(service: "b") {
+            {userInB{__typename id name}}
+          },
+          Fetch(service: "c") {
+            {userInC{__typename id}}
+          },
+        },
+        Parallel {
           Flatten(path: "userInA") {
             Fetch(service: "b") {
                 __typename
@@ -165,55 +173,23 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
               {name}
             },
           },
-          Parallel {
-            Flatten(path: "userInA") {
-              Fetch(service: "c") {
-                  __typename
-                  name
-                  id
-                } =>
-                {cName}
-              },
-            },
-            Flatten(path: "userInA") {
-              Fetch(service: "a") {
-                  __typename
-                  name
-                  id
-                } =>
-                {aName}
-              },
+          Flatten(path: "userInB") {
+            Fetch(service: "c") {
+                __typename
+                name
+                id
+              } =>
+              {cName}
             },
           },
-        },
-        Sequence {
-          Fetch(service: "b") {
-            {userInB{__typename id name}}
-          },
-          Parallel {
-            Flatten(path: "userInB") {
-              Fetch(service: "c") {
-                  __typename
-                  name
-                  id
-                } =>
-                {cName}
-              },
+          Flatten(path: "userInB") {
+            Fetch(service: "a") {
+                __typename
+                name
+                id
+              } =>
+              {aName}
             },
-            Flatten(path: "userInB") {
-              Fetch(service: "a") {
-                  __typename
-                  name
-                  id
-                } =>
-                {aName}
-              },
-            },
-          },
-        },
-        Sequence {
-          Fetch(service: "c") {
-            {userInC{__typename id}}
           },
           Flatten(path: "userInC") {
             Fetch(service: "b") {
@@ -223,24 +199,42 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
               {name}
             },
           },
-          Parallel {
-            Flatten(path: "userInC") {
-              Fetch(service: "c") {
-                  __typename
-                  name
-                  id
-                } =>
-                {cName}
-              },
+        },
+        Parallel {
+          Flatten(path: "userInA") {
+            Fetch(service: "c") {
+                __typename
+                name
+                id
+              } =>
+              {cName}
             },
-            Flatten(path: "userInC") {
-              Fetch(service: "a") {
-                  __typename
-                  name
-                  id
-                } =>
-                {aName}
-              },
+          },
+          Flatten(path: "userInA") {
+            Fetch(service: "a") {
+                __typename
+                name
+                id
+              } =>
+              {aName}
+            },
+          },
+          Flatten(path: "userInC") {
+            Fetch(service: "c") {
+                __typename
+                name
+                id
+              } =>
+              {cName}
+            },
+          },
+          Flatten(path: "userInC") {
+            Fetch(service: "a") {
+                __typename
+                name
+                id
+              } =>
+              {aName}
             },
           },
         },

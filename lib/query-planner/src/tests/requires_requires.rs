@@ -150,24 +150,13 @@ fn one_with_one_local() -> Result<(), Box<dyn Error>> {
           {product{__typename id hasDiscount}}
         },
         Parallel {
-          Sequence {
-            Flatten(path: "product") {
-              Fetch(service: "c") {
-                  __typename
-                  hasDiscount
-                  id
-                } =>
-                {isExpensiveWithDiscount}
-              },
-            },
-            Flatten(path: "product") {
-              Fetch(service: "d") {
-                  __typename
-                  isExpensiveWithDiscount
-                  id
-                } =>
-                {canAffordWithDiscount}
-              },
+          Flatten(path: "product") {
+            Fetch(service: "c") {
+                __typename
+                hasDiscount
+                id
+              } =>
+              {isExpensiveWithDiscount}
             },
           },
           Flatten(path: "product") {
@@ -177,6 +166,15 @@ fn one_with_one_local() -> Result<(), Box<dyn Error>> {
               } =>
               {fieldInD}
             },
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "d") {
+              __typename
+              isExpensiveWithDiscount
+              id
+            } =>
+            {canAffordWithDiscount}
           },
         },
       },
@@ -556,53 +554,51 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
           {product{__typename id hasDiscount}}
         },
         Parallel {
-          Sequence {
-            Flatten(path: "product") {
-              Fetch(service: "c") {
-                  __typename
-                  hasDiscount
-                  id
-                } =>
-                {isExpensiveWithDiscount}
-              },
-            },
-            Flatten(path: "product") {
-              Fetch(service: "d") {
-                  __typename
-                  isExpensiveWithDiscount
-                  id
-                } =>
-                {canAffordWithDiscount}
-              },
+          Flatten(path: "product") {
+            Fetch(service: "c") {
+                __typename
+                hasDiscount
+                id
+              } =>
+              {isExpensiveWithDiscount}
             },
           },
-          Sequence {
-            Flatten(path: "product") {
-              Fetch(service: "a") {
-                  __typename
-                  id
-                } =>
-                {price}
-              },
+          Flatten(path: "product") {
+            Fetch(service: "a") {
+                __typename
+                id
+              } =>
+              {price}
             },
-            Flatten(path: "product") {
-              Fetch(service: "c") {
-                  __typename
-                  price
-                  id
-                } =>
-                {isExpensive}
-              },
+          },
+        },
+        Parallel {
+          Flatten(path: "product") {
+            Fetch(service: "d") {
+                __typename
+                isExpensiveWithDiscount
+                id
+              } =>
+              {canAffordWithDiscount}
             },
-            Flatten(path: "product") {
-              Fetch(service: "d") {
-                  __typename
-                  isExpensive
-                  id
-                } =>
-                {canAfford}
-              },
+          },
+          Flatten(path: "product") {
+            Fetch(service: "c") {
+                __typename
+                price
+                id
+              } =>
+              {isExpensive}
             },
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "d") {
+              __typename
+              isExpensive
+              id
+            } =>
+            {canAfford}
           },
         },
       },
@@ -712,24 +708,22 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
               {isExpensiveWithDiscount}
             },
           },
-          Sequence {
-            Flatten(path: "product") {
-              Fetch(service: "a") {
-                  __typename
-                  id
-                } =>
-                {price}
-              },
+          Flatten(path: "product") {
+            Fetch(service: "a") {
+                __typename
+                id
+              } =>
+              {price}
             },
-            Flatten(path: "product") {
-              Fetch(service: "c") {
-                  __typename
-                  price
-                  id
-                } =>
-                {isExpensive}
-              },
-            }
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "c") {
+              __typename
+              price
+              id
+            } =>
+            {isExpensive}
           },
         },
         Flatten(path: "product") {
@@ -893,53 +887,51 @@ fn many() -> Result<(), Box<dyn Error>> {
           {product{__typename id hasDiscount}}
         },
         Parallel {
-          Sequence {
-            Flatten(path: "product") {
-              Fetch(service: "c") {
-                  __typename
-                  hasDiscount
-                  id
-                } =>
-                {isExpensiveWithDiscount}
-              },
-            },
-            Flatten(path: "product") {
-              Fetch(service: "d") {
-                  __typename
-                  isExpensiveWithDiscount
-                  id
-                } =>
-                {canAffordWithDiscount canAffordWithDiscount2}
-              },
+          Flatten(path: "product") {
+            Fetch(service: "c") {
+                __typename
+                hasDiscount
+                id
+              } =>
+              {isExpensiveWithDiscount}
             },
           },
-          Sequence {
-            Flatten(path: "product") {
-              Fetch(service: "a") {
-                  __typename
-                  id
-                } =>
-                {price}
-              },
+          Flatten(path: "product") {
+            Fetch(service: "a") {
+                __typename
+                id
+              } =>
+              {price}
             },
-            Flatten(path: "product") {
-              Fetch(service: "c") {
-                  __typename
-                  price
-                  id
-                } =>
-                {isExpensive}
-              },
+          },
+        },
+        Parallel {
+          Flatten(path: "product") {
+            Fetch(service: "d") {
+                __typename
+                isExpensiveWithDiscount
+                id
+              } =>
+              {canAffordWithDiscount canAffordWithDiscount2}
             },
-            Flatten(path: "product") {
-              Fetch(service: "d") {
-                  __typename
-                  isExpensive
-                  id
-                } =>
-                {canAfford canAfford2}
-              },
+          },
+          Flatten(path: "product") {
+            Fetch(service: "c") {
+                __typename
+                price
+                id
+              } =>
+              {isExpensive}
             },
+          },
+        },
+        Flatten(path: "product") {
+          Fetch(service: "d") {
+              __typename
+              isExpensive
+              id
+            } =>
+            {canAfford canAfford2}
           },
         },
       },
