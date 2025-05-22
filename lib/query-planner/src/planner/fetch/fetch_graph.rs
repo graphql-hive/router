@@ -158,11 +158,8 @@ impl FetchGraph {
     pub fn optimize(&mut self, root_step_index: NodeIndex) -> Result<(), FetchGraphError> {
         self.root_index = Some(root_step_index);
 
-        println!("merging children with parents");
         self.merge_children_with_parents(root_step_index)?;
-        println!("merging siblings");
         self.merge_siblings(root_step_index)?;
-        println!("deduplicating");
         self.deduplicate_and_prune_fetch_steps()?;
         self.turn_mutations_into_sequence(root_step_index)?;
 
