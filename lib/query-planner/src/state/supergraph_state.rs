@@ -386,9 +386,9 @@ pub enum RootOperationType {
 impl Display for RootOperationType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RootOperationType::Query => write!(f, "Query"),
-            RootOperationType::Mutation => write!(f, "Mutation"),
-            RootOperationType::Subscription => write!(f, "Subscription"),
+            RootOperationType::Query => write!(f, "query"),
+            RootOperationType::Mutation => write!(f, "mutation"),
+            RootOperationType::Subscription => write!(f, "subscription"),
         }
     }
 }

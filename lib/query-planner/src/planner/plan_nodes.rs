@@ -1,6 +1,13 @@
 use super::fetch::fetch_graph::FetchStepData;
 use crate::{
-    ast::{merge_path::MergePath, selection_set::SelectionSet},
+    ast::{
+        merge_path::MergePath,
+        operation::{OperationDefinition, SubgraphFetchOperation, TypeNode, VariableDefinition},
+        selection_item::SelectionItem,
+        selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
+        type_aware_selection::TypeAwareSelection,
+        value::Value,
+    },
     state::supergraph_state::RootOperationType,
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
@@ -23,7 +30,7 @@ pub enum QueryPlanNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FetchNode {
     pub service_name: String,
-    pub operation: SelectionSet,
+    pub operation: SubgraphFetchOperation,
     pub operation_type: RootOperationType,
     pub requires: Option<SelectionSet>,
 }
@@ -58,16 +65,67 @@ impl From<MergePath> for Vec<FlattenNodePathType> {
     }
 }
 
+fn create_input_selection_set(input_selections: &TypeAwareSelection) -> SelectionSet {
+    SelectionSet {
+        items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+            selections: input_selections.selection_set.clone(),
+            type_name: input_selections.type_name.clone(),
+        })],
+    }
+}
+
+fn create_output_operation(type_aware_selection: &TypeAwareSelection) -> SubgraphFetchOperation {
+    SubgraphFetchOperation(OperationDefinition {
+        name: None,
+        operation_type: RootOperationType::Query,
+        variable_definitions: Some(vec![VariableDefinition {
+            name: "representations".to_string(),
+            variable_type: TypeNode::NonNull(Box::new(TypeNode::List(Box::new(
+                TypeNode::NonNull(Box::new(TypeNode::Named("_Any".to_string()))),
+            )))),
+        }]),
+        selection_set: SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection {
+                name: "_entities".to_string(),
+                selections: SelectionSet {
+                    items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                        selections: type_aware_selection.selection_set.clone(),
+                        type_name: type_aware_selection.type_name.clone(),
+                    })],
+                },
+                alias: None,
+                is_leaf: false,
+                arguments: (
+                    "representations".to_string(),
+                    Value::Variable("representations".to_string()),
+                )
+                    .into(),
+            })],
+        },
+    })
+}
+
 impl From<&FetchStepData> for FetchNode {
     fn from(step: &FetchStepData) -> Self {
-        FetchNode {
-            service_name: step.service_name.0.clone(),
-            operation: step.output.selection_set.clone(),
-            // TODO: make sure it's correct
-            operation_type: RootOperationType::Query,
-            requires: match step.input.selection_set.is_empty() {
-                true => None,
-                false => Some(step.input.selection_set.clone()),
+        match step.input.selection_set.is_empty() {
+            true => FetchNode {
+                service_name: step.service_name.0.clone(),
+                operation: SubgraphFetchOperation(OperationDefinition {
+                    name: None,
+                    operation_type: RootOperationType::Query,
+                    selection_set: step.output.selection_set.clone(),
+                    variable_definitions: None,
+                }),
+                // TODO: make sure it's correct
+                operation_type: RootOperationType::Query,
+                requires: None,
+            },
+            false => FetchNode {
+                service_name: step.service_name.0.clone(),
+                operation: create_output_operation(&step.output),
+                // TODO: make sure it's correct
+                operation_type: RootOperationType::Query,
+                requires: Some(create_input_selection_set(&step.input)),
             },
         }
     }
@@ -129,7 +187,7 @@ impl PrettyDisplay for FetchNode {
             requires.pretty_fmt(f, depth + 2)?;
             writeln!(f, "{indent}  }} =>")?;
         }
-        writeln!(f, "{indent}  {}", self.operation)?;
+        self.operation.pretty_fmt(f, depth)?;
         writeln!(f, "{indent}}},")?;
 
         Ok(())

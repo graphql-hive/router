@@ -49,7 +49,7 @@ pub fn walk_operation(
         let mut tracker = BestPathTracker::new(graph);
 
         match selection_item {
-            SelectionItem::Fragment(_f) => unimplemented!("fragments are not supported yet"),
+            SelectionItem::InlineFragment(_f) => unimplemented!("fragments are not supported yet"),
             SelectionItem::Field(field) => {
                 let field_span = span!(
                     Level::INFO,

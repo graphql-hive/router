@@ -122,22 +122,43 @@ fn testing() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "store") {
-          {products{__typename id}}
+          {
+            products {
+              __typename
+              id
+            }
+          }
         },
         Flatten(path: "products") {
           Fetch(service: "info") {
-              __typename
-              id
+              ... on Product {
+                __typename
+                id
+              }
             } =>
-            {isAvailable uuid}
+            {
+              ... on Product {
+                isAvailable
+                uuid
+              }
+            }
           },
         },
         Flatten(path: "products") {
           Fetch(service: "cost") {
-              __typename
-              uuid
+              ... on Product {
+                __typename
+                uuid
+              }
             } =>
-            {price{currency amount}}
+            {
+              ... on Product {
+                price {
+                  currency
+                  amount
+                }
+              }
+            }
           },
         },
       },
@@ -197,15 +218,31 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          {products{__typename id pid}}
-        },
-        Flatten(path: "products.@") {
-          Fetch(service: "c") {
+          {
+            products {
               __typename
               id
               pid
+            }
+          }
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "c") {
+              ... on Product {
+                __typename
+                id
+                pid
+              }
             } =>
-            {category{details{products}}}
+            {
+              ... on Product {
+                category {
+                  details {
+                    products
+                  }
+                }
+              }
+            }
           },
         },
       },
@@ -308,32 +345,61 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "d") {
-          {productFromD{__typename id name}}
+          {
+            productFromD {
+              __typename
+              id
+              name
+            }
+          }
         },
         Parallel {
           Flatten(path: "productFromD") {
             Fetch(service: "b") {
-                __typename
-                id
+                ... on Product {
+                  __typename
+                  id
+                }
               } =>
-              {category{__typename id}}
+              {
+                ... on Product {
+                  category {
+                    __typename
+                    id
+                  }
+                }
+              }
             },
           },
           Flatten(path: "productFromD") {
             Fetch(service: "a") {
-                __typename
-                id
+                ... on Product {
+                  __typename
+                  id
+                }
               } =>
-              {category{details}}
+              {
+                ... on Product {
+                  category {
+                    details
+                  }
+                }
+              }
             },
           },
         },
         Flatten(path: "productFromD.category") {
           Fetch(service: "c") {
-              __typename
-              id
+              ... on Category {
+                __typename
+                id
+              }
             } =>
-            {name}
+            {
+              ... on Category {
+                name
+              }
+            }
           },
         },
       },
@@ -408,27 +474,52 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "products") {
-          {topProducts{products{__typename id category{tag id}}}}
+          {
+            topProducts {
+              products {
+                __typename
+                id
+                category {
+                  tag
+                  id
+                }
+              }
+            }
+          }
         },
         Flatten(path: "topProducts.products.@") {
           Fetch(service: "link") {
-              __typename
-              id
+              ... on Product {
+                __typename
+                id
+              }
             } =>
-            {pid}
+            {
+              ... on Product {
+                pid
+              }
+            }
           },
         },
         Flatten(path: "topProducts.products.@") {
           Fetch(service: "price") {
-              __typename
-              category {
+              ... on Product {
+                __typename
+                category {
+                  id
+                  tag
+                }
                 id
-                tag
+                pid
               }
-              id
-              pid
             } =>
-            {price{price}}
+            {
+              ... on Product {
+                price {
+                  price
+                }
+              }
+            }
           },
         },
       },

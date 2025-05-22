@@ -91,12 +91,12 @@ impl FieldSelection {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-pub struct FragmentSelection {
+pub struct InlineFragmentSelection {
     pub type_name: String,
     pub selections: SelectionSet,
 }
 
-impl Hash for FragmentSelection {
+impl Hash for InlineFragmentSelection {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.type_name.hash(state);
         self.selections.hash(state);
@@ -138,14 +138,14 @@ impl PrettyDisplay for SelectionSet {
     }
 }
 
-impl Display for FragmentSelection {
+impl Display for InlineFragmentSelection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "... on {}", self.type_name)?;
         write!(f, "{}", self.selections)
     }
 }
 
-impl PrettyDisplay for FragmentSelection {
+impl PrettyDisplay for InlineFragmentSelection {
     fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
         let indent = get_indent(depth);
         writeln!(f, "{indent}... on {} {{", self.type_name)?;
@@ -177,7 +177,7 @@ impl From<&ParserSelection<'_, String>> for SelectionItem {
                 arguments: (&field.arguments).into(),
             }),
             ParserSelection::InlineFragment(inline_fragment) => {
-                SelectionItem::Fragment(FragmentSelection {
+                SelectionItem::InlineFragment(InlineFragmentSelection {
                     type_name: inline_fragment
                         .type_condition
                         .as_ref()

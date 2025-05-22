@@ -1,5 +1,6 @@
 pub mod arguments;
 pub mod merge_path;
+pub mod operation;
 pub mod selection_item;
 pub mod selection_set;
 pub mod type_aware_selection;
