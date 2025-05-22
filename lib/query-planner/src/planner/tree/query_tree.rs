@@ -23,15 +23,10 @@ impl QueryTree {
         root_node = graph.pretty_print_node(&path.root_node)
     ))]
     pub fn from_path(graph: &Graph, path: &OperationPath) -> Result<Self, GraphError> {
-        let edges = path.get_edges();
-        let requirements_tree = path.get_requirement_tree();
+        let segments = path.get_segments();
 
-        let root_node = QueryTreeNode::create_root_for_path_sequences(
-            graph,
-            &path.root_node,
-            &edges,
-            &requirements_tree,
-        )?;
+        let root_node =
+            QueryTreeNode::create_root_for_path_sequences(graph, &path.root_node, &segments)?;
 
         Ok(QueryTree::new(root_node))
     }
