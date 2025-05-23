@@ -1,7 +1,7 @@
 use std::env;
 use std::process;
 
-use graphql_parser::query::OperationDefinition;
+use query_planner::ast::operation::OperationDefinition;
 use query_planner::consumer_schema::ConsumerSchema;
 use query_planner::graph::Graph;
 use query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
@@ -12,7 +12,7 @@ use query_planner::planner::tree::query_tree::QueryTree;
 use query_planner::planner::walker::walk_operation;
 use query_planner::planner::walker::BestPathsPerLeaf;
 use query_planner::state::supergraph_state::SupergraphState;
-use query_planner::utils::operation_utils::get_operation_to_execute;
+use query_planner::utils::operation_utils::prepare_document;
 use query_planner::utils::parsing::parse_operation;
 use query_planner::utils::parsing::parse_schema;
 use tracing_subscriber::layer::SubscriberExt;
@@ -131,11 +131,11 @@ fn process_merged_tree(supergraph_path: &str, operation_path: &str) -> (Graph, Q
     (graph, query_tree)
 }
 
-fn get_operation(operation_path: &str) -> OperationDefinition<'static, String> {
-    let operation_text =
-        std::fs::read_to_string(operation_path).expect("Unable to read input file");
-    let operation = parse_operation(&operation_text);
-    let operation = get_operation_to_execute(&operation).expect("failed to locate operation");
+fn get_operation(operation_path: &str) -> OperationDefinition {
+    let document_text = std::fs::read_to_string(operation_path).expect("Unable to read input file");
+    let parsed_document = parse_operation(&document_text);
+    let document = prepare_document(&parsed_document, None);
+    let operation = document.executable_operation().unwrap();
 
     operation.clone()
 }
@@ -143,11 +143,7 @@ fn get_operation(operation_path: &str) -> OperationDefinition<'static, String> {
 fn process_paths(
     supergraph_path: &str,
     operation_path: &str,
-) -> (
-    Graph,
-    BestPathsPerLeaf,
-    OperationDefinition<'static, String>,
-) {
+) -> (Graph, BestPathsPerLeaf, OperationDefinition) {
     let operation = get_operation(operation_path);
     let graph = process_graph(supergraph_path);
     let best_paths_per_leaf = walk_operation(&graph, &operation).unwrap();

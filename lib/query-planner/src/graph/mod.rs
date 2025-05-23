@@ -1,6 +1,6 @@
-pub mod edge;
-pub mod error;
-pub mod node;
+pub(crate) mod edge;
+pub(crate) mod error;
+pub(crate) mod node;
 
 mod tests;
 

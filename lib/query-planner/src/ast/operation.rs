@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+use graphql_parser::query as parser;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -18,6 +19,17 @@ pub struct OperationDefinition {
     pub operation_kind: Option<OperationKind>,
     pub selection_set: SelectionSet,
     pub variable_definitions: Option<Vec<VariableDefinition>>,
+}
+
+impl OperationDefinition {
+    pub fn parts(&self) -> (&OperationKind, &SelectionSet) {
+        (
+            self.operation_kind
+                .as_ref()
+                .unwrap_or(&OperationKind::Query),
+            &self.selection_set,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -109,5 +121,24 @@ pub struct VariableDefinition {
 impl Display for VariableDefinition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "${}:{}", self.name, self.variable_type)
+    }
+}
+
+impl From<&parser::Type<'_, String>> for TypeNode {
+    fn from(value: &parser::Type<'_, String>) -> Self {
+        match value {
+            parser::Type::ListType(inner) => TypeNode::List(Box::new(inner.as_ref().into())),
+            parser::Type::NonNullType(inner) => TypeNode::NonNull(Box::new(inner.as_ref().into())),
+            parser::Type::NamedType(name) => TypeNode::Named(name.clone()),
+        }
+    }
+}
+
+impl From<&parser::VariableDefinition<'_, String>> for VariableDefinition {
+    fn from(value: &parser::VariableDefinition<'_, String>) -> Self {
+        VariableDefinition {
+            name: value.name.clone(),
+            variable_type: (&value.var_type).into(),
+        }
     }
 }

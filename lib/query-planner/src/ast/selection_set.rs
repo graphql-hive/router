@@ -4,8 +4,6 @@ use std::{
     hash::Hash,
 };
 
-use graphql_parser::query::{Selection as ParserSelection, SelectionSet as ParserSelectionSet};
-
 use crate::utils::pretty_display::{get_indent, PrettyDisplay};
 
 use super::{arguments::ArgumentsMap, selection_item::SelectionItem};
@@ -176,44 +174,6 @@ impl PrettyDisplay for InlineFragmentSelection {
         writeln!(f, "{indent}... on {} {{", self.type_condition)?;
         self.selections.pretty_fmt(f, depth + 1)?;
         writeln!(f, "{indent}}}")
-    }
-}
-
-impl From<&ParserSelectionSet<'_, String>> for SelectionSet {
-    fn from(parser_selection_set: &ParserSelectionSet<'_, String>) -> Self {
-        SelectionSet {
-            items: parser_selection_set
-                .items
-                .iter()
-                .map(|parser_selection_item| parser_selection_item.into())
-                .collect(),
-        }
-    }
-}
-
-impl From<&ParserSelection<'_, String>> for SelectionItem {
-    fn from(parser_selection: &ParserSelection<'_, String>) -> Self {
-        match parser_selection {
-            ParserSelection::Field(field) => SelectionItem::Field(FieldSelection {
-                name: field.name.to_string(),
-                alias: field.alias.as_ref().map(|alias| alias.to_string()),
-                selections: (&field.selection_set).into(),
-                arguments: (&field.arguments).into(),
-            }),
-            ParserSelection::InlineFragment(inline_fragment) => {
-                SelectionItem::InlineFragment(InlineFragmentSelection {
-                    type_condition: inline_fragment
-                        .type_condition
-                        .as_ref()
-                        .map(|t| t.to_string())
-                        .unwrap(),
-                    selections: (&inline_fragment.selection_set).into(),
-                })
-            }
-            ParserSelection::FragmentSpread(_) => {
-                unimplemented!("FragmentSpread is not supported")
-            }
-        }
     }
 }
 

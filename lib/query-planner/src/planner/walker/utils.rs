@@ -1,7 +1,4 @@
-use graphql_parser::query::OperationDefinition;
-
 use crate::{
-    ast::selection_set::SelectionSet,
     graph::{edge::EdgeReference, Graph},
     state::supergraph_state::OperationKind,
 };
@@ -20,22 +17,4 @@ pub fn get_entrypoints<'a>(
     .ok_or(WalkOperationError::MissingRootType(operation_type.clone()))?;
 
     Ok(graph.edges_from(entrypoint_root).collect())
-}
-
-pub fn operation_to_parts(
-    operation: &OperationDefinition<'static, String>,
-) -> (OperationKind, SelectionSet) {
-    match operation {
-        OperationDefinition::Query(query) => (OperationKind::Query, (&query.selection_set).into()),
-        OperationDefinition::SelectionSet(selection_set) => {
-            (OperationKind::Query, selection_set.into())
-        }
-        OperationDefinition::Mutation(mutation) => {
-            (OperationKind::Mutation, (&mutation.selection_set).into())
-        }
-        OperationDefinition::Subscription(subscription) => (
-            OperationKind::Subscription,
-            (&subscription.selection_set).into(),
-        ),
-    }
 }

@@ -565,10 +565,6 @@ fn perform_fetch_step_merge(
     Ok(())
 }
 
-pub struct FetchSteps {
-    pub root_step_index: Option<NodeIndex>,
-}
-
 fn create_noop_fetch_step(fetch_graph: &mut FetchGraph) -> NodeIndex {
     fetch_graph.add_step(FetchStepData {
         service_name: SubgraphName::any(),

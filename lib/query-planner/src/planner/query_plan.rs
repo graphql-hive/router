@@ -67,7 +67,7 @@ impl<'a> InDegree<'a> {
     }
 }
 
-#[tracing::instrument(skip_all, fields(graph = %fetch_graph))]
+#[tracing::instrument(skip_all)]
 pub fn build_query_plan_from_fetch_graph(
     fetch_graph: FetchGraph,
 ) -> Result<QueryPlan, QueryPlanError> {

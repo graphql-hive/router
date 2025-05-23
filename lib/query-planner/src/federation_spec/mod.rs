@@ -6,8 +6,8 @@ use graphql_parser::{
 
 use crate::state::supergraph_state::{SupergraphDefinition, SupergraphField};
 
-pub mod definitions;
-pub mod directives;
+pub(crate) mod definitions;
+pub(crate) mod directives;
 
 pub(crate) mod directive_trait;
 pub(crate) mod inacessible;

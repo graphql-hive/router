@@ -1,11 +1,9 @@
-use query_tree::QueryTree;
-
-use crate::graph::{error::GraphError, Graph};
+pub mod query_tree;
+pub(crate) mod query_tree_node;
 
 use super::walker::path::OperationPath;
-
-pub mod query_tree;
-pub mod query_tree_node;
+use crate::graph::{error::GraphError, Graph};
+use query_tree::QueryTree;
 
 pub fn paths_to_trees(
     graph: &Graph,
