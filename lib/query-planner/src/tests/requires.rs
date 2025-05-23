@@ -1,12 +1,12 @@
 use crate::{
-    parse_operation,
     planner::{
         fetch::fetch_graph::build_fetch_graph_from_query_tree,
-        query_plan::build_query_plan_from_fetch_graph, tree::query_tree::QueryTree,
+        query_plan::build_query_plan_from_fetch_graph,
+        tree::{paths_to_trees, query_tree::QueryTree},
         walker::walk_operation,
     },
-    tests::testkit::{init_logger, paths_to_trees, read_supergraph},
-    utils::operation_utils::get_operation_to_execute,
+    tests::testkit::{init_logger, read_supergraph},
+    utils::{operation_utils::get_operation_to_execute, parsing::parse_operation},
 };
 use std::error::Error;
 
@@ -32,7 +32,7 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
       @"root(Query) -(inventory)- Query/inventory -(products)- Product/inventory -(isExpensive🧩{price})- Boolean/inventory"
     );
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     let query_tree = QueryTree::merge_trees(qtps);
 
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
@@ -121,7 +121,7 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
       @"root(Query) -(products)- Query/products -(products)- Product/products -(🔑🧩{upc})- Product/inventory -(isExpensive🧩{price})- Boolean/inventory"
     );
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     let query_tree = QueryTree::merge_trees(qtps);
 
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
@@ -198,7 +198,7 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
     assert_eq!(best_paths_per_leaf[0].len(), 1);
     assert_eq!(best_paths_per_leaf[1].len(), 1);
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     let query_tree = QueryTree::merge_trees(qtps);
 
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
@@ -280,7 +280,7 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
       @"root(Query) -(products)- Query/products -(products)- Product/products -(🔑🧩{upc})- Product/inventory -(shippingEstimate🧩{price weight})- Int/inventory"
     );
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     let query_tree = QueryTree::merge_trees(qtps);
 
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
@@ -372,7 +372,7 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
       @"root(Query) -(products)- Query/products -(products)- Product/products -(🔑🧩{upc})- Product/inventory -(shippingEstimate🧩{price weight})- Int/inventory"
     );
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     let query_tree = QueryTree::merge_trees(qtps);
 
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
@@ -467,7 +467,7 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
       @"root(Query) -(products)- Query/products -(products)- Product/products -(🔑🧩{upc})- Product/inventory -(shippingEstimate🧩{price weight})- Estimate/inventory -(price)- Int/inventory"
     );
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     let query_tree = QueryTree::merge_trees(qtps);
 
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
@@ -573,7 +573,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
       @"root(Query) -(b)- Query/b -(b)- B/b -(id)- ID/b"
     );
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
 
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)

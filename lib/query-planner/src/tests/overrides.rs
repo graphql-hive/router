@@ -1,12 +1,12 @@
 use crate::{
-    parse_operation,
     planner::{
         fetch::fetch_graph::build_fetch_graph_from_query_tree,
-        query_plan::build_query_plan_from_fetch_graph, tree::query_tree::QueryTree,
+        query_plan::build_query_plan_from_fetch_graph,
+        tree::{paths_to_trees, query_tree::QueryTree},
         walker::walk_operation,
     },
-    tests::testkit::{init_logger, paths_to_trees, read_supergraph},
-    utils::operation_utils::get_operation_to_execute,
+    tests::testkit::{init_logger, read_supergraph},
+    utils::{operation_utils::get_operation_to_execute, parsing::parse_operation},
 };
 use std::error::Error;
 
@@ -32,7 +32,7 @@ fn single_simple_overrides() -> Result<(), Box<dyn Error>> {
       @"root(Query) -(b)- Query/b -(feed)- Post/b -(createdAt)- String/b"
     );
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
       🚪 (Query/b)
@@ -89,7 +89,7 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
       @"root(Query) -(a)- Query/a -(aFeed)- Post/a -(🔑🧩{id})- Post/b -(createdAt)- String/b"
     );
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
       🚪 (Query/b)

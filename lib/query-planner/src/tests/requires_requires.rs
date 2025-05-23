@@ -1,12 +1,12 @@
 use crate::{
-    parse_operation,
     planner::{
         fetch::fetch_graph::build_fetch_graph_from_query_tree,
-        query_plan::build_query_plan_from_fetch_graph, tree::query_tree::QueryTree,
+        query_plan::build_query_plan_from_fetch_graph,
+        tree::{paths_to_trees, query_tree::QueryTree},
         walker::walk_operation,
     },
-    tests::testkit::{init_logger, paths_to_trees, read_supergraph},
-    utils::operation_utils::get_operation_to_execute,
+    tests::testkit::{init_logger, read_supergraph},
+    utils::{operation_utils::get_operation_to_execute, parsing::parse_operation},
 };
 use std::error::Error;
 
@@ -28,7 +28,7 @@ fn one() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(product)- Product/b -(🔑🧩{id})- Product/d -(canAffordWithDiscount🧩{isExpensiveWithDiscount})- Boolean/d");
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     let query_tree = QueryTree::merge_trees(qtps);
 
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
@@ -129,7 +129,7 @@ fn one_with_one_local() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(product)- Product/b -(🔑🧩{id})- Product/d -(canAffordWithDiscount🧩{isExpensiveWithDiscount})- Boolean/d");
     insta::assert_snapshot!(best_paths_per_leaf[1][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(product)- Product/b -(🔑🧩{id})- Product/d -(fieldInD)- String/d");
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     let query_tree = QueryTree::merge_trees(qtps);
 
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
@@ -248,7 +248,7 @@ fn two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(product)- Product/b -(🔑🧩{id})- Product/d -(canAffordWithDiscount2🧩{isExpensiveWithDiscount})- Boolean/d");
     insta::assert_snapshot!(best_paths_per_leaf[1][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(product)- Product/b -(🔑🧩{id})- Product/d -(canAffordWithDiscount🧩{isExpensiveWithDiscount})- Boolean/d");
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     let query_tree = QueryTree::merge_trees(qtps);
 
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
@@ -363,7 +363,7 @@ fn one_more() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(product)- Product/b -(🔑🧩{id})- Product/d -(canAfford🧩{isExpensive})- Boolean/d");
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     let query_tree = QueryTree::merge_trees(qtps);
 
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
@@ -478,7 +478,7 @@ fn another_two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>>
     insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(product)- Product/b -(🔑🧩{id})- Product/d -(canAfford2🧩{isExpensive})- Boolean/d");
     insta::assert_snapshot!(best_paths_per_leaf[1][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(product)- Product/b -(🔑🧩{id})- Product/d -(canAfford🧩{isExpensive})- Boolean/d");
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     let query_tree = QueryTree::merge_trees(qtps);
 
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
@@ -609,7 +609,7 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(product)- Product/b -(🔑🧩{id})- Product/d -(canAfford🧩{isExpensive})- Boolean/d");
     insta::assert_snapshot!(best_paths_per_leaf[1][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(product)- Product/b -(🔑🧩{id})- Product/d -(canAffordWithDiscount🧩{isExpensiveWithDiscount})- Boolean/d");
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     let query_tree = QueryTree::merge_trees(qtps);
 
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
@@ -774,7 +774,7 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(product)- Product/b -(🔑🧩{id})- Product/d -(canAffordWithAndWithoutDiscount2🧩{isExpensive isExpensiveWithDiscount})- Boolean/d");
     insta::assert_snapshot!(best_paths_per_leaf[1][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(product)- Product/b -(🔑🧩{id})- Product/d -(canAffordWithAndWithoutDiscount🧩{isExpensive isExpensiveWithDiscount})- Boolean/d");
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     let query_tree = QueryTree::merge_trees(qtps);
 
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
@@ -952,7 +952,7 @@ fn many() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(best_paths_per_leaf[7][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(product)- Product/b -(🔑🧩{id})- Product/a -(price)- Float/a");
     insta::assert_snapshot!(best_paths_per_leaf[8][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(product)- Product/b -(id)- ID/b");
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     let query_tree = QueryTree::merge_trees(qtps);
 
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"

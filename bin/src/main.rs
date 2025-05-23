@@ -4,8 +4,6 @@ use std::process;
 use graphql_parser::query::OperationDefinition;
 use query_planner::consumer_schema::ConsumerSchema;
 use query_planner::graph::Graph;
-use query_planner::parse_operation;
-use query_planner::parse_schema;
 use query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
 use query_planner::planner::fetch::fetch_graph::FetchGraph;
 use query_planner::planner::plan_nodes::QueryPlan;
@@ -15,6 +13,8 @@ use query_planner::planner::walker::walk_operation;
 use query_planner::planner::walker::BestPathsPerLeaf;
 use query_planner::state::supergraph_state::SupergraphState;
 use query_planner::utils::operation_utils::get_operation_to_execute;
+use query_planner::utils::parsing::parse_operation;
+use query_planner::utils::parsing::parse_schema;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 

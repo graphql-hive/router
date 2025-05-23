@@ -1,12 +1,12 @@
 use crate::{
-    parse_operation,
     planner::{
         fetch::fetch_graph::build_fetch_graph_from_query_tree,
-        query_plan::build_query_plan_from_fetch_graph, tree::query_tree::QueryTree,
+        query_plan::build_query_plan_from_fetch_graph,
+        tree::{paths_to_trees, query_tree::QueryTree},
         walker::walk_operation,
     },
-    tests::testkit::{init_logger, paths_to_trees, read_supergraph},
-    utils::operation_utils::get_operation_to_execute,
+    tests::testkit::{init_logger, read_supergraph},
+    utils::{operation_utils::get_operation_to_execute, parsing::parse_operation},
 };
 use std::error::Error;
 
@@ -46,7 +46,7 @@ fn testing() -> Result<(), Box<dyn Error>> {
       @"root(Query) -(store)- Query/store -(products)- Product/store -(🔑🧩{uuid})- Product/cost -(price)- Price/cost -(amount)- Float/cost"
     );
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
 
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
@@ -194,7 +194,7 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
       @"root(Query) -(a)- Query/a -(products)- Product/a -(🔑🧩{id pid})- Product/c -(category)- Category/c -(details)- CategoryDetails/c -(products)- Int/c"
     );
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
 
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
@@ -285,7 +285,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(best_paths_per_leaf[3][0].pretty_print(&graph), @"root(Query) -(d)- Query/d -(productFromD)- Product/d -(name)- String/d");
     insta::assert_snapshot!(best_paths_per_leaf[4][0].pretty_print(&graph), @"root(Query) -(d)- Query/d -(productFromD)- Product/d -(id)- ID/d");
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
 
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
@@ -435,7 +435,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(products)- Query/products -(topProducts)- ProductList/products -(products)- Product/products -(🔑🧩{category{id tag} id pid})- Product/price -(price)- Price/price -(price)- Float/price");
     insta::assert_snapshot!(best_paths_per_leaf[1][0].pretty_print(&graph), @"root(Query) -(products)- Query/products -(topProducts)- ProductList/products -(products)- Product/products -(id)- String/products");
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
 
     // TODO: Understand why "tag" and "id" are not both under the same "category of Category/PRODUCTS"
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
