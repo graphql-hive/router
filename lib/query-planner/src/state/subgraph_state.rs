@@ -299,7 +299,7 @@ pub struct SubgraphField {
 mod tests {
     use std::path::PathBuf;
 
-    use crate::parse_schema;
+    use crate::utils::parsing::parse_schema;
 
     use super::*;
 

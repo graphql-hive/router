@@ -111,7 +111,7 @@ impl<'a, T: Text<'a> + Clone> SchemaTransformer<'a, T> for StripSchemaInternals 
 mod test {
     use insta::assert_debug_snapshot;
 
-    use crate::parse_schema;
+    use crate::utils::parsing::parse_schema;
 
     #[test]
     fn test_strip_schema_internals() {

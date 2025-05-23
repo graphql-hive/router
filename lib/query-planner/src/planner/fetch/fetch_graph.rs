@@ -23,6 +23,7 @@ use tracing::{debug, instrument};
 
 use super::error::FetchGraphError;
 
+#[derive(Debug, Clone)]
 pub struct FetchGraph {
     graph: StableDiGraph<FetchStepData, ()>,
     pub root_index: Option<NodeIndex>,

@@ -1,12 +1,12 @@
 use crate::{
-    parse_operation,
     planner::{
         fetch::fetch_graph::build_fetch_graph_from_query_tree,
-        query_plan::build_query_plan_from_fetch_graph, tree::query_tree::QueryTree,
+        query_plan::build_query_plan_from_fetch_graph,
+        tree::{paths_to_trees, query_tree::QueryTree},
         walker::walk_operation,
     },
-    tests::testkit::{init_logger, paths_to_trees, read_supergraph},
-    utils::operation_utils::get_operation_to_execute,
+    tests::testkit::{init_logger, read_supergraph},
+    utils::{operation_utils::get_operation_to_execute, parsing::parse_operation},
 };
 use std::error::Error;
 
@@ -40,7 +40,7 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(best_paths_per_leaf[2][0].pretty_print(&graph), @"root(Query) -(accounts)- Query/accounts -(me)- User/accounts -(🔑🧩{id})- User/reviews -(reviews)- Review/reviews -(author)- User/reviews -(id)- ID/reviews");
     insta::assert_snapshot!(best_paths_per_leaf[3][0].pretty_print(&graph), @"root(Query) -(accounts)- Query/accounts -(me)- User/accounts -(🔑🧩{id})- User/reviews -(reviews)- Review/reviews -(id)- ID/reviews");
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
 
     let query_tree = QueryTree::merge_trees(qtps);
 

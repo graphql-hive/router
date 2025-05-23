@@ -1,12 +1,12 @@
 use crate::{
-    parse_operation,
     planner::{
         fetch::fetch_graph::build_fetch_graph_from_query_tree,
-        query_plan::build_query_plan_from_fetch_graph, tree::query_tree::QueryTree,
+        query_plan::build_query_plan_from_fetch_graph,
+        tree::{paths_to_trees, query_tree::QueryTree},
         walker::walk_operation,
     },
-    tests::testkit::{init_logger, paths_to_trees, read_supergraph},
-    utils::operation_utils::get_operation_to_execute,
+    tests::testkit::{init_logger, read_supergraph},
+    utils::{operation_utils::get_operation_to_execute, parsing::parse_operation},
 };
 use std::error::Error;
 
@@ -36,7 +36,7 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
       @"root(Query) -(products)- Query/products -(products)- Product/products -(🔑🧩{upc})- Product/reviews -(reviews)- Review/reviews -(author)- User/reviews/1 -(username)- String/reviews/1"
     );
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
 
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)
@@ -115,7 +115,7 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
     assert_eq!(best_paths_per_leaf[1].len(), 1);
     assert_eq!(best_paths_per_leaf[2].len(), 1);
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
 
     insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
     root(Query)

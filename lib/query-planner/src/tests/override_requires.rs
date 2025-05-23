@@ -1,12 +1,12 @@
 use crate::{
-    parse_operation,
     planner::{
         fetch::fetch_graph::build_fetch_graph_from_query_tree,
-        query_plan::build_query_plan_from_fetch_graph, tree::query_tree::QueryTree,
+        query_plan::build_query_plan_from_fetch_graph,
+        tree::{paths_to_trees, query_tree::QueryTree},
         walker::walk_operation,
     },
-    tests::testkit::{init_logger, paths_to_trees, read_supergraph},
-    utils::operation_utils::get_operation_to_execute,
+    tests::testkit::{init_logger, read_supergraph},
+    utils::{operation_utils::get_operation_to_execute, parsing::parse_operation},
 };
 use std::error::Error;
 
@@ -56,7 +56,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(best_paths_per_leaf[10][0].pretty_print(&graph), @"root(Query) -(a)- Query/a -(userInA)- User/a -(🔑🧩{id})- User/b -(name)- String/b");
     insta::assert_snapshot!(best_paths_per_leaf[11][0].pretty_print(&graph), @"root(Query) -(a)- Query/a -(userInA)- User/a -(id)- ID/a");
 
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
 
     let query_tree = QueryTree::merge_trees(qtps);
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
@@ -324,7 +324,7 @@ fn override_with_requires_cname_in_c() -> Result<(), Box<dyn Error>> {
     let operation = get_operation_to_execute(&document).expect("failed to locate operation");
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
 
     let query_tree = QueryTree::merge_trees(qtps);
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
@@ -406,7 +406,7 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
     let operation = get_operation_to_execute(&document).expect("failed to locate operation");
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
 
     let query_tree = QueryTree::merge_trees(qtps);
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
@@ -492,7 +492,7 @@ fn override_with_requires_aname_in_a() -> Result<(), Box<dyn Error>> {
     let operation = get_operation_to_execute(&document).expect("failed to locate operation");
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf);
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
 
     let query_tree = QueryTree::merge_trees(qtps);
     insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"

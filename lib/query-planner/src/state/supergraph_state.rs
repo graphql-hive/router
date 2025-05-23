@@ -554,17 +554,6 @@ impl SupergraphDefinition<'_> {
         !self.extract_join_types_for(graph_id).is_empty()
     }
 
-    pub fn is_interface(&self) -> bool {
-        matches!(self, SupergraphDefinition::Interface(_))
-    }
-
-    pub fn is_root(&self) -> bool {
-        match self {
-            SupergraphDefinition::Object(object_type) => object_type.root_type.is_some(),
-            _ => false,
-        }
-    }
-
     pub fn try_into_root_type(&self) -> Option<&RootOperationType> {
         match self {
             SupergraphDefinition::Object(object_type) => object_type.root_type.as_ref(),

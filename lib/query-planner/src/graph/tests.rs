@@ -6,8 +6,8 @@ mod graph_tests {
             node::Node,
             Graph,
         },
-        parse_schema,
         state::supergraph_state::SupergraphState,
+        utils::parsing::parse_schema,
     };
     use petgraph::{
         graph::NodeIndex,

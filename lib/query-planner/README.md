@@ -1,3 +1,16 @@
+# Query Planner
+
+## Usage
+
+```rs
+fn main() {
+  let parsed_supergraph = parse_schema("...");
+  let planner = Planner::new_from_supergraph(&parsed_supergraph);
+  let operation = parse_operation("...");
+  let plan = planner.plan(&operation);
+}
+```
+
 ## Testing
 
 To run all tests for the QP, please use:
