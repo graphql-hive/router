@@ -248,13 +248,20 @@ async fn graphql_endpoint(
     serve_data: web::Data<ServeData>,
 ) -> impl Responder {
     let query_str = request_body.query.as_deref().expect("query is required");
-
+    let operation_name = request_body.operation_name.as_deref();
     let document = parse_operation(query_str);
 
-    let (query_plan, operation) = serve_data
+    let query_plan = serve_data
         .planner
-        .plan(&document)
+        .plan(&document, operation_name)
         .expect("failed to build query plan");
+
+    // TODO: Fix that, it should really be handled differently
+    let operation = match &document.definitions[0] {
+        graphql_parser::query::Definition::Operation(operation) => operation,
+        _ => panic!("Expected an operation definition"),
+    };
+
     let variable_values = collect_variables(operation, &request_body.variables);
     let mut result = execute_query_plan(
         &query_plan,
@@ -264,6 +271,7 @@ async fn graphql_endpoint(
         &document,
     )
     .await;
+
     let mut extensions = HashMap::new();
     extensions.insert("queryPlan".to_string(), json!(query_plan));
     result.extensions = Some(extensions);

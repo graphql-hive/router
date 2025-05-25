@@ -6,7 +6,7 @@ use crate::{
         walker::walk_operation,
     },
     tests::testkit::{init_logger, read_supergraph},
-    utils::{operation_utils::get_operation_to_execute, parsing::parse_operation},
+    utils::{operation_utils::prepare_document, parsing::parse_operation},
 };
 use std::error::Error;
 
@@ -22,7 +22,8 @@ fn single_simple_overrides() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let operation = get_operation_to_execute(&document).expect("failed to locate operation");
+    let document = prepare_document(&document, None);
+    let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
     assert_eq!(best_paths_per_leaf[0].len(), 1);
@@ -84,7 +85,8 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let operation = get_operation_to_execute(&document).expect("failed to locate operation");
+    let document = prepare_document(&document, None);
+    let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 2);
     assert_eq!(best_paths_per_leaf[0].len(), 1);

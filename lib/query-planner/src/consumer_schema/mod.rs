@@ -1,5 +1,5 @@
-pub mod prune_inacessible;
-pub mod strip_schema_internals;
+pub(crate) mod prune_inacessible;
+pub(crate) mod strip_schema_internals;
 
 use graphql_parser::schema::*;
 use prune_inacessible::PruneInaccessible;

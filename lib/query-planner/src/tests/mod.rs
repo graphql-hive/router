@@ -1,4 +1,5 @@
 mod alias;
+mod fragments;
 mod object_entities;
 mod override_requires;
 mod overrides;

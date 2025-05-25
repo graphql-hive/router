@@ -104,11 +104,8 @@ impl SelectionResolver {
                     let selection_node = self.resolve_field_selection(type_name, field)?;
                     result.push(selection_node);
                 }
-                OperationSelectionKind::InlineFragment(_fragment) => {
-                    unimplemented!("not supported yet")
-                }
-                OperationSelectionKind::FragmentSpread(_spread) => {
-                    unimplemented!("not supported yet")
+                _ => {
+                    unimplemented!("not supported yet: unexpected selection in selection-resolver")
                 }
             }
         }

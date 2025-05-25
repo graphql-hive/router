@@ -1,9 +1,6 @@
 use petgraph::graph::NodeIndex;
 
-use crate::{
-    ast::selection_item::SelectionItem, graph::error::GraphError,
-    state::supergraph_state::OperationKind,
-};
+use crate::{graph::error::GraphError, state::supergraph_state::OperationKind};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WalkOperationError {
@@ -14,7 +11,7 @@ pub enum WalkOperationError {
     #[error("Tail node missing info")]
     TailMissingInfo(NodeIndex),
     #[error("No paths found for selection item: {0}")]
-    NoPathsFound(SelectionItem),
+    NoPathsFound(String),
 }
 
 impl From<GraphError> for WalkOperationError {

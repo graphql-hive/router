@@ -7,9 +7,10 @@ use tree::{paths_to_trees, query_tree::QueryTree};
 use walker::{error::WalkOperationError, walk_operation};
 
 use crate::{
+    consumer_schema::ConsumerSchema,
     graph::{error::GraphError, Graph},
     state::supergraph_state::SupergraphState,
-    utils::operation_utils::get_operation_to_execute,
+    utils::operation_utils::prepare_document,
 };
 
 mod error;
@@ -21,6 +22,7 @@ pub mod walker;
 
 pub struct Planner {
     graph: Graph,
+    consumer_schema: ConsumerSchema,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -67,15 +69,22 @@ impl Planner {
     ) -> Result<Self, PlannerError> {
         let supergraph_state = SupergraphState::new(parsed_supergraph);
         let graph = Graph::graph_from_supergraph_state(&supergraph_state)?;
+        let consumer_schema = ConsumerSchema::new_from_supergraph(parsed_supergraph);
 
-        Ok(Planner { graph })
+        Ok(Planner {
+            graph,
+            consumer_schema,
+        })
     }
 
-    pub fn plan<'a>(
+    pub fn plan(
         &self,
-        operation_document: &'a query::Document<'static, String>,
-    ) -> Result<(QueryPlan, &'a query::OperationDefinition<'static, String>), PlannerError> {
-        let operation = get_operation_to_execute(operation_document)
+        operation_document: &query::Document<'static, String>,
+        operation_name: Option<&str>,
+    ) -> Result<QueryPlan, PlannerError> {
+        let document = prepare_document(operation_document, operation_name);
+        let operation = document
+            .executable_operation()
             .ok_or(PlannerError::MissingOperationToExecute)?;
         let best_paths_per_leaf = walk_operation(&self.graph, operation)?;
         let qtps = paths_to_trees(&self.graph, &best_paths_per_leaf)?;
@@ -83,6 +92,10 @@ impl Planner {
         let fetch_graph = build_fetch_graph_from_query_tree(&self.graph, query_tree)?;
         let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
 
-        Ok((query_plan, operation))
+        Ok(query_plan)
+    }
+
+    pub fn consumer_schema(&self) -> &ConsumerSchema {
+        &self.consumer_schema
     }
 }
