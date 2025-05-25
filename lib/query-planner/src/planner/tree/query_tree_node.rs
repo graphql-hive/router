@@ -4,7 +4,7 @@ use tracing::{debug, instrument};
 
 use crate::{
     graph::{edge::Edge, error::GraphError, Graph},
-    planner::walker::path::OperationPath,
+    planner::walker::path::{OperationPath, PathSegment},
 };
 
 use super::query_tree::QueryTree;
@@ -18,6 +18,7 @@ pub struct QueryTreeNode {
     /// Nodes required to execute the move
     pub requirements: Vec<QueryTreeNode>,
     pub children: Vec<QueryTreeNode>,
+    pub alias: Option<String>,
 }
 
 impl PartialEq for QueryTreeNode {
@@ -56,6 +57,7 @@ impl QueryTreeNode {
             edge_from_parent: edge_from_parent.cloned(),
             requirements: Vec::new(),
             children: Vec::new(),
+            alias: None,
         }
     }
 
@@ -72,6 +74,7 @@ impl QueryTreeNode {
             edge_from_parent: self.edge_from_parent,
             requirements: self.requirements.clone(),
             children: self.children.clone(),
+            alias: self.alias.clone().or_else(|| other.alias.clone()),
         }
     }
 
@@ -97,37 +100,43 @@ impl QueryTreeNode {
         Ok(Some(QueryTree::merge_trees(trees).root))
     }
 
-    #[instrument(skip(graph, requirements_trees), fields(
-      total_edges = edges.len()
+    #[instrument(skip(graph, segments), fields(
+      total_segments = segments.len()
     ))]
     fn from_path_segment_sequences(
         graph: &Graph,
-        edges: &[EdgeIndex],
-        requirements_trees: &[Option<&QueryTreeNode>],
+        segments: &[&PathSegment],
         current_index: usize,
     ) -> Result<Option<Self>, GraphError> {
-        if current_index >= edges.len() {
+        if current_index >= segments.len() {
             return Ok(None);
         }
 
-        let edge_at_index = edges[current_index];
-        let requirements_tree = requirements_trees[current_index];
+        let segment_at_index = &segments[current_index];
+        let edge_at_index = &segment_at_index.edge_index;
+        let requirements_tree_at_index = &segment_at_index.requirement_tree;
+        let field_at_index = &segment_at_index.field;
 
         debug!(
             "Processing edge: {}",
-            graph.pretty_print_edge(edge_at_index, false)
+            graph.pretty_print_edge(*edge_at_index, false)
         );
 
         // Creates the QueryTreeNode representing the state after traversing this edge
-        let tail_node_index = graph.get_edge_tail(&edge_at_index)?;
-        let mut tree_node = QueryTreeNode::new(&tail_node_index, Some(&edge_at_index));
+        let tail_node_index = graph.get_edge_tail(edge_at_index)?;
+        let mut tree_node = QueryTreeNode::new(&tail_node_index, Some(edge_at_index));
 
-        if let Some(requirements_tree) = requirements_tree {
+        tree_node.alias = field_at_index
+            .as_ref()
+            .and_then(|v| v.alias.as_ref())
+            .cloned();
+
+        if let Some(requirements_tree) = requirements_tree_at_index {
             tree_node.requirements.push(requirements_tree.clone());
         }
 
         let subsequent_query_tree_node =
-            Self::from_path_segment_sequences(graph, edges, requirements_trees, current_index + 1)?;
+            Self::from_path_segment_sequences(graph, segments, current_index + 1)?;
 
         match subsequent_query_tree_node {
             Some(subsequent_query_tree_node) => {
@@ -146,8 +155,7 @@ impl QueryTreeNode {
     pub fn create_root_for_path_sequences(
         graph: &Graph,
         root_node_index: &NodeIndex,
-        edges: &Vec<EdgeIndex>,
-        requirements_tree: &Vec<Option<&QueryTreeNode>>,
+        segments: &Vec<&PathSegment>,
     ) -> Result<QueryTreeNode, GraphError> {
         debug!(
             "Building root query tree node: {}",
@@ -156,11 +164,10 @@ impl QueryTreeNode {
 
         let mut root_tree_node = Self::new_root(root_node_index);
 
-        if edges.is_empty() {
+        if segments.is_empty() {
             debug!("Path has no edges beyond the root.");
         } else {
-            let subsequent_node =
-                QueryTreeNode::from_path_segment_sequences(graph, edges, requirements_tree, 0)?;
+            let subsequent_node = QueryTreeNode::from_path_segment_sequences(graph, segments, 0)?;
 
             if let Some(subsequent_node) = subsequent_node {
                 root_tree_node.children.push(subsequent_node);

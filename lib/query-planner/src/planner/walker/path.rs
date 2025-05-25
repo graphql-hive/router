@@ -6,6 +6,7 @@ use petgraph::{
 };
 
 use crate::{
+    ast::selection_set::FieldSelection,
     graph::{edge::EdgeReference, Graph},
     planner::tree::query_tree_node::QueryTreeNode,
 };
@@ -14,10 +15,11 @@ use crate::{
 pub struct PathSegment {
     // Link to the previous step, null for the first segment originating from rootNode
     prev: Option<Box<PathSegment>>,
-    edge_index: EdgeIndex,
+    pub edge_index: EdgeIndex,
     tail_node: NodeIndex,
     cumulative_cost: u64,
-    requirement_tree: Option<QueryTreeNode>,
+    pub requirement_tree: Option<QueryTreeNode>,
+    pub field: Option<FieldSelection>,
 }
 
 impl PathSegment {
@@ -28,6 +30,7 @@ impl PathSegment {
             tail_node: edge.target(),
             cumulative_cost: edge.weight().cost(),
             requirement_tree: None,
+            field: None,
         }
     }
 }
@@ -90,6 +93,7 @@ impl OperationPath {
         &self,
         edge_ref: &EdgeReference<'_>,
         requirement: Option<QueryTreeNode>,
+        field: &FieldSelection,
     ) -> OperationPath {
         let prev_cost = self.cost;
         let edge_cost = edge_ref.weight().cost();
@@ -103,6 +107,7 @@ impl OperationPath {
             edge_index: edge_ref.id(),
             cumulative_cost: new_cost,
             requirement_tree: requirement,
+            field: Some(field.clone()),
         };
 
         OperationPath::new(self.root_node, Some(new_segment), new_visited)
@@ -116,6 +121,20 @@ impl OperationPath {
 
     pub fn has_visited_edge(&self, edge_index: &EdgeIndex) -> bool {
         self.visited_edge_indices.contains(edge_index)
+    }
+
+    pub fn get_segments(&self) -> Vec<&PathSegment> {
+        // TODO: Consider VecDeque so we can just do push_front
+        let mut segments: Vec<&PathSegment> = vec![];
+
+        let mut current = self.last_segment.as_ref();
+        while let Some(segment) = current {
+            segments.push(segment);
+            current = segment.prev.as_deref();
+        }
+
+        segments.reverse();
+        segments
     }
 
     pub fn get_edges(&self) -> Vec<EdgeIndex> {
@@ -144,20 +163,6 @@ impl OperationPath {
 
         requirement_tree.reverse();
         requirement_tree
-    }
-
-    pub fn get_segments(&self) -> Vec<&PathSegment> {
-        // TODO: Consider VecDeque so we can just do push_front
-        let mut segments: Vec<&PathSegment> = vec![];
-
-        let mut current = self.last_segment.as_ref();
-        while let Some(segment) = current {
-            segments.push(segment);
-            current = segment.prev.as_deref();
-        }
-
-        segments.reverse();
-        segments
     }
 
     pub fn pretty_print(&self, graph: &Graph) -> String {
@@ -237,6 +242,7 @@ impl OperationPath {
                 edge_index: original_segment.edge_index,
                 requirement_tree: original_segment.requirement_tree.clone(),
                 tail_node: original_segment.tail_node,
+                field: original_segment.field.clone(),
             };
 
             previous_new_segment = Some(Box::new(new_segment));

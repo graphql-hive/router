@@ -73,7 +73,7 @@ pub fn walk_operation(
                     let mut advanced = false;
 
                     let excluded = ExcludedFromLookup::new();
-                    let direct_paths = find_direct_paths(graph, &path, &field.name, &excluded)?;
+                    let direct_paths = find_direct_paths(graph, &path, field, &excluded)?;
 
                     debug!("Direct paths found: {}", direct_paths.len());
 
@@ -85,7 +85,7 @@ pub fn walk_operation(
                         }
                     }
 
-                    let indirect_paths = find_indirect_paths(graph, &path, &field.name, &excluded)?;
+                    let indirect_paths = find_indirect_paths(graph, &path, field, &excluded)?;
 
                     debug!("Indirect paths found: {}", indirect_paths.len());
 

@@ -120,6 +120,10 @@ impl Hash for InlineFragmentSelection {
 
 impl Display for FieldSelection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(alias) = &self.alias {
+            write!(f, "{}: ", alias)?;
+        }
+
         write!(f, "{}", self.name)?;
 
         if self.has_arguments() {
@@ -133,11 +137,17 @@ impl Display for FieldSelection {
 impl PrettyDisplay for FieldSelection {
     fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
         let indent = get_indent(depth);
+
+        let alias_str = match &self.alias {
+            Some(alias_name) => format!("{}: ", alias_name),
+            None => String::new(),
+        };
+
         if self.is_leaf() {
-            return writeln!(f, "{indent}{}", self.name);
+            return writeln!(f, "{indent}{}{}", alias_str, self.name);
         }
 
-        writeln!(f, "{indent}{} {{", self.name)?;
+        writeln!(f, "{indent}{}{} {{", alias_str, self.name)?;
         self.selections.pretty_fmt(f, depth + 1)?;
         writeln!(f, "{indent}}}")
     }
@@ -212,6 +222,38 @@ mod tests {
     use crate::ast::value::Value;
 
     use super::*;
+
+    #[test]
+    fn print_alias_selection_set() {
+        let selection_set = SelectionSet {
+            items: vec![
+                SelectionItem::Field(FieldSelection {
+                    name: "field1".to_string(),
+                    selections: SelectionSet::default(),
+                    alias: Some("f".to_string()),
+                    arguments: ArgumentsMap::default(),
+                }),
+                SelectionItem::Field(FieldSelection {
+                    name: "field2".to_string(),
+                    selections: SelectionSet {
+                        items: vec![SelectionItem::Field(FieldSelection {
+                            name: "nested".to_string(),
+                            selections: SelectionSet::default(),
+                            alias: Some("n".to_string()),
+                            arguments: ("a".to_string(), Value::Int(1)).into(),
+                        })],
+                    },
+                    alias: Some("f2".to_string()),
+                    arguments: ArgumentsMap::default(),
+                }),
+            ],
+        };
+
+        insta::assert_snapshot!(
+          selection_set,
+          @"{f: field1 f2: field2{n: nested(a: 1)}}"
+        )
+    }
 
     #[test]
     fn print_simple_selection_set() {

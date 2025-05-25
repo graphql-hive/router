@@ -961,6 +961,7 @@ fn process_plain_field_edge(
     response_path: &MergePath,
     fetch_path: &MergePath,
     field_name: &str,
+    field_alias: Option<&str>,
     field_is_leaf: bool,
     field_is_list: bool,
     field_type_name: &str,
@@ -979,7 +980,7 @@ fn process_plain_field_edge(
             selection_set: SelectionSet {
                 items: vec![SelectionItem::Field(FieldSelection {
                     name: field_name.to_string(),
-                    alias: None,
+                    alias: field_alias.map(|a| a.to_string()),
                     selections: SelectionSet::default(),
                     // TODO: replace with a proper type
                     arguments: ArgumentsMap::default(),
@@ -991,7 +992,8 @@ fn process_plain_field_edge(
         false,
     );
 
-    let mut child_response_path = response_path.push(field_name);
+    let merge_path_name = field_alias.unwrap_or(field_name).to_string();
+    let mut child_response_path = response_path.push(merge_path_name);
     let mut child_fetch_path = fetch_path.push(field_name);
 
     if field_is_list {
@@ -1414,6 +1416,7 @@ fn process_query_node(
                         response_path,
                         fetch_path,
                         &field.name,
+                        query_node.alias.as_deref(),
                         field.is_leaf,
                         field.is_list,
                         &field.type_name,

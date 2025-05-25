@@ -62,7 +62,7 @@ impl IndirectPathsLookupQueue {
 pub fn find_indirect_paths(
     graph: &Graph,
     path: &OperationPath,
-    field_name: &str,
+    field: &FieldSelection,
     excluded: &ExcludedFromLookup,
 ) -> Result<Vec<OperationPath>, WalkOperationError> {
     let mut tracker = BestPathTracker::new(graph);
@@ -146,14 +146,14 @@ pub fn find_indirect_paths(
                     );
 
                     let next_resolution_path =
-                        path.advance(&edge_ref, QueryTreeNode::from_paths(graph, &paths)?);
+                        path.advance(&edge_ref, QueryTreeNode::from_paths(graph, &paths)?, field);
 
                     let direct_paths_excluded =
                         excluded.next(edge_tail_graph_id, &visited_key_fields, &[]);
                     let direct_paths = find_direct_paths(
                         graph,
                         &next_resolution_path,
-                        field_name,
+                        field,
                         &direct_paths_excluded,
                     )?;
 
@@ -213,9 +213,10 @@ pub fn find_indirect_paths(
 pub fn find_direct_paths(
     graph: &Graph,
     path: &OperationPath,
-    field_name: &str,
+    field: &FieldSelection,
     excluded: &ExcludedFromLookup,
 ) -> Result<Vec<OperationPath>, WalkOperationError> {
+    let field_name = &field.name;
     let mut result: Vec<OperationPath> = vec![];
     let path_tail_index = path.tail();
 
@@ -224,7 +225,7 @@ pub fn find_direct_paths(
     let edges_iter =
             graph
             .edges_from(path_tail_index)
-            .filter(|e| matches!(e.weight(), Edge::FieldMove(f) if f.name == field_name && !path.has_visited_edge(&e.id())));
+            .filter(|e| matches!(e.weight(), Edge::FieldMove(f) if f.name == *field_name && !path.has_visited_edge(&e.id())));
 
     for edge_ref in edges_iter {
         debug!(
@@ -245,7 +246,7 @@ pub fn find_direct_paths(
                 );
 
                 let next_resolution_path =
-                    path.advance(&edge_ref, QueryTreeNode::from_paths(graph, &paths)?);
+                    path.advance(&edge_ref, QueryTreeNode::from_paths(graph, &paths)?, field);
 
                 result.push(next_resolution_path);
             }
@@ -361,15 +362,14 @@ type FieldRequirementsResult = Option<(Vec<OperationPath>, Vec<MoveRequirement>)
 fn validate_field_requirement(
     graph: &Graph,
     move_requirement: &MoveRequirement,
-    field_move_requirement: &FieldSelection,
+    field: &FieldSelection,
     excluded: &ExcludedFromLookup,
     use_only_direct_edges: bool,
 ) -> Result<FieldRequirementsResult, WalkOperationError> {
-    let field_name = &field_move_requirement.name;
     let mut next_paths: Vec<OperationPath> = Vec::new();
 
     for path in move_requirement.paths.iter() {
-        let direct_paths = find_direct_paths(graph, path, field_name, excluded)?;
+        let direct_paths = find_direct_paths(graph, path, field, excluded)?;
 
         for direct_path in direct_paths.into_iter() {
             next_paths.push(direct_path);
@@ -378,7 +378,7 @@ fn validate_field_requirement(
 
     if !use_only_direct_edges {
         for path in move_requirement.paths.iter() {
-            let indirect_paths = find_indirect_paths(graph, path, field_name, excluded)?;
+            let indirect_paths = find_indirect_paths(graph, path, field, excluded)?;
 
             for indirect_path in indirect_paths.into_iter() {
                 next_paths.push(indirect_path);
