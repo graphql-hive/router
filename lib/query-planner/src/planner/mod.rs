@@ -71,10 +71,10 @@ impl Planner {
         Ok(Planner { graph })
     }
 
-    pub fn plan(
+    pub fn plan<'a>(
         &self,
-        operation_document: &query::Document<'static, String>,
-    ) -> Result<QueryPlan, PlannerError> {
+        operation_document: &'a query::Document<'static, String>,
+    ) -> Result<(QueryPlan, &'a query::OperationDefinition<'static, String>), PlannerError> {
         let operation = get_operation_to_execute(operation_document)
             .ok_or(PlannerError::MissingOperationToExecute)?;
         let best_paths_per_leaf = walk_operation(&self.graph, operation)?;
@@ -83,6 +83,6 @@ impl Planner {
         let fetch_graph = build_fetch_graph_from_query_tree(&self.graph, query_tree)?;
         let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
 
-        Ok(query_plan)
+        Ok((query_plan, operation))
     }
 }

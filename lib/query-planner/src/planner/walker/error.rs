@@ -2,13 +2,13 @@ use petgraph::graph::NodeIndex;
 
 use crate::{
     ast::selection_item::SelectionItem, graph::error::GraphError,
-    state::supergraph_state::RootOperationType,
+    state::supergraph_state::OperationKind,
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum WalkOperationError {
     #[error("Root type of {0} not found")]
-    MissingRootType(RootOperationType),
+    MissingRootType(OperationKind),
     #[error("Graph error: {0}")]
     GraphFailure(GraphError),
     #[error("Tail node missing info")]

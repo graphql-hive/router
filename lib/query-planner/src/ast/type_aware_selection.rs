@@ -82,7 +82,7 @@ fn selection_item_is_subset_of(source: &SelectionItem, target: &SelectionItem) -
                 return false;
             }
 
-            if source_field.is_leaf != target_field.is_leaf {
+            if source_field.is_leaf() != target_field.is_leaf() {
                 return false;
             }
 

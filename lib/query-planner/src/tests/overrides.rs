@@ -55,7 +55,17 @@ fn single_simple_overrides() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Fetch",
+        "serviceName": "b",
+        "operationKind": "query",
+        "operation": "{feed{createdAt}}"
+      }
+    }
+    "#);
     Ok(())
 }
 
@@ -162,6 +172,61 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Parallel",
+            "nodes": [
+              {
+                "kind": "Fetch",
+                "serviceName": "a",
+                "operationKind": "query",
+                "operation": "{aFeed{__typename id}}"
+              },
+              {
+                "kind": "Fetch",
+                "serviceName": "b",
+                "operationKind": "query",
+                "operation": "{bFeed{createdAt}}"
+              }
+            ]
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "aFeed",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "b",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{createdAt}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Post",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
     Ok(())
 }

@@ -95,8 +95,7 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
                     upc
                   }
                   author {
-                    username {
-                    }
+                    username
                     id
                   }
                   id
@@ -122,6 +121,80 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "accounts",
+            "operationKind": "query",
+            "operation": "{me{__typename id}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "me"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "reviews",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{reviews{product{__typename upc} author{username id} id}}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "User",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "me",
+              "reviews",
+              "@",
+              "product"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "inventory",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{inStock}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "upc"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
     Ok(())
 }

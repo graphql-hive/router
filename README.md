@@ -2,7 +2,10 @@
 
 ## Try it out
 
-See [bin/README.md](bin/README.md) for instructions to quickly use the dev-cli for seeing the QP in action.
+To try the query planner, see [bin/dev-cli/README.md](bin/dev-cli/README.md) for instructions to quickly use the qp-dev-cli for seeing the QP in action.
+
+To try the gateway, see [bin/gateway/README.md](bin/gatewayREADME.md) for instructions to quickly use the qp-dev-cli for seeing the QP in action.
+
 
 ## Testing
 

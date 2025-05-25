@@ -3,7 +3,7 @@ use std::fmt::Display;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    state::supergraph_state::RootOperationType,
+    state::supergraph_state::OperationKind,
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
 
@@ -12,12 +12,15 @@ use super::{selection_item::SelectionItem, selection_set::SelectionSet};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationDefinition {
     pub name: Option<String>,
-    pub operation_type: RootOperationType,
+    // TODO: Should operation_kind be OperationKind or Option<OperationKind>?
+    // I don't see a scenario where it should be set to None?
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_kind: Option<OperationKind>,
     pub selection_set: SelectionSet,
     pub variable_definitions: Option<Vec<VariableDefinition>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SubgraphFetchOperation(pub OperationDefinition);
 
 impl SubgraphFetchOperation {
@@ -34,6 +37,15 @@ impl SubgraphFetchOperation {
     }
 }
 
+impl Serialize for SubgraphFetchOperation {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.0.to_string().as_str())
+    }
+}
+
 impl PrettyDisplay for SubgraphFetchOperation {
     fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
         let indent = get_indent(depth);
@@ -45,7 +57,9 @@ impl PrettyDisplay for SubgraphFetchOperation {
 
 impl Display for OperationDefinition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.operation_type)?;
+        if let Some(operation_kind) = &self.operation_kind {
+            write!(f, "{}", operation_kind)?;
+        }
 
         if let Some(name) = &self.name {
             write!(f, "{}", name)?;
@@ -65,7 +79,7 @@ impl Display for OperationDefinition {
             }
         }
 
-        write!(f, " {}", self.selection_set)
+        write!(f, "{}", self.selection_set)
     }
 }
 
@@ -94,6 +108,6 @@ pub struct VariableDefinition {
 
 impl Display for VariableDefinition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "${}: {}", self.name, self.variable_type)
+        write!(f, "${}:{}", self.name, self.variable_type)
     }
 }

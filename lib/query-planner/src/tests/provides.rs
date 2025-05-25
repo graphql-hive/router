@@ -76,8 +76,7 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
               ... on Product {
                 reviews {
                   author {
-                    username {
-                    }
+                    username
                   }
                 }
               }
@@ -87,7 +86,51 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "products",
+            "operationKind": "query",
+            "operation": "{products{__typename upc}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "products",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "reviews",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reviews{author{username}}}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "upc"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
     Ok(())
 }
 
@@ -147,16 +190,25 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
         {
           products {
             categories {
-              name {
-              }
-              id {
-              }
+              name
+              id
             }
             id
           }
         }
       },
     },
+    "#);
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Fetch",
+        "serviceName": "category",
+        "operationKind": "query",
+        "operation": "{products{categories{name id} id}}"
+      }
+    }
     "#);
 
     Ok(())

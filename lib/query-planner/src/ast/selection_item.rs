@@ -8,6 +8,7 @@ use std::{
 };
 
 #[derive(Clone, Deserialize, Serialize)]
+#[serde(tag = "kind")]
 pub enum SelectionItem {
     Field(FieldSelection),
     InlineFragment(InlineFragmentSelection),
@@ -54,8 +55,12 @@ impl Ord for SelectionItem {
                 SelectionItem::Field(FieldSelection { .. }),
             ) => self.sort_key().cmp(&other.sort_key()),
             (
-                SelectionItem::InlineFragment(InlineFragmentSelection { type_name: a, .. }),
-                SelectionItem::InlineFragment(InlineFragmentSelection { type_name: b, .. }),
+                SelectionItem::InlineFragment(InlineFragmentSelection {
+                    type_condition: a, ..
+                }),
+                SelectionItem::InlineFragment(InlineFragmentSelection {
+                    type_condition: b, ..
+                }),
             ) => a.cmp(b),
             (
                 SelectionItem::Field(FieldSelection { .. }),
@@ -97,8 +102,8 @@ impl SelectionItem {
             SelectionItem::Field(FieldSelection {
                 name: field_name, ..
             }) => field_name.to_string(),
-            SelectionItem::InlineFragment(InlineFragmentSelection { type_name, .. }) => {
-                type_name.to_string()
+            SelectionItem::InlineFragment(InlineFragmentSelection { type_condition, .. }) => {
+                type_condition.to_string()
             }
         }
     }
@@ -135,11 +140,11 @@ impl Debug for SelectionItem {
                 .field("selections", selections)
                 .finish(),
             SelectionItem::InlineFragment(InlineFragmentSelection {
-                type_name,
+                type_condition,
                 selections,
             }) => f
                 .debug_struct("SelectionItem::Fragment")
-                .field("type_name", type_name)
+                .field("type_name", type_condition)
                 .field("selections", selections)
                 .finish(),
         }
@@ -157,7 +162,7 @@ impl PartialEq for SelectionItem {
                 f1.selections == f2.selections
             }
             (SelectionItem::InlineFragment(f1), SelectionItem::InlineFragment(f2)) => {
-                f1.type_name == f2.type_name && f1.selections.items == f2.selections.items
+                f1.type_condition == f2.type_condition && f1.selections.items == f2.selections.items
             }
             _ => false,
         }
