@@ -13,7 +13,7 @@ use query_planner::planner::Planner;
 use query_planner::utils::parsing::parse_operation;
 use query_planner::utils::parsing::parse_schema;
 use serde_json::json;
-use serde_json::Value;
+use serde_json::Value::{self};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -70,6 +70,44 @@ struct ServeData {
     planner: Planner,
 }
 
+fn from_graphql_value_to_serde_value<'a>(
+    value: &graphql_parser::query::Value<'static, String>,
+    variables: &Option<HashMap<String, Value>>,
+) -> serde_json::Value {
+    match value {
+        graphql_parser::query::Value::Null => serde_json::Value::Null,
+        graphql_parser::query::Value::Boolean(b) => serde_json::Value::Bool(*b),
+        graphql_parser::query::Value::String(s) => serde_json::Value::String(s.to_string()),
+        graphql_parser::query::Value::Enum(e) => serde_json::Value::String(e.to_string()),
+        graphql_parser::query::Value::Int(n) => {
+            serde_json::Value::Number(serde_json::Number::from(n.as_i64().unwrap()))
+        }
+        graphql_parser::query::Value::Float(n) => {
+            serde_json::Value::Number(serde_json::Number::from_f64(*n).expect("Failed to coerce"))
+        }
+        graphql_parser::query::Value::List(l) => serde_json::Value::Array(
+            l.into_iter()
+                .map(|v| from_graphql_value_to_serde_value(v, variables))
+                .collect(),
+        ),
+        graphql_parser::query::Value::Object(o) => serde_json::Value::Object(
+            o.into_iter()
+                .map(|(k, v)| {
+                    (
+                        k.to_string(),
+                        from_graphql_value_to_serde_value(v, variables),
+                    )
+                })
+                .collect(),
+        ),
+        graphql_parser::query::Value::Variable(var_name) => variables
+            .as_ref()
+            .and_then(|vars| vars.get(var_name))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    }
+}
+
 fn collect_variables(
     operation: &OperationDefinition<'static, String>,
     variables: &Option<HashMap<String, Value>>,
@@ -86,7 +124,9 @@ fn collect_variables(
         if let Some(variable_value) = variables.as_ref().and_then(|v| v.get(&variable_name)) {
             variable_values.insert(variable_name, variable_value.clone());
         } else if let Some(default_value) = &variable_definition.default_value {
-            todo!("Not implemented yet: default value: {}", default_value);
+            let default_value_coerced =
+                from_graphql_value_to_serde_value(default_value, &variables);
+            variable_values.insert(variable_name, default_value_coerced);
         } else {
             variable_values.insert(variable_name, Value::Null);
         }
