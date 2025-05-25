@@ -5,7 +5,7 @@ use petgraph::{graph::NodeIndex, visit::EdgeRef};
 use super::{
     error::QueryPlanError,
     fetch::fetch_graph::FetchGraph,
-    plan_nodes::{QueryPlan, QueryPlanNode},
+    plan_nodes::{ParallelNode, PlanNode, QueryPlan, SequenceNode},
 };
 
 /// Tracks the in-degree of FetchGraph (DAG) in a dependency graph.
@@ -91,10 +91,10 @@ pub fn build_query_plan_from_fetch_graph(
         }
     }
 
-    let mut overall_plan_sequence: Vec<QueryPlanNode> = Vec::new();
+    let mut overall_plan_sequence: Vec<PlanNode> = Vec::new();
 
     while !queue.is_empty() {
-        let mut current_wave_nodes: Vec<QueryPlanNode> = Vec::new();
+        let mut current_wave_nodes: Vec<PlanNode> = Vec::new();
         let wave_size = queue.len();
 
         for _ in 0..wave_size {
@@ -132,7 +132,9 @@ pub fn build_query_plan_from_fetch_graph(
                 QueryPlanError::Internal(String::from("Was was expected to be of length 1")),
             )?);
         } else {
-            overall_plan_sequence.push(QueryPlanNode::Parallel(current_wave_nodes));
+            overall_plan_sequence.push(PlanNode::Parallel(ParallelNode {
+                nodes: current_wave_nodes,
+            }));
         }
     }
 
@@ -157,8 +159,13 @@ pub fn build_query_plan_from_fetch_graph(
 
     let root_node = match overall_plan_sequence.len() == 1 {
         true => overall_plan_sequence.into_iter().next().unwrap(),
-        false => QueryPlanNode::Sequence(overall_plan_sequence),
+        false => PlanNode::Sequence(SequenceNode {
+            nodes: overall_plan_sequence,
+        }),
     };
 
-    Ok(QueryPlan { root: root_node })
+    Ok(QueryPlan {
+        kind: "QueryPlan".to_string(),
+        node: Some(root_node),
+    })
 }

@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{ser::SerializeSeq, Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display},
     hash::Hash,
@@ -10,7 +10,7 @@ use crate::utils::pretty_display::{get_indent, PrettyDisplay};
 
 use super::{arguments::ArgumentsMap, selection_item::SelectionItem};
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct SelectionSet {
     pub items: Vec<SelectionItem>,
 }
@@ -54,12 +54,27 @@ impl Hash for SelectionSet {
     }
 }
 
+impl Serialize for SelectionSet {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut seq = serializer.serialize_seq(Some(self.items.len()))?;
+        for e in &self.items {
+            seq.serialize_element(&e)?;
+        }
+        seq.end()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct FieldSelection {
     pub name: String,
+    #[serde(skip_serializing_if = "SelectionSet::is_empty")]
     pub selections: SelectionSet,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
-    pub is_leaf: bool,
+    #[serde(skip_serializing_if = "ArgumentsMap::is_empty")]
     pub arguments: ArgumentsMap,
 }
 
@@ -72,14 +87,13 @@ impl Hash for FieldSelection {
 
 impl FieldSelection {
     pub fn is_leaf(&self) -> bool {
-        self.is_leaf
+        self.selections.is_empty()
     }
 
     pub fn new_typename() -> Self {
         FieldSelection {
             name: "__typename".to_string(),
             alias: None,
-            is_leaf: true,
             selections: SelectionSet::default(),
             arguments: ArgumentsMap::default(),
         }
@@ -91,14 +105,15 @@ impl FieldSelection {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InlineFragmentSelection {
-    pub type_name: String,
+    pub type_condition: String,
     pub selections: SelectionSet,
 }
 
 impl Hash for InlineFragmentSelection {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.type_name.hash(state);
+        self.type_condition.hash(state);
         self.selections.hash(state);
     }
 }
@@ -118,7 +133,7 @@ impl Display for FieldSelection {
 impl PrettyDisplay for FieldSelection {
     fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
         let indent = get_indent(depth);
-        if self.is_leaf {
+        if self.is_leaf() {
             return writeln!(f, "{indent}{}", self.name);
         }
 
@@ -140,7 +155,7 @@ impl PrettyDisplay for SelectionSet {
 
 impl Display for InlineFragmentSelection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "... on {}", self.type_name)?;
+        write!(f, "...on {}", self.type_condition)?;
         write!(f, "{}", self.selections)
     }
 }
@@ -148,7 +163,7 @@ impl Display for InlineFragmentSelection {
 impl PrettyDisplay for InlineFragmentSelection {
     fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
         let indent = get_indent(depth);
-        writeln!(f, "{indent}... on {} {{", self.type_name)?;
+        writeln!(f, "{indent}... on {} {{", self.type_condition)?;
         self.selections.pretty_fmt(f, depth + 1)?;
         writeln!(f, "{indent}}}")
     }
@@ -172,13 +187,12 @@ impl From<&ParserSelection<'_, String>> for SelectionItem {
             ParserSelection::Field(field) => SelectionItem::Field(FieldSelection {
                 name: field.name.to_string(),
                 alias: field.alias.as_ref().map(|alias| alias.to_string()),
-                is_leaf: field.selection_set.items.is_empty(),
                 selections: (&field.selection_set).into(),
                 arguments: (&field.arguments).into(),
             }),
             ParserSelection::InlineFragment(inline_fragment) => {
                 SelectionItem::InlineFragment(InlineFragmentSelection {
-                    type_name: inline_fragment
+                    type_condition: inline_fragment
                         .type_condition
                         .as_ref()
                         .map(|t| t.to_string())
@@ -206,7 +220,6 @@ mod tests {
                 name: "field1".to_string(),
                 selections: SelectionSet::default(),
                 alias: None,
-                is_leaf: true,
                 arguments: ArgumentsMap::default(),
             })],
         };
@@ -224,7 +237,6 @@ mod tests {
                 name: "field1".to_string(),
                 selections: SelectionSet::default(),
                 alias: None,
-                is_leaf: true,
                 arguments: vec![("id".to_string(), Value::Int(1))].into(),
             })],
         };
@@ -242,7 +254,6 @@ mod tests {
                 name: "field1".to_string(),
                 selections: SelectionSet::default(),
                 alias: None,
-                is_leaf: true,
                 arguments: vec![
                     ("id".to_string(), Value::Int(1)),
                     ("name".to_string(), Value::String("test".to_string())),

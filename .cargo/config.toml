@@ -1,5 +1,6 @@
 # The following are aliases you can use with "cargo command_name"
 [alias]
+gateway = "run --package gateway"
 test_all = "test --workspace"
 test_qp = "test --package query-planner -- --nocapture"
 "clippy:fix" = "clippy --all --fix --allow-dirty --allow-staged"

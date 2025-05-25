@@ -204,6 +204,33 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Parallel",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "name",
+            "operationKind": "query",
+            "operation": "{product{name{model brand id}}}"
+          },
+          {
+            "kind": "Fetch",
+            "serviceName": "category",
+            "operationKind": "query",
+            "operation": "{product{category{name id} id}}"
+          },
+          {
+            "kind": "Fetch",
+            "serviceName": "price",
+            "operationKind": "query",
+            "operation": "{product{price{currency amount id}}}"
+          }
+        ]
+      }
+    }
+    "#);
     Ok(())
 }

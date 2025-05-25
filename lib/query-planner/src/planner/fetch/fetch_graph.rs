@@ -980,7 +980,6 @@ fn process_plain_field_edge(
                 items: vec![SelectionItem::Field(FieldSelection {
                     name: field_name.to_string(),
                     alias: None,
-                    is_leaf: field_is_leaf,
                     selections: SelectionSet::default(),
                     // TODO: replace with a proper type
                     arguments: ArgumentsMap::default(),
@@ -1296,7 +1295,6 @@ fn process_requires_field_edge(
                 items: vec![SelectionItem::Field(FieldSelection {
                     name: field_name.to_owned(),
                     alias: None,
-                    is_leaf: field_is_leaf,
                     selections: SelectionSet { items: vec![] },
                     arguments: Default::default(),
                 })],

@@ -314,17 +314,17 @@ impl<'a> SupergraphState<'a> {
         let fields = Self::build_fields(&object_type.fields);
 
         let root_type = if object_type.name == schema.query_type().name {
-            Some(RootOperationType::Query)
+            Some(OperationKind::Query)
         } else if schema
             .mutation_type()
             .is_some_and(|t| t.name == object_type.name)
         {
-            Some(RootOperationType::Mutation)
+            Some(OperationKind::Mutation)
         } else if schema
             .subscription_type()
             .is_some_and(|t| t.name == object_type.name)
         {
-            Some(RootOperationType::Subscription)
+            Some(OperationKind::Subscription)
         } else {
             None
         };
@@ -376,19 +376,23 @@ impl<'a> SupergraphState<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum RootOperationType {
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub enum OperationKind {
+    #[serde(rename = "query")]
     Query,
+    #[serde(rename = "mutation")]
     Mutation,
+    #[serde(rename = "subscription")]
     Subscription,
 }
 
-impl Display for RootOperationType {
+impl Display for OperationKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RootOperationType::Query => write!(f, "query"),
-            RootOperationType::Mutation => write!(f, "mutation"),
-            RootOperationType::Subscription => write!(f, "subscription"),
+            OperationKind::Query => write!(f, "query"),
+            OperationKind::Mutation => write!(f, "mutation"),
+            OperationKind::Subscription => write!(f, "subscription"),
         }
     }
 }
@@ -409,7 +413,7 @@ pub struct SupergraphObjectType<'a> {
     pub fields: HashMap<String, SupergraphField<'a>>,
     pub join_type: Vec<JoinTypeDirective>,
     pub join_implements: Vec<JoinImplementsDirective>,
-    pub root_type: Option<RootOperationType>,
+    pub root_type: Option<OperationKind>,
     pub used_in_subgraphs: HashSet<String>,
 }
 
@@ -554,7 +558,7 @@ impl SupergraphDefinition<'_> {
         !self.extract_join_types_for(graph_id).is_empty()
     }
 
-    pub fn try_into_root_type(&self) -> Option<&RootOperationType> {
+    pub fn try_into_root_type(&self) -> Option<&OperationKind> {
         match self {
             SupergraphDefinition::Object(object_type) => object_type.root_type.as_ref(),
             _ => None,

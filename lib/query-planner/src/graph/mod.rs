@@ -11,7 +11,7 @@ use std::{
 
 use crate::{
     federation_spec::FederationRules,
-    state::supergraph_state::{RootOperationType, SupergraphDefinition, SupergraphState},
+    state::supergraph_state::{OperationKind, SupergraphDefinition, SupergraphState},
 };
 use error::GraphError;
 use graphql_parser::query::{Selection, SelectionSet, Type};
@@ -327,11 +327,11 @@ impl Graph {
 
                     if !relevant_fields.is_empty() {
                         let head = match root_type {
-                            RootOperationType::Query => Some(self.query_root),
-                            RootOperationType::Mutation => self.mutation_root,
-                            RootOperationType::Subscription => self.subscription_root,
+                            OperationKind::Query => Some(self.query_root),
+                            OperationKind::Mutation => self.mutation_root,
+                            OperationKind::Subscription => self.subscription_root,
                         }
-                        .ok_or(GraphError::MissingRootType(*root_type))?;
+                        .ok_or(GraphError::MissingRootType(root_type.clone()))?;
 
                         let tail = self.upsert_node(Node::new_node(
                             def_name,

@@ -1,6 +1,6 @@
 use crate::state::{
     selection_resolver::SelectionResolverError,
-    supergraph_state::{RootOperationType, SupergraphStateError},
+    supergraph_state::{OperationKind, SupergraphStateError},
 };
 use petgraph::graph::{EdgeIndex, NodeIndex};
 
@@ -11,7 +11,7 @@ pub enum GraphError {
     #[error("Edge with index '{0:?}' was not found")]
     EdgeNotFound(EdgeIndex),
     #[error("Unexpected missing root type {0}")]
-    MissingRootType(RootOperationType),
+    MissingRootType(OperationKind),
     #[error("Definition with name '{0}' was not found")]
     DefinitionNotFound(String),
     #[error("Field named '{0}' was not found in definition name '{1}'")]

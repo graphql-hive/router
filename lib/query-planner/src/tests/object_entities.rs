@@ -164,7 +164,78 @@ fn testing() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "store",
+            "operationKind": "query",
+            "operation": "{products{__typename id}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "products"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "info",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isAvailable uuid}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "products"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "cost",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price{currency amount}}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "uuid"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
     Ok(())
 }
 
@@ -248,7 +319,55 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "operationKind": "query",
+            "operation": "{products{__typename id pid}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "products",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "c",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{details{products}}}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "pid"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
     Ok(())
 }
 
@@ -405,7 +524,112 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "d",
+            "operationKind": "query",
+            "operation": "{productFromD{__typename id name}}"
+          },
+          {
+            "kind": "Parallel",
+            "nodes": [
+              {
+                "kind": "Flatten",
+                "path": [
+                  "productFromD"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "b",
+                  "operationKind": "query",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{__typename id}}}}",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Product",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "Flatten",
+                "path": [
+                  "productFromD"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "a",
+                  "operationKind": "query",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{details}}}}",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Product",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "productFromD",
+              "category"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "c",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Category{name}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Category",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
     Ok(())
 }
 
@@ -525,6 +749,99 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "products",
+            "operationKind": "query",
+            "operation": "{topProducts{products{__typename id category{tag id}}}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "topProducts",
+              "products",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "link",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{pid}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "topProducts",
+              "products",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "price",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price{price}}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "category",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "tag"
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "pid"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
     Ok(())
 }

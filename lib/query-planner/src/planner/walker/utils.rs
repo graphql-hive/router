@@ -3,41 +3,38 @@ use graphql_parser::query::OperationDefinition;
 use crate::{
     ast::selection_set::SelectionSet,
     graph::{edge::EdgeReference, Graph},
-    state::supergraph_state::RootOperationType,
+    state::supergraph_state::OperationKind,
 };
 
 use super::error::WalkOperationError;
 
 pub fn get_entrypoints<'a>(
     graph: &'a Graph,
-    operation_type: &RootOperationType,
+    operation_type: &OperationKind,
 ) -> Result<Vec<EdgeReference<'a>>, WalkOperationError> {
     let entrypoint_root = match operation_type {
-        RootOperationType::Query => Some(graph.query_root),
-        RootOperationType::Mutation => graph.mutation_root,
-        RootOperationType::Subscription => graph.subscription_root,
+        OperationKind::Query => Some(graph.query_root),
+        OperationKind::Mutation => graph.mutation_root,
+        OperationKind::Subscription => graph.subscription_root,
     }
-    .ok_or(WalkOperationError::MissingRootType(*operation_type))?;
+    .ok_or(WalkOperationError::MissingRootType(operation_type.clone()))?;
 
     Ok(graph.edges_from(entrypoint_root).collect())
 }
 
 pub fn operation_to_parts(
     operation: &OperationDefinition<'static, String>,
-) -> (RootOperationType, SelectionSet) {
+) -> (OperationKind, SelectionSet) {
     match operation {
-        OperationDefinition::Query(query) => {
-            (RootOperationType::Query, (&query.selection_set).into())
-        }
+        OperationDefinition::Query(query) => (OperationKind::Query, (&query.selection_set).into()),
         OperationDefinition::SelectionSet(selection_set) => {
-            (RootOperationType::Query, selection_set.into())
+            (OperationKind::Query, selection_set.into())
         }
-        OperationDefinition::Mutation(mutation) => (
-            RootOperationType::Mutation,
-            (&mutation.selection_set).into(),
-        ),
+        OperationDefinition::Mutation(mutation) => {
+            (OperationKind::Mutation, (&mutation.selection_set).into())
+        }
         OperationDefinition::Subscription(subscription) => (
-            RootOperationType::Subscription,
+            OperationKind::Subscription,
             (&subscription.selection_set).into(),
         ),
     }

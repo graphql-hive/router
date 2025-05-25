@@ -1,10 +1,16 @@
 [workspace]
-members = ["lib/query-planner", "lib/wasm-lib", "bin"]
+members = [
+  "lib/query-planner",
+  "lib/wasm-lib",
+  "lib/query-plan-executor",
+  "bin/dev-cli",
+  "bin/gateway",
+]
 resolver = "2"
-default-members = ["bin"]
+default-members = ["bin/dev-cli"]
 
 [profile.dev]
-debug = "full"
+debug = 2
 
 # See PROFILING.md
 [profile.profiling]

@@ -7,6 +7,7 @@ use graphql_parser::query::Value as ParserValue;
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct ArgumentsMap {
+    #[serde(flatten)]
     arguments_map: BTreeMap<String, Value>,
 }
 
