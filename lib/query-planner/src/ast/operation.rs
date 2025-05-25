@@ -12,6 +12,8 @@ use super::{selection_item::SelectionItem, selection_set::SelectionSet};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationDefinition {
     pub name: Option<String>,
+    // TODO: Should operation_kind be OperationKind or Option<OperationKind>?
+    // I don't see a scenario where it should be set to None?
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_kind: Option<OperationKind>,
     pub selection_set: SelectionSet,
