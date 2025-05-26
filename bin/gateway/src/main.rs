@@ -86,12 +86,12 @@ fn from_graphql_value_to_serde_value(
             serde_json::Value::Number(serde_json::Number::from_f64(*n).expect("Failed to coerce"))
         }
         graphql_parser::query::Value::List(l) => serde_json::Value::Array(
-            l.into_iter()
+            l.iter()
                 .map(|v| from_graphql_value_to_serde_value(v, variables))
                 .collect(),
         ),
         graphql_parser::query::Value::Object(o) => serde_json::Value::Object(
-            o.into_iter()
+            o.iter()
                 .map(|(k, v)| {
                     (
                         k.to_string(),
