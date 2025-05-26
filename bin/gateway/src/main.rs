@@ -103,7 +103,7 @@ fn from_graphql_value_to_serde_value(
         graphql_parser::query::Value::Variable(var_name) => {
             if let Some(variables_map) = variables {
                 if let Some(value) = variables_map.get(var_name) {
-                    value.clone().clone() // Return the value from the variables map
+                    value.clone() // Return the value from the variables map
                 } else {
                     serde_json::Value::Null // If variable not found, return null
                 }
@@ -129,22 +129,18 @@ fn collect_variables(
         .filter_map(|variable_definition| {
             let variable_name = variable_definition.name.to_string();
             if let Some(variable_value) = variables.as_ref().and_then(|v| v.get(&variable_name)) {
-                if variable_value.is_null() {
-                    None // Skip if the variable value is null
-                } else {
-                    Some((variable_name, variable_value.clone()))
+                if !variable_value.is_null() {
+                    return Some((variable_name, variable_value.clone()));
                 }
-            } else if let Some(default_value) = &variable_definition.default_value {
+            }
+            if let Some(default_value) = &variable_definition.default_value {
                 let default_value_coerced =
                     from_graphql_value_to_serde_value(default_value, variables);
-                if default_value_coerced.is_null() {
-                    None // Skip if the default value is null
-                } else {
-                    Some((variable_name, default_value_coerced))
+                if !default_value_coerced.is_null() {
+                    return Some((variable_name, default_value_coerced));
                 }
-            } else {
-                None
             }
+            None
         })
         .collect();
     if variable_values.is_empty() {
