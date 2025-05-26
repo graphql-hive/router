@@ -103,9 +103,9 @@ fn get_type_name_of_ast(type_ast: &graphql_parser::schema::Type<'static, String>
     match type_ast {
         graphql_parser::schema::Type::NamedType(named_type) => named_type.to_string(),
         graphql_parser::schema::Type::NonNullType(non_null_type) => {
-            get_type_name_of_ast(&non_null_type)
+            get_type_name_of_ast(non_null_type)
         }
-        graphql_parser::schema::Type::ListType(list_type) => get_type_name_of_ast(&list_type),
+        graphql_parser::schema::Type::ListType(list_type) => get_type_name_of_ast(list_type),
     }
 }
 
@@ -114,48 +114,45 @@ fn get_subgraph_endpoint_map(
 ) -> HashMap<String, String> {
     let mut subgraph_endpoint_map = HashMap::new();
     for definition in &supergraph_ast.definitions {
-        match definition {
-            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => {
-                let name = enum_type.name.to_string();
-                if name == "join__Graph" {
-                    for enum_value in &enum_type.values {
-                        let directive = enum_value
-                            .directives
-                            .iter()
-                            .find(|d| d.name == "join__graph");
-                        if let Some(directive) = directive {
-                            let mut subgraph_name = "".to_string();
-                            let mut endpoint = "".to_string();
-                            for (argument_name, argument_value) in &directive.arguments {
-                                if argument_name == "name" {
-                                    match argument_value {
-                                        graphql_parser::schema::Value::String(enum_value) => {
-                                            subgraph_name = enum_value.to_string();
-                                        }
-                                        _ => {
-                                            panic!("Expected enum value for name");
-                                        }
+        if let graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) = definition {
+            let name = &enum_type.name;
+            if name == "join__Graph" {
+                for enum_value in &enum_type.values {
+                    let directive = enum_value
+                        .directives
+                        .iter()
+                        .find(|d| d.name == "join__graph");
+                    if let Some(directive) = directive {
+                        let mut subgraph_name = "".to_string();
+                        let mut endpoint = "".to_string();
+                        for (argument_name, argument_value) in &directive.arguments {
+                            if argument_name == "name" {
+                                match argument_value {
+                                    graphql_parser::schema::Value::String(enum_value) => {
+                                        subgraph_name = enum_value.to_string();
                                     }
-                                } else if argument_name == "url" {
-                                    match argument_value {
-                                        graphql_parser::schema::Value::String(enum_value) => {
-                                            endpoint = enum_value.to_string();
-                                        }
-                                        _ => {
-                                            panic!("Expected enum value for url");
-                                        }
+                                    _ => {
+                                        panic!("Expected enum value for name");
+                                    }
+                                }
+                            } else if argument_name == "url" {
+                                match argument_value {
+                                    graphql_parser::schema::Value::String(enum_value) => {
+                                        endpoint = enum_value.to_string();
+                                    }
+                                    _ => {
+                                        panic!("Expected enum value for url");
                                     }
                                 }
                             }
-                            if !subgraph_name.is_empty() && !endpoint.is_empty() {
-                                subgraph_endpoint_map.insert(subgraph_name, endpoint);
-                            }
+                        }
+                        if !subgraph_name.is_empty() && !endpoint.is_empty() {
+                            subgraph_endpoint_map.insert(subgraph_name, endpoint);
                         }
                     }
                 }
-                break;
             }
-            _ => {}
+            break;
         }
     }
 
