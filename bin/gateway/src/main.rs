@@ -114,7 +114,9 @@ fn get_subgraph_endpoint_map(
 ) -> HashMap<String, String> {
     let mut subgraph_endpoint_map = HashMap::new();
     for definition in &supergraph_ast.definitions {
-        if let graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) = definition {
+        if let graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) =
+            definition
+        {
             let name = &enum_type.name;
             if name == "join__Graph" {
                 for enum_value in &enum_type.values {
