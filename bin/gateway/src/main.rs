@@ -134,7 +134,10 @@ fn get_subgraph_endpoint_map(
                                         subgraph_name = enum_value.to_string();
                                     }
                                     _ => {
-                                        panic!("Expected enum value for name");
+                                        println!(
+                                            "Expected enum value for \"name\": {:?}",
+                                            argument_value
+                                        );
                                     }
                                 }
                             } else if argument_name == "url" {
@@ -143,7 +146,10 @@ fn get_subgraph_endpoint_map(
                                         endpoint = enum_value.to_string();
                                     }
                                     _ => {
-                                        panic!("Expected enum value for url");
+                                        println!(
+                                            "Expected enum value for \"url\": {:?}",
+                                            argument_value
+                                        );
                                     }
                                 }
                             }
@@ -154,6 +160,7 @@ fn get_subgraph_endpoint_map(
                     }
                 }
             }
+            // We don't need to process other types for endpoints
             break;
         }
     }
@@ -232,13 +239,13 @@ impl SchemaWithMetadata for ConsumerSchema {
         }
         let mut final_possible_types: HashMap<String, Vec<String>> = HashMap::new();
         // Re-iterate over the possible_types
-        for (definition_name_of_x, first_possible_types_of_x) in first_possible_types.iter() {
+        for (definition_name_of_x, first_possible_types_of_x) in &first_possible_types {
             let mut possible_types_of_x: Vec<String> = Vec::new();
-            for definition_name_of_y in first_possible_types_of_x.iter() {
+            for definition_name_of_y in first_possible_types_of_x {
                 possible_types_of_x.push(definition_name_of_y.to_string());
-                let possible_types_of_y = first_possible_types.get(&definition_name_of_y.clone());
+                let possible_types_of_y = first_possible_types.get(definition_name_of_y);
                 if let Some(possible_types_of_y) = possible_types_of_y {
-                    for definition_name_of_z in possible_types_of_y.iter() {
+                    for definition_name_of_z in possible_types_of_y {
                         possible_types_of_x.push(definition_name_of_z.to_string());
                     }
                 }
