@@ -9,6 +9,7 @@ use graphql_parser::schema::TypeDefinition;
 use query_plan_executor::execute_query_plan;
 use query_plan_executor::ExecutionRequest;
 use query_plan_executor::SchemaMetadata;
+use query_planner::consumer_schema::ConsumerSchema;
 use query_planner::planner::Planner;
 use query_planner::utils::parsing::parse_operation;
 use query_planner::utils::parsing::parse_schema;
@@ -42,8 +43,8 @@ async fn main() {
         std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
     let planner = Planner::new_from_supergraph(&parsed_schema).expect("failed to create planner");
-    // TODO: Schema metadata should be collected from the public schema not supergraph schema to filter inaccessible components
-    let (subgraph_endpoint_map, schema_metadata) = collect_schema_metadata(parsed_schema);
+    let schema_metadata = planner.consumer_schema().schema_metadata();
+    let subgraph_endpoint_map = get_subgraph_endpoint_map(&parsed_schema);
     let serve_data = ServeData {
         planner,
         subgraph_endpoint_map,
@@ -98,29 +99,26 @@ fn collect_variables(
     }
 }
 
-fn get_type_name_of_ast(type_ast: graphql_parser::schema::Type<'static, String>) -> String {
+fn get_type_name_of_ast(type_ast: &graphql_parser::schema::Type<'static, String>) -> String {
     match type_ast {
-        graphql_parser::schema::Type::NamedType(named_type) => named_type,
+        graphql_parser::schema::Type::NamedType(named_type) => named_type.to_string(),
         graphql_parser::schema::Type::NonNullType(non_null_type) => {
-            get_type_name_of_ast(*non_null_type)
+            get_type_name_of_ast(&non_null_type)
         }
-        graphql_parser::schema::Type::ListType(list_type) => get_type_name_of_ast(*list_type),
+        graphql_parser::schema::Type::ListType(list_type) => get_type_name_of_ast(&list_type),
     }
 }
 
-fn collect_schema_metadata(
-    supergraph_ast: graphql_parser::schema::Document<'static, String>,
-) -> (HashMap<String, String>, SchemaMetadata) {
-    let mut subgraph_endpoint_map: HashMap<String, String> = HashMap::new();
-    let mut first_possible_types: HashMap<String, Vec<String>> = HashMap::new();
-    let mut enum_values: HashMap<String, Vec<String>> = HashMap::new();
-    let mut type_fields: HashMap<String, HashMap<String, String>> = HashMap::new();
-    for definition in supergraph_ast.definitions {
+fn get_subgraph_endpoint_map(
+    supergraph_ast: &graphql_parser::schema::Document<'static, String>,
+) -> HashMap<String, String> {
+    let mut subgraph_endpoint_map = HashMap::new();
+    for definition in &supergraph_ast.definitions {
         match definition {
             graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => {
                 let name = enum_type.name.to_string();
                 if name == "join__Graph" {
-                    for enum_value in enum_type.values {
+                    for enum_value in &enum_type.values {
                         let directive = enum_value
                             .directives
                             .iter()
@@ -154,85 +152,106 @@ fn collect_schema_metadata(
                             }
                         }
                     }
-                } else {
-                    let mut values = vec![];
-                    for enum_value in enum_type.values {
-                        values.push(enum_value.name.to_string());
-                    }
-                    enum_values.insert(name, values);
                 }
-            }
-            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Object(
-                object_type,
-            )) => {
-                let name = object_type.name.to_string();
-                let mut fields = HashMap::new();
-                for field in object_type.fields {
-                    let field_type_name = get_type_name_of_ast(field.field_type);
-                    fields.insert(field.name.to_string(), field_type_name);
-                }
-                type_fields.insert(name, fields);
-
-                for interface in object_type.implements_interfaces {
-                    let interface_name = interface.to_string();
-                    let possible_types_entry =
-                        first_possible_types.entry(interface_name).or_default();
-                    possible_types_entry.push(object_type.name.to_string());
-                }
-            }
-            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Interface(
-                interface_type,
-            )) => {
-                let name = interface_type.name.to_string();
-                let mut fields = HashMap::new();
-                for field in interface_type.fields {
-                    let field_type_name = get_type_name_of_ast(field.field_type);
-                    fields.insert(field.name.to_string(), field_type_name);
-                }
-                type_fields.insert(name, fields);
-                for interface_name in interface_type.implements_interfaces {
-                    let interface_name = interface_name.to_string();
-                    let possible_types_entry =
-                        first_possible_types.entry(interface_name).or_default();
-                    possible_types_entry.push(interface_type.name.to_string());
-                }
-            }
-            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Union(
-                union_type,
-            )) => {
-                let name = union_type.name.to_string();
-                let mut types = vec![];
-                for member in union_type.types {
-                    types.push(member.to_string());
-                }
-                first_possible_types.insert(name, types);
+                break;
             }
             _ => {}
         }
     }
-    let mut final_possible_types: HashMap<String, Vec<String>> = HashMap::new();
-    // Re-iterate over the possible_types
-    for (definition_name_of_x, first_possible_types_of_x) in first_possible_types.iter() {
-        let mut possible_types_of_x: Vec<String> = Vec::new();
-        for definition_name_of_y in first_possible_types_of_x.iter() {
-            possible_types_of_x.push(definition_name_of_y.to_string());
-            let possible_types_of_y = first_possible_types.get(&definition_name_of_y.clone());
-            if let Some(possible_types_of_y) = possible_types_of_y {
-                for definition_name_of_z in possible_types_of_y.iter() {
-                    possible_types_of_x.push(definition_name_of_z.to_string());
+
+    subgraph_endpoint_map
+}
+
+trait SchemaWithMetadata {
+    fn schema_metadata(&self) -> SchemaMetadata;
+}
+
+impl SchemaWithMetadata for ConsumerSchema {
+    fn schema_metadata(&self) -> SchemaMetadata {
+        let mut first_possible_types: HashMap<String, Vec<String>> = HashMap::new();
+        let mut enum_values: HashMap<String, Vec<String>> = HashMap::new();
+        let mut type_fields: HashMap<String, HashMap<String, String>> = HashMap::new();
+        for definition in &self.document.definitions {
+            match definition {
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(
+                    enum_type,
+                )) => {
+                    let name = enum_type.name.to_string();
+                    let mut values = vec![];
+                    for enum_value in &enum_type.values {
+                        values.push(enum_value.name.to_string());
+                    }
+                    enum_values.insert(name, values);
                 }
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Object(
+                    object_type,
+                )) => {
+                    let name = object_type.name.to_string();
+                    let mut fields = HashMap::new();
+                    for field in &object_type.fields {
+                        let field_type_name = get_type_name_of_ast(&field.field_type);
+                        fields.insert(field.name.to_string(), field_type_name);
+                    }
+                    type_fields.insert(name, fields);
+
+                    for interface in &object_type.implements_interfaces {
+                        let interface_name = interface.to_string();
+                        let possible_types_entry =
+                            first_possible_types.entry(interface_name).or_default();
+                        possible_types_entry.push(object_type.name.to_string());
+                    }
+                }
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Interface(
+                    interface_type,
+                )) => {
+                    let name = interface_type.name.to_string();
+                    let mut fields = HashMap::new();
+                    for field in &interface_type.fields {
+                        let field_type_name = get_type_name_of_ast(&field.field_type);
+                        fields.insert(field.name.to_string(), field_type_name);
+                    }
+                    type_fields.insert(name, fields);
+                    for interface_name in &interface_type.implements_interfaces {
+                        let interface_name = interface_name.to_string();
+                        let possible_types_entry =
+                            first_possible_types.entry(interface_name).or_default();
+                        possible_types_entry.push(interface_type.name.to_string());
+                    }
+                }
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Union(
+                    union_type,
+                )) => {
+                    let name = union_type.name.to_string();
+                    let mut types = vec![];
+                    for member in &union_type.types {
+                        types.push(member.to_string());
+                    }
+                    first_possible_types.insert(name, types);
+                }
+                _ => {}
             }
         }
-        final_possible_types.insert(definition_name_of_x.to_string(), possible_types_of_x);
-    }
-    (
-        subgraph_endpoint_map,
+        let mut final_possible_types: HashMap<String, Vec<String>> = HashMap::new();
+        // Re-iterate over the possible_types
+        for (definition_name_of_x, first_possible_types_of_x) in first_possible_types.iter() {
+            let mut possible_types_of_x: Vec<String> = Vec::new();
+            for definition_name_of_y in first_possible_types_of_x.iter() {
+                possible_types_of_x.push(definition_name_of_y.to_string());
+                let possible_types_of_y = first_possible_types.get(&definition_name_of_y.clone());
+                if let Some(possible_types_of_y) = possible_types_of_y {
+                    for definition_name_of_z in possible_types_of_y.iter() {
+                        possible_types_of_x.push(definition_name_of_z.to_string());
+                    }
+                }
+            }
+            final_possible_types.insert(definition_name_of_x.to_string(), possible_types_of_x);
+        }
         SchemaMetadata {
             possible_types: final_possible_types,
             enum_values,
             type_fields,
-        },
-    )
+        }
+    }
 }
 
 static GRAPHILQL_HTML: &str = include_str!("../static/graphiql.html");
