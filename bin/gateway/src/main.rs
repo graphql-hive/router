@@ -130,9 +130,7 @@ fn collect_variables(
         .filter_map(|variable_definition| {
             let variable_name = variable_definition.name.to_string();
             if let Some(variable_value) = variables.as_ref().and_then(|v| v.get(&variable_name)) {
-                if !variable_value.is_null() {
-                    return Some((variable_name, variable_value.clone()));
-                }
+                return Some((variable_name, variable_value.clone()));
             }
             if let Some(default_value) = &variable_definition.default_value {
                 let default_value_coerced =
