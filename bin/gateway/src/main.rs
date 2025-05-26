@@ -70,7 +70,7 @@ struct ServeData {
     planner: Planner,
 }
 
-fn from_graphql_value_to_serde_value<'a>(
+fn from_graphql_value_to_serde_value(
     value: &graphql_parser::query::Value<'static, String>,
     variables: &Option<HashMap<String, Value>>,
 ) -> serde_json::Value {
@@ -100,11 +100,17 @@ fn from_graphql_value_to_serde_value<'a>(
                 })
                 .collect(),
         ),
-        graphql_parser::query::Value::Variable(var_name) => variables
-            .as_ref()
-            .and_then(|vars| vars.get(var_name))
-            .cloned()
-            .unwrap_or(serde_json::Value::Null),
+        graphql_parser::query::Value::Variable(var_name) => {
+            if let Some(variables_map) = variables {
+                if let Some(value) = variables_map.get(var_name) {
+                    value.clone().clone() // Return the value from the variables map
+                } else {
+                    serde_json::Value::Null // If variable not found, return null
+                }
+            } else {
+                serde_json::Value::Null // If no variables provided, return null
+            }
+        }
     }
 }
 
@@ -112,25 +118,35 @@ fn collect_variables(
     operation: &OperationDefinition<'static, String>,
     variables: &Option<HashMap<String, Value>>,
 ) -> Option<HashMap<String, Value>> {
-    let mut variable_values = HashMap::new();
     let variable_definitions = match &operation {
-        OperationDefinition::SelectionSet(_) => &vec![],
+        OperationDefinition::SelectionSet(_) => return None,
         OperationDefinition::Query(query) => &query.variable_definitions,
         OperationDefinition::Mutation(mutation) => &mutation.variable_definitions,
         OperationDefinition::Subscription(subscription) => &subscription.variable_definitions,
     };
-    for variable_definition in variable_definitions {
-        let variable_name = variable_definition.name.to_string();
-        if let Some(variable_value) = variables.as_ref().and_then(|v| v.get(&variable_name)) {
-            variable_values.insert(variable_name, variable_value.clone());
-        } else if let Some(default_value) = &variable_definition.default_value {
-            let default_value_coerced =
-                from_graphql_value_to_serde_value(default_value, &variables);
-            variable_values.insert(variable_name, default_value_coerced);
-        } else {
-            variable_values.insert(variable_name, Value::Null);
-        }
-    }
+    let variable_values: HashMap<String, Value> = variable_definitions
+        .iter()
+        .filter_map(|variable_definition| {
+            let variable_name = variable_definition.name.to_string();
+            if let Some(variable_value) = variables.as_ref().and_then(|v| v.get(&variable_name)) {
+                if variable_value.is_null() {
+                    None // Skip if the variable value is null
+                } else {
+                    Some((variable_name, variable_value.clone()))
+                }
+            } else if let Some(default_value) = &variable_definition.default_value {
+                let default_value_coerced =
+                    from_graphql_value_to_serde_value(default_value, variables);
+                if default_value_coerced.is_null() {
+                    None // Skip if the default value is null
+                } else {
+                    Some((variable_name, default_value_coerced))
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
     if variable_values.is_empty() {
         None
     } else {
