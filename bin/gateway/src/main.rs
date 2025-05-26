@@ -79,9 +79,10 @@ fn from_graphql_value_to_serde_value(
         graphql_parser::query::Value::Boolean(b) => serde_json::Value::Bool(*b),
         graphql_parser::query::Value::String(s) => serde_json::Value::String(s.to_string()),
         graphql_parser::query::Value::Enum(e) => serde_json::Value::String(e.to_string()),
-        graphql_parser::query::Value::Int(n) => {
-            serde_json::Value::Number(serde_json::Number::from(n.as_i64().unwrap()))
-        }
+        // TODO: Handle variable parsing errors here just like in GraphQL-JS
+        graphql_parser::query::Value::Int(n) => serde_json::Value::Number(
+            serde_json::Number::from(n.as_i64().expect("Failed to coerce")),
+        ),
         graphql_parser::query::Value::Float(n) => {
             serde_json::Value::Number(serde_json::Number::from_f64(*n).expect("Failed to coerce"))
         }
