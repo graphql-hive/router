@@ -1151,7 +1151,7 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
 
     insta::assert_snapshot!(
       best_paths_per_leaf[0][0].pretty_print(&graph),
-      @"root(Query) -(a)- Query/a -(feed)- Post/a -(🔑🧩{id})- Post/b -(author🧩{comments{authorId}})- Author/b -(id)- ID/b"
+      @"root(Query) -(a)- Query/a -(feed)- Post/a -(🔑🧩{id})- Post/b -(author🧩{comments(limit: 3){authorId}})- Author/b -(id)- ID/b"
     );
 
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
@@ -1166,7 +1166,7 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
           ]
           🔑 Post/b
             🧩 [
-              comments of Comment/b
+              comments(limit: 3) of Comment/b
                 🧩 [
                   id of ID/b
                 ]
@@ -1200,7 +1200,7 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Post {
-                comments {
+                comments(limit: 3) {
                   __typename
                   id
                 }
@@ -1226,7 +1226,7 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
           Fetch(service: "b") {
               ... on Post {
                 __typename
-                comments {
+                comments(limit: 3) {
                   authorId
                 }
                 id

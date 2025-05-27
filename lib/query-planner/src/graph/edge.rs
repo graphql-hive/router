@@ -7,12 +7,14 @@ use crate::{
     state::supergraph_state::SubgraphName,
 };
 
+#[derive(Debug)]
 pub struct EntityMove {
     pub key: String,
     pub requirements: TypeAwareSelection,
 }
 
 /// Represent a simple file move
+#[derive(Debug)]
 pub struct FieldMove {
     pub name: String,
     pub type_name: String,

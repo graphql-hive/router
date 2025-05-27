@@ -220,7 +220,7 @@ pub fn find_indirect_paths(
 
 #[instrument(skip(graph, excluded), ret(), fields(
     path = path.pretty_print(graph),
-    current_cost = path.cost
+    current_cost = path.cost,
 ))]
 pub fn find_direct_paths(
     graph: &Graph,
