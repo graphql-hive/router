@@ -54,7 +54,7 @@ impl Serialize for SubgraphFetchOperation {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(self.0.to_string().as_str())
+        serializer.serialize_str(&self.0.to_string())
     }
 }
 
