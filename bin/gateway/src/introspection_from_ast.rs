@@ -9,7 +9,7 @@ use graphql_tools::introspection::{
     IntrospectionType, IntrospectionUnionType,
 };
 
-use crate::builtin_types;
+use crate::{builtin_types, value_from_ast::value_from_ast};
 
 fn introspection_output_type_ref_from_ast(
     ast: &graphql_parser::schema::Type<'static, String>,
@@ -215,7 +215,10 @@ pub fn introspection_query_from_ast(
                                                 &arg.value_type,
                                                 &type_ast_map,
                                             )),
-                                            default_value: None, // TODO: Handle default values
+                                            default_value: arg
+                                                .default_value
+                                                .as_ref()
+                                                .map(|v| serde_json::Value::String(v.to_string())),
                                             is_deprecated: builtin_props.is_deprecated,
                                             deprecation_reason: builtin_props.deprecation_reason,
                                         }
@@ -267,7 +270,10 @@ pub fn introspection_query_from_ast(
                                                 &arg.value_type,
                                                 &type_ast_map,
                                             )),
-                                            default_value: None, // TODO: Handle default values
+                                            default_value: arg
+                                                .default_value
+                                                .as_ref()
+                                                .map(|v| serde_json::Value::String(v.to_string())),
                                             is_deprecated: builtin_props.is_deprecated,
                                             deprecation_reason: builtin_props.deprecation_reason,
                                         }
@@ -348,8 +354,10 @@ pub fn introspection_query_from_ast(
                                         &field.value_type,
                                         &type_ast_map,
                                     )),
-                                    // TODO: Handle default values
-                                    default_value: None,
+                                    default_value: field
+                                        .default_value
+                                        .as_ref()
+                                        .map(|v| serde_json::Value::String(v.to_string())),
                                     is_deprecated: builtin_props.is_deprecated,
                                     deprecation_reason: builtin_props.deprecation_reason,
                                 }
@@ -400,7 +408,10 @@ pub fn introspection_query_from_ast(
                                 name: arg.name.to_string(),
                                 description: arg.description.clone(),
                                 type_ref: Some(introspection_input_type_ref_from_ast(&arg.value_type, &type_ast_map)),
-                                default_value: None, // TODO: Handle default values
+                                default_value: arg
+                                    .default_value
+                                    .as_ref()
+                                    .map(|v| serde_json::Value::String(v.to_string())),
                                 is_deprecated: builtin_props.is_deprecated,
                                 deprecation_reason: builtin_props.deprecation_reason,
                             }
@@ -462,10 +473,10 @@ fn get_builtin_props_from_directives(
         match directive.name.as_str() {
             "deprecated" => {
                 props.is_deprecated = Some(true);
-                for (arg_name, _arg_value) in &directive.arguments {
+                for (arg_name, arg_value) in &directive.arguments {
                     if arg_name == "reason" {
-                        // TODO: Convert AST to value
-                        break;
+                        props.deprecation_reason =
+                            Some(value_from_ast(arg_value, &None).to_string());
                     }
                 }
             }
@@ -473,9 +484,9 @@ fn get_builtin_props_from_directives(
                 props.one_of = Some(true);
             }
             "specifiedBy" => {
-                for (arg_name, _arg_value) in &directive.arguments {
+                for (arg_name, arg_value) in &directive.arguments {
                     if arg_name == "url" {
-                        // TODO: Convert AST to value
+                        props.specified_by_url = Some(value_from_ast(arg_value, &None).to_string());
                     }
                 }
             }
