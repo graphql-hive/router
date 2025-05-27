@@ -15,25 +15,23 @@ use query_planner::state::supergraph_state::SupergraphState;
 use query_planner::utils::operation_utils::prepare_document;
 use query_planner::utils::parsing::parse_operation;
 use query_planner::utils::parsing::parse_schema;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 fn main() {
-    let logger_enabled = env::var("DEBUG").is_ok();
+    let tree_layer = tracing_tree::HierarchicalLayer::new(2)
+        .with_bracketed_fields(true)
+        .with_deferred_spans(false)
+        .with_wraparound(25)
+        .with_indent_lines(true)
+        .with_timer(tracing_tree::time::Uptime::default())
+        .with_thread_names(false)
+        .with_thread_ids(false)
+        .with_targets(false);
 
-    if logger_enabled {
-        let tree_layer = tracing_tree::HierarchicalLayer::new(2)
-            .with_bracketed_fields(true)
-            .with_deferred_spans(false)
-            .with_wraparound(25)
-            .with_indent_lines(true)
-            .with_timer(tracing_tree::time::Uptime::default())
-            .with_thread_names(false)
-            .with_thread_ids(false)
-            .with_targets(false);
-
-        tracing_subscriber::registry().with(tree_layer).init();
-    }
+    tracing_subscriber::registry()
+        .with(tree_layer)
+        .with(EnvFilter::from_default_env())
+        .init();
 
     let args: Vec<String> = env::args().collect();
 
