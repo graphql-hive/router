@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Gateway GraphiQL</title>
+    <title>Hive Gateway RS</title>
     <link
       rel="icon"
       href="https://raw.githubusercontent.com/graphql-hive/graphql-yoga/main/website/public/favicon.ico"
@@ -20,7 +20,9 @@
     <script type="module">
       import { renderYogaGraphiQL } from 'https://unpkg.com/@graphql-yoga/graphiql/dist/yoga-graphiql.es.js';
 
-      renderYogaGraphiQL(root, {});
+      renderYogaGraphiQL(root, {
+        title: 'Hive Gateway RS',
+      });
     </script>
   </body>
 </html>

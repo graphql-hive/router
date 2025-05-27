@@ -665,7 +665,11 @@ impl ExecutableQueryPlan for QueryPlan {
                     .await;
                 ExecutionResult {
                     data: Some(data),
-                    errors: Some(errors),
+                    errors: if errors.is_empty() {
+                        None
+                    } else {
+                        Some(errors)
+                    },
                     extensions: None,
                 }
             }
