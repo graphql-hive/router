@@ -151,7 +151,10 @@ impl QueryTreeNode {
         Ok(Some(tree_node))
     }
 
-    #[instrument(skip(graph))]
+    #[instrument(skip_all, fields(
+      root_node_index = graph.pretty_print_node(root_node_index),
+      segments_count = segments.len()
+    ))]
     pub fn create_root_for_path_sequences(
         graph: &Graph,
         root_node_index: &NodeIndex,

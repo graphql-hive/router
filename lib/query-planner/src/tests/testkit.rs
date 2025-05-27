@@ -3,8 +3,7 @@ use std::path::PathBuf;
 use std::sync::Once;
 
 use lazy_static::lazy_static;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::graph::Graph;
 use crate::state::supergraph_state::SupergraphState;
@@ -21,7 +20,10 @@ fn init_test_logger_internal() {
         .with_thread_ids(false)
         .with_targets(false);
 
-    tracing_subscriber::registry().with(tree_layer).init();
+    tracing_subscriber::registry()
+        .with(tree_layer)
+        .with(EnvFilter::from_default_env())
+        .init();
 }
 
 lazy_static! {
@@ -30,13 +32,7 @@ lazy_static! {
 
 pub fn init_logger() {
     TRACING_INIT.call_once(|| {
-        let logger_enabled = env::var("DEBUG").is_ok();
-
-        if logger_enabled {
-            init_test_logger_internal();
-        } else {
-            println!("Logger is disabled, to print QP logs, please set DEBUG=1")
-        }
+        init_test_logger_internal();
     });
 }
 

@@ -35,10 +35,10 @@ cargo test_qp tests::file_name::test_name
 cargo test_qp --nocapture
 ```
 
-* To see logs created by the QP itself, using `tracing` or `instrumente` macro, please set `DEBUG=1`
+* To see logs created by the QP itself, using `tracing` or `instrumente` macro, please set `RUST_LOG="..."` (see [EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#example-syntax)):
 
 ```
-DEBUG=1 cargo test_qp
+RUST_LOG="debug" cargo test_qp
 ```
 
 ## Snapshots
