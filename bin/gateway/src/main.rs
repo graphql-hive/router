@@ -1,12 +1,16 @@
 use std::collections::HashMap;
-use std::env;
+use std::{env, vec};
 use std::sync::Arc;
 
 use actix_web::web::Html;
 use actix_web::{get, post, web, App, HttpServer, Responder};
-use graphql_parser::query::OperationDefinition;
+use graphql_parser::query::{OperationDefinition};
 use graphql_parser::schema::TypeDefinition;
-use query_plan_executor::execute_query_plan;
+use graphql_tools::ast::{AstNodeWithName, TypeExtension};
+use graphql_tools::introspection::{
+    IntrospectionDirective, IntrospectionEnumType, IntrospectionEnumValue, IntrospectionField, IntrospectionInputObjectType, IntrospectionInputTypeRef, IntrospectionInputValue, IntrospectionInterfaceType, IntrospectionNamedTypeRef, IntrospectionObjectType, IntrospectionOutputTypeRef, IntrospectionQuery, IntrospectionScalarType, IntrospectionSchema, IntrospectionType, IntrospectionUnionType
+};
+use query_plan_executor::{execute_query_plan, ExecutionResult};
 use query_plan_executor::ExecutionRequest;
 use query_plan_executor::SchemaMetadata;
 use query_planner::consumer_schema::ConsumerSchema;
@@ -265,8 +269,8 @@ async fn graphql_endpoint(
     request_body: web::Json<ExecutionRequest>,
     serve_data: web::Data<ServeData>,
 ) -> impl Responder {
-    let query_str = request_body.query.as_deref().expect("query is required");
     let operation_name = request_body.operation_name.as_deref();
+    let query_str = request_body.query.as_deref().expect("query is required");
     let document = parse_operation(query_str);
 
     let query_plan = serve_data
@@ -279,6 +283,15 @@ async fn graphql_endpoint(
         graphql_parser::query::Definition::Operation(operation) => operation,
         _ => panic!("Expected an operation definition"),
     };
+
+    if operation.node_name() == Some("IntrospectionQuery") {
+        let introspection_query = introspection_query_from_ast(&serve_data.planner.consumer_schema().document);
+        return web::Json(ExecutionResult {
+            data: Some(json!(introspection_query)),
+            errors: None,
+            extensions: None,
+        });
+    }
 
     let variable_values = collect_variables(operation, &request_body.variables);
     let mut result = execute_query_plan(
@@ -294,4 +307,377 @@ async fn graphql_endpoint(
     extensions.insert("queryPlan".to_string(), json!(query_plan));
     result.extensions = Some(extensions);
     web::Json(result)
+}
+
+fn introspection_output_type_ref_from_ast(
+    ast: &graphql_parser::schema::Type<'static, String>,
+    type_ast_map: &HashMap<&String, &graphql_parser::schema::Definition<'static, String>>,
+) -> IntrospectionOutputTypeRef {
+    match ast {
+        graphql_parser::schema::Type::ListType(list_type) => {
+            IntrospectionOutputTypeRef::LIST { 
+                of_type: Some(
+                    Box::new(
+                        introspection_output_type_ref_from_ast(list_type.of_type(), type_ast_map)
+                    )
+                ) 
+            }
+        },
+        graphql_parser::schema::Type::NonNullType(non_null_type) => {
+            IntrospectionOutputTypeRef::NON_NULL {
+                of_type: Some(
+                    Box::new(
+                        introspection_output_type_ref_from_ast(non_null_type.of_type(), type_ast_map)
+                    )
+                )
+            }
+        },
+        graphql_parser::schema::Type::NamedType(named_type) => {
+            let named_type_definition = type_ast_map
+                .get(named_type)
+                .expect(&format!("Type {} not found in type AST map", named_type));
+            match named_type_definition {
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Scalar(scalar_type)) => {
+                    IntrospectionOutputTypeRef::SCALAR(
+                        IntrospectionNamedTypeRef { name: scalar_type.name.to_string() }
+                    )
+                }
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Object(object_type)) => {
+                    IntrospectionOutputTypeRef::OBJECT(
+                        IntrospectionNamedTypeRef { name: object_type.name.to_string() }
+                    )
+                }
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Interface(interface_type)) => {
+                    IntrospectionOutputTypeRef::INTERFACE(
+                        IntrospectionNamedTypeRef { name: interface_type.name.to_string() }
+                    )
+                }
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Union(union_type)) => {
+                    IntrospectionOutputTypeRef::UNION(
+                        IntrospectionNamedTypeRef { name: union_type.name.to_string() }
+                    )
+                }
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => {
+                    IntrospectionOutputTypeRef::ENUM(
+                        IntrospectionNamedTypeRef { name: enum_type.name.to_string() }
+                    )
+                }
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::InputObject(input_object_type)) => {
+                    IntrospectionOutputTypeRef::INPUT_OBJECT(IntrospectionNamedTypeRef {
+                        name: input_object_type.name.to_string(),
+                    })
+                }
+                _ => panic!("Unsupported type definition for introspection"),
+            }
+        }
+    }
+}
+
+fn introspection_input_type_ref_from_ast(
+    ast: &graphql_parser::schema::Type<'static, String>,
+    type_ast_map: &HashMap<&String, &graphql_parser::schema::Definition<'static, String>>,
+) -> IntrospectionInputTypeRef {
+    match ast {
+        graphql_parser::schema::Type::ListType(list_type) => {
+            IntrospectionInputTypeRef::LIST {
+                of_type: Some(
+                    Box::new(
+                        introspection_input_type_ref_from_ast(list_type.of_type(), type_ast_map)
+                    )
+                )
+            }
+        },
+        graphql_parser::schema::Type::NonNullType(non_null_type) => {
+            IntrospectionInputTypeRef::NON_NULL {
+                of_type: Some(
+                    Box::new(
+                        introspection_input_type_ref_from_ast(non_null_type.of_type(), type_ast_map)
+                    )
+                )
+            }
+        },
+        graphql_parser::schema::Type::NamedType(named_type) => {
+            let named_type_definition = type_ast_map
+                .get(named_type)
+                .expect(&format!("Type {} not found in type AST map", named_type));
+            match named_type_definition {
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Scalar(scalar_type)) => {
+                    IntrospectionInputTypeRef::SCALAR(IntrospectionNamedTypeRef { name: scalar_type.name.to_string() })
+                }
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => {
+                    IntrospectionInputTypeRef::ENUM(IntrospectionNamedTypeRef { name: enum_type.name.to_string() })
+                }
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::InputObject(input_object_type)) => {
+                    IntrospectionInputTypeRef::INPUT_OBJECT(IntrospectionNamedTypeRef { name: input_object_type.name.to_string() })
+                }
+                _ => panic!("Unsupported type definition for introspection"),
+            }
+        }
+    }
+}
+
+fn introspection_query_from_ast(
+    ast: &graphql_parser::schema::Document<'static, String>,
+) -> IntrospectionQuery {
+    let mut type_ast_map: HashMap<&String, &graphql_parser::schema::Definition<'static, String>> = HashMap::new();
+    let mut schema_definition: Option<&graphql_parser::schema::SchemaDefinition<'static, String>> = None;
+    for definition in &ast.definitions {
+        let type_name = match &definition {
+            graphql_parser::schema::Definition::TypeDefinition(
+                TypeDefinition::Scalar(scalar_type),
+            ) => Some(&scalar_type.name),
+            graphql_parser::schema::Definition::TypeDefinition(
+                TypeDefinition::Object(object_type),
+            ) => Some(&object_type.name),
+            graphql_parser::schema::Definition::TypeDefinition(
+                TypeDefinition::Interface(interface_type),
+            ) => Some(&interface_type.name),
+            graphql_parser::schema::Definition::TypeDefinition(
+                TypeDefinition::Union(union_type),
+            ) => Some(&union_type.name),
+            graphql_parser::schema::Definition::TypeDefinition(
+                TypeDefinition::Enum(enum_type),
+            ) => Some(&enum_type.name),
+            graphql_parser::schema::Definition::TypeDefinition(
+                TypeDefinition::InputObject(input_object_type),
+            ) => Some(&input_object_type.name),
+            graphql_parser::schema::Definition::DirectiveDefinition(directive) => Some(&directive.name),
+            graphql_parser::schema::Definition::SchemaDefinition(schema_definition_ast) => {
+                schema_definition = Some(schema_definition_ast);
+                None
+            },
+            _ => None,
+        };
+        if let Some(type_name) = type_name {
+            type_ast_map.insert(type_name, definition);
+        }
+    }
+
+    let mut types = vec![];
+    let mut directives = vec![];
+
+    for (_type_name, definition) in &type_ast_map {
+        match definition {
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Scalar(scalar_type)) => {
+                types.push(IntrospectionType::SCALAR(IntrospectionScalarType {
+                    name: scalar_type.name.to_string(),
+                    description: scalar_type.description.clone(),
+                    // TODO: specified_by_url is missing in graphql_parser::schema::ScalarType
+                    specified_by_url: None,
+                }));
+            }
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Object(object_type)) => {
+                let mut fields = vec![];
+                for field in &object_type.fields {
+                    let type_ref = introspection_output_type_ref_from_ast(&field.field_type, &type_ast_map);
+                    fields.push(IntrospectionField {
+                        name: field.name.to_string(),
+                        description: field.description.clone(),
+                        // TODO: Handle deprecation
+                        is_deprecated: None,
+                        deprecation_reason: None,
+                        // TODO: Handle arguments
+                        args: vec![],
+                        type_ref,
+                    });
+                }
+                types.push(
+                    IntrospectionType::OBJECT(
+                        IntrospectionObjectType {
+                            name: object_type.name.to_string(),
+                            description: object_type.description.clone(),
+                            fields,
+                            interfaces: object_type
+                                .implements_interfaces
+                                .iter()
+                                .map(|i| IntrospectionNamedTypeRef {
+                                    name: i.to_string(),
+                                })
+                                .collect(),
+                        }
+                    )
+                );
+            }
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Interface(interface_type)) => {
+                let mut fields = vec![];
+                for field in &interface_type.fields {
+                    let type_ref = introspection_output_type_ref_from_ast(&field.field_type, &type_ast_map);
+                    fields.push(IntrospectionField {
+                        name: field.name.to_string(),
+                        description: field.description.clone(),
+                        // TODO: Handle deprecation
+                        is_deprecated: None,
+                        deprecation_reason: None,
+                        args: field.arguments
+                            .iter()
+                            .map(|arg| IntrospectionInputValue {
+                                name: arg.name.to_string(),
+                                description: arg.description.clone(),
+                                type_ref: Some(introspection_input_type_ref_from_ast(&arg.value_type, &type_ast_map)),
+                                default_value: None, // TODO: Handle default values
+                                is_deprecated: None, // TODO: Handle deprecation
+                                deprecation_reason: None, // TODO: Handle deprecation reason
+                            })
+                            .collect(),
+                        type_ref,
+                    });
+                }
+                types.push(
+                    IntrospectionType::INTERFACE(
+                        IntrospectionInterfaceType {
+                            name: interface_type.name.to_string(),
+                            description: interface_type.description.clone(),
+                            fields,
+                            interfaces: Some(
+                                interface_type
+                                .implements_interfaces
+                                .iter()
+                                .map(|i| IntrospectionNamedTypeRef {
+                                    name: i.to_string(),
+                                })
+                                .collect()
+                            ),
+                            // TODO: Handle possible types
+                            possible_types: vec![],
+                        }
+                    )
+                );
+            }
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Union(union_type)) => {
+                types.push(IntrospectionType::UNION(
+                    IntrospectionUnionType {
+                        name: union_type.name.to_string(),
+                        description: union_type.description.clone(),
+                        possible_types: union_type
+                            .types
+                            .iter()
+                            .map(|t| IntrospectionNamedTypeRef {
+                                name: t.to_string(),
+                            })
+                            .collect(),
+                    }
+                ));
+            }
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => {
+                let mut enum_values = vec![];
+                for value in &enum_type.values {
+                    enum_values.push(value.name.to_string());
+                }
+                types.push(IntrospectionType::ENUM(
+                    IntrospectionEnumType {
+                        name: enum_type.name.to_string(),
+                        description: enum_type.description.clone(),
+                        enum_values: enum_values
+                            .into_iter()
+                            .map(|name| IntrospectionEnumValue {
+                                name,
+                                description: None, // TODO: Handle description
+                                is_deprecated: None, // TODO: Handle deprecation
+                                deprecation_reason: None, // TODO: Handle deprecation reason
+                            })
+                            .collect(),
+                    }
+                ));
+            }
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::InputObject(input_object_type)) => {
+                let mut input_fields = vec![];
+                for field in &input_object_type.fields {
+                    let type_ref = introspection_input_type_ref_from_ast(&field.value_type, &type_ast_map);
+                    input_fields.push(IntrospectionInputValue {
+                        name: field.name.to_string(),
+                        description: field.description.clone(),
+                        type_ref: Some(type_ref),
+                        // TODO: Handle default values
+                        default_value: None,
+                        // TODO: Handle deprecation
+                        is_deprecated: None,
+                        deprecation_reason: None,
+                    });
+                }
+                types.push(IntrospectionType::INPUT_OBJECT(
+                    IntrospectionInputObjectType {
+                        name: input_object_type.name.to_string(),
+                        description: input_object_type.description.clone(),
+                        input_fields,
+                    }
+                ));
+            }
+            graphql_parser::schema::Definition::DirectiveDefinition(directive) => {
+                directives.push(IntrospectionDirective {
+                    name: directive.name.to_string(),
+                    description: directive.description.clone(),
+                    locations: directive
+                        .locations
+                        .iter()
+                        .map(|l| {
+                            match l {
+                                graphql_parser::schema::DirectiveLocation::Query => graphql_tools::introspection::DirectiveLocation::QUERY,
+                                graphql_parser::schema::DirectiveLocation::Mutation => graphql_tools::introspection::DirectiveLocation::MUTATION,
+                                graphql_parser::schema::DirectiveLocation::Subscription => graphql_tools::introspection::DirectiveLocation::SUBSCRIPTION,
+                                graphql_parser::schema::DirectiveLocation::Field => graphql_tools::introspection::DirectiveLocation::FIELD,
+                                graphql_parser::schema::DirectiveLocation::FragmentDefinition => graphql_tools::introspection::DirectiveLocation::FRAGMENT_DEFINITION,
+                                graphql_parser::schema::DirectiveLocation::FragmentSpread => graphql_tools::introspection::DirectiveLocation::FRAGMENT_SPREAD,
+                                graphql_parser::schema::DirectiveLocation::InlineFragment => graphql_tools::introspection::DirectiveLocation::INLINE_FRAGMENT,
+                                graphql_parser::schema::DirectiveLocation::VariableDefinition => graphql_tools::introspection::DirectiveLocation::VARIABLE_DEFINITION,
+                                graphql_parser::schema::DirectiveLocation::Schema => graphql_tools::introspection::DirectiveLocation::SCHEMA,
+                                graphql_parser::schema::DirectiveLocation::Scalar => graphql_tools::introspection::DirectiveLocation::SCALAR,
+                                graphql_parser::schema::DirectiveLocation::Object => graphql_tools::introspection::DirectiveLocation::OBJECT,
+                                graphql_parser::schema::DirectiveLocation::FieldDefinition => graphql_tools::introspection::DirectiveLocation::FIELD_DEFINITION,
+                                graphql_parser::schema::DirectiveLocation::ArgumentDefinition => graphql_tools::introspection::DirectiveLocation::ARGUMENT_DEFINITION,
+                                graphql_parser::schema::DirectiveLocation::Interface => graphql_tools::introspection::DirectiveLocation::INTERFACE,
+                                graphql_parser::schema::DirectiveLocation::Union => graphql_tools::introspection::DirectiveLocation::UNION,
+                                graphql_parser::schema::DirectiveLocation::Enum => graphql_tools::introspection::DirectiveLocation::ENUM,
+                                graphql_parser::schema::DirectiveLocation::EnumValue => graphql_tools::introspection::DirectiveLocation::ENUM_VALUE,
+                                graphql_parser::schema::DirectiveLocation::InputObject => graphql_tools::introspection::DirectiveLocation::INPUT_OBJECT,
+                                graphql_parser::schema::DirectiveLocation::InputFieldDefinition => graphql_tools::introspection::DirectiveLocation::INPUT_FIELD_DEFINITION,
+                            }
+                        })
+                        .collect(),
+                    is_repeatable: Some(directive.repeatable),
+                    args: directive
+                        .arguments
+                        .iter()
+                        .map(|arg| IntrospectionInputValue {
+                            name: arg.name.to_string(),
+                            description: arg.description.clone(),
+                            type_ref: Some(introspection_input_type_ref_from_ast(&arg.value_type, &type_ast_map)),
+                            default_value: None, // TODO: Handle default values
+                            is_deprecated: None, // TODO: Handle deprecation
+                            deprecation_reason: None, // TODO: Handle deprecation reason
+                        })
+                        .collect(),
+                });
+            }
+            _ => {
+                // Ignore other definitions like TypeExtension, SchemaDefinition, etc.
+            }
+        }
+    }
+
+    IntrospectionQuery {
+        __schema: IntrospectionSchema {
+            query_type: IntrospectionNamedTypeRef {
+                name: schema_definition
+                    .as_ref()
+                    .and_then(|sd| sd.query.as_ref())
+                    .map_or("Query".to_string(), |qt| qt.to_string()),
+            },
+            mutation_type: schema_definition
+            .as_ref()
+            .and_then(|sd| sd.mutation.as_ref())
+            .map(|mt| IntrospectionNamedTypeRef {
+                name: mt.to_string(),
+            }),
+            subscription_type: schema_definition
+                .as_ref()
+                .and_then(|sd| sd.subscription.as_ref())
+                .map(|st| IntrospectionNamedTypeRef {
+                    name: st.to_string(),
+                }),
+            types,
+            directives,
+            // TODO: Description missing on graphql_parser::schema::SchemaDefinition
+            description: None,
+        },
+    }
 }
