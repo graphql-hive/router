@@ -11,6 +11,7 @@ use query_plan_executor::ExecutionRequest;
 use query_plan_executor::SchemaMetadata;
 use query_planner::consumer_schema::ConsumerSchema;
 use query_planner::planner::Planner;
+use query_planner::state::supergraph_state::SupergraphState;
 use query_planner::utils::parsing::parse_operation;
 use query_planner::utils::parsing::parse_schema;
 use serde_json::json;
@@ -42,13 +43,14 @@ async fn main() {
     let supergraph_sdl =
         std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
-    let planner = Planner::new_from_supergraph(&parsed_schema).expect("failed to create planner");
+    let supergraph_state = SupergraphState::new(&parsed_schema);
+    let planner =
+        Planner::new_from_supergraph_state(&supergraph_state).expect("failed to create planner");
     let schema_metadata = planner.consumer_schema().schema_metadata();
-    let subgraph_endpoint_map = get_subgraph_endpoint_map(&parsed_schema);
     let serve_data = ServeData {
         planner,
-        subgraph_endpoint_map,
         schema_metadata,
+        subgraph_endpoint_map: supergraph_state.subgraph_endpoint_map,
     };
     let serve_data_arc = Arc::new(serve_data);
     println!("Starting server on http://localhost:4000");
@@ -66,9 +68,9 @@ async fn main() {
 }
 
 struct ServeData {
-    subgraph_endpoint_map: HashMap<String, String>,
     schema_metadata: SchemaMetadata,
     planner: Planner,
+    subgraph_endpoint_map: HashMap<String, String>,
 }
 
 fn collect_variables(
@@ -108,66 +110,6 @@ fn get_type_name_of_ast(type_ast: &graphql_parser::schema::Type<'static, String>
         graphql_parser::schema::Type::ListType(list_type) => get_type_name_of_ast(list_type),
     }
 }
-
-fn get_subgraph_endpoint_map(
-    supergraph_ast: &graphql_parser::schema::Document<'static, String>,
-) -> HashMap<String, String> {
-    let mut subgraph_endpoint_map = HashMap::new();
-    for definition in &supergraph_ast.definitions {
-        if let graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) =
-            definition
-        {
-            let name = &enum_type.name;
-            if name == "join__Graph" {
-                for enum_value in &enum_type.values {
-                    let directive = enum_value
-                        .directives
-                        .iter()
-                        .find(|d| d.name == "join__graph");
-                    if let Some(directive) = directive {
-                        let mut subgraph_name = "".to_string();
-                        let mut endpoint = "".to_string();
-                        for (argument_name, argument_value) in &directive.arguments {
-                            if argument_name == "name" {
-                                match argument_value {
-                                    graphql_parser::schema::Value::String(enum_value) => {
-                                        subgraph_name = enum_value.to_string();
-                                    }
-                                    _ => {
-                                        println!(
-                                            "Expected enum value for \"name\": {:?}",
-                                            argument_value
-                                        );
-                                    }
-                                }
-                            } else if argument_name == "url" {
-                                match argument_value {
-                                    graphql_parser::schema::Value::String(enum_value) => {
-                                        endpoint = enum_value.to_string();
-                                    }
-                                    _ => {
-                                        println!(
-                                            "Expected enum value for \"url\": {:?}",
-                                            argument_value
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        if !subgraph_name.is_empty() && !endpoint.is_empty() {
-                            subgraph_endpoint_map.insert(subgraph_name, endpoint);
-                        }
-                    }
-                }
-            }
-            // We don't need to process other types for endpoints
-            break;
-        }
-    }
-
-    subgraph_endpoint_map
-}
-
 trait SchemaWithMetadata {
     fn schema_metadata(&self) -> SchemaMetadata;
 }

@@ -53,15 +53,20 @@ pub struct SupergraphState<'a> {
     pub known_scalars: HashSet<String>,
     /// A map from subgraph id to a subgraph state
     pub subgraphs_state: HashMap<String, SelectionResolver>,
+    /// A map of (subgraph_name, endpoint) to make it easy to resolve
+    pub subgraph_endpoint_map: HashMap<String, String>,
 }
 
 impl<'a> SupergraphState<'a> {
     #[instrument(skip(schema), name = "new_supergraph_state")]
     pub fn new(schema: &'a SchemaDocument) -> Self {
+        let (known_subgraphs, subgraph_endpoint_map) =
+            Self::extract_subgraph_names_and_endpoints(schema);
         let mut instance = Self {
             document: schema,
             definitions: Self::build_map(schema),
-            known_subgraphs: Self::extract_subgraph_names(schema),
+            known_subgraphs,
+            subgraph_endpoint_map,
             known_scalars: Self::extract_known_scalars(schema),
             subgraphs_state: HashMap::new(),
         };
@@ -136,8 +141,11 @@ impl<'a> SupergraphState<'a> {
         set
     }
 
-    fn extract_subgraph_names(schema: &'a SchemaDocument) -> HashMap<String, String> {
-        let mut map = HashMap::new();
+    fn extract_subgraph_names_and_endpoints(
+        schema: &'a SchemaDocument,
+    ) -> (HashMap<String, String>, HashMap<String, String>) {
+        let mut subgraph_names_map = HashMap::new();
+        let mut subgraph_endpoints_map = HashMap::new();
         let join_graph_enum = schema.definitions.iter().find_map(|d| match d {
             input::Definition::TypeDefinition(input::TypeDefinition::Enum(e)) => {
                 if e.name == "join__Graph" {
@@ -156,12 +164,16 @@ impl<'a> SupergraphState<'a> {
                     Self::extract_directives::<JoinGraphDirective>(&enum_value.directives);
 
                 if let Some(join_graph_directive) = join_graphs.first() {
-                    map.insert(graph_id, join_graph_directive.name.to_string());
+                    subgraph_names_map.insert(graph_id, join_graph_directive.name.to_string());
+                    subgraph_endpoints_map.insert(
+                        join_graph_directive.name.to_string(),
+                        join_graph_directive.url.to_string(),
+                    );
                 }
             }
         }
 
-        map
+        (subgraph_names_map, subgraph_endpoints_map)
     }
 
     #[instrument(skip(schema))]
