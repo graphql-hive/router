@@ -3,8 +3,9 @@ use std::fmt::Write;
 use tracing::{debug, instrument};
 
 use crate::{
+    ast::arguments::ArgumentsMap,
     graph::{edge::Edge, error::GraphError, Graph},
-    planner::walker::path::{OperationPath, PathSegment},
+    planner::walker::path::{OperationPath, PathSegment, SelectionAttributes},
 };
 
 use super::query_tree::QueryTree;
@@ -18,12 +19,17 @@ pub struct QueryTreeNode {
     /// Nodes required to execute the move
     pub requirements: Vec<QueryTreeNode>,
     pub children: Vec<QueryTreeNode>,
-    pub alias: Option<String>,
+    pub selection_attributes: Option<SelectionAttributes>,
 }
 
+/// Implements the `PartialEq` trait for `QueryTreeNode` to allow comparison based on node index, edge from parent, and selection attributes.
+/// This is also the way to "fingerprint" a node in the query tree, as it allows us to determine if two nodes are effectively
+/// the same in terms of their position and attributes in the graph while merging.
 impl PartialEq for QueryTreeNode {
     fn eq(&self, other: &Self) -> bool {
-        self.node_index == other.node_index && self.edge_from_parent == other.edge_from_parent
+        self.node_index == other.node_index
+            && self.edge_from_parent == other.edge_from_parent
+            && self.selection_attributes == other.selection_attributes
     }
 }
 
@@ -51,18 +57,34 @@ fn merge_query_tree_node_list(target_list: &mut Vec<QueryTreeNode>, source_list:
 }
 
 impl QueryTreeNode {
-    pub fn new(node_index: &NodeIndex, edge_from_parent: Option<&EdgeIndex>) -> Self {
+    pub fn new(
+        node_index: &NodeIndex,
+        edge_from_parent: Option<&EdgeIndex>,
+        selection_attributes: Option<&SelectionAttributes>,
+    ) -> Self {
         QueryTreeNode {
             node_index: *node_index,
             edge_from_parent: edge_from_parent.cloned(),
             requirements: Vec::new(),
             children: Vec::new(),
-            alias: None,
+            selection_attributes: selection_attributes.cloned(),
         }
     }
 
+    pub fn selection_arguments(&self) -> Option<&ArgumentsMap> {
+        self.selection_attributes
+            .as_ref()
+            .and_then(|v| v.arguments.as_ref())
+    }
+
+    pub fn selection_alias(&self) -> Option<&str> {
+        self.selection_attributes
+            .as_ref()
+            .and_then(|v| v.alias.as_deref())
+    }
+
     pub fn new_root(node_index: &NodeIndex) -> Self {
-        QueryTreeNode::new(node_index, None)
+        QueryTreeNode::new(node_index, None, None)
     }
 
     pub fn merge_nodes(&mut self, other: &Self) -> Self {
@@ -74,13 +96,10 @@ impl QueryTreeNode {
             edge_from_parent: self.edge_from_parent,
             requirements: self.requirements.clone(),
             children: self.children.clone(),
-            alias: self.alias.clone().or_else(|| other.alias.clone()),
+            selection_attributes: self.selection_attributes.clone(),
         }
     }
 
-    // #[instrument(skip(graph), fields(
-    //   paths = paths.iter().map(|path| path.pretty_print(graph)).collect::<Vec<String>>().join(", ")
-    // ))]
     pub fn from_paths(graph: &Graph, paths: &[OperationPath]) -> Result<Option<Self>, GraphError> {
         if paths.is_empty() {
             return Ok(None);
@@ -115,7 +134,7 @@ impl QueryTreeNode {
         let segment_at_index = &segments[current_index];
         let edge_at_index = &segment_at_index.edge_index;
         let requirements_tree_at_index = &segment_at_index.requirement_tree;
-        let field_at_index = &segment_at_index.field;
+        let selection_attributes_at_index = &segment_at_index.selection_attributes;
 
         debug!(
             "Processing edge: {}",
@@ -124,12 +143,11 @@ impl QueryTreeNode {
 
         // Creates the QueryTreeNode representing the state after traversing this edge
         let tail_node_index = graph.get_edge_tail(edge_at_index)?;
-        let mut tree_node = QueryTreeNode::new(&tail_node_index, Some(edge_at_index));
-
-        tree_node.alias = field_at_index
-            .as_ref()
-            .and_then(|v| v.alias.as_ref())
-            .cloned();
+        let mut tree_node = QueryTreeNode::new(
+            &tail_node_index,
+            Some(edge_at_index),
+            (*selection_attributes_at_index).as_ref(),
+        );
 
         if let Some(requirements_tree) = requirements_tree_at_index {
             tree_node.requirements.push(requirements_tree.clone());
@@ -152,7 +170,7 @@ impl QueryTreeNode {
     }
 
     #[instrument(skip_all, fields(
-      root_node_index = graph.pretty_print_node(root_node_index),
+      root_node = graph.pretty_print_node(root_node_index),
       segments_count = segments.len()
     ))]
     pub fn create_root_for_path_sequences(
@@ -211,13 +229,23 @@ impl QueryTreeNode {
             Edge::SubgraphEntrypoint { .. } => {
                 write!(result, "\n{}🚪 ({})", indent, tail_str)
             }
-            _ => write!(
-                result,
-                "\n{}{} of {}",
-                indent,
-                edge.display_name(),
-                tail_str
-            ),
+            _ => {
+                let args_str = self
+                    .selection_arguments()
+                    .map(|v| match v.is_empty() {
+                        true => "".to_string(),
+                        false => format!("({})", v),
+                    })
+                    .unwrap_or("".to_string());
+                write!(
+                    result,
+                    "\n{}{}{} of {}",
+                    indent,
+                    edge.display_name(),
+                    args_str,
+                    tail_str
+                )
+            }
         }?;
 
         for sub_step in self.children.iter() {
