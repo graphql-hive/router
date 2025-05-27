@@ -461,7 +461,6 @@ fn get_builtin_props_from_directives(
     for directive in directives {
         match directive.name.as_str() {
             "deprecated" => {
-                println!("Found deprecated directive: {:?}", directive);
                 props.is_deprecated = Some(true);
                 for (arg_name, _arg_value) in &directive.arguments {
                     if arg_name == "reason" {
