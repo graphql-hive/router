@@ -1,0 +1,486 @@
+use std::collections::HashMap;
+
+use graphql_parser::schema::TypeDefinition;
+use graphql_tools::introspection::{
+    IntrospectionDirective, IntrospectionEnumType, IntrospectionEnumValue, IntrospectionField,
+    IntrospectionInputObjectType, IntrospectionInputTypeRef, IntrospectionInputValue,
+    IntrospectionInterfaceType, IntrospectionNamedTypeRef, IntrospectionObjectType,
+    IntrospectionOutputTypeRef, IntrospectionQuery, IntrospectionScalarType, IntrospectionSchema,
+    IntrospectionType, IntrospectionUnionType,
+};
+
+use crate::builtin_types;
+
+fn introspection_output_type_ref_from_ast(
+    ast: &graphql_parser::schema::Type<'static, String>,
+    type_ast_map: &HashMap<String, graphql_parser::schema::Definition<'static, String>>,
+) -> graphql_tools::introspection::IntrospectionOutputTypeRef {
+    match ast {
+        graphql_parser::schema::Type::ListType(of_type) => IntrospectionOutputTypeRef::LIST {
+            of_type: Some(Box::new(introspection_output_type_ref_from_ast(
+                of_type,
+                type_ast_map,
+            ))),
+        },
+        graphql_parser::schema::Type::NonNullType(of_type) => {
+            IntrospectionOutputTypeRef::NON_NULL {
+                of_type: Some(Box::new(introspection_output_type_ref_from_ast(
+                    of_type,
+                    type_ast_map,
+                ))),
+            }
+        }
+        graphql_parser::schema::Type::NamedType(named_type) => {
+            let named_type_definition = type_ast_map
+                .get(named_type)
+                .unwrap_or_else(|| panic!("Type {} not found in type AST map", named_type));
+            match named_type_definition {
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Scalar(
+                    scalar_type,
+                )) => IntrospectionOutputTypeRef::SCALAR(IntrospectionNamedTypeRef {
+                    name: scalar_type.name.to_string(),
+                }),
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Object(
+                    object_type,
+                )) => IntrospectionOutputTypeRef::OBJECT(IntrospectionNamedTypeRef {
+                    name: object_type.name.to_string(),
+                }),
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Interface(
+                    interface_type,
+                )) => IntrospectionOutputTypeRef::INTERFACE(IntrospectionNamedTypeRef {
+                    name: interface_type.name.to_string(),
+                }),
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Union(
+                    union_type,
+                )) => IntrospectionOutputTypeRef::UNION(IntrospectionNamedTypeRef {
+                    name: union_type.name.to_string(),
+                }),
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(
+                    enum_type,
+                )) => IntrospectionOutputTypeRef::ENUM(IntrospectionNamedTypeRef {
+                    name: enum_type.name.to_string(),
+                }),
+                graphql_parser::schema::Definition::TypeDefinition(
+                    TypeDefinition::InputObject(input_object_type),
+                ) => IntrospectionOutputTypeRef::INPUT_OBJECT(IntrospectionNamedTypeRef {
+                    name: input_object_type.name.to_string(),
+                }),
+                _ => panic!("Unsupported type definition for introspection"),
+            }
+        }
+    }
+}
+
+fn introspection_input_type_ref_from_ast(
+    ast: &graphql_parser::schema::Type<'static, String>,
+    type_ast_map: &HashMap<String, graphql_parser::schema::Definition<'static, String>>,
+) -> IntrospectionInputTypeRef {
+    match ast {
+        graphql_parser::schema::Type::ListType(of_type) => IntrospectionInputTypeRef::LIST {
+            of_type: Some(Box::new(introspection_input_type_ref_from_ast(
+                of_type,
+                type_ast_map,
+            ))),
+        },
+        graphql_parser::schema::Type::NonNullType(of_type) => IntrospectionInputTypeRef::NON_NULL {
+            of_type: Some(Box::new(introspection_input_type_ref_from_ast(
+                of_type,
+                type_ast_map,
+            ))),
+        },
+        graphql_parser::schema::Type::NamedType(named_type) => {
+            let named_type_definition = type_ast_map
+                .get(named_type)
+                .unwrap_or_else(|| panic!("Type {} not found in type AST map", named_type));
+            match named_type_definition {
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Scalar(
+                    scalar_type,
+                )) => IntrospectionInputTypeRef::SCALAR(IntrospectionNamedTypeRef {
+                    name: scalar_type.name.to_string(),
+                }),
+                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(
+                    enum_type,
+                )) => IntrospectionInputTypeRef::ENUM(IntrospectionNamedTypeRef {
+                    name: enum_type.name.to_string(),
+                }),
+                graphql_parser::schema::Definition::TypeDefinition(
+                    TypeDefinition::InputObject(input_object_type),
+                ) => IntrospectionInputTypeRef::INPUT_OBJECT(IntrospectionNamedTypeRef {
+                    name: input_object_type.name.to_string(),
+                }),
+                _ => panic!("Unsupported type definition for introspection"),
+            }
+        }
+    }
+}
+
+pub fn introspection_query_from_ast(
+    ast: &graphql_parser::schema::Document<'static, String>,
+) -> IntrospectionQuery {
+    // Add known scalar types to the type AST map
+    let mut type_ast_map: HashMap<String, graphql_parser::schema::Definition<'static, String>> =
+        HashMap::new();
+    let specified_scalars = builtin_types::get_specified_scalars();
+    for (name, scalar_type) in specified_scalars {
+        type_ast_map.insert(
+            name.clone(),
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Scalar(scalar_type)),
+        );
+    }
+    let specified_directives = builtin_types::get_specified_directives();
+    for (name, directive) in specified_directives {
+        type_ast_map.insert(
+            name.clone(),
+            graphql_parser::schema::Definition::DirectiveDefinition(directive),
+        );
+    }
+    let mut schema_definition: Option<&graphql_parser::schema::SchemaDefinition<'static, String>> =
+        None;
+    for definition in &ast.definitions {
+        let type_name = match &definition {
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Scalar(
+                scalar_type,
+            )) => Some(&scalar_type.name),
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Object(
+                object_type,
+            )) => Some(&object_type.name),
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Interface(
+                interface_type,
+            )) => Some(&interface_type.name),
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Union(
+                union_type,
+            )) => Some(&union_type.name),
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => {
+                Some(&enum_type.name)
+            }
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::InputObject(
+                input_object_type,
+            )) => Some(&input_object_type.name),
+            graphql_parser::schema::Definition::DirectiveDefinition(directive) => {
+                Some(&directive.name)
+            }
+            graphql_parser::schema::Definition::SchemaDefinition(schema_definition_ast) => {
+                schema_definition = Some(schema_definition_ast);
+                None
+            }
+            _ => None,
+        };
+        if let Some(type_name) = type_name {
+            type_ast_map.insert(type_name.clone(), definition.clone());
+        }
+    }
+
+    let mut types = vec![];
+    let mut directives = vec![];
+
+    for definition in type_ast_map.values() {
+        match definition {
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Scalar(
+                scalar_type,
+            )) => {
+                let builtin_props = get_builtin_props_from_directives(&scalar_type.directives);
+                types.push(IntrospectionType::SCALAR(IntrospectionScalarType {
+                    name: scalar_type.name.to_string(),
+                    description: scalar_type.description.clone(),
+                    specified_by_url: builtin_props.specified_by_url,
+                }));
+            }
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Object(
+                object_type,
+            )) => {
+                types.push(IntrospectionType::OBJECT(IntrospectionObjectType {
+                    name: object_type.name.to_string(),
+                    description: object_type.description.clone(),
+                    fields: object_type
+                        .fields
+                        .iter()
+                        .map(|field| {
+                            let builtin_props =
+                                get_builtin_props_from_directives(&field.directives);
+                            IntrospectionField {
+                                name: field.name.to_string(),
+                                description: field.description.clone(),
+                                is_deprecated: builtin_props.is_deprecated,
+                                deprecation_reason: builtin_props.deprecation_reason,
+                                args: field
+                                    .arguments
+                                    .iter()
+                                    .map(|arg| {
+                                        let builtin_props =
+                                            get_builtin_props_from_directives(&arg.directives);
+                                        IntrospectionInputValue {
+                                            name: arg.name.to_string(),
+                                            description: arg.description.clone(),
+                                            type_ref: Some(introspection_input_type_ref_from_ast(
+                                                &arg.value_type,
+                                                &type_ast_map,
+                                            )),
+                                            default_value: None, // TODO: Handle default values
+                                            is_deprecated: builtin_props.is_deprecated,
+                                            deprecation_reason: builtin_props.deprecation_reason,
+                                        }
+                                    })
+                                    .collect(),
+                                type_ref: introspection_output_type_ref_from_ast(
+                                    &field.field_type,
+                                    &type_ast_map,
+                                ),
+                            }
+                        })
+                        .collect(),
+                    interfaces: object_type
+                        .implements_interfaces
+                        .iter()
+                        .map(|i| IntrospectionNamedTypeRef {
+                            name: i.to_string(),
+                        })
+                        .collect(),
+                }));
+            }
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Interface(
+                interface_type,
+            )) => {
+                types.push(IntrospectionType::INTERFACE(IntrospectionInterfaceType {
+                    name: interface_type.name.to_string(),
+                    description: interface_type.description.clone(),
+                    fields: interface_type
+                        .fields
+                        .iter()
+                        .map(|field| {
+                            let builtin_props =
+                                get_builtin_props_from_directives(&field.directives);
+                            IntrospectionField {
+                                name: field.name.to_string(),
+                                description: field.description.clone(),
+                                is_deprecated: builtin_props.is_deprecated,
+                                deprecation_reason: builtin_props.deprecation_reason,
+                                args: field
+                                    .arguments
+                                    .iter()
+                                    .map(|arg| {
+                                        let builtin_props =
+                                            get_builtin_props_from_directives(&arg.directives);
+                                        IntrospectionInputValue {
+                                            name: arg.name.to_string(),
+                                            description: arg.description.clone(),
+                                            type_ref: Some(introspection_input_type_ref_from_ast(
+                                                &arg.value_type,
+                                                &type_ast_map,
+                                            )),
+                                            default_value: None, // TODO: Handle default values
+                                            is_deprecated: builtin_props.is_deprecated,
+                                            deprecation_reason: builtin_props.deprecation_reason,
+                                        }
+                                    })
+                                    .collect(),
+                                type_ref: introspection_output_type_ref_from_ast(
+                                    &field.field_type,
+                                    &type_ast_map,
+                                ),
+                            }
+                        })
+                        .collect(),
+                    interfaces: Some(
+                        interface_type
+                            .implements_interfaces
+                            .iter()
+                            .map(|i| IntrospectionNamedTypeRef {
+                                name: i.to_string(),
+                            })
+                            .collect(),
+                    ),
+                    // TODO: Handle possible types
+                    possible_types: vec![],
+                }));
+            }
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Union(
+                union_type,
+            )) => {
+                types.push(IntrospectionType::UNION(IntrospectionUnionType {
+                    name: union_type.name.to_string(),
+                    description: union_type.description.clone(),
+                    possible_types: union_type
+                        .types
+                        .iter()
+                        .map(|t| IntrospectionNamedTypeRef {
+                            name: t.to_string(),
+                        })
+                        .collect(),
+                }));
+            }
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => {
+                types.push(IntrospectionType::ENUM(IntrospectionEnumType {
+                    name: enum_type.name.to_string(),
+                    description: enum_type.description.clone(),
+                    enum_values: enum_type
+                        .values
+                        .iter()
+                        .map(|enum_value| {
+                            let builtin_props =
+                                get_builtin_props_from_directives(&enum_value.directives);
+                            IntrospectionEnumValue {
+                                name: enum_value.name.to_string(),
+                                description: enum_value.description.clone(),
+                                is_deprecated: builtin_props.is_deprecated,
+                                deprecation_reason: builtin_props.deprecation_reason,
+                            }
+                        })
+                        .collect(),
+                }));
+            }
+            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::InputObject(
+                input_object_type,
+            )) => {
+                types.push(IntrospectionType::INPUT_OBJECT(
+                    IntrospectionInputObjectType {
+                        name: input_object_type.name.to_string(),
+                        description: input_object_type.description.clone(),
+                        input_fields: input_object_type
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                let builtin_props =
+                                    get_builtin_props_from_directives(&field.directives);
+                                IntrospectionInputValue {
+                                    name: field.name.to_string(),
+                                    description: field.description.clone(),
+                                    type_ref: Some(introspection_input_type_ref_from_ast(
+                                        &field.value_type,
+                                        &type_ast_map,
+                                    )),
+                                    // TODO: Handle default values
+                                    default_value: None,
+                                    is_deprecated: builtin_props.is_deprecated,
+                                    deprecation_reason: builtin_props.deprecation_reason,
+                                }
+                            })
+                            .collect(),
+                    },
+                ));
+            }
+            graphql_parser::schema::Definition::DirectiveDefinition(directive) => {
+                directives.push(IntrospectionDirective {
+                    name: directive.name.to_string(),
+                    description: directive.description.clone(),
+                    locations: directive
+                        .locations
+                        .iter()
+                        .map(|l| {
+                            match l {
+                                graphql_parser::schema::DirectiveLocation::Query => graphql_tools::introspection::DirectiveLocation::QUERY,
+                                graphql_parser::schema::DirectiveLocation::Mutation => graphql_tools::introspection::DirectiveLocation::MUTATION,
+                                graphql_parser::schema::DirectiveLocation::Subscription => graphql_tools::introspection::DirectiveLocation::SUBSCRIPTION,
+                                graphql_parser::schema::DirectiveLocation::Field => graphql_tools::introspection::DirectiveLocation::FIELD,
+                                graphql_parser::schema::DirectiveLocation::FragmentDefinition => graphql_tools::introspection::DirectiveLocation::FRAGMENT_DEFINITION,
+                                graphql_parser::schema::DirectiveLocation::FragmentSpread => graphql_tools::introspection::DirectiveLocation::FRAGMENT_SPREAD,
+                                graphql_parser::schema::DirectiveLocation::InlineFragment => graphql_tools::introspection::DirectiveLocation::INLINE_FRAGMENT,
+                                graphql_parser::schema::DirectiveLocation::VariableDefinition => graphql_tools::introspection::DirectiveLocation::VARIABLE_DEFINITION,
+                                graphql_parser::schema::DirectiveLocation::Schema => graphql_tools::introspection::DirectiveLocation::SCHEMA,
+                                graphql_parser::schema::DirectiveLocation::Scalar => graphql_tools::introspection::DirectiveLocation::SCALAR,
+                                graphql_parser::schema::DirectiveLocation::Object => graphql_tools::introspection::DirectiveLocation::OBJECT,
+                                graphql_parser::schema::DirectiveLocation::FieldDefinition => graphql_tools::introspection::DirectiveLocation::FIELD_DEFINITION,
+                                graphql_parser::schema::DirectiveLocation::ArgumentDefinition => graphql_tools::introspection::DirectiveLocation::ARGUMENT_DEFINITION,
+                                graphql_parser::schema::DirectiveLocation::Interface => graphql_tools::introspection::DirectiveLocation::INTERFACE,
+                                graphql_parser::schema::DirectiveLocation::Union => graphql_tools::introspection::DirectiveLocation::UNION,
+                                graphql_parser::schema::DirectiveLocation::Enum => graphql_tools::introspection::DirectiveLocation::ENUM,
+                                graphql_parser::schema::DirectiveLocation::EnumValue => graphql_tools::introspection::DirectiveLocation::ENUM_VALUE,
+                                graphql_parser::schema::DirectiveLocation::InputObject => graphql_tools::introspection::DirectiveLocation::INPUT_OBJECT,
+                                graphql_parser::schema::DirectiveLocation::InputFieldDefinition => graphql_tools::introspection::DirectiveLocation::INPUT_FIELD_DEFINITION,
+                            }
+                        })
+                        .collect(),
+                    is_repeatable: Some(directive.repeatable),
+                    args: directive
+                        .arguments
+                        .iter()
+                        .map(|arg: &graphql_parser::schema::InputValue<'_, String>| {
+                            let builtin_props =
+                                get_builtin_props_from_directives(&arg.directives);
+                            IntrospectionInputValue {
+                                name: arg.name.to_string(),
+                                description: arg.description.clone(),
+                                type_ref: Some(introspection_input_type_ref_from_ast(&arg.value_type, &type_ast_map)),
+                                default_value: None, // TODO: Handle default values
+                                is_deprecated: builtin_props.is_deprecated,
+                                deprecation_reason: builtin_props.deprecation_reason,
+                            }
+                        })
+                        .collect(),
+                });
+            }
+            _ => {
+                // Ignore other definitions like TypeExtension, SchemaDefinition, etc.
+            }
+        }
+    }
+
+    IntrospectionQuery {
+        __schema: IntrospectionSchema {
+            query_type: IntrospectionNamedTypeRef {
+                name: schema_definition
+                    .as_ref()
+                    .and_then(|sd| sd.query.as_ref())
+                    .map_or("Query".to_string(), |qt| qt.to_string()),
+            },
+            mutation_type: schema_definition
+                .as_ref()
+                .and_then(|sd| sd.mutation.as_ref())
+                .map(|mt| IntrospectionNamedTypeRef {
+                    name: mt.to_string(),
+                }),
+            subscription_type: schema_definition
+                .as_ref()
+                .and_then(|sd| sd.subscription.as_ref())
+                .map(|st| IntrospectionNamedTypeRef {
+                    name: st.to_string(),
+                }),
+            types,
+            directives,
+            // TODO: Description missing on graphql_parser::schema::SchemaDefinition
+            description: None,
+        },
+    }
+}
+
+struct BuiltinDirectiveProps {
+    is_deprecated: Option<bool>,
+    deprecation_reason: Option<String>,
+    one_of: Option<bool>,
+    specified_by_url: Option<String>,
+}
+
+fn get_builtin_props_from_directives(
+    directives: &[graphql_parser::schema::Directive<'static, String>],
+) -> BuiltinDirectiveProps {
+    let mut props = BuiltinDirectiveProps {
+        is_deprecated: None,
+        deprecation_reason: None,
+        one_of: None,
+        specified_by_url: None,
+    };
+    for directive in directives {
+        match directive.name.as_str() {
+            "deprecated" => {
+                props.is_deprecated = Some(true);
+                for (arg_name, _arg_value) in &directive.arguments {
+                    if arg_name == "reason" {
+                        // TODO: Convert AST to value
+                        break;
+                    }
+                }
+            }
+            "oneOf" => {
+                props.one_of = Some(true);
+            }
+            "specifiedBy" => {
+                for (arg_name, _arg_value) in &directive.arguments {
+                    if arg_name == "url" {
+                        // TODO: Convert AST to value
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    props
+}
