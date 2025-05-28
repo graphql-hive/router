@@ -64,25 +64,21 @@ jobs:
         run: cargo clippy --all
 
   graphql-over-http:
-    name: graphql-over-http
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9 # v1
       - uses: the-guild-org/shared-config/setup@v1
-        name: set up env
         with:
           node-version-file: .node-version
       - run: npm run test:graphql-over-http
 
   federation-audit:
-    name: federation-audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9 # v1
       - uses: the-guild-org/shared-config/setup@v1
-        name: set up env
         with:
           node-version-file: .node-version
       - run: npm run test:federation-all
