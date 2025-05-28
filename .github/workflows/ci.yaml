@@ -5,6 +5,10 @@ on:
       - main
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: cargo test
@@ -69,7 +73,7 @@ jobs:
       - run: cargo run gateway lib/query-planner/fixture/supergraph.graphql & npm run test:graphql-over-http
 
   federation-audit:
-    name: graphql-over-http
+    name: federation-audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
