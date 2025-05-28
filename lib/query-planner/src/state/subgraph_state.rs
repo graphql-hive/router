@@ -199,8 +199,7 @@ impl SubgraphState {
         _graph_join_types: &[JoinTypeDirective],
         _scalar_type: &super::supergraph_state::SupergraphInputObjectType<'_>,
     ) -> Option<SubgraphDefinition> {
-        //unimplemented!("not there yet")
-        println!("not there yet");
+        // TODO: unimplemented!("not there yet")
         None
     }
 }

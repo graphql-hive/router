@@ -86,12 +86,6 @@ fn transform_selection_set(
     for selection in &selection_set.items {
         match selection {
             parser::Selection::Field(field) => {
-                // Ignore fields that start with "__", as they are relate to introspection
-                // Keep __typename as it is a valid field
-                if field.name.starts_with("__") && field.name != "__typename" {
-                    continue;
-                }
-
                 transformed_selection_set
                     .items
                     .push(SelectionItem::Field(FieldSelection {
@@ -207,29 +201,5 @@ mod tests {
 
         let transformed = prepare_document(&parsed, None);
         insta::assert_snapshot!(transformed.to_string(), @"query{test{...on TestType{field1 field2} ...on TestType{field10 field21} otherField nested{...on SomeType{field3 nested{other} field4}} nested2{...on SomeType{field3 nested{other} field4} sibling}}}");
-    }
-
-    #[test]
-    fn remove_introspection_fields_keep_typename() {
-        let parsed = parse_query(
-            r#"
-      {
-        keep
-        __typename
-        __schema {
-          queryType {
-            name
-          }
-        }
-        test {
-          keep
-        }
-      }
-    "#,
-        )
-        .expect("failed to parse query");
-
-        let transformed = prepare_document(&parsed, None);
-        insta::assert_snapshot!(transformed.to_string(), @"query{keep __typename test{keep}}");
     }
 }
