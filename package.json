@@ -2,7 +2,8 @@
   "name": "hive-gateway-rs",
   "type": "module",
   "scripts": {
-    "test:federation": "graphql-federation-audit test --run-script=\"./run-gw-for-audit.sh\" --graphql=\"http://localhost:4000/graphql\" --healthcheck=\"http://localhost:4000/health\" --write=\"federation-audit-results.txt\"",
+    "test:federation-all": "graphql-federation-audit test --run-script=\"./run-gw-for-audit.sh\" --graphql=\"http://localhost:4000/graphql\" --healthcheck=\"http://localhost:4000/health\" --write=\"federation-audit-results.txt\"",
+    "test:federation-single": "graphql-federation-audit test-suite --run-script=\"./run-gw-for-audit.sh\" --graphql=\"http://localhost:4000/graphql\" --healthcheck=\"http://localhost:4000/health\" --write=\"federation-audit-results.txt\"",
     "test:graphql-over-http": "node --test graphql-over-http.test.js"
   },
   "devDependencies": {
