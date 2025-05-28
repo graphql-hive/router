@@ -2,3 +2,7 @@
 .digraph
 *.pending-snap
 profile.json.gz
+node_modules/
+logs
+federation-audit-results.txt
+supergraph.graphql
