@@ -83,6 +83,7 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: (!cancelled())
         with:
+          fail_on: "nothing"
           check_name: GraphQL over HTTP Audit
           files: |
             *.junit.xml
@@ -102,6 +103,7 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: (!cancelled())
         with:
+          fail_on: "nothing"
           check_name: Federation Audit
           files: |
             *.junit.xml
