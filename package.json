@@ -4,11 +4,14 @@
   "scripts": {
     "test:federation-all": "graphql-federation-audit test --run-script=\"./run-gw-for-audit.sh\" --graphql=\"http://localhost:4000/graphql\" --healthcheck=\"http://localhost:4000/health\" --write=\"federation-audit-results.txt\"",
     "test:federation-single": "graphql-federation-audit test-suite --run-script=\"./run-gw-for-audit.sh\" --graphql=\"http://localhost:4000/graphql\" --healthcheck=\"http://localhost:4000/health\" --write=\"federation-audit-results.txt\"",
-    "test:graphql-over-http": "node --test graphql-over-http.test.js"
+    "start:test-gateway": "cargo gateway lib/query-planner/fixture/spotify-supergraph.graphql",
+    "test-only:graphql-over-http": "node --test",
+    "test:graphql-over-http": "start-server-and-test start:test-gateway http://localhost:4000 test-only:graphql-over-http"
   },
   "devDependencies": {
     "graphql-federation-gateway-audit": "the-guild-org/graphql-federation-gateway-audit#main",
     "graphql-http": "^1.22.4",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "start-server-and-test": "^2.0.12"
   }
 }
