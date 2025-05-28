@@ -100,7 +100,7 @@ jobs:
       - run: npm run test:federation-all
         continue-on-error: true # continue even if the test fails
       - name: Upload logs
-        if: always() # always run this step
+        if: always()
         uses: actions/upload-artifact@v3
         with:
           name: federation-audit-logs
