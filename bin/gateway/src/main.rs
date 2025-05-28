@@ -134,7 +134,9 @@ trait SchemaWithMetadata {
 impl SchemaWithMetadata for ConsumerSchema {
     fn schema_metadata(&self) -> SchemaMetadata {
         let mut first_possible_types: HashMap<String, Vec<String>> = HashMap::new();
-        let (mut type_fields, mut enum_values) = get_introspection_metadata();
+        let introspection_metadata = get_introspection_metadata();
+        let mut type_fields = introspection_metadata.type_fields;
+        let mut enum_values = introspection_metadata.enum_values;
         for definition in &self.document.definitions {
             match definition {
                 graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(
@@ -151,7 +153,7 @@ impl SchemaWithMetadata for ConsumerSchema {
                     object_type,
                 )) => {
                     let name = object_type.name.to_string();
-                    let fields = type_fields.entry(name).or_insert_with(HashMap::new);
+                    let fields = type_fields.entry(name).or_default();
                     for field in &object_type.fields {
                         let field_type_name = get_type_name_of_ast(&field.field_type);
                         fields.insert(field.name.to_string(), field_type_name);
@@ -295,7 +297,7 @@ async fn graphql_endpoint(
         .expect("Failed to get executable operation");
 
     let (has_introspection, filtered_operation_for_plan) =
-        filter_introspection_fields_in_operation(&operation);
+        filter_introspection_fields_in_operation(operation);
 
     let query_plan = if filtered_operation_for_plan.selection_set.is_empty() && has_introspection {
         query_planner::planner::plan_nodes::QueryPlan {

@@ -558,10 +558,12 @@ pub fn filter_introspection_fields_in_operation(
     )
 }
 
-pub fn get_introspection_metadata() -> (
-    HashMap<String, HashMap<String, String>>,
-    HashMap<String, Vec<String>>,
-) {
+pub struct IntrospectionMetadata {
+    pub type_fields: HashMap<String, HashMap<String, String>>,
+    pub enum_values: HashMap<String, Vec<String>>,
+}
+
+pub fn get_introspection_metadata() -> IntrospectionMetadata {
     let mut type_fields: HashMap<String, HashMap<String, String>> = HashMap::new();
     type_fields.insert(
         "Query".to_string(),
@@ -675,5 +677,9 @@ pub fn get_introspection_metadata() -> (
             ],
         ),
     ]);
-    (type_fields, enum_values)
+
+    IntrospectionMetadata {
+        type_fields,
+        enum_values,
+    }
 }
