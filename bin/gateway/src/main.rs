@@ -57,6 +57,7 @@ async fn main() {
         Planner::new_from_supergraph_state(&supergraph_state).expect("failed to create planner");
     let schema_metadata = planner.consumer_schema().schema_metadata();
     let serve_data = ServeData {
+        supergraph_source: supergraph_path.to_string(),
         planner,
         schema_metadata,
         subgraph_endpoint_map: supergraph_state.subgraph_endpoint_map,
@@ -78,6 +79,7 @@ async fn main() {
 }
 
 struct ServeData {
+    supergraph_source: String,
     schema_metadata: SchemaMetadata,
     planner: Planner,
     subgraph_endpoint_map: HashMap<String, String>,
@@ -225,7 +227,10 @@ async fn landing(serve_data: web::Data<Arc<ServeData>>) -> impl Responder {
     let mut subgraph_html = String::new();
     subgraph_html.push_str("<section class=\"supergraph-information\">");
     subgraph_html.push_str("<h3>Supergraph Status: Loaded ✅</h3>");
-    subgraph_html.push_str("<p><strong>Source: </strong> <i>supergraph.graphql</i></p>");
+    subgraph_html.push_str(&format!(
+        "<p><strong>Source: </strong> <i>{}</i></p>",
+        serve_data.supergraph_source
+    ));
     subgraph_html.push_str("<table>");
     subgraph_html.push_str("<tr><th>Subgraph</th><th>Transport</th><th>Location</th></tr>");
     for (subgraph_name, subgraph_endpoint) in &serve_data.subgraph_endpoint_map {
