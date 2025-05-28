@@ -3,7 +3,7 @@ pub mod document;
 pub(crate) mod merge_path;
 pub mod operation;
 pub mod selection_item;
-pub(crate) mod selection_set;
+pub mod selection_set;
 pub(crate) mod type_aware_selection;
 pub(crate) mod value;
 

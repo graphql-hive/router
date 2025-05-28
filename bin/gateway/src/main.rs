@@ -6,9 +6,13 @@ use actix_web::web::Html;
 use actix_web::{get, post, web, App, HttpServer, Responder};
 use graphql_parser::query::OperationDefinition;
 use graphql_parser::schema::TypeDefinition;
+use introspection::{
+    filter_introspection_fields_in_operation, get_introspection_metadata,
+    introspection_query_from_ast,
+};
+use query_plan_executor::execute_query_plan;
 use query_plan_executor::ExecutionRequest;
 use query_plan_executor::SchemaMetadata;
-use query_plan_executor::{execute_query_plan, ExecutionResult};
 use query_planner::consumer_schema::ConsumerSchema;
 use query_planner::planner::Planner;
 use query_planner::state::supergraph_state::SupergraphState;
@@ -21,7 +25,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use value_from_ast::value_from_ast;
 
 mod builtin_types;
-mod introspection_from_ast;
+mod introspection;
 mod value_from_ast;
 
 #[actix_web::main]
@@ -128,8 +132,7 @@ trait SchemaWithMetadata {
 impl SchemaWithMetadata for ConsumerSchema {
     fn schema_metadata(&self) -> SchemaMetadata {
         let mut first_possible_types: HashMap<String, Vec<String>> = HashMap::new();
-        let mut enum_values: HashMap<String, Vec<String>> = HashMap::new();
-        let mut type_fields: HashMap<String, HashMap<String, String>> = HashMap::new();
+        let (mut type_fields, mut enum_values) = get_introspection_metadata();
         for definition in &self.document.definitions {
             match definition {
                 graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(
@@ -146,12 +149,11 @@ impl SchemaWithMetadata for ConsumerSchema {
                     object_type,
                 )) => {
                     let name = object_type.name.to_string();
-                    let mut fields = HashMap::new();
+                    let fields = type_fields.entry(name).or_insert_with(HashMap::new);
                     for field in &object_type.fields {
                         let field_type_name = get_type_name_of_ast(&field.field_type);
                         fields.insert(field.name.to_string(), field_type_name);
                     }
-                    type_fields.insert(name, fields);
 
                     for interface in &object_type.implements_interfaces {
                         let interface_name = interface.to_string();
@@ -205,10 +207,13 @@ impl SchemaWithMetadata for ConsumerSchema {
             }
             final_possible_types.insert(definition_name_of_x.to_string(), possible_types_of_x);
         }
+        let introspection_query = introspection_query_from_ast(&self.document);
+        let introspection_schema_root_json = json!(introspection_query.__schema);
         SchemaMetadata {
             possible_types: final_possible_types,
             enum_values,
             type_fields,
+            introspection_schema_root_json,
         }
     }
 }
@@ -277,22 +282,27 @@ async fn graphql_endpoint(
     let operation_name = request_body.operation_name.as_deref();
     let query_str = request_body.query.as_deref().expect("query is required");
     let document = parse_operation(query_str);
+    let normalized_document =
+        query_planner::utils::operation_utils::prepare_document(&document, operation_name);
+    let operation = normalized_document
+        .executable_operation()
+        .ok_or(query_planner::planner::PlannerError::MissingOperationToExecute)
+        .expect("Failed to get executable operation");
 
-    if operation_name == Some("IntrospectionQuery") {
-        let consumer_schema = serve_data.planner.consumer_schema();
-        let introspection_query =
-            introspection_from_ast::introspection_query_from_ast(&consumer_schema.document);
-        return web::Json(ExecutionResult {
-            data: Some(json!(introspection_query)),
-            errors: None,
-            extensions: None,
-        });
-    }
+    let (has_introspection, filtered_operation_for_plan) =
+        filter_introspection_fields_in_operation(&operation);
 
-    let query_plan = serve_data
-        .planner
-        .plan(&document, operation_name)
-        .expect("failed to build query plan");
+    let query_plan = if filtered_operation_for_plan.selection_set.is_empty() && has_introspection {
+        query_planner::planner::plan_nodes::QueryPlan {
+            kind: "QueryPlan".to_string(),
+            node: None,
+        }
+    } else {
+        serve_data
+            .planner
+            .plan_from_normalized_operation(&filtered_operation_for_plan)
+            .expect("Failed to create query plan")
+    };
 
     // TODO: Fix that, it should really be handled differently
     let operation = match &document.definitions[0] {
@@ -301,17 +311,15 @@ async fn graphql_endpoint(
     };
 
     let variable_values = collect_variables(operation, &request_body.variables);
-    let mut result = execute_query_plan(
+    let result = execute_query_plan(
         &query_plan,
         &serve_data.subgraph_endpoint_map,
         &variable_values,
         &serve_data.schema_metadata,
         &document,
+        has_introspection,
     )
     .await;
 
-    let mut extensions = HashMap::new();
-    extensions.insert("queryPlan".to_string(), json!(query_plan));
-    result.extensions = Some(extensions);
     web::Json(result)
 }

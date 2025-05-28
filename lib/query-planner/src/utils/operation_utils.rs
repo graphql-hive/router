@@ -86,12 +86,6 @@ fn transform_selection_set(
     for selection in &selection_set.items {
         match selection {
             parser::Selection::Field(field) => {
-                // Ignore fields that start with "__", as they are relate to introspection
-                // Keep __typename as it is a valid field
-                if field.name.starts_with("__") && field.name != "__typename" {
-                    continue;
-                }
-
                 transformed_selection_set
                     .items
                     .push(SelectionItem::Field(FieldSelection {

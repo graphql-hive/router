@@ -7,6 +7,7 @@ use tree::{paths_to_trees, query_tree::QueryTree};
 use walker::{error::WalkOperationError, walk_operation};
 
 use crate::{
+    ast::operation::OperationDefinition,
     consumer_schema::ConsumerSchema,
     graph::{error::GraphError, Graph},
     state::supergraph_state::SupergraphState,
@@ -92,7 +93,14 @@ impl Planner {
         let operation = document
             .executable_operation()
             .ok_or(PlannerError::MissingOperationToExecute)?;
-        let best_paths_per_leaf = walk_operation(&self.graph, operation)?;
+        self.plan_from_normalized_operation(operation)
+    }
+
+    pub fn plan_from_normalized_operation(
+        &self,
+        normalized_operation: &OperationDefinition,
+    ) -> Result<QueryPlan, PlannerError> {
+        let best_paths_per_leaf = walk_operation(&self.graph, normalized_operation)?;
         let qtps = paths_to_trees(&self.graph, &best_paths_per_leaf)?;
         let query_tree = QueryTree::merge_trees(qtps);
         let fetch_graph = build_fetch_graph_from_query_tree(&self.graph, query_tree)?;

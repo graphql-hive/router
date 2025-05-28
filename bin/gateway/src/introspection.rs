@@ -8,6 +8,10 @@ use graphql_tools::introspection::{
     IntrospectionOutputTypeRef, IntrospectionQuery, IntrospectionScalarType, IntrospectionSchema,
     IntrospectionType, IntrospectionUnionType,
 };
+use query_planner::ast::{
+    operation::OperationDefinition, selection_item::SelectionItem,
+    selection_set::InlineFragmentSelection,
+};
 
 use crate::{builtin_types, value_from_ast::value_from_ast};
 
@@ -494,4 +498,182 @@ fn get_builtin_props_from_directives(
         }
     }
     props
+}
+
+fn filter_introspection_selections(
+    selection_set: &query_planner::ast::selection_set::SelectionSet,
+) -> (bool, query_planner::ast::selection_set::SelectionSet) {
+    let mut has_introspection = false;
+    let filtered_selections: Vec<SelectionItem> = selection_set
+        .items
+        .iter()
+        .filter_map(|item| {
+            match item {
+                SelectionItem::Field(field) => {
+                    if field.name.starts_with("__") {
+                        has_introspection = true;
+                        None // Skip introspection fields except __typename
+                    } else {
+                        Some(item.clone())
+                    }
+                }
+                SelectionItem::InlineFragment(inline_fragment) => {
+                    let (has_introspection_in_fragment, filtered_selection_set) =
+                        filter_introspection_selections(&inline_fragment.selections);
+                    if has_introspection_in_fragment {
+                        has_introspection = true;
+                        Some(SelectionItem::InlineFragment(InlineFragmentSelection {
+                            type_condition: inline_fragment.type_condition.clone(),
+                            selections: filtered_selection_set,
+                        }))
+                    } else {
+                        Some(item.clone())
+                    }
+                }
+            }
+        })
+        .collect();
+    (
+        has_introspection,
+        query_planner::ast::selection_set::SelectionSet {
+            items: filtered_selections,
+        },
+    )
+}
+
+pub fn filter_introspection_fields_in_operation(
+    operation: &OperationDefinition,
+) -> (bool, OperationDefinition) {
+    let (has_introspection, filtered_selection_set) =
+        filter_introspection_selections(&operation.selection_set);
+
+    (
+        has_introspection,
+        OperationDefinition {
+            name: operation.name.clone(),
+            operation_kind: operation.operation_kind.clone(),
+            selection_set: filtered_selection_set,
+            variable_definitions: operation.variable_definitions.clone(),
+        },
+    )
+}
+
+pub fn get_introspection_metadata() -> (
+    HashMap<String, HashMap<String, String>>,
+    HashMap<String, Vec<String>>,
+) {
+    let mut type_fields: HashMap<String, HashMap<String, String>> = HashMap::new();
+    type_fields.insert(
+        "Query".to_string(),
+        HashMap::from([("__schema".to_string(), "__Schema".to_string())]),
+    );
+    type_fields.insert(
+        "__Schema".to_string(),
+        HashMap::from([
+            ("description".to_string(), "String".to_string()),
+            ("types".to_string(), "__Type".to_string()),
+            ("queryType".to_string(), "__Type".to_string()),
+            ("mutationType".to_string(), "__Type".to_string()),
+            ("subscriptionType".to_string(), "__Type".to_string()),
+            ("directives".to_string(), "__Directive".to_string()),
+        ]),
+    );
+    type_fields.insert(
+        "__Directive".to_string(),
+        HashMap::from([
+            ("name".to_string(), "String".to_string()),
+            ("description".to_string(), "String".to_string()),
+            ("isRepeatable".to_string(), "Boolean".to_string()),
+            ("locations".to_string(), "__DirectiveLocation".to_string()),
+            ("args".to_string(), "__InputValue".to_string()),
+        ]),
+    );
+    type_fields.insert(
+        "__Type".to_string(),
+        HashMap::from([
+            ("kind".to_string(), "__TypeKind".to_string()),
+            ("name".to_string(), "String".to_string()),
+            ("description".to_string(), "String".to_string()),
+            ("specifiedByURL".to_string(), "String".to_string()),
+            ("fields".to_string(), "__Field".to_string()),
+            ("interfaces".to_string(), "__Type".to_string()),
+            ("possibleTypes".to_string(), "__Type".to_string()),
+            ("enumValues".to_string(), "__EnumValue".to_string()),
+            ("inputFields".to_string(), "__InputValue".to_string()),
+            ("ofType".to_string(), "__Type".to_string()),
+            ("isOneOf".to_string(), "Boolean".to_string()),
+        ]),
+    );
+    type_fields.insert(
+        "__Field".to_string(),
+        HashMap::from([
+            ("name".to_string(), "String".to_string()),
+            ("description".to_string(), "String".to_string()),
+            ("args".to_string(), "__InputValue".to_string()),
+            ("type".to_string(), "__Type".to_string()),
+            ("isDeprecated".to_string(), "Boolean".to_string()),
+            ("deprecationReason".to_string(), "String".to_string()),
+        ]),
+    );
+    type_fields.insert(
+        "__InputValue".to_string(),
+        HashMap::from([
+            ("name".to_string(), "String".to_string()),
+            ("description".to_string(), "String".to_string()),
+            ("type".to_string(), "__Type".to_string()),
+            ("defaultValue".to_string(), "String".to_string()),
+            ("isDeprecated".to_string(), "Boolean".to_string()),
+            ("deprecationReason".to_string(), "String".to_string()),
+        ]),
+    );
+    type_fields.insert(
+        "__EnumValue".to_string(),
+        HashMap::from([
+            ("name".to_string(), "String".to_string()),
+            ("description".to_string(), "String".to_string()),
+            ("isDeprecated".to_string(), "Boolean".to_string()),
+            ("deprecationReason".to_string(), "String".to_string()),
+        ]),
+    );
+
+    let enum_values: HashMap<String, Vec<String>> = HashMap::from([
+        (
+            "__DirectiveLocation".to_string(),
+            vec![
+                "QUERY".to_string(),
+                "MUTATION".to_string(),
+                "SUBSCRIPTION".to_string(),
+                "FIELD".to_string(),
+                "FRAGMENT_DEFINITION".to_string(),
+                "FRAGMENT_SPREAD".to_string(),
+                "INLINE_FRAGMENT".to_string(),
+                "VARIABLE_DEFINITION".to_string(),
+                "SCHEMA".to_string(),
+                "SCALAR".to_string(),
+                "OBJECT".to_string(),
+                "FIELD_DEFINITION".to_string(),
+                "ARGUMENT_DEFINITION".to_string(),
+                "INTERFACE".to_string(),
+                "UNION".to_string(),
+                "ENUM".to_string(),
+                "ENUM_VALUE".to_string(),
+                "INPUT_OBJECT".to_string(),
+                "INPUT_FIELD_DEFINITION".to_string(),
+            ],
+        ),
+        (
+            "__TypeKind".to_string(),
+            vec![
+                "SCALAR".to_string(),
+                "OBJECT".to_string(),
+                "INTERFACE".to_string(),
+                "UNION".to_string(),
+                "ENUM".to_string(),
+                "INPUT_OBJECT".to_string(),
+                "LIST".to_string(),
+                "NON_NULL".to_string(),
+            ],
+        ),
+    ]);
+    (type_fields, enum_values)
 }

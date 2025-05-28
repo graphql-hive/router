@@ -12,7 +12,7 @@ use query_planner::{
     },
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Map, Value};
 use std::{collections::HashMap, vec};
 
 #[async_trait]
@@ -650,12 +650,12 @@ trait ExecutableQueryPlan {
 
 impl ExecutableQueryPlan for QueryPlan {
     async fn execute(&self, execution_context: QueryPlanExecutionContext<'_>) -> ExecutionResult {
-        let data = Value::Null; // Placeholder for data
-        let representations = Vec::new(); // Placeholder for representations
-                                          // Execute the root node
-                                          // The ? operator will propagate errors upwards
         match &self.node {
             Some(root_node) => {
+                let data = Value::Null; // Placeholder for data
+                let representations = Vec::new(); // Placeholder for representations
+                                                  // Execute the root node
+                                                  // The ? operator will propagate errors upwards
                 let (data, _representations, errors) = root_node
                     .execute(
                         &execution_context,
@@ -677,12 +677,7 @@ impl ExecutableQueryPlan for QueryPlan {
                 // Handle case where QueryPlan has no node (though checked earlier)
                 ExecutionResult {
                     data: None,
-                    errors: Some(vec![GraphQLError {
-                        message: "QueryPlan has no node".to_string(),
-                        location: None,
-                        path: None,
-                        extensions: None,
-                    }]),
+                    errors: None,
                     extensions: None,
                 }
             }
@@ -966,12 +961,13 @@ impl HTTPSubgraphExecutor<'_> {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct SchemaMetadata {
     pub possible_types: HashMap<String, Vec<String>>,
     pub enum_values: HashMap<String, Vec<String>>,
     pub type_fields: HashMap<String, HashMap<String, String>>,
+    pub introspection_schema_root_json: Value,
 }
 
 fn should_skip_per_variables(
@@ -1121,7 +1117,12 @@ fn project_selection_set(
                             continue;
                         }
                         let field_type = field_map.get(&field.name);
-                        let field_val = obj.get(&response_key);
+                        let field_val = if field.name == "__schema" && type_name == "Query" {
+                            // Special case for introspection query
+                            Some(&schema_metadata.introspection_schema_root_json)
+                        } else {
+                            obj.get(&response_key)
+                        };
                         match (field_type, field_val) {
                             (Some(field_type), Some(field_val)) => {
                                 let projected = project_selection_set(
@@ -1138,7 +1139,12 @@ fn project_selection_set(
                                 // If the field is not found in the object, set it to Null
                                 result_map.insert(response_key, Value::Null);
                             }
-                            (None, _) => {}
+                            (None, _) => {
+                                println!(
+                                    "Warning: Field {} not found in type {}. Skipping projection.",
+                                    field.name, type_name
+                                );
+                            }
                         }
                     }
                     Selection::InlineFragment(inline_fragment) => {
@@ -1212,6 +1218,18 @@ fn project_selection_set(
                                                     );
                                                 }
                                             }
+                                        } else if type_condition == type_name {
+                                            // If the type condition matches the current type name,
+                                            // project the fragment without checking the entity
+                                            let projected = project_selection_set(
+                                                data,
+                                                &fragment.selection_set,
+                                                type_name,
+                                                schema_metadata,
+                                                fragments,
+                                                variable_values,
+                                            );
+                                            deep_merge(&mut result, projected);
                                         }
                                     }
                                 }
@@ -1306,6 +1324,7 @@ pub async fn execute_query_plan(
     variable_values: &Option<HashMap<String, Value>>,
     schema_metadata: &SchemaMetadata,
     document: &Document<'static, String>,
+    has_introspection: bool,
 ) -> ExecutionResult {
     let http_executor = HTTPSubgraphExecutor {
         subgraph_endpoint_map,
@@ -1317,13 +1336,16 @@ pub async fn execute_query_plan(
         schema_metadata,
     };
     let mut result = query_plan.execute(execution_context).await;
-    if result.data.is_some() {
+    if result.data.as_ref().is_some() || has_introspection {
         result.data = Some(project_data_by_operation(
-            result.data.unwrap(),
+            result.data.unwrap_or(Value::Object(Map::new())),
             document,
             schema_metadata,
             variable_values,
         ));
     }
+    let mut extensions = HashMap::new();
+    extensions.insert("queryPlan".to_string(), json!(query_plan));
+    result.extensions = Some(extensions);
     result
 }
