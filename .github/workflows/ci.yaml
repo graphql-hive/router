@@ -78,7 +78,7 @@ jobs:
         with:
           name: GraphQL Over HTTP            # Name of the check run which will be created
           path: 'graphql-over-http.junit.xml'    # Path to test results
-          reporter: java-junit        # Format of test results
+          reporter: jest-junit        # Format of test results
           fail-on-error: false # Fail the job if there are test failures
 
   federation-audit:
@@ -96,6 +96,6 @@ jobs:
         with:
           name: Federation Audit            # Name of the check run which will be created
           path: '*-federation-audit.junit.xml'    # Path to test results
-          reporter: java-junit        # Format of test results
+          reporter: jest-junit        # Format of test results
           fail-on-error: false # Fail the job if there are test failures
     
