@@ -9,6 +9,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  issues: read
+  checks: write
+  pull-requests: write
+
 jobs:
   test:
     name: cargo test
@@ -73,14 +79,13 @@ jobs:
           node-version-file: .node-version
       - run: npm run ci:test:graphql-over-http
         continue-on-error: true # continue even if the test fails
-      - name: Test Report
-        uses: dorny/test-reporter@v2
-        if: ${{ !cancelled() }}       # run this step even if previous step failed
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: (!cancelled())
         with:
-          name: GraphQL Over HTTP            # Name of the check run which will be created
-          path: 'graphql-over-http.junit.xml'    # Path to test results
-          reporter: jest-junit        # Format of test results
-          fail-on-error: false # Fail the job if there are test failures
+          check_name: GraphQL over HTTP Audit
+          files: |
+            *.junit.xml
 
   federation-audit:
     runs-on: ubuntu-latest
@@ -92,12 +97,11 @@ jobs:
           node-version-file: .node-version
       - run: npm run test:federation-all
         continue-on-error: true # continue even if the test fails
-      - name: Test Report
-        uses: dorny/test-reporter@v2
-        if: ${{ !cancelled() }}       # run this step even if previous step failed
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: (!cancelled())
         with:
-          name: Federation Audit            # Name of the check run which will be created
-          path: '*-federation-audit.junit.xml'    # Path to test results
-          reporter: jest-junit        # Format of test results
-          fail-on-error: false # Fail the job if there are test failures
+          check_name: Federation Audit
+          files: |
+            *.junit.xml
     
