@@ -5,5 +5,5 @@ profile.json.gz
 node_modules/
 logs
 federation-audit-results.txt
-graphql-over-http.junit.xml
+*.junit.xml
 supergraph.graphql

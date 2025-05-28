@@ -78,7 +78,7 @@ jobs:
         with:
           name: GraphQL Over HTTP            # Name of the check run which will be created
           path: 'graphql-over-http.junit.xml'    # Path to test results
-          reporter: jest-junit        # Format of test results
+          reporter: java-junit        # Format of test results
 
   federation-audit:
     runs-on: ubuntu-latest
@@ -89,4 +89,11 @@ jobs:
         with:
           node-version-file: .node-version
       - run: npm run test:federation-all
+      - name: Test Report
+        uses: dorny/test-reporter@v2
+        if: ${{ !cancelled() }}       # run this step even if previous step failed
+        with:
+          name: Federation Audit            # Name of the check run which will be created
+          path: 'federation-audit.junit.xml'    # Path to test results
+          reporter: java-junit        # Format of test results
     
