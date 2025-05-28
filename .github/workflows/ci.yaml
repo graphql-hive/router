@@ -71,7 +71,12 @@ jobs:
       - uses: the-guild-org/shared-config/setup@v1
         with:
           node-version-file: .node-version
-      - run: npm run test:graphql-over-http
+      - run: npm run ci:test:graphql-over-http
+      - name: Publish Test Report
+        uses: mikepenz/action-junit-report@v5
+        if: success() || failure() # always run even if the previous step fails
+        with:
+          report_paths: 'graphql-over-http.junit.xml'
 
   federation-audit:
     runs-on: ubuntu-latest
