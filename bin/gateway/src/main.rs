@@ -348,27 +348,21 @@ async fn handle_execution_request(
     execution_request: &ExecutionRequest,
     serve_data: &Arc<ServeData>,
 ) -> HttpResponse {
-    let operation_name = execution_request.operation_name.as_deref();
-    let document = safe_parse_operation(&execution_request.query);
-    if document.is_err() {
-        let error = document.err().unwrap();
-        let accept_header = req
-            .headers()
-            .get("Accept")
-            .and_then(|h| h.to_str().ok())
-            .map(|s| s.to_string());
-        return make_error_response(&error.to_string(), &accept_header, true, "BAD_REQUEST");
-    }
-    let document = document.unwrap();
-    let normalized_document =
-        query_planner::utils::operation_utils::prepare_document(&document, operation_name);
-    let operation = normalized_document.executable_operation();
-
     let accept_header = req
         .headers()
         .get("Accept")
         .and_then(|h| h.to_str().ok())
         .map(|s| s.to_string());
+    let operation_name = execution_request.operation_name.as_deref();
+    let document = match safe_parse_operation(&execution_request.query) {
+        Ok(doc) => doc,
+        Err(err) => {
+            return make_error_response(&err.to_string(), &accept_header, true, "BAD_REQUEST");
+        }
+    };
+    let normalized_document =
+        query_planner::utils::operation_utils::prepare_document(&document, operation_name);
+    let operation = normalized_document.executable_operation();
 
     if operation.is_none() {
         return make_error_response(
@@ -416,12 +410,12 @@ async fn handle_execution_request(
         _ => panic!("Expected an operation definition"),
     };
 
-    let variable_values = collect_variables(operation, &execution_request.variables);
-    if variable_values.is_err() {
-        let error = variable_values.err().unwrap();
-        return make_error_response(&error, &accept_header, true, "BAD_REQUEST");
-    }
-    let variable_values = variable_values.unwrap();
+    let variable_values = match collect_variables(operation, &execution_request.variables) {
+        Ok(values) => values,
+        Err(err) => {
+            return make_error_response(&err, &accept_header, true, "BAD_REQUEST");
+        }
+    };
     let result = execute_query_plan(
         &query_plan,
         &serve_data.subgraph_endpoint_map,
