@@ -1178,6 +1178,7 @@ fn process_requires_field_edge(
     parent_fetch_step_index: Option<NodeIndex>,
     response_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
+    field_move: &FieldMove,
     edge_index: EdgeIndex,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let parent_fetch_step_index = parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?;
@@ -1192,15 +1193,10 @@ fn process_requires_field_edge(
         .map(|edge| edge.source())
         .unwrap();
 
-    let edge = graph.edge(edge_index)?;
-    let (requires, field_name, field_is_list) = match edge {
-        Edge::FieldMove(f) => (
-            &f.requirements.clone().expect("Expected @requires"),
-            &f.name,
-            &f.is_list,
-        ),
-        _ => panic!("Expected a Field Move with @requires"),
-    };
+    let requires = field_move
+        .requirements
+        .as_ref()
+        .expect("Expected @requires");
 
     let tail_node_index = graph.get_edge_tail(&edge_index)?;
     let tail_node = graph.node(tail_node_index)?;
@@ -1209,7 +1205,6 @@ fn process_requires_field_edge(
         // todo: FetchGraphError::MissingSubgraphName(tail_node.clone())
         _ => panic!("Expected a subgraph type, not root type"),
     };
-
     let head_node_index = graph.get_edge_head(&edge_index)?;
     let head_node = graph.node(head_node_index)?;
     let (head_type_name, head_subgraph_name) = match head_node {
@@ -1222,13 +1217,26 @@ fn process_requires_field_edge(
         find_satisfiable_key(graph, query_node.requirements.first().unwrap())?;
     debug!("Key to re-enter: {}", key_to_reenter_subgraph);
 
-    let real_parent_fetch_step_index =
-        match fetch_graph.parents_of(parent_parent_index).count() == 0 {
-            true => parent_fetch_step_index,
-            // In case of a field with `@requires`, the parent will be the current subgraph we're in.
-            // That's why we want to move up, to the parent of the current fetch step.
-            false => parent_parent_index,
-        };
+    let parent_fetch_step = fetch_graph.get_step_data(parent_fetch_step_index)?;
+    // In case of a field with `@requires`, the parent will be the current subgraph we're in.
+    let real_parent_fetch_step_index = match parent_fetch_step.output.type_name != *head_type_name {
+        // If the parent's output resolves a different type, then it's a root type.
+        // We can use that as a parent.
+        true => parent_fetch_step_index,
+        // If the parent's output resolves the same type, it manes we're in an entity call.
+        // We need to move up, as the entity call was created to fetch regular fields of the type
+        // (those without @requires).
+        //
+        // Example: Fetch Step was created to get `baz`
+        // {
+        //   foo
+        //   bar @requires(fields: "foo")
+        //   baz
+        // }
+        //
+        // We need to stick to the parent of the parent.
+        false => parent_parent_index,
+    };
 
     // When a field (foo) is annotated with `@requires(fields: "bar")`
     // We want to create new FetchStep (entity move) for that field (foo)
@@ -1242,7 +1250,7 @@ fn process_requires_field_edge(
         head_subgraph_name,
         head_type_name,
         response_path,
-        requires,
+        &requires,
     )?;
 
     let step_for_children = fetch_graph.get_step_data_mut(step_for_children_index)?;
@@ -1251,7 +1259,7 @@ fn process_requires_field_edge(
         &TypeAwareSelection {
             selection_set: SelectionSet {
                 items: vec![SelectionItem::Field(FieldSelection {
-                    name: field_name.to_owned(),
+                    name: field_move.name.clone(),
                     alias: None,
                     selections: SelectionSet { items: vec![] },
                     arguments: Default::default(),
@@ -1262,12 +1270,13 @@ fn process_requires_field_edge(
         MergePath::default(),
         false,
     );
+
     debug!(
         "Adding {} to fetch([{}]).input",
         requires,
         step_for_children_index.index()
     );
-    step_for_children.input.add(requires);
+    step_for_children.input.add(&requires);
     debug!(
         "Adding {} to fetch([{}]).input",
         key_to_reenter_subgraph,
@@ -1283,7 +1292,6 @@ fn process_requires_field_edge(
         response_path,
     );
     let step_for_requirements = fetch_graph.get_step_data_mut(step_for_requirements_index)?;
-    // step_for_requirements.reserved_for_requires = Some(requires.clone());
     debug!(
         "Adding {} to fetch([{}]).input",
         key_to_reenter_subgraph,
@@ -1300,10 +1308,10 @@ fn process_requires_field_edge(
 
     fetch_graph.connect(real_parent_fetch_step_index, step_for_requirements_index);
 
-    let mut child_response_path = response_path.push(field_name.to_owned());
-    let mut child_fetch_path = MergePath::default().push(field_name.to_owned());
+    let mut child_response_path = response_path.push(field_move.name.clone());
+    let mut child_fetch_path = MergePath::default().push(field_move.name.clone());
 
-    if *field_is_list {
+    if field_move.is_list {
         child_response_path = child_response_path.push("@".to_string());
         child_fetch_path = child_fetch_path.push("@".to_string());
     }
@@ -1482,6 +1490,7 @@ fn process_query_node(
                     parent_fetch_step_index,
                     response_path,
                     requiring_fetch_step_index,
+                    field,
                     edge_index,
                 ),
                 false => process_plain_field_edge(
