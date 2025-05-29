@@ -59,8 +59,8 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
         Fetch(service: "inventory") {
           {
             products {
-              __typename
               upc
+              __typename
             }
           }
         },
@@ -106,7 +106,7 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "inventory",
             "operationKind": "query",
-            "operation": "{products{__typename upc}}"
+            "operation": "{products{upc __typename}}"
           },
           {
             "kind": "Flatten",
@@ -660,8 +660,8 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                shippingEstimate2
                 shippingEstimate
+                shippingEstimate2
               }
             }
           },
@@ -691,7 +691,7 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "inventory",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate2 shippingEstimate}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate shippingEstimate2}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -775,7 +775,6 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
 
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
-
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
@@ -979,7 +978,6 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
 
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
-
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
@@ -1128,5 +1126,124 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
       }
     }
     "#);
+    Ok(())
+}
+
+#[test]
+fn deep_requires() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let graph = read_supergraph("fixture/tests/deep-requires.supergraph.graphql");
+    let document = parse_operation(
+        r#"
+        query {
+          feed {
+            author {
+              id
+            }
+          }
+        }"#,
+    );
+    let document = prepare_document(&document, None);
+    let operation = document.executable_operation().unwrap();
+    let best_paths_per_leaf = walk_operation(&graph, operation)?;
+    assert_eq!(best_paths_per_leaf.len(), 1);
+    assert_eq!(best_paths_per_leaf[0].len(), 1);
+
+    insta::assert_snapshot!(
+      best_paths_per_leaf[0][0].pretty_print(&graph),
+      @"root(Query) -(a)- Query/a -(feed)- Post/a -(🔑🧩{id})- Post/b -(author🧩{comments{authorId}})- Author/b -(id)- ID/b"
+    );
+
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
+    let query_tree = QueryTree::merge_trees(qtps);
+
+    insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
+    root(Query)
+      🚪 (Query/a)
+        feed of Post/a
+          🧩 [
+            id of ID/a
+          ]
+          🔑 Post/b
+            🧩 [
+              comments of Comment/b
+                🧩 [
+                  id of ID/b
+                ]
+                🔑 Comment/a
+                  authorId of ID/a
+            ]
+            author of Author/b
+              id of ID/b
+    ");
+
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    let plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
+    insta::assert_snapshot!(format!("{}", plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            feed {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "feed.@") {
+          Fetch(service: "b") {
+              ... on Post {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Post {
+                comments {
+                  __typename
+                  id
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "feed.@.comments.@") {
+          Fetch(service: "a") {
+              ... on Comment {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Comment {
+                authorId
+              }
+            }
+          },
+        },
+        Flatten(path: "feed.@") {
+          Fetch(service: "b") {
+              ... on Post {
+                __typename
+                comments {
+                  authorId
+                }
+                id
+              }
+            } =>
+            {
+              ... on Post {
+                author {
+                  id
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
     Ok(())
 }
