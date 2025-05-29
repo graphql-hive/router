@@ -1,0 +1,19 @@
+{
+  "name": "hive-gateway-rs",
+  "type": "module",
+  "scripts": {
+    "test:federation-all": "graphql-federation-audit test --run-script=\"./run-gw-for-audit.sh\" --graphql=\"http://localhost:4000/graphql\" --healthcheck=\"http://localhost:4000/health\" --write=\"federation-audit-results.txt\" --junit=\"federation-audit.junit.xml\"",
+    "test:federation-single": "graphql-federation-audit test-suite --run-script=\"./run-gw-for-audit.sh\" --graphql=\"http://localhost:4000/graphql\" --healthcheck=\"http://localhost:4000/health\" --write=\"federation-audit-results.txt\"",
+    "start:test-gateway": "cargo gateway lib/query-planner/fixture/spotify-supergraph.graphql",
+    "test:graphql-over-http": "node --test",
+    "test-junit:graphql-over-http": "node --test --test-reporter=junit --test-reporter-destination=graphql-over-http.junit.xml",
+    "ci:test:graphql-over-http": "start-server-and-test start:test-gateway http://localhost:4000 test-junit:graphql-over-http"
+  },
+  "devDependencies": {
+    "graphql-federation-gateway-audit": "the-guild-org/graphql-federation-gateway-audit#junit-support",
+    "graphql-http": "^1.22.4",
+    "typescript": "^5.8.3",
+    "start-server-and-test": "^2.0.12"
+  },
+  "packageManager": "npm@10.9.2"
+}
