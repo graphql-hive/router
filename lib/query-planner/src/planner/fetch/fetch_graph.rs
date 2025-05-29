@@ -1250,7 +1250,7 @@ fn process_requires_field_edge(
         head_subgraph_name,
         head_type_name,
         response_path,
-        &requires,
+        requires,
     )?;
 
     let step_for_children = fetch_graph.get_step_data_mut(step_for_children_index)?;
@@ -1276,7 +1276,7 @@ fn process_requires_field_edge(
         requires,
         step_for_children_index.index()
     );
-    step_for_children.input.add(&requires);
+    step_for_children.input.add(requires);
     debug!(
         "Adding {} to fetch([{}]).input",
         key_to_reenter_subgraph,
