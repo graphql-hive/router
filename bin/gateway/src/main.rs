@@ -371,7 +371,12 @@ async fn handle_execution_request(
         .map(|s| s.to_string());
 
     if operation.is_none() {
-        return make_error_response("Unable to detect operation AST", &accept_header, true, "BAD_REQUEST");
+        return make_error_response(
+            "Unable to detect operation AST",
+            &accept_header,
+            true,
+            "BAD_REQUEST",
+        );
     }
 
     let operation = operation.unwrap();
@@ -485,7 +490,12 @@ async fn graphiql(
             .body(GRAPHILQL_HTML)
     } else {
         if params.query.is_none() {
-            return make_error_response("Missing query parameter", &accept_header, true, "BAD_REQUEST");
+            return make_error_response(
+                "Missing query parameter",
+                &accept_header,
+                true,
+                "BAD_REQUEST",
+            );
         }
         let variables = params
             .variables
