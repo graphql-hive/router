@@ -459,7 +459,7 @@ static GRAPHILQL_HTML: &str = include_str!("../static/graphiql.html");
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 struct QueryParamsBody {
-    query: String,
+    query: Option<String>,
     operation_name: Option<String>,
     variables: Option<String>,
     extensions: Option<String>,
@@ -484,6 +484,9 @@ async fn graphiql(
             .content_type("text/html")
             .body(GRAPHILQL_HTML)
     } else {
+        if params.query.is_none() {
+            return make_error_response("Missing query parameter", &accept_header, true, "BAD_REQUEST");
+        }
         let variables = params
             .variables
             .as_ref()
@@ -498,8 +501,9 @@ async fn graphiql(
         if let Some(Err(err)) = extensions {
             return make_error_response(&err.to_string(), &accept_header, true, "BAD_REQUEST");
         }
+        let query = params.query.clone().unwrap();
         let execution_request = ExecutionRequest {
-            query: params.query.clone(),
+            query,
             operation_name: params.operation_name.clone(),
             variables: variables.and_then(|v| v.ok()),
             extensions: extensions.and_then(|v| v.ok()),
