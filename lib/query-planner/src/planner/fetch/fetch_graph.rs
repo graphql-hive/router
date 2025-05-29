@@ -149,6 +149,7 @@ impl FetchGraph {
 
     #[instrument(skip_all)]
     pub fn optimize(&mut self) -> Result<(), FetchGraphError> {
+        self.merge_passthrough_child()?;
         self.merge_children_with_parents()?;
         self.merge_siblings()?;
         self.deduplicate_and_prune_fetch_steps()?;
@@ -245,8 +246,7 @@ impl FetchGraph {
                 for other_child_index in children.iter().skip(i + 1) {
                     let other_child = self.get_step_data(*other_child_index)?;
 
-                    if child.can_merge_sibling(*child_index, *other_child_index, other_child, self)
-                    {
+                    if child.can_merge(*child_index, *other_child_index, other_child, self) {
                         debug!(
                             "Found optimization: {} <- {}",
                             child_index.index(),
@@ -271,16 +271,81 @@ impl FetchGraph {
                     .get(&other_child_index)
                     .expect("Index mapping got lost");
 
-                perform_fetch_step_sibling_merge(
-                    *child_index_latest,
-                    *other_child_index_latest,
-                    self,
-                )?;
+                perform_fetch_step_merge(*child_index_latest, *other_child_index_latest, self)?;
 
                 // Because `other_child` was merged into `child`,
                 // then everything that was pointing to `other_child`
                 // has to point to the `child`.
                 node_indexes.insert(*other_child_index_latest, *child_index_latest);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// When a child has the input identical as the output,
+    /// it gets squashed into its parent.
+    /// Its children becomes children of the parent.
+    #[instrument(skip_all)]
+    fn merge_passthrough_child(&mut self) -> Result<(), FetchGraphError> {
+        let root_index = self
+            .root_index
+            .ok_or(FetchGraphError::NonSingleRootStep(0))?;
+        // Breadth-First Search (BFS) starting from the root node.
+        let mut queue = VecDeque::from([root_index]);
+        // HashMap to keep track of node index mappings, especially after merges.
+        // Key: original index, Value: potentially updated index after merges.
+        let mut node_indexes: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+
+        node_indexes.insert(root_index, root_index);
+
+        while let Some(parent_index) = queue.pop_front() {
+            // Store pairs of sibling nodes that can be merged.
+            let mut merges_to_perform: Vec<(NodeIndex, NodeIndex)> = Vec::new();
+            let parent_index = *node_indexes
+                .get(&parent_index)
+                .expect("Index mapping got lost");
+
+            let children: Vec<_> = self
+                .graph
+                .neighbors_directed(parent_index, Direction::Outgoing)
+                .collect();
+
+            let parent = self.get_step_data(parent_index)?;
+
+            for child_index in children.iter() {
+                queue.push_back(*child_index);
+                // Add the current child to the queue for further processing (BFS).
+                let child = self.get_step_data(*child_index)?;
+                node_indexes.insert(*child_index, *child_index);
+                node_indexes.insert(parent_index, parent_index);
+
+                if parent.can_merge_passthrough_child(parent_index, *child_index, child, self) {
+                    debug!(
+                        "optimization found: merge parent [{}] with a passthrough child [{}]",
+                        parent_index.index(),
+                        child_index.index()
+                    );
+                    // Register their original indexes in the map.
+                    merges_to_perform.push((parent_index, *child_index));
+                }
+            }
+
+            for (parent_index, child_index) in merges_to_perform {
+                // Get the latest indexes for the nodes, accounting for previous merges.
+                let parent_index_latest = node_indexes
+                    .get(&parent_index)
+                    .expect("Index mapping got lost");
+                let child_index_latest = node_indexes
+                    .get(&child_index)
+                    .expect("Index mapping got lost");
+
+                perform_passthrough_child_merge(*parent_index_latest, *child_index_latest, self)?;
+
+                // Because `child` was merged into `parent`,
+                // then everything that was pointing to `child`
+                // has to point to the `parent`.
+                node_indexes.insert(*child_index_latest, *parent_index_latest);
             }
         }
 
@@ -321,10 +386,11 @@ impl FetchGraph {
                 node_indexes.insert(*child_index, *child_index);
                 node_indexes.insert(parent_index, parent_index);
 
-                if parent.can_merge_child(parent_index, *child_index, child, self) {
+                if parent.can_merge(parent_index, *child_index, child, self) {
                     debug!(
-                        "optimization found: merge parent '{}' with child '{}'",
-                        parent, child
+                        "optimization found: merge parent [{}] with child [{}]",
+                        parent_index.index(),
+                        child_index.index()
                     );
                     // Register their original indexes in the map.
                     merges_to_perform.push((parent_index, *child_index));
@@ -340,7 +406,7 @@ impl FetchGraph {
                     .get(&child_index)
                     .expect("Index mapping got lost");
 
-                perform_fetch_step_child_merge(*parent_index_latest, *child_index_latest, self)?;
+                perform_fetch_step_merge(*parent_index_latest, *child_index_latest, self)?;
 
                 // Because `child` was merged into `parent`,
                 // then everything that was pointing to `child`
@@ -485,7 +551,8 @@ impl FetchStepData {
         write!(writer, "[{}] {}", index.index(), self)
     }
 
-    pub fn can_merge_child(
+    /// see `perform_passthrough_child_merge`
+    pub fn can_merge_passthrough_child(
         &self,
         self_index: NodeIndex,
         other_index: NodeIndex,
@@ -496,20 +563,11 @@ impl FetchStepData {
             return false;
         }
 
-        if self.service_name == other.service_name {
-            return self.can_merge_sibling(self_index, other_index, other, fetch_graph);
-        }
-
-        let self_path = self.response_path.insert_front("*".to_string());
-        let other_path = other.response_path.insert_front("*".to_string());
-        if !other_path.starts_with(&self_path) {
-            return false;
-        }
-
         // if the `other` FetchStep has a single parent and it's `this` FetchStep
         if fetch_graph.parents_of(other_index).count() != 1 {
             return false;
         }
+
         if fetch_graph.parents_of(other_index).next().unwrap().source() != self_index {
             return false;
         }
@@ -517,7 +575,7 @@ impl FetchStepData {
         other.input.eq(&other.output)
     }
 
-    pub fn can_merge_sibling(
+    pub fn can_merge(
         &self,
         self_index: NodeIndex,
         other_index: NodeIndex,
@@ -564,14 +622,66 @@ impl FetchStepData {
 }
 
 #[instrument(skip_all)]
-fn perform_fetch_step_sibling_merge(
+fn perform_passthrough_child_merge(
     self_index: NodeIndex,
     other_index: NodeIndex,
     fetch_graph: &mut FetchGraph,
 ) -> Result<(), FetchGraphError> {
     let (me, other) = fetch_graph.get_pair_of_steps_mut(self_index, other_index)?;
 
-    debug!("merging fetch steps '{}' and '{}'", me, other);
+    debug!(
+        "merging fetch steps [{}] and [{}]",
+        self_index.index(),
+        other_index.index()
+    );
+
+    me.output.add_at_path(
+        &other.output,
+        other.response_path.slice_from(me.response_path.len()),
+        false,
+    );
+
+    let mut children_indexes: Vec<NodeIndex> = vec![];
+    let mut parents_indexes: Vec<NodeIndex> = vec![];
+    for edge_ref in fetch_graph.children_of(other_index) {
+        children_indexes.push(edge_ref.target().id());
+    }
+
+    for edge_ref in fetch_graph.parents_of(other_index) {
+        // We ignore self_index
+        if edge_ref.source().id() != self_index {
+            parents_indexes.push(edge_ref.source().id());
+        }
+    }
+
+    // Replace parents:
+    // 1. Add self -> child
+    for child_index in children_indexes {
+        fetch_graph.connect(self_index, child_index);
+    }
+    // 2. Add parent -> self
+    for parent_index in parents_indexes {
+        fetch_graph.connect(parent_index, self_index);
+    }
+    // 3. Drop other -> child and parent -> other
+    fetch_graph.remove_step(other_index);
+
+    Ok(())
+}
+
+#[instrument(skip_all)]
+fn perform_fetch_step_merge(
+    self_index: NodeIndex,
+    other_index: NodeIndex,
+    fetch_graph: &mut FetchGraph,
+) -> Result<(), FetchGraphError> {
+    let (me, other) = fetch_graph.get_pair_of_steps_mut(self_index, other_index)?;
+
+    debug!(
+        "merging fetch steps [{}] and [{}]",
+        self_index.index(),
+        other_index.index()
+    );
 
     me.output.add_at_path(
         &other.output,
@@ -613,15 +723,6 @@ fn perform_fetch_step_sibling_merge(
     fetch_graph.remove_step(other_index);
 
     Ok(())
-}
-
-#[instrument(skip_all)]
-fn perform_fetch_step_child_merge(
-    self_index: NodeIndex,
-    other_index: NodeIndex,
-    fetch_graph: &mut FetchGraph,
-) -> Result<(), FetchGraphError> {
-    perform_fetch_step_sibling_merge(self_index, other_index, fetch_graph)
 }
 
 fn create_noop_fetch_step(fetch_graph: &mut FetchGraph) -> NodeIndex {
