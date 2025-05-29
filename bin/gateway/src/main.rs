@@ -302,12 +302,16 @@ fn make_error_response(
     message: &str,
     accept_header: &Option<String>,
     is_graphql_error: bool,
+    error_code: &str,
 ) -> HttpResponse {
     if !is_graphql_error {
         HttpResponse::BadRequest().json(json!({
             "errors": [
                 {
-                    "message": message
+                    "message": message,
+                    "extensions": {
+                        "code": error_code
+                    }
                 }
             ]
         }))
@@ -318,7 +322,10 @@ fn make_error_response(
         HttpResponse::Ok().json(json!({
             "errors": [
                 {
-                    "message": message
+                    "message": message,
+                    "extensions": {
+                        "code": error_code
+                    }
                 }
             ]
         }))
@@ -326,7 +333,10 @@ fn make_error_response(
         HttpResponse::BadRequest().json(json!({
             "errors": [
                 {
-                    "message": message
+                    "message": message,
+                    "extensions": {
+                        "code": error_code
+                    }
                 }
             ]
         }))
@@ -347,7 +357,7 @@ async fn handle_execution_request(
             .get("Accept")
             .and_then(|h| h.to_str().ok())
             .map(|s| s.to_string());
-        return make_error_response(&error.to_string(), &accept_header, true);
+        return make_error_response(&error.to_string(), &accept_header, true, "BAD_REQUEST");
     }
     let document = document.unwrap();
     let normalized_document =
@@ -361,7 +371,7 @@ async fn handle_execution_request(
         .map(|s| s.to_string());
 
     if operation.is_none() {
-        return make_error_response("Unable to detect operation AST", &accept_header, true);
+        return make_error_response("Unable to detect operation AST", &accept_header, true, "BAD_REQUEST");
     }
 
     let operation = operation.unwrap();
@@ -404,7 +414,7 @@ async fn handle_execution_request(
     let variable_values = collect_variables(operation, &execution_request.variables);
     if variable_values.is_err() {
         let error = variable_values.err().unwrap();
-        return make_error_response(&error, &accept_header, true);
+        return make_error_response(&error, &accept_header, true, "BAD_REQUEST");
     }
     let variable_values = variable_values.unwrap();
     let result = execute_query_plan(
@@ -483,10 +493,10 @@ async fn graphiql(
             .as_ref()
             .map(|e| serde_json::from_str::<HashMap<String, Value>>(e));
         if let Some(Err(err)) = variables {
-            return make_error_response(&err.to_string(), &accept_header, true);
+            return make_error_response(&err.to_string(), &accept_header, true, "BAD_REQUEST");
         }
         if let Some(Err(err)) = extensions {
-            return make_error_response(&err.to_string(), &accept_header, true);
+            return make_error_response(&err.to_string(), &accept_header, true, "BAD_REQUEST");
         }
         let execution_request = ExecutionRequest {
             query: params.query.clone(),
