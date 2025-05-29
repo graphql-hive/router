@@ -1444,7 +1444,7 @@ fn process_query_node(
     if let Some(edge_index) = query_node.edge_from_parent {
         let edge = graph.edge(edge_index)?;
 
-        return match edge {
+        match edge {
             Edge::SubgraphEntrypoint { name, .. } => {
                 let tail_node_index = graph.get_edge_tail(&edge_index)?;
                 let tail_node = graph.node(tail_node_index)?;
@@ -1498,7 +1498,7 @@ fn process_query_node(
             Edge::AbstractMove(_) => {
                 panic!("AbstractMove is not supported yet")
             }
-        };
+        }
     } else {
         process_noop_edge(
             graph,
