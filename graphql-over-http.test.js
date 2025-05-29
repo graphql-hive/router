@@ -13,4 +13,31 @@ describe("GraphQL over HTTP", () => {
         assert.equal(result.status, "ok", result.reason);
       });
     }
+    it('preserve the order of the selection set', async () => {
+        const response = await fetch("http://localhost:4000/graphql", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            query: /* GraphQL */ `
+                    query {
+                      a: __typename
+                      __typename
+                      __schema {
+                        __typename
+                      }
+                    }
+              `,
+          }),
+        });
+        const text = await response.text();
+        assert.match(
+          text,
+          new RegExp(
+            '"a":"Query","__typename":"Query","__schema":{"__typename":"__Schema"'
+          ),
+          "Order of selection set is not preserved"
+        );
+    })
 })
