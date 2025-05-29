@@ -98,14 +98,33 @@ jobs:
         working-directory: audits
       - run: npm run ci:test:graphql-over-http
         working-directory: audits
-      - name: Publish Test Results
+      - name: Publish Test Results for comparison
         uses: EnricoMi/publish-unit-test-result-action@3a74b2957438d0b6e2e61d67b05318aa25c9e6c6 # v2
         if: (!cancelled())
         with:
-          check_name: Publish GraphQL over HTTP Audit Results
+          check_name: graphql-over-http
           comment_title: GraphQL over HTTP Audit Results
           files: |
-            audits/*.junit.xml
+            audits/reports/*.xml
+      - name: Publish Test Results for details
+        uses: mikepenz/action-junit-report@v5
+        if: (!cancelled())
+        with:
+          report_paths: 'audits/reports/*.xml'
+          group_reports: false
+          annotate_only: true
+          fail_on_failure: true # do not fail the job if the report fails
+          fail_on_parse_error: true # do not fail the job if the report cannot be parsed
+          job_summary: true
+          verbose_summary: false
+          skip_success_summary: true
+          include_empty_in_summary: false
+          include_time_in_summary: true
+          simplified_summary: true
+          group_suite: true
+          comment: true
+          updateComment: true
+          exclude_sources: /lib/,/node_modules/
 
   federation-audit:
     runs-on: ubuntu-latest
@@ -128,12 +147,34 @@ jobs:
           name: federation-audit-logs
           path: |
             ./audits/logs/*.log
-      - name: Publish Test Results
+      - name: Publish Test Results for comparison
         uses: EnricoMi/publish-unit-test-result-action@3a74b2957438d0b6e2e61d67b05318aa25c9e6c6 # v2
         if: (!cancelled())
         with:
           fail_on: "nothing"
-          check_name: Publish Federation Audit Results
+          check_name: federation-audit
           comment_title: Federation Audit Results
           files: |
-            audits/*.junit.xml
+            audits/reports/*.xml
+      - name: Publish Test Results for details
+        uses: mikepenz/action-junit-report@v5
+        if: (!cancelled())
+        with:
+          report_paths: 'audits/reports/*.xml'
+          group_reports: false
+          job_name: federation-audit
+          check_name: federation-audit
+          check_title_template: "{{FILE_NAME}}"
+          fail_on_failure: false # do not fail the job if the report fails
+          fail_on_parse_error: false # do not fail the job if the report cannot be parsed
+          annotate_only: true
+          job_summary: true
+          verbose_summary: false
+          include_empty_in_summary: false
+          include_time_in_summary: true
+          simplified_summary: true
+          group_suite: true
+          comment: true
+          updateComment: true
+          exclude_sources: /lib/,/audits/node_modules/
+    
