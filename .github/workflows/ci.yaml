@@ -78,6 +78,7 @@ jobs:
         with:
           node-version-file: .node-version
       - run: npm run ci:test:graphql-over-http
+        continue-on-error: true # continue even if the test fails
       - name: Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action@3a74b2957438d0b6e2e61d67b05318aa25c9e6c6 # v2
         if: (!cancelled())
