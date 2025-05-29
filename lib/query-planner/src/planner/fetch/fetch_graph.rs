@@ -641,12 +641,6 @@ fn perform_passthrough_child_merge(
         false,
     );
 
-    me.output.add_at_path(
-        &other.input,
-        other.response_path.slice_from(me.response_path.len()),
-        false,
-    );
-
     let mut children_indexes: Vec<NodeIndex> = vec![];
     let mut parents_indexes: Vec<NodeIndex> = vec![];
     for edge_ref in fetch_graph.children_of(other_index) {
