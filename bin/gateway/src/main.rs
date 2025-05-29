@@ -312,8 +312,8 @@ fn make_error_response(
             ]
         }))
     } else if accept_header
-            .as_ref()
-            .is_some_and(|header| header.contains("application/json"))
+        .as_ref()
+        .is_some_and(|header| header.contains("application/json"))
     {
         HttpResponse::Ok().json(json!({
             "errors": [
@@ -482,11 +482,11 @@ async fn graphiql(
             .extensions
             .as_ref()
             .map(|e| serde_json::from_str::<HashMap<String, Value>>(e));
-        if variables.is_some() && variables.as_ref().unwrap().is_err() {
-            return make_error_response("Invalid variables format", &accept_header, true);
+        if let Some(Err(err)) = variables {
+            return make_error_response(&err.to_string(), &accept_header, true);
         }
-        if extensions.is_some() && extensions.as_ref().unwrap().is_err() {
-            return make_error_response("Invalid extensions format", &accept_header, true);
+        if let Some(Err(err)) = extensions {
+            return make_error_response(&err.to_string(), &accept_header, true);
         }
         let execution_request = ExecutionRequest {
             query: params.query.clone(),
