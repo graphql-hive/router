@@ -117,7 +117,7 @@ impl ExecutableFetchNode for FetchNode {
             .execute(
                 &self.service_name,
                 ExecutionRequest {
-                    query: Some(self.operation.0.to_string()),
+                    query: self.operation.0.to_string(),
                     operation_name: self.operation_name.clone(),
                     variables,
                     extensions: None,
@@ -204,7 +204,7 @@ impl ExecutableFetchNode for FetchNode {
             .execute(
                 &self.service_name,
                 ExecutionRequest {
-                    query: Some(self.operation.0.to_string()),
+                    query: self.operation.0.to_string(),
                     operation_name: self.operation_name.clone(),
                     variables: Some(variables),
                     extensions: None,
@@ -730,8 +730,7 @@ pub struct GraphQLErrorLocation {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub query: Option<String>,
+    pub query: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

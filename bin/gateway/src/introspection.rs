@@ -479,8 +479,11 @@ fn get_builtin_props_from_directives(
                 props.is_deprecated = Some(true);
                 for (arg_name, arg_value) in &directive.arguments {
                     if arg_name == "reason" {
-                        props.deprecation_reason =
-                            Some(value_from_ast(arg_value, &None).to_string());
+                        props.deprecation_reason = Some(
+                            value_from_ast(arg_value, &None)
+                                .expect("Unable to parse deprecated")
+                                .to_string(),
+                        );
                     }
                 }
             }
@@ -490,7 +493,11 @@ fn get_builtin_props_from_directives(
             "specifiedBy" => {
                 for (arg_name, arg_value) in &directive.arguments {
                     if arg_name == "url" {
-                        props.specified_by_url = Some(value_from_ast(arg_value, &None).to_string());
+                        props.specified_by_url = Some(
+                            value_from_ast(arg_value, &None)
+                                .expect("Unable to parse specifiedBy URL")
+                                .to_string(),
+                        );
                     }
                 }
             }
