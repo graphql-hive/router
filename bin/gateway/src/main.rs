@@ -310,10 +310,8 @@ fn make_error_response(
                     "message": message
                 }
             ]
-        }));
-    }
-    if is_graphql_error
-        && accept_header
+        }))
+    } else if accept_header
             .as_ref()
             .is_some_and(|header| header.contains("application/json"))
     {
