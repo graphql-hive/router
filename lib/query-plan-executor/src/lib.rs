@@ -1102,18 +1102,15 @@ fn project_selection_set(
                 return Value::Null; // No fields found for the type
             }
             let field_map = field_map.unwrap();
-            let mut result = Value::Object(serde_json::Map::new());
-            for selection in &selection_set.items {
+            let result_map = selection_set.items.iter().flat_map(|selection| {
                 match selection {
                     Selection::Field(field) => {
                         if should_skip_per_variables(&field.directives, variable_values) {
-                            continue;
+                            return vec![];
                         }
                         let response_key = field.alias.as_ref().unwrap_or(&field.name).to_string();
-                        let result_map = result.as_object_mut().unwrap();
                         if field.name == "__typename" {
-                            result_map.insert(response_key, Value::String(type_name.to_string()));
-                            continue;
+                            return vec![(response_key, Value::String(type_name.to_string()))];
                         }
                         let field_type = field_map.get(&field.name);
                         let field_val = if field.name == "__schema" && type_name == "Query" {
@@ -1132,11 +1129,11 @@ fn project_selection_set(
                                     fragments,
                                     variable_values,
                                 );
-                                result_map.insert(response_key, projected);
+                                return vec![(response_key, projected)];
                             }
                             (Some(_field_type), None) => {
                                 // If the field is not found in the object, set it to Null
-                                result_map.insert(response_key, Value::Null);
+                                return vec![(response_key, Value::Null)];
                             }
                             (None, _) => {
                                 println!(
@@ -1148,7 +1145,7 @@ fn project_selection_set(
                     }
                     Selection::InlineFragment(inline_fragment) => {
                         if should_skip_per_variables(&inline_fragment.directives, variable_values) {
-                            continue;
+                            return vec![]; // Skip this inline fragment
                         }
                         match &inline_fragment.type_condition {
                             Some(TypeCondition::On(type_condition)) => {
@@ -1168,7 +1165,9 @@ fn project_selection_set(
                                                 fragments,
                                                 variable_values,
                                             );
-                                            deep_merge(&mut result, projected);
+                                            if let Value::Object(projected_map) = projected {
+                                                return projected_map.into_iter().collect();
+                                            }
                                         }
                                         _ => {
                                             // Handle case where type_name is not a string
@@ -1185,7 +1184,7 @@ fn project_selection_set(
                     }
                     Selection::FragmentSpread(fragment_spread) => {
                         if should_skip_per_variables(&fragment_spread.directives, variable_values) {
-                            continue;
+                            return vec![]; // Skip this fragment spread
                         }
                         match fragments.get(&fragment_spread.fragment_name) {
                             Some(fragment) => {
@@ -1207,7 +1206,9 @@ fn project_selection_set(
                                                         fragments,
                                                         variable_values,
                                                     );
-                                                    deep_merge(&mut result, projected);
+                                                    if let Value::Object(projected) = projected {
+                                                        return projected.into_iter().collect();
+                                                    }
                                                 }
                                                 _ => {
                                                     // Handle case where type_name is not a string
@@ -1228,7 +1229,9 @@ fn project_selection_set(
                                                 fragments,
                                                 variable_values,
                                             );
-                                            deep_merge(&mut result, projected);
+                                            if let Value::Object(projected) = projected {
+                                                return projected.into_iter().collect();
+                                            }
                                         }
                                     }
                                 }
@@ -1243,8 +1246,11 @@ fn project_selection_set(
                         }
                     }
                 }
-            }
-            result
+
+                vec![]// No valid selection found
+            }).collect();
+
+            Value::Object(result_map)
         }
         // In case of an array
         (_, _, Value::Array(arr)) => Value::Array(
