@@ -1102,153 +1102,165 @@ fn project_selection_set(
                 return Value::Null; // No fields found for the type
             }
             let field_map = field_map.unwrap();
-            let result_map = selection_set.items.iter().flat_map(|selection| {
-                match selection {
-                    Selection::Field(field) => {
-                        if should_skip_per_variables(&field.directives, variable_values) {
-                            return vec![];
-                        }
-                        let response_key = field.alias.as_ref().unwrap_or(&field.name).to_string();
-                        if field.name == "__typename" {
-                            return vec![(response_key, Value::String(type_name.to_string()))];
-                        }
-                        let field_type = field_map.get(&field.name);
-                        let field_val = if field.name == "__schema" && type_name == "Query" {
-                            // Special case for introspection query
-                            Some(&schema_metadata.introspection_schema_root_json)
-                        } else {
-                            obj.get(&response_key)
-                        };
-                        match (field_type, field_val) {
-                            (Some(field_type), Some(field_val)) => {
-                                let projected = project_selection_set(
-                                    field_val,
-                                    &field.selection_set,
-                                    field_type,
-                                    schema_metadata,
-                                    fragments,
-                                    variable_values,
-                                );
-                                return vec![(response_key, projected)];
+            let result_map = selection_set
+                .items
+                .iter()
+                .flat_map(|selection| {
+                    match selection {
+                        Selection::Field(field) => {
+                            if should_skip_per_variables(&field.directives, variable_values) {
+                                return vec![];
                             }
-                            (Some(_field_type), None) => {
-                                // If the field is not found in the object, set it to Null
-                                return vec![(response_key, Value::Null)];
+                            let response_key =
+                                field.alias.as_ref().unwrap_or(&field.name).to_string();
+                            if field.name == "__typename" {
+                                return vec![(response_key, Value::String(type_name.to_string()))];
                             }
-                            (None, _) => {
-                                println!(
+                            let field_type = field_map.get(&field.name);
+                            let field_val = if field.name == "__schema" && type_name == "Query" {
+                                // Special case for introspection query
+                                Some(&schema_metadata.introspection_schema_root_json)
+                            } else {
+                                obj.get(&response_key)
+                            };
+                            match (field_type, field_val) {
+                                (Some(field_type), Some(field_val)) => {
+                                    let projected = project_selection_set(
+                                        field_val,
+                                        &field.selection_set,
+                                        field_type,
+                                        schema_metadata,
+                                        fragments,
+                                        variable_values,
+                                    );
+                                    return vec![(response_key, projected)];
+                                }
+                                (Some(_field_type), None) => {
+                                    // If the field is not found in the object, set it to Null
+                                    return vec![(response_key, Value::Null)];
+                                }
+                                (None, _) => {
+                                    println!(
                                     "Warning: Field {} not found in type {}. Skipping projection.",
                                     field.name, type_name
                                 );
+                                }
                             }
                         }
-                    }
-                    Selection::InlineFragment(inline_fragment) => {
-                        if should_skip_per_variables(&inline_fragment.directives, variable_values) {
-                            return vec![]; // Skip this inline fragment
-                        }
-                        match &inline_fragment.type_condition {
-                            Some(TypeCondition::On(type_condition)) => {
-                                if entity_satisfies_type_condition(
-                                    &schema_metadata.possible_types,
-                                    obj,
-                                    type_condition,
-                                ) {
-                                    let type_name = obj.get("__typename");
-                                    match type_name {
-                                        Some(Value::String(type_name)) => {
-                                            let projected = project_selection_set(
-                                                data,
-                                                &inline_fragment.selection_set,
-                                                type_name,
-                                                schema_metadata,
-                                                fragments,
-                                                variable_values,
-                                            );
-                                            if let Value::Object(projected_map) = projected {
-                                                return projected_map.into_iter().collect();
+                        Selection::InlineFragment(inline_fragment) => {
+                            if should_skip_per_variables(
+                                &inline_fragment.directives,
+                                variable_values,
+                            ) {
+                                return vec![]; // Skip this inline fragment
+                            }
+                            match &inline_fragment.type_condition {
+                                Some(TypeCondition::On(type_condition)) => {
+                                    if entity_satisfies_type_condition(
+                                        &schema_metadata.possible_types,
+                                        obj,
+                                        type_condition,
+                                    ) {
+                                        let type_name = obj.get("__typename");
+                                        match type_name {
+                                            Some(Value::String(type_name)) => {
+                                                let projected = project_selection_set(
+                                                    data,
+                                                    &inline_fragment.selection_set,
+                                                    type_name,
+                                                    schema_metadata,
+                                                    fragments,
+                                                    variable_values,
+                                                );
+                                                if let Value::Object(projected_map) = projected {
+                                                    return projected_map.into_iter().collect();
+                                                }
                                             }
-                                        }
-                                        _ => {
-                                            // Handle case where type_name is not a string
-                                            println!(
-                                                "Warning: Type name is not a string: {:?}",
-                                                type_name
-                                            );
+                                            _ => {
+                                                // Handle case where type_name is not a string
+                                                println!(
+                                                    "Warning: Type name is not a string: {:?}",
+                                                    type_name
+                                                );
+                                            }
                                         }
                                     }
                                 }
+                                None => {}
                             }
-                            None => {}
                         }
-                    }
-                    Selection::FragmentSpread(fragment_spread) => {
-                        if should_skip_per_variables(&fragment_spread.directives, variable_values) {
-                            return vec![]; // Skip this fragment spread
-                        }
-                        match fragments.get(&fragment_spread.fragment_name) {
-                            Some(fragment) => {
-                                match &fragment.type_condition {
-                                    TypeCondition::On(type_condition) => {
-                                        if entity_satisfies_type_condition(
-                                            &schema_metadata.possible_types,
-                                            obj,
-                                            type_condition,
-                                        ) {
-                                            let type_name = obj.get("__typename");
-                                            match type_name {
-                                                Some(Value::String(type_name)) => {
-                                                    let projected = project_selection_set(
-                                                        data,
-                                                        &fragment.selection_set,
-                                                        type_name,
-                                                        schema_metadata,
-                                                        fragments,
-                                                        variable_values,
-                                                    );
-                                                    if let Value::Object(projected) = projected {
-                                                        return projected.into_iter().collect();
+                        Selection::FragmentSpread(fragment_spread) => {
+                            if should_skip_per_variables(
+                                &fragment_spread.directives,
+                                variable_values,
+                            ) {
+                                return vec![]; // Skip this fragment spread
+                            }
+                            match fragments.get(&fragment_spread.fragment_name) {
+                                Some(fragment) => {
+                                    match &fragment.type_condition {
+                                        TypeCondition::On(type_condition) => {
+                                            if entity_satisfies_type_condition(
+                                                &schema_metadata.possible_types,
+                                                obj,
+                                                type_condition,
+                                            ) {
+                                                let type_name = obj.get("__typename");
+                                                match type_name {
+                                                    Some(Value::String(type_name)) => {
+                                                        let projected = project_selection_set(
+                                                            data,
+                                                            &fragment.selection_set,
+                                                            type_name,
+                                                            schema_metadata,
+                                                            fragments,
+                                                            variable_values,
+                                                        );
+                                                        if let Value::Object(projected) = projected
+                                                        {
+                                                            return projected.into_iter().collect();
+                                                        }
                                                     }
-                                                }
-                                                _ => {
-                                                    // Handle case where type_name is not a string
-                                                    println!(
+                                                    _ => {
+                                                        // Handle case where type_name is not a string
+                                                        println!(
                                                         "Warning: Type name is not a string: {:?}",
                                                         type_name
                                                     );
+                                                    }
                                                 }
-                                            }
-                                        } else if type_condition == type_name {
-                                            // If the type condition matches the current type name,
-                                            // project the fragment without checking the entity
-                                            let projected = project_selection_set(
-                                                data,
-                                                &fragment.selection_set,
-                                                type_name,
-                                                schema_metadata,
-                                                fragments,
-                                                variable_values,
-                                            );
-                                            if let Value::Object(projected) = projected {
-                                                return projected.into_iter().collect();
+                                            } else if type_condition == type_name {
+                                                // If the type condition matches the current type name,
+                                                // project the fragment without checking the entity
+                                                let projected = project_selection_set(
+                                                    data,
+                                                    &fragment.selection_set,
+                                                    type_name,
+                                                    schema_metadata,
+                                                    fragments,
+                                                    variable_values,
+                                                );
+                                                if let Value::Object(projected) = projected {
+                                                    return projected.into_iter().collect();
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
-                            _ => {
-                                // Handle case where fragment is not found
-                                println!(
-                                    "Warning: Fragment {} not found in fragments map",
-                                    fragment_spread.fragment_name
-                                );
+                                _ => {
+                                    // Handle case where fragment is not found
+                                    println!(
+                                        "Warning: Fragment {} not found in fragments map",
+                                        fragment_spread.fragment_name
+                                    );
+                                }
                             }
                         }
                     }
-                }
 
-                vec![]// No valid selection found
-            }).collect();
+                    vec![] // No valid selection found
+                })
+                .collect();
 
             Value::Object(result_map)
         }
