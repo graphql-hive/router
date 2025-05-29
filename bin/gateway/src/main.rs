@@ -2,22 +2,23 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::{env, vec};
 
+use actix_web::http::Method;
 use actix_web::web::Html;
-use actix_web::{get, post, web, App, HttpServer, Responder};
+use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use graphql_parser::query::OperationDefinition;
 use graphql_parser::schema::TypeDefinition;
+use graphql_tools::ast::TypeExtension;
 use introspection::{
     filter_introspection_fields_in_operation, get_introspection_metadata,
     introspection_query_from_ast,
 };
-use query_plan_executor::execute_query_plan;
 use query_plan_executor::ExecutionRequest;
 use query_plan_executor::SchemaMetadata;
-use query_planner::consumer_schema::ConsumerSchema;
-use query_planner::planner::Planner;
-use query_planner::state::supergraph_state::SupergraphState;
-use query_planner::utils::parsing::parse_operation;
+use query_plan_executor::{execute_query_plan, ExecutionResult};
+use query_planner::state::supergraph_state::{OperationKind, SupergraphState};
 use query_planner::utils::parsing::parse_schema;
+use query_planner::utils::parsing::safe_parse_operation;
+use query_planner::{consumer_schema::ConsumerSchema, planner::Planner};
 use serde_json::json;
 use serde_json::Value::{self};
 use tracing_subscriber::layer::SubscriberExt;
@@ -88,33 +89,56 @@ struct ServeData {
 fn collect_variables(
     operation: &OperationDefinition<'static, String>,
     variables: &Option<HashMap<String, Value>>,
-) -> Option<HashMap<String, Value>> {
+) -> Result<Option<HashMap<String, Value>>, String> {
     let variable_definitions = match &operation {
-        OperationDefinition::SelectionSet(_) => return None,
+        OperationDefinition::SelectionSet(_) => return Ok(None),
         OperationDefinition::Query(query) => &query.variable_definitions,
         OperationDefinition::Mutation(mutation) => &mutation.variable_definitions,
         OperationDefinition::Subscription(subscription) => &subscription.variable_definitions,
     };
-    let variable_values: HashMap<String, Value> = variable_definitions
+    let collected_variables: Result<Vec<Option<(String, Value)>>, String> = variable_definitions
         .iter()
-        .filter_map(|variable_definition| {
+        .map(|variable_definition| {
             let variable_name = variable_definition.name.to_string();
             if let Some(variable_value) = variables.as_ref().and_then(|v| v.get(&variable_name)) {
-                return Some((variable_name, variable_value.clone()));
+                if variable_value.is_null() && variable_definition.var_type.is_non_null() {
+                    return Err(format!(
+                        "Variable '{}' is non-nullable but no value was provided",
+                        variable_name
+                    ));
+                }
+                return Ok(Some((variable_name, variable_value.clone())));
             }
             if let Some(default_value) = &variable_definition.default_value {
-                let default_value_coerced = value_from_ast(default_value, variables);
-                if !default_value_coerced.is_null() {
-                    return Some((variable_name, default_value_coerced));
+                // Assuming value_from_ast now returns Result<Value, String> or similar
+                // and needs to be adapted if it returns Option or panics.
+                // For now, let's assume it can return an Err that needs to be propagated.
+                match value_from_ast(default_value, variables) {
+                    Ok(default_value_coerced) => {
+                        if !default_value_coerced.is_null() {
+                            return Ok(Some((variable_name, default_value_coerced)));
+                        }
+                    }
+                    Err(e) => return Err(e), // Propagate error from value_from_ast
                 }
             }
-            None
+            if variable_definition.var_type.is_non_null() {
+                return Err(format!(
+                    "Variable '{}' is non-nullable but no value was provided",
+                    variable_name
+                ));
+            }
+            Ok(None)
         })
         .collect();
+
+    let variable_values: HashMap<String, Value> =
+        collected_variables?.into_iter().flatten().collect();
+
     if variable_values.is_empty() {
-        None
+        Ok(None)
     } else {
-        Some(variable_values)
+        Ok(Some(variable_values))
     }
 }
 
@@ -274,27 +298,96 @@ async fn landing(serve_data: web::Data<Arc<ServeData>>) -> impl Responder {
     )
 }
 
-static GRAPHILQL_HTML: &str = include_str!("../static/graphiql.html");
-
-#[get("/graphql")]
-async fn graphiql() -> impl Responder {
-    Html::new(GRAPHILQL_HTML)
+fn make_error_response(
+    message: &str,
+    accept_header: &Option<String>,
+    is_graphql_error: bool,
+    error_code: &str,
+) -> HttpResponse {
+    if !is_graphql_error {
+        HttpResponse::BadRequest().json(json!({
+            "errors": [
+                {
+                    "message": message,
+                    "extensions": {
+                        "code": error_code
+                    }
+                }
+            ]
+        }))
+    } else if accept_header
+        .as_ref()
+        .is_some_and(|header| header.contains("application/json"))
+    {
+        HttpResponse::Ok().json(json!({
+            "errors": [
+                {
+                    "message": message,
+                    "extensions": {
+                        "code": error_code
+                    }
+                }
+            ]
+        }))
+    } else {
+        HttpResponse::BadRequest().json(json!({
+            "errors": [
+                {
+                    "message": message,
+                    "extensions": {
+                        "code": error_code
+                    }
+                }
+            ]
+        }))
+    }
 }
 
-#[post("/graphql")]
-async fn graphql_endpoint(
-    request_body: web::Json<ExecutionRequest>,
-    serve_data: web::Data<Arc<ServeData>>,
-) -> impl Responder {
-    let operation_name = request_body.operation_name.as_deref();
-    let query_str = request_body.query.as_deref().expect("query is required");
-    let document = parse_operation(query_str);
+async fn handle_execution_request(
+    req: &HttpRequest,
+    execution_request: &ExecutionRequest,
+    serve_data: &Arc<ServeData>,
+) -> HttpResponse {
+    let accept_header = req
+        .headers()
+        .get("Accept")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string());
+    let operation_name = execution_request.operation_name.as_deref();
+    let document = match safe_parse_operation(&execution_request.query) {
+        Ok(doc) => doc,
+        Err(err) => {
+            return make_error_response(&err.to_string(), &accept_header, true, "BAD_REQUEST");
+        }
+    };
     let normalized_document =
         query_planner::utils::operation_utils::prepare_document(&document, operation_name);
-    let operation = normalized_document
-        .executable_operation()
-        .ok_or(query_planner::planner::PlannerError::MissingOperationToExecute)
-        .expect("Failed to get executable operation");
+    let operation = normalized_document.executable_operation();
+
+    if operation.is_none() {
+        return make_error_response(
+            "Unable to detect operation AST",
+            &accept_header,
+            true,
+            "BAD_REQUEST",
+        );
+    }
+
+    let operation = operation.unwrap();
+
+    if req.method() == Method::GET && operation.operation_kind.is_some() {
+        if let Some(OperationKind::Mutation) = operation.operation_kind {
+            return HttpResponse::MethodNotAllowed()
+                .append_header(("allow", "POST"))
+                .json(json!({
+                    "errors": [
+                        {
+                            "message": "Cannot perform mutations over GET"
+                        }
+                    ]
+                }));
+        }
+    }
 
     let (has_introspection, filtered_operation_for_plan) =
         filter_introspection_fields_in_operation(operation);
@@ -317,7 +410,12 @@ async fn graphql_endpoint(
         _ => panic!("Expected an operation definition"),
     };
 
-    let variable_values = collect_variables(operation, &request_body.variables);
+    let variable_values = match collect_variables(operation, &execution_request.variables) {
+        Ok(values) => values,
+        Err(err) => {
+            return make_error_response(&err, &accept_header, true, "BAD_REQUEST");
+        }
+    };
     let result = execute_query_plan(
         &query_plan,
         &serve_data.subgraph_endpoint_map,
@@ -328,5 +426,92 @@ async fn graphql_endpoint(
     )
     .await;
 
-    web::Json(result)
+    let content_type: &str = if accept_header
+        .as_ref()
+        .is_some_and(|header| header.contains("application/graphql-response+json"))
+    {
+        "application/graphql-response+json"
+    } else {
+        "application/json"
+    };
+
+    HttpResponse::Ok()
+        .content_type(content_type)
+        .json(ExecutionResult {
+            data: result.data,
+            errors: result.errors,
+            extensions: result.extensions,
+        })
+}
+
+#[post("/graphql")]
+async fn graphql_endpoint(
+    req: HttpRequest,
+    request_body: web::Json<ExecutionRequest>,
+    serve_data: web::Data<Arc<ServeData>>,
+) -> impl Responder {
+    handle_execution_request(&req, &request_body, &serve_data).await
+}
+
+static GRAPHILQL_HTML: &str = include_str!("../static/graphiql.html");
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+struct QueryParamsBody {
+    query: Option<String>,
+    operation_name: Option<String>,
+    variables: Option<String>,
+    extensions: Option<String>,
+}
+
+#[get("/graphql")]
+async fn graphiql(
+    req: HttpRequest,
+    params: web::Query<QueryParamsBody>,
+    serve_data: web::Data<Arc<ServeData>>,
+) -> impl Responder {
+    let accept_header = req
+        .headers()
+        .get("Accept")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string());
+    if accept_header
+        .as_ref()
+        .is_some_and(|header| header.contains("text/html"))
+    {
+        HttpResponse::Ok()
+            .content_type("text/html")
+            .body(GRAPHILQL_HTML)
+    } else {
+        if params.query.is_none() {
+            return make_error_response(
+                "Missing query parameter",
+                &accept_header,
+                true,
+                "BAD_REQUEST",
+            );
+        }
+        let variables = params
+            .variables
+            .as_ref()
+            .map(|v| serde_json::from_str::<HashMap<String, Value>>(v));
+        let extensions = params
+            .extensions
+            .as_ref()
+            .map(|e| serde_json::from_str::<HashMap<String, Value>>(e));
+        if let Some(Err(err)) = variables {
+            return make_error_response(&err.to_string(), &accept_header, true, "BAD_REQUEST");
+        }
+        if let Some(Err(err)) = extensions {
+            return make_error_response(&err.to_string(), &accept_header, true, "BAD_REQUEST");
+        }
+        let query = params.query.clone().unwrap();
+        let execution_request = ExecutionRequest {
+            query,
+            operation_name: params.operation_name.clone(),
+            variables: variables.and_then(|v| v.ok()),
+            extensions: extensions.and_then(|v| v.ok()),
+        };
+        handle_execution_request(&req, &execution_request, &serve_data).await
+    }
 }
