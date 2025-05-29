@@ -271,11 +271,7 @@ impl FetchGraph {
                     .get(&other_child_index)
                     .expect("Index mapping got lost");
 
-                perform_fetch_step_sibling_merge(
-                    *child_index_latest,
-                    *other_child_index_latest,
-                    self,
-                )?;
+                perform_fetch_step_merge(*child_index_latest, *other_child_index_latest, self)?;
 
                 // Because `other_child` was merged into `child`,
                 // then everything that was pointing to `other_child`
@@ -410,7 +406,7 @@ impl FetchGraph {
                     .get(&child_index)
                     .expect("Index mapping got lost");
 
-                perform_fetch_step_child_merge(*parent_index_latest, *child_index_latest, self)?;
+                perform_fetch_step_merge(*parent_index_latest, *child_index_latest, self)?;
 
                 // Because `child` was merged into `parent`,
                 // then everything that was pointing to `child`
@@ -680,7 +676,7 @@ fn perform_passthrough_child_merge(
 }
 
 #[instrument(skip_all)]
-fn perform_fetch_step_sibling_merge(
+fn perform_fetch_step_merge(
     self_index: NodeIndex,
     other_index: NodeIndex,
     fetch_graph: &mut FetchGraph,
@@ -733,15 +729,6 @@ fn perform_fetch_step_sibling_merge(
     fetch_graph.remove_step(other_index);
 
     Ok(())
-}
-
-#[instrument(skip_all)]
-fn perform_fetch_step_child_merge(
-    self_index: NodeIndex,
-    other_index: NodeIndex,
-    fetch_graph: &mut FetchGraph,
-) -> Result<(), FetchGraphError> {
-    perform_fetch_step_sibling_merge(self_index, other_index, fetch_graph)
 }
 
 fn create_noop_fetch_step(fetch_graph: &mut FetchGraph) -> NodeIndex {
