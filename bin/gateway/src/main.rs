@@ -5,9 +5,7 @@ use std::{env, vec};
 use actix_web::http::Method;
 use actix_web::web::Html;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
-use graphql_parser::query::OperationDefinition;
 use graphql_parser::schema::TypeDefinition;
-use graphql_tools::ast::TypeExtension;
 use introspection::{
     filter_introspection_fields_in_operation, get_introspection_metadata,
     introspection_query_from_ast,
@@ -15,6 +13,7 @@ use introspection::{
 use query_plan_executor::ExecutionRequest;
 use query_plan_executor::SchemaMetadata;
 use query_plan_executor::{execute_query_plan, ExecutionResult};
+use query_planner::ast::document::NormalizedDocument;
 use query_planner::state::supergraph_state::{OperationKind, SupergraphState};
 use query_planner::utils::parsing::parse_schema;
 use query_planner::utils::parsing::safe_parse_operation;
@@ -23,7 +22,6 @@ use serde_json::json;
 use serde_json::Value::{self};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use value_from_ast::value_from_ast;
 
 mod builtin_types;
 mod introspection;
@@ -63,6 +61,9 @@ async fn main() {
         schema_metadata,
         subgraph_endpoint_map: supergraph_state.subgraph_endpoint_map,
         http_client: reqwest::Client::new(),
+        plan_cache: moka::future::Cache::new(1000),
+        parse_cache: moka::future::Cache::new(1000),
+        filtered_operation_cache: moka::future::Cache::new(1000),
     };
     let serve_data_arc = Arc::new(serve_data);
     println!("Starting server on http://localhost:4000");
@@ -86,24 +87,28 @@ struct ServeData {
     planner: Planner,
     subgraph_endpoint_map: HashMap<String, String>,
     http_client: reqwest::Client,
+    plan_cache: moka::future::Cache<String, Arc<query_planner::planner::plan_nodes::QueryPlan>>,
+    parse_cache: moka::future::Cache<String, Arc<NormalizedDocument>>,
+    filtered_operation_cache: moka::future::Cache<
+        String,
+        Arc<(bool, query_planner::ast::operation::OperationDefinition)>,
+    >,
 }
 
 fn collect_variables(
-    operation: &OperationDefinition<'static, String>,
+    operation: &query_planner::ast::operation::OperationDefinition,
     variables: &Option<HashMap<String, Value>>,
 ) -> Result<Option<HashMap<String, Value>>, String> {
-    let variable_definitions = match &operation {
-        OperationDefinition::SelectionSet(_) => return Ok(None),
-        OperationDefinition::Query(query) => &query.variable_definitions,
-        OperationDefinition::Mutation(mutation) => &mutation.variable_definitions,
-        OperationDefinition::Subscription(subscription) => &subscription.variable_definitions,
-    };
+    if operation.variable_definitions.is_none() {
+        return Ok(None);
+    }
+    let variable_definitions = operation.variable_definitions.as_ref().unwrap();
     let collected_variables: Result<Vec<Option<(String, Value)>>, String> = variable_definitions
         .iter()
         .map(|variable_definition| {
             let variable_name = variable_definition.name.to_string();
             if let Some(variable_value) = variables.as_ref().and_then(|v| v.get(&variable_name)) {
-                if variable_value.is_null() && variable_definition.var_type.is_non_null() {
+                if variable_value.is_null() && variable_definition.variable_type.is_non_null() {
                     return Err(format!(
                         "Variable '{}' is non-nullable but no value was provided",
                         variable_name
@@ -115,16 +120,12 @@ fn collect_variables(
                 // Assuming value_from_ast now returns Result<Value, String> or similar
                 // and needs to be adapted if it returns Option or panics.
                 // For now, let's assume it can return an Err that needs to be propagated.
-                match value_from_ast(default_value, variables) {
-                    Ok(default_value_coerced) => {
-                        if !default_value_coerced.is_null() {
-                            return Ok(Some((variable_name, default_value_coerced)));
-                        }
-                    }
-                    Err(e) => return Err(e), // Propagate error from value_from_ast
+                let default_value_coerced = json!(default_value);
+                if !default_value_coerced.is_null() {
+                    return Ok(Some((variable_name, default_value_coerced)));
                 }
             }
-            if variable_definition.var_type.is_non_null() {
+            if variable_definition.variable_type.is_non_null() {
                 return Err(format!(
                     "Variable '{}' is non-nullable but no value was provided",
                     variable_name
@@ -355,30 +356,72 @@ async fn handle_execution_request(
         .get("Accept")
         .and_then(|h| h.to_str().ok())
         .map(|s| s.to_string());
-    let operation_name = execution_request.operation_name.as_deref();
-    let document = match safe_parse_operation(&execution_request.query) {
-        Ok(doc) => doc,
-        Err(err) => {
-            return make_error_response(&err.to_string(), &accept_header, true, "BAD_REQUEST");
+    let query_and_operation_name = format!(
+        "{}_{}",
+        execution_request.query,
+        execution_request.operation_name.clone().unwrap_or_default()
+    );
+
+    let normalized_document = match serve_data.parse_cache.get(&query_and_operation_name).await {
+        Some(normalized_document) => normalized_document,
+        None => {
+            let doc = match safe_parse_operation(&execution_request.query) {
+                Ok(doc) => doc,
+                Err(err) => {
+                    return make_error_response(
+                        &err.to_string(),
+                        &accept_header,
+                        true,
+                        "BAD_REQUEST",
+                    );
+                }
+            };
+            let normalized_document =
+                Arc::new(query_planner::utils::operation_utils::prepare_document(
+                    doc,
+                    execution_request.operation_name.as_deref(),
+                ));
+            serve_data
+                .parse_cache
+                .insert(execution_request.query.clone(), normalized_document.clone())
+                .await;
+            normalized_document
         }
     };
-    let normalized_document =
-        query_planner::utils::operation_utils::prepare_document(&document, operation_name);
-    let operation = normalized_document.executable_operation();
 
-    if operation.is_none() {
-        return make_error_response(
-            "Unable to detect operation AST",
-            &accept_header,
-            true,
-            "BAD_REQUEST",
-        );
-    }
+    let filtered_op_data = match serve_data
+        .filtered_operation_cache
+        .get(&query_and_operation_name)
+        .await
+    {
+        Some(filtered_op_data) => filtered_op_data,
+        None => {
+            let operation = match normalized_document.executable_operation() {
+                Some(operation) => operation,
+                None => {
+                    return make_error_response(
+                        "Unable to detect operation AST",
+                        &accept_header,
+                        true,
+                        "BAD_REQUEST",
+                    );
+                }
+            };
+            let filtered_op_data = filter_introspection_fields_in_operation(operation);
+            let filtered_op_arc = Arc::new(filtered_op_data);
+            serve_data
+                .filtered_operation_cache
+                .insert(query_and_operation_name.clone(), filtered_op_arc.clone())
+                .await;
+            filtered_op_arc
+        }
+    };
 
-    let operation = operation.unwrap();
+    let has_introspection = filtered_op_data.0;
+    let filtered_operation_for_plan = &filtered_op_data.1;
 
-    if req.method() == Method::GET && operation.operation_kind.is_some() {
-        if let Some(OperationKind::Mutation) = operation.operation_kind {
+    if req.method() == Method::GET && filtered_operation_for_plan.operation_kind.is_some() {
+        if let Some(OperationKind::Mutation) = filtered_operation_for_plan.operation_kind {
             return HttpResponse::MethodNotAllowed()
                 .append_header(("allow", "POST"))
                 .json(json!({
@@ -391,52 +434,53 @@ async fn handle_execution_request(
         }
     }
 
-    let (has_introspection, filtered_operation_for_plan) =
-        filter_introspection_fields_in_operation(operation);
-
-    let query_plan = if filtered_operation_for_plan.selection_set.is_empty() && has_introspection {
-        query_planner::planner::plan_nodes::QueryPlan {
-            kind: "QueryPlan".to_string(),
-            node: None,
+    let query_plan = match serve_data.plan_cache.get(&query_and_operation_name).await {
+        Some(plan) => plan,
+        None => {
+            let query_plan =
+                if filtered_operation_for_plan.selection_set.is_empty() && has_introspection {
+                    query_planner::planner::plan_nodes::QueryPlan {
+                        kind: "QueryPlan".to_string(),
+                        node: None,
+                    }
+                } else {
+                    match serve_data
+                        .planner
+                        .plan_from_normalized_operation(filtered_operation_for_plan)
+                    {
+                        Ok(plan) => plan,
+                        Err(err) => {
+                            return make_error_response(
+                                &err.to_string(),
+                                &accept_header,
+                                true,
+                                "QUERY_PLANNER_ERROR",
+                            );
+                        }
+                    }
+                };
+            let query_plan_arc = Arc::new(query_plan);
+            serve_data
+                .plan_cache
+                .insert(query_and_operation_name.clone(), query_plan_arc.clone())
+                .await;
+            query_plan_arc
         }
-    } else {
-        match serve_data
-            .planner
-            .plan_from_normalized_operation(&filtered_operation_for_plan)
-        {
-            Ok(plan) => plan,
+    };
+
+    let variable_values =
+        match collect_variables(filtered_operation_for_plan, &execution_request.variables) {
+            Ok(values) => values,
             Err(err) => {
-                return make_error_response(
-                    &err.to_string(),
-                    &accept_header,
-                    true,
-                    "QUERY_PLANNER_ERROR",
-                );
+                return make_error_response(&err, &accept_header, true, "BAD_REQUEST");
             }
-        }
-    };
-
-    let operation = &document
-        .definitions
-        .iter()
-        .find_map(|def| match def {
-            graphql_parser::query::Definition::Operation(operation) => Some(operation),
-            _ => None,
-        })
-        .expect("Expected an operation definition");
-
-    let variable_values = match collect_variables(operation, &execution_request.variables) {
-        Ok(values) => values,
-        Err(err) => {
-            return make_error_response(&err, &accept_header, true, "BAD_REQUEST");
-        }
-    };
+        };
     let result = execute_query_plan(
         &query_plan,
         &serve_data.subgraph_endpoint_map,
         &variable_values,
         &serve_data.schema_metadata,
-        &document,
+        &normalized_document.original_document,
         has_introspection,
         &serve_data.http_client,
     )

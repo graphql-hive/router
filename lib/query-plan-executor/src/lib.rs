@@ -341,9 +341,10 @@ impl ApplyOutputRewrite for KeyRenamer {
                     }
                     _ => {
                         if remaining_path.is_empty() {
-                            if let Some(val) = obj.get(current_segment) {
-                                // Rename the key
-                                obj.insert(self.rename_key_to.to_string(), val.clone());
+                            if *current_segment != self.rename_key_to {
+                                if let Some(val) = obj.remove(current_segment) {
+                                    obj.insert(self.rename_key_to.to_string(), val);
+                                }
                             }
                         } else if let Some(next_value) = obj.get_mut(current_segment) {
                             self.apply_path(possible_types, next_value, remaining_path)

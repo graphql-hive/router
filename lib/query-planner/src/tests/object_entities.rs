@@ -26,7 +26,7 @@ fn testing() -> Result<(), Box<dyn Error>> {
               }
             }"#,
     );
-    let document = prepare_document(&document, None);
+    let document = prepare_document(document, None);
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 3);
@@ -255,7 +255,7 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(&document, None);
+    let document = prepare_document(document, None);
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
@@ -390,7 +390,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(&document, None);
+    let document = prepare_document(document, None);
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 5);
@@ -678,7 +678,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(&document, None);
+    let document = prepare_document(document, None);
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 2);

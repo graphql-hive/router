@@ -86,7 +86,7 @@ impl Planner {
 
     pub fn plan(
         &self,
-        operation_document: &query::Document<'static, String>,
+        operation_document: query::Document<'static, String>,
         operation_name: Option<&str>,
     ) -> Result<QueryPlan, PlannerError> {
         let document = prepare_document(operation_document, operation_name);

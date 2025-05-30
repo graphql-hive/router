@@ -37,7 +37,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(&document, None);
+    let document = prepare_document(document, None);
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 12);
@@ -612,7 +612,7 @@ fn override_with_requires_cname_in_c() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(&document, None);
+    let document = prepare_document(document, None);
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
@@ -770,7 +770,7 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(&document, None);
+    let document = prepare_document(document, None);
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
@@ -932,7 +932,7 @@ fn override_with_requires_aname_in_a() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(&document, None);
+    let document = prepare_document(document, None);
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);

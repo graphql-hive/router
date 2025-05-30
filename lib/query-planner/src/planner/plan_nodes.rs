@@ -178,6 +178,7 @@ fn create_output_operation(type_aware_selection: &TypeAwareSelection) -> Subgrap
             variable_type: TypeNode::NonNull(Box::new(TypeNode::List(Box::new(
                 TypeNode::NonNull(Box::new(TypeNode::Named("_Any".to_string()))),
             )))),
+            default_value: None,
         }]),
         selection_set: SelectionSet {
             items: vec![SelectionItem::Field(FieldSelection {

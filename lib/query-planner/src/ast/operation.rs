@@ -116,6 +116,17 @@ impl Display for TypeNode {
 pub struct VariableDefinition {
     pub name: String,
     pub variable_type: TypeNode,
+    pub default_value: Option<crate::ast::value::Value>,
+}
+
+impl TypeNode {
+    pub fn is_non_null(&self) -> bool {
+        matches!(self, TypeNode::NonNull(_))
+    }
+
+    pub fn is_list(&self) -> bool {
+        matches!(self, TypeNode::List(_))
+    }
 }
 
 impl Display for VariableDefinition {
@@ -139,6 +150,7 @@ impl From<&parser::VariableDefinition<'_, String>> for VariableDefinition {
         VariableDefinition {
             name: value.name.clone(),
             variable_type: (&value.var_type).into(),
+            default_value: value.default_value.as_ref().map(|v| v.into()),
         }
     }
 }

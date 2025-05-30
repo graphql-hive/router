@@ -1,13 +1,14 @@
 use std::fmt::Display;
 
-use serde::{Deserialize, Serialize};
+use graphql_parser::query::Document;
 
 use super::operation::OperationDefinition;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct NormalizedDocument {
     pub operations: Vec<OperationDefinition>,
     pub operation_name: Option<String>,
+    pub original_document: Document<'static, String>,
 }
 
 impl NormalizedDocument {
