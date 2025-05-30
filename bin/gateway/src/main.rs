@@ -18,8 +18,8 @@ use query_planner::state::supergraph_state::{OperationKind, SupergraphState};
 use query_planner::utils::parsing::parse_schema;
 use query_planner::utils::parsing::safe_parse_operation;
 use query_planner::{consumer_schema::ConsumerSchema, planner::Planner};
-use serde_json::json;
 use serde_json::Value::{self};
+use serde_json::{json};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -95,6 +95,43 @@ struct ServeData {
     >,
 }
 
+fn value_to_serde_value(
+    value: &query_planner::ast::value::Value,
+    variables: &Option<HashMap<String, serde_json::Value>>,
+) -> serde_json::Value {
+    match value {
+        query_planner::ast::value::Value::Null => serde_json::Value::Null,
+        query_planner::ast::value::Value::Int(n) => serde_json::Value::Number((*n).into()),
+        query_planner::ast::value::Value::Boolean(b) => serde_json::Value::Bool(*b),
+        query_planner::ast::value::Value::Enum(s) => serde_json::Value::String(s.to_string()),
+        query_planner::ast::value::Value::Float(n) => {
+            serde_json::Value::Number(serde_json::Number::from_f64(*n).expect("Failed to coerce"))
+        }
+        query_planner::ast::value::Value::List(l) => serde_json::Value::Array(
+            l.into_iter()
+                .map(|v| value_to_serde_value(v, variables))
+                .collect(),
+        ),
+        query_planner::ast::value::Value::Object(o) => serde_json::Value::Object(
+            o.into_iter()
+                .map(|(k, v)| (k.to_string(), value_to_serde_value(v, variables)))
+                .collect(),
+        ),
+        query_planner::ast::value::Value::String(s) => serde_json::Value::String(s.to_string()),
+        query_planner::ast::value::Value::Variable(var_name) => {
+            if let Some(variables_map) = variables {
+                if let Some(value) = variables_map.get(var_name) {
+                    value.clone() // Return the value from the variables map
+                } else {
+                    serde_json::Value::Null // If variable not found, return null
+                }
+            } else {
+                serde_json::Value::Null // If no variables provided, return null
+            }
+        }
+    }
+}
+
 fn collect_variables(
     operation: &query_planner::ast::operation::OperationDefinition,
     variables: &Option<HashMap<String, Value>>,
@@ -120,7 +157,7 @@ fn collect_variables(
                 // Assuming value_from_ast now returns Result<Value, String> or similar
                 // and needs to be adapted if it returns Option or panics.
                 // For now, let's assume it can return an Err that needs to be propagated.
-                let default_value_coerced = json!(default_value);
+                let default_value_coerced = value_to_serde_value(default_value, variables);
                 if !default_value_coerced.is_null() {
                     return Ok(Some((variable_name, default_value_coerced)));
                 }
