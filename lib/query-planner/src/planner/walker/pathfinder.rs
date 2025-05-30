@@ -222,10 +222,12 @@ pub fn find_direct_paths(
 
     // Get all the edges from the current tail
     // Filter by FieldMove edges with matching field name and not already in path, to avoid loops
-    let edges_iter =
-            graph
-            .edges_from(path_tail_index)
-            .filter(|e| matches!(e.weight(), Edge::FieldMove(f) if f.name == *field_name && !path.has_visited_edge(&e.id())));
+    let edges_iter = graph
+        .edges_from(path_tail_index)
+        .filter(|e| matches!(e.weight(), Edge::FieldMove(f) if f.name == *field_name));
+    // We no longer avoid loops, but let's see if it's an issue or not,
+    // right now it's incorrect loop check detection as it prevents using the same edge multiple times.
+    // .filter(|e| matches!(e.weight(), Edge::FieldMove(f) if f.name == *field_name && !path.has_visited_edge(&e.id())));
 
     for edge_ref in edges_iter {
         debug!(

@@ -513,6 +513,12 @@ impl Display for FetchGraph {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum FetchStepKind {
+    Entity,
+    Root,
+}
+
 #[derive(Debug, Clone)]
 pub struct FetchStepData {
     pub service_name: SubgraphName,
@@ -520,6 +526,7 @@ pub struct FetchStepData {
     pub input: TypeAwareSelection,
     pub output: TypeAwareSelection,
     pub reserved_for_requires: Option<TypeAwareSelection>,
+    pub kind: FetchStepKind,
 }
 
 impl Display for FetchStepData {
@@ -595,8 +602,17 @@ impl FetchStepData {
 
         let self_path = self.response_path.insert_front("*".to_string());
         let other_path = other.response_path.insert_front("*".to_string());
-        if !other_path.starts_with(&self_path) {
-            return false;
+        // If both are entities, their response_paths should match,
+        // as we can't merge entity calls resolving different entities
+        if matches!(self.kind, FetchStepKind::Entity) && self.kind == other.kind {
+            if !self_path.eq(&other_path) {
+                return false;
+            }
+        } else {
+            // otherwise we can merge
+            if !other_path.starts_with(&self_path) {
+                return false;
+            }
         }
 
         // if the `other` FetchStep has a single parent and it's `this` FetchStep
@@ -738,6 +754,7 @@ fn create_noop_fetch_step(fetch_graph: &mut FetchGraph) -> NodeIndex {
             type_name: "*".to_string(),
         },
         reserved_for_requires: None,
+        kind: FetchStepKind::Root,
     })
 }
 
@@ -761,6 +778,7 @@ fn create_fetch_step_for_entity_move(
             type_name: type_name.to_string(),
         },
         reserved_for_requires: None,
+        kind: FetchStepKind::Entity,
     })
 }
 
@@ -782,6 +800,7 @@ fn create_fetch_step_for_root_move(
             type_name: type_name.to_string(),
         },
         reserved_for_requires: None,
+        kind: FetchStepKind::Root,
     });
 
     fetch_graph.connect(root_step_index, idx);
