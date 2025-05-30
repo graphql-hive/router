@@ -18,8 +18,8 @@ use query_planner::state::supergraph_state::{OperationKind, SupergraphState};
 use query_planner::utils::parsing::parse_schema;
 use query_planner::utils::parsing::safe_parse_operation;
 use query_planner::{consumer_schema::ConsumerSchema, planner::Planner};
+use serde_json::json;
 use serde_json::Value::{self};
-use serde_json::{json};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -108,12 +108,12 @@ fn value_to_serde_value(
             serde_json::Value::Number(serde_json::Number::from_f64(*n).expect("Failed to coerce"))
         }
         query_planner::ast::value::Value::List(l) => serde_json::Value::Array(
-            l.into_iter()
+            l.iter()
                 .map(|v| value_to_serde_value(v, variables))
                 .collect(),
         ),
         query_planner::ast::value::Value::Object(o) => serde_json::Value::Object(
-            o.into_iter()
+            o.iter()
                 .map(|(k, v)| (k.to_string(), value_to_serde_value(v, variables)))
                 .collect(),
         ),
