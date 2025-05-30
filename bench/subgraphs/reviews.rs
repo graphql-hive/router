@@ -117,7 +117,6 @@ pub struct User {
 
 #[derive(SimpleObject, Clone)]
 #[graphql(extends, complex)]
-
 pub struct Product {
     #[graphql(external)]
     upc: String,
@@ -154,7 +153,7 @@ impl Query {
     #[graphql(entity)]
     async fn find_user_by_id(&self, id: ID) -> User {
         User {
-            id: id.into(),
+            id,
             username: Some("user".to_string()),
             reviews: Some(REVIEWS[0..2].iter().map(|r| Some(r.clone())).collect()),
         }
