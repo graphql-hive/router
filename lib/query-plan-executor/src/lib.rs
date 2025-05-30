@@ -919,7 +919,7 @@ fn deep_merge(target: &mut Value, source: Value) {
 #[derive(Debug)]
 struct HTTPSubgraphExecutor<'a> {
     subgraph_endpoint_map: &'a HashMap<String, String>,
-    http_client: reqwest::Client,
+    http_client: &'a reqwest::Client,
 }
 
 impl HTTPSubgraphExecutor<'_> {
@@ -1324,10 +1324,11 @@ pub async fn execute_query_plan(
     schema_metadata: &SchemaMetadata,
     document: &Document<'static, String>,
     has_introspection: bool,
+    http_client: &reqwest::Client,
 ) -> ExecutionResult {
     let http_executor = HTTPSubgraphExecutor {
         subgraph_endpoint_map,
-        http_client: reqwest::Client::new(),
+        http_client,
     };
     let execution_context = QueryPlanExecutionContext {
         variable_values,

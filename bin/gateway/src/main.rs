@@ -62,6 +62,7 @@ async fn main() {
         planner,
         schema_metadata,
         subgraph_endpoint_map: supergraph_state.subgraph_endpoint_map,
+        http_client: reqwest::Client::new(),
     };
     let serve_data_arc = Arc::new(serve_data);
     println!("Starting server on http://localhost:4000");
@@ -84,6 +85,7 @@ struct ServeData {
     schema_metadata: SchemaMetadata,
     planner: Planner,
     subgraph_endpoint_map: HashMap<String, String>,
+    http_client: reqwest::Client,
 }
 
 fn collect_variables(
@@ -433,6 +435,7 @@ async fn handle_execution_request(
         &serve_data.schema_metadata,
         &document,
         has_introspection,
+        &serve_data.http_client,
     )
     .await;
 
