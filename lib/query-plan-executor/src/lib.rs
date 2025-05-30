@@ -1328,7 +1328,7 @@ pub async fn execute_query_plan(
 ) -> ExecutionResult {
     let http_executor = HTTPSubgraphExecutor {
         subgraph_endpoint_map,
-        http_client: &http_client,
+        http_client,
     };
     let execution_context = QueryPlanExecutionContext {
         variable_values,
