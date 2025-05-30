@@ -398,10 +398,20 @@ async fn handle_execution_request(
             node: None,
         }
     } else {
-        serve_data
+        match serve_data
             .planner
             .plan_from_normalized_operation(&filtered_operation_for_plan)
-            .expect("Failed to create query plan")
+        {
+            Ok(plan) => plan,
+            Err(err) => {
+                return make_error_response(
+                    &err.to_string(),
+                    &accept_header,
+                    true,
+                    "QUERY_PLANNER_ERROR",
+                );
+            }
+        }
     };
 
     // TODO: Fix that, it should really be handled differently
