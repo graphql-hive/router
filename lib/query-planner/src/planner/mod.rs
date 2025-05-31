@@ -5,13 +5,13 @@ use lru::LruCache;
 use parking_lot::Mutex;
 use plan_nodes::QueryPlan;
 use query_plan::build_query_plan_from_fetch_graph;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use std::time::Instant;
 use tree::{paths_to_trees, query_tree::QueryTree};
 use walker::{error::WalkOperationError, walk_operation};
 
+use crate::ast::hash::ast_hash;
 use crate::{
     ast::operation::OperationDefinition,
     consumer_schema::ConsumerSchema,
@@ -110,7 +110,10 @@ impl Planner {
         &self,
         normalized_operation: &OperationDefinition,
     ) -> Result<Arc<QueryPlan>, PlannerError> {
+        let start_time = Instant::now();
         let cache_key = generate_qp_lru_cache_key(normalized_operation);
+        let end_time = Instant::now();
+        println!("hash {:?}", end_time.duration_since(start_time));
 
         {
             let mut cache = self.cache.lock();
@@ -144,11 +147,6 @@ impl Planner {
     }
 }
 
-// TODO: visit bits of the operation definition and hash its elements (like it was done in graph-node)
 fn generate_qp_lru_cache_key(normalized_operation: &OperationDefinition) -> u64 {
-    let op_bytes = serde_json::to_vec(normalized_operation)
-                   .expect("Failed to serialize operation for caching. Ensure graphql_parser's serde feature is enabled.");
-    let mut hasher = DefaultHasher::new();
-    op_bytes.hash(&mut hasher);
-    hasher.finish()
+    ast_hash(normalized_operation)
 }
