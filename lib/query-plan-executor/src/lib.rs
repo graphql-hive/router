@@ -338,7 +338,11 @@ impl ApplyOutputRewrite for KeyRenamer {
                             Some(Value::String(type_name)) => type_name,
                             _ => type_condition, // Default to type_condition if not found
                         };
-                        if entity_satisfies_type_condition(possible_types, type_name, type_condition) {
+                        if entity_satisfies_type_condition(
+                            possible_types,
+                            type_name,
+                            type_condition,
+                        ) {
                             self.apply_path(possible_types, value, remaining_path)
                         }
                     }
@@ -411,7 +415,7 @@ impl ApplyInputRewrite for ValueSetter {
                         Some(Value::String(type_name)) => type_name,
                         _ => type_condition, // Default to type_condition if not found
                     };
-                    if entity_satisfies_type_condition(possible_types, &type_name, type_condition) {
+                    if entity_satisfies_type_condition(possible_types, type_name, type_condition) {
                         let data = Value::Object(map);
                         return self.apply_path(possible_types, data, remaining_path);
                     }
