@@ -1076,7 +1076,6 @@ fn project_selection_set(
     selection_set: &SelectionSet,
     type_name: &str,
     schema_metadata: &SchemaMetadata,
-    variable_values: &Option<HashMap<String, Value>>,
 ) -> Value {
     // If selection_set is empty, return the original data
     let type_name = match data.get("__typename") {
@@ -1128,7 +1127,6 @@ fn project_selection_set(
                                     &field.selections,
                                     field_type,
                                     schema_metadata,
-                                    variable_values,
                                 );
                                 result_map.insert(response_key, projected);
                             }
@@ -1155,7 +1153,7 @@ fn project_selection_set(
                         ) {
                             let type_name = obj
                                 .get("__typename")
-                                .and_then(|v| Some(v.to_string()))
+                                .map(|v| v.to_string())
                                 .unwrap_or(inline_fragment.type_condition.to_string());
 
                             let projected = project_selection_set(
@@ -1163,7 +1161,6 @@ fn project_selection_set(
                                 &inline_fragment.selections,
                                 &type_name,
                                 schema_metadata,
-                                variable_values,
                             );
                             deep_merge(&mut result, projected);
                         }
@@ -1175,15 +1172,7 @@ fn project_selection_set(
         // In case of an array
         (_, _, Value::Array(arr)) => Value::Array(
             arr.iter()
-                .map(|item| {
-                    project_selection_set(
-                        item,
-                        selection_set,
-                        type_name,
-                        schema_metadata,
-                        variable_values,
-                    )
-                })
+                .map(|item| project_selection_set(item, selection_set, type_name, schema_metadata))
                 .collect(),
         ),
         // In case of enum type with a string
@@ -1203,7 +1192,6 @@ fn project_data_by_operation(
     data: Value,
     normalized_document: &NormalizedDocument,
     schema_metadata: &SchemaMetadata,
-    variable_values: &Option<HashMap<String, Value>>,
 ) -> Value {
     let operation = normalized_document.executable_operation().unwrap();
     let root_type_name = match operation.operation_kind {
@@ -1218,7 +1206,6 @@ fn project_data_by_operation(
         &operation.selection_set,
         root_type_name,
         schema_metadata,
-        variable_values,
     )
 }
 
@@ -1246,7 +1233,6 @@ pub async fn execute_query_plan(
             result.data.unwrap_or(Value::Object(Map::new())),
             normalized_document,
             schema_metadata,
-            variable_values,
         ));
     }
 
