@@ -1,11 +1,14 @@
 use async_trait::async_trait;
 use futures::future::join_all;
 use query_planner::{
-    ast::{document::NormalizedDocument, selection_item::SelectionItem, selection_set::SelectionSet},
+    ast::{
+        document::NormalizedDocument, selection_item::SelectionItem, selection_set::SelectionSet,
+    },
     planner::plan_nodes::{
         ConditionNode, FetchNode, FlattenNode, InputRewrite, KeyRenamer, OutputRewrite,
         ParallelNode, PlanNode, QueryPlan, SequenceNode, ValueSetter,
-    }, state::supergraph_state::OperationKind,
+    },
+    state::supergraph_state::OperationKind,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -1145,7 +1148,7 @@ fn project_selection_set(
                         // if should_skip_per_variables(&inline_fragment.directives, variable_values) {
                         //     continue;
                         // }
-                        
+
                         if entity_satisfies_type_condition(
                             &schema_metadata.possible_types,
                             obj,
@@ -1165,14 +1168,10 @@ fn project_selection_set(
                                 }
                                 _ => {
                                     // Handle case where type_name is not a string
-                                    println!(
-                                        "Warning: Type name is not a string: {:?}",
-                                        type_name
-                                    );
+                                    println!("Warning: Type name is not a string: {:?}", type_name);
                                 }
                             }
                         }
-                    
                     }
                 }
             }
@@ -1216,7 +1215,7 @@ fn project_data_by_operation(
         Some(OperationKind::Query) => "Query",
         Some(OperationKind::Mutation) => "Mutation",
         Some(OperationKind::Subscription) => "Subscription",
-        None => "Query"
+        None => "Query",
     };
     // Project the data based on the selection set
     project_selection_set(

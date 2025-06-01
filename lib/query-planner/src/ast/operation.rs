@@ -1,8 +1,8 @@
 use std::fmt::Display;
 
+use crate::ast::hash::ast_hash;
 use graphql_parser::query as parser;
 use serde::{Deserialize, Serialize};
-use crate::ast::hash::ast_hash;
 
 use crate::{
     state::supergraph_state::OperationKind,
@@ -32,7 +32,7 @@ impl OperationDefinition {
         )
     }
     pub fn hash(&self) -> u64 {
-        ast_hash(&self)
+        ast_hash(self)
     }
 }
 

@@ -1,6 +1,6 @@
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
 use std::{
-    collections::{BTreeSet},
+    collections::BTreeSet,
     fmt::{Debug, Display},
     hash::Hash,
 };
