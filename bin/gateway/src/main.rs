@@ -95,43 +95,6 @@ struct ServeData {
     >,
 }
 
-fn value_to_serde_value(
-    value: &query_planner::ast::value::Value,
-    variables: &Option<HashMap<String, serde_json::Value>>,
-) -> serde_json::Value {
-    match value {
-        query_planner::ast::value::Value::Null => serde_json::Value::Null,
-        query_planner::ast::value::Value::Int(n) => serde_json::Value::Number((*n).into()),
-        query_planner::ast::value::Value::Boolean(b) => serde_json::Value::Bool(*b),
-        query_planner::ast::value::Value::Enum(s) => serde_json::Value::String(s.to_string()),
-        query_planner::ast::value::Value::Float(n) => {
-            serde_json::Value::Number(serde_json::Number::from_f64(*n).expect("Failed to coerce"))
-        }
-        query_planner::ast::value::Value::List(l) => serde_json::Value::Array(
-            l.iter()
-                .map(|v| value_to_serde_value(v, variables))
-                .collect(),
-        ),
-        query_planner::ast::value::Value::Object(o) => serde_json::Value::Object(
-            o.iter()
-                .map(|(k, v)| (k.to_string(), value_to_serde_value(v, variables)))
-                .collect(),
-        ),
-        query_planner::ast::value::Value::String(s) => serde_json::Value::String(s.to_string()),
-        query_planner::ast::value::Value::Variable(var_name) => {
-            if let Some(variables_map) = variables {
-                if let Some(value) = variables_map.get(var_name) {
-                    value.clone() // Return the value from the variables map
-                } else {
-                    serde_json::Value::Null // If variable not found, return null
-                }
-            } else {
-                serde_json::Value::Null // If no variables provided, return null
-            }
-        }
-    }
-}
-
 fn collect_variables(
     operation: &query_planner::ast::operation::OperationDefinition,
     variables: &Option<HashMap<String, Value>>,
@@ -157,7 +120,7 @@ fn collect_variables(
                 // Assuming value_from_ast now returns Result<Value, String> or similar
                 // and needs to be adapted if it returns Option or panics.
                 // For now, let's assume it can return an Err that needs to be propagated.
-                let default_value_coerced = value_to_serde_value(default_value, variables);
+                let default_value_coerced: Value = default_value.into();
                 if !default_value_coerced.is_null() {
                     return Ok(Some((variable_name, default_value_coerced)));
                 }
@@ -517,7 +480,7 @@ async fn handle_execution_request(
         &serve_data.subgraph_endpoint_map,
         &variable_values,
         &serve_data.schema_metadata,
-        &normalized_document.original_document,
+        &normalized_document,
         has_introspection,
         &serve_data.http_client,
     )

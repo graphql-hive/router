@@ -1,15 +1,11 @@
 use async_trait::async_trait;
 use futures::future::join_all;
-use graphql_parser::query::{
-    Definition, Directive, Document, FragmentDefinition, OperationDefinition, Selection,
-    SelectionSet, TypeCondition,
-};
 use query_planner::{
-    ast::selection_item::SelectionItem,
+    ast::{document::NormalizedDocument, selection_item::SelectionItem, selection_set::SelectionSet},
     planner::plan_nodes::{
         ConditionNode, FetchNode, FlattenNode, InputRewrite, KeyRenamer, OutputRewrite,
         ParallelNode, PlanNode, QueryPlan, SequenceNode, ValueSetter,
-    },
+    }, state::supergraph_state::OperationKind,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -970,114 +966,113 @@ pub struct SchemaMetadata {
     pub introspection_schema_root_json: Value,
 }
 
-fn should_skip_per_variables(
-    directives: &Vec<Directive<'static, String>>,
-    variable_values: &Option<HashMap<String, Value>>,
-) -> bool {
-    for directive in directives {
-        if directive.name == "skip" {
-            for (arg_name, arg_value) in &directive.arguments {
-                if *arg_name == "if" {
-                    let mut if_value = None;
-                    if let Some(variable_values) = variable_values {
-                        let arg_value = arg_value.to_string();
-                        let arg_value_without_dollar = arg_value.strip_prefix("$");
-                        match arg_value_without_dollar {
-                            Some(arg_value) => {
-                                // Check if the variable exists in the variable values
-                                // and get its value
-                                // Note: The original code used `arg_value.to_string()`, which is incorrect
-                                // because it includes the '$' sign. We need to strip it first.
-                                if let Some(value) = variable_values.get(arg_value) {
-                                    if_value = Some(value);
-                                }
-                            }
-                            None => {
-                                println!(
-                                    "Warning: Skip directive found with invalid variable name: {}",
-                                    arg_value
-                                );
-                            }
-                        }
-                    }
-                    match if_value {
-                        Some(Value::Bool(if_value)) => {
-                            return *if_value; // Skip if the condition is true
-                        }
-                        Some(_) => {
-                            println!(
-                                "Warning: Skip directive found with non-boolean if argument: {}",
-                                arg_value
-                            );
-                            return true; // Skip if not boolean
-                        }
-                        None => {
-                            println!(
-                                "Warning: Skip directive found with unknown variable: {}",
-                                arg_value
-                            );
-                            return false;
-                        }
-                    }
-                }
-            }
-        } else if directive.name == "include" {
-            for (arg_name, arg_value) in &directive.arguments {
-                if *arg_name == "if" {
-                    let mut if_value = None;
-                    if let Some(variable_values) = variable_values {
-                        let arg_value = arg_value.to_string();
-                        let arg_value_without_dollar = arg_value.strip_prefix("$");
-                        match arg_value_without_dollar {
-                            Some(arg_value) => {
-                                // Check if the variable exists in the variable values
-                                // and get its value
-                                // Note: The original code used `arg_value.to_string()`, which is incorrect
-                                // because it includes the '$' sign. We need to strip it first.
-                                if let Some(value) = variable_values.get(arg_value) {
-                                    if_value = Some(value);
-                                }
-                            }
-                            None => {
-                                println!(
-                                    "Warning: Skip directive found with invalid variable name: {}",
-                                    arg_value
-                                );
-                            }
-                        }
-                    }
-                    match if_value {
-                        Some(Value::Bool(if_value)) => {
-                            return !*if_value; // Skip if the condition is false
-                        }
-                        Some(_) => {
-                            println!(
-                                "Warning: Include directive found with non-boolean if argument: {}",
-                                arg_value
-                            );
-                            return false; // Skip if not boolean
-                        }
-                        None => {
-                            println!(
-                                "Warning: Include directive found with unknown variable: {} on {:#?}",
-                                arg_value, variable_values
-                            );
-                            return true; // Skip if not found
-                        }
-                    }
-                }
-            }
-        }
-    }
-    false // Default to false if no skip directive found
-}
+// fn should_skip_per_variables(
+//     directives: &Vec<Directive<'static, String>>,
+//     variable_values: &Option<HashMap<String, Value>>,
+// ) -> bool {
+//     for directive in directives {
+//         if directive.name == "skip" {
+//             for (arg_name, arg_value) in &directive.arguments {
+//                 if *arg_name == "if" {
+//                     let mut if_value = None;
+//                     if let Some(variable_values) = variable_values {
+//                         let arg_value = arg_value.to_string();
+//                         let arg_value_without_dollar = arg_value.strip_prefix("$");
+//                         match arg_value_without_dollar {
+//                             Some(arg_value) => {
+//                                 // Check if the variable exists in the variable values
+//                                 // and get its value
+//                                 // Note: The original code used `arg_value.to_string()`, which is incorrect
+//                                 // because it includes the '$' sign. We need to strip it first.
+//                                 if let Some(value) = variable_values.get(arg_value) {
+//                                     if_value = Some(value);
+//                                 }
+//                             }
+//                             None => {
+//                                 println!(
+//                                     "Warning: Skip directive found with invalid variable name: {}",
+//                                     arg_value
+//                                 );
+//                             }
+//                         }
+//                     }
+//                     match if_value {
+//                         Some(Value::Bool(if_value)) => {
+//                             return *if_value; // Skip if the condition is true
+//                         }
+//                         Some(_) => {
+//                             println!(
+//                                 "Warning: Skip directive found with non-boolean if argument: {}",
+//                                 arg_value
+//                             );
+//                             return true; // Skip if not boolean
+//                         }
+//                         None => {
+//                             println!(
+//                                 "Warning: Skip directive found with unknown variable: {}",
+//                                 arg_value
+//                             );
+//                             return false;
+//                         }
+//                     }
+//                 }
+//             }
+//         } else if directive.name == "include" {
+//             for (arg_name, arg_value) in &directive.arguments {
+//                 if *arg_name == "if" {
+//                     let mut if_value = None;
+//                     if let Some(variable_values) = variable_values {
+//                         let arg_value = arg_value.to_string();
+//                         let arg_value_without_dollar = arg_value.strip_prefix("$");
+//                         match arg_value_without_dollar {
+//                             Some(arg_value) => {
+//                                 // Check if the variable exists in the variable values
+//                                 // and get its value
+//                                 // Note: The original code used `arg_value.to_string()`, which is incorrect
+//                                 // because it includes the '$' sign. We need to strip it first.
+//                                 if let Some(value) = variable_values.get(arg_value) {
+//                                     if_value = Some(value);
+//                                 }
+//                             }
+//                             None => {
+//                                 println!(
+//                                     "Warning: Skip directive found with invalid variable name: {}",
+//                                     arg_value
+//                                 );
+//                             }
+//                         }
+//                     }
+//                     match if_value {
+//                         Some(Value::Bool(if_value)) => {
+//                             return !*if_value; // Skip if the condition is false
+//                         }
+//                         Some(_) => {
+//                             println!(
+//                                 "Warning: Include directive found with non-boolean if argument: {}",
+//                                 arg_value
+//                             );
+//                             return false; // Skip if not boolean
+//                         }
+//                         None => {
+//                             println!(
+//                                 "Warning: Include directive found with unknown variable: {} on {:#?}",
+//                                 arg_value, variable_values
+//                             );
+//                             return true; // Skip if not found
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+//     }
+//     false // Default to false if no skip directive found
+// }
 
 fn project_selection_set(
     data: &Value,
-    selection_set: &SelectionSet<'static, String>,
+    selection_set: &SelectionSet,
     type_name: &str,
     schema_metadata: &SchemaMetadata,
-    fragments: &HashMap<String, &FragmentDefinition<'static, String>>,
     variable_values: &Option<HashMap<String, Value>>,
 ) -> Value {
     // If selection_set is empty, return the original data
@@ -1106,10 +1101,10 @@ fn project_selection_set(
             let mut result = Value::Object(serde_json::Map::new());
             for selection in &selection_set.items {
                 match selection {
-                    Selection::Field(field) => {
-                        if should_skip_per_variables(&field.directives, variable_values) {
-                            continue;
-                        }
+                    SelectionItem::Field(field) => {
+                        // if should_skip_per_variables(&field.directives, variable_values) {
+                        //     continue;
+                        // }
                         let response_key = field.alias.as_ref().unwrap_or(&field.name).to_string();
                         let result_map = result.as_object_mut().unwrap();
                         if field.name == "__typename" {
@@ -1127,10 +1122,9 @@ fn project_selection_set(
                             (Some(field_type), Some(field_val)) => {
                                 let projected = project_selection_set(
                                     field_val,
-                                    &field.selection_set,
+                                    &field.selections,
                                     field_type,
                                     schema_metadata,
-                                    fragments,
                                     variable_values,
                                 );
                                 result_map.insert(response_key, projected);
@@ -1147,101 +1141,38 @@ fn project_selection_set(
                             }
                         }
                     }
-                    Selection::InlineFragment(inline_fragment) => {
-                        if should_skip_per_variables(&inline_fragment.directives, variable_values) {
-                            continue;
-                        }
-                        match &inline_fragment.type_condition {
-                            Some(TypeCondition::On(type_condition)) => {
-                                if entity_satisfies_type_condition(
-                                    &schema_metadata.possible_types,
-                                    obj,
-                                    type_condition,
-                                ) {
-                                    let type_name = obj.get("__typename");
-                                    match type_name {
-                                        Some(Value::String(type_name)) => {
-                                            let projected = project_selection_set(
-                                                data,
-                                                &inline_fragment.selection_set,
-                                                type_name,
-                                                schema_metadata,
-                                                fragments,
-                                                variable_values,
-                                            );
-                                            deep_merge(&mut result, projected);
-                                        }
-                                        _ => {
-                                            // Handle case where type_name is not a string
-                                            println!(
-                                                "Warning: Type name is not a string: {:?}",
-                                                type_name
-                                            );
-                                        }
-                                    }
+                    SelectionItem::InlineFragment(inline_fragment) => {
+                        // if should_skip_per_variables(&inline_fragment.directives, variable_values) {
+                        //     continue;
+                        // }
+                        
+                        if entity_satisfies_type_condition(
+                            &schema_metadata.possible_types,
+                            obj,
+                            &inline_fragment.type_condition,
+                        ) {
+                            let type_name = obj.get("__typename");
+                            match type_name {
+                                Some(Value::String(type_name)) => {
+                                    let projected = project_selection_set(
+                                        data,
+                                        &inline_fragment.selections,
+                                        type_name,
+                                        schema_metadata,
+                                        variable_values,
+                                    );
+                                    deep_merge(&mut result, projected);
+                                }
+                                _ => {
+                                    // Handle case where type_name is not a string
+                                    println!(
+                                        "Warning: Type name is not a string: {:?}",
+                                        type_name
+                                    );
                                 }
                             }
-                            None => {}
                         }
-                    }
-                    Selection::FragmentSpread(fragment_spread) => {
-                        if should_skip_per_variables(&fragment_spread.directives, variable_values) {
-                            continue;
-                        }
-                        match fragments.get(&fragment_spread.fragment_name) {
-                            Some(fragment) => {
-                                match &fragment.type_condition {
-                                    TypeCondition::On(type_condition) => {
-                                        if entity_satisfies_type_condition(
-                                            &schema_metadata.possible_types,
-                                            obj,
-                                            type_condition,
-                                        ) {
-                                            let type_name = obj.get("__typename");
-                                            match type_name {
-                                                Some(Value::String(type_name)) => {
-                                                    let projected = project_selection_set(
-                                                        data,
-                                                        &fragment.selection_set,
-                                                        type_name,
-                                                        schema_metadata,
-                                                        fragments,
-                                                        variable_values,
-                                                    );
-                                                    deep_merge(&mut result, projected);
-                                                }
-                                                _ => {
-                                                    // Handle case where type_name is not a string
-                                                    println!(
-                                                        "Warning: Type name is not a string: {:?}",
-                                                        type_name
-                                                    );
-                                                }
-                                            }
-                                        } else if type_condition == type_name {
-                                            // If the type condition matches the current type name,
-                                            // project the fragment without checking the entity
-                                            let projected = project_selection_set(
-                                                data,
-                                                &fragment.selection_set,
-                                                type_name,
-                                                schema_metadata,
-                                                fragments,
-                                                variable_values,
-                                            );
-                                            deep_merge(&mut result, projected);
-                                        }
-                                    }
-                                }
-                            }
-                            _ => {
-                                // Handle case where fragment is not found
-                                println!(
-                                    "Warning: Fragment {} not found in fragments map",
-                                    fragment_spread.fragment_name
-                                );
-                            }
-                        }
+                    
                     }
                 }
             }
@@ -1256,7 +1187,6 @@ fn project_selection_set(
                         selection_set,
                         type_name,
                         schema_metadata,
-                        fragments,
                         variable_values,
                     )
                 })
@@ -1277,43 +1207,23 @@ fn project_selection_set(
 
 fn project_data_by_operation(
     data: Value,
-    document: &graphql_parser::query::Document<'static, String>,
+    normalized_document: &NormalizedDocument,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
 ) -> Value {
-    let mut root_type_name = "Query"; // Default to Query
-    let mut selection_set: Option<&SelectionSet<'static, String>> = None;
-    let mut fragments: HashMap<String, &FragmentDefinition<'static, String>> = HashMap::new();
-    for def in &document.definitions {
-        match def {
-            Definition::Operation(OperationDefinition::Query(query)) => {
-                root_type_name = "Query";
-                selection_set = Some(&query.selection_set);
-            }
-            Definition::Operation(OperationDefinition::Mutation(mutation)) => {
-                root_type_name = "Mutation";
-                selection_set = Some(&mutation.selection_set);
-            }
-            Definition::Operation(OperationDefinition::Subscription(subscription)) => {
-                root_type_name = "Subscription";
-                selection_set = Some(&subscription.selection_set);
-            }
-            Definition::Operation(OperationDefinition::SelectionSet(query_selection_set)) => {
-                root_type_name = "Query";
-                selection_set = Some(query_selection_set);
-            }
-            Definition::Fragment(fragment_def) => {
-                fragments.insert(fragment_def.name.to_string(), fragment_def);
-            }
-        }
-    }
+    let operation = normalized_document.executable_operation().unwrap();
+    let root_type_name = match operation.operation_kind {
+        Some(OperationKind::Query) => "Query",
+        Some(OperationKind::Mutation) => "Mutation",
+        Some(OperationKind::Subscription) => "Subscription",
+        None => "Query"
+    };
     // Project the data based on the selection set
     project_selection_set(
         &data,
-        selection_set.unwrap(),
+        &operation.selection_set,
         root_type_name,
         schema_metadata,
-        &fragments,
         variable_values,
     )
 }
@@ -1323,7 +1233,7 @@ pub async fn execute_query_plan(
     subgraph_endpoint_map: &HashMap<String, String>,
     variable_values: &Option<HashMap<String, Value>>,
     schema_metadata: &SchemaMetadata,
-    document: &Document<'static, String>,
+    normalized_document: &NormalizedDocument,
     has_introspection: bool,
     http_client: &reqwest::Client,
 ) -> ExecutionResult {
@@ -1340,7 +1250,7 @@ pub async fn execute_query_plan(
     if result.data.as_ref().is_some() || has_introspection {
         result.data = Some(project_data_by_operation(
             result.data.unwrap_or(Value::Object(Map::new())),
-            document,
+            normalized_document,
             schema_metadata,
             variable_values,
         ));

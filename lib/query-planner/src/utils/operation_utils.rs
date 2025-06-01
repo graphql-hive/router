@@ -74,7 +74,6 @@ pub fn prepare_document(
     NormalizedDocument {
         operations,
         operation_name: operation_name.map(|name| name.to_string()),
-        original_document,
     }
 }
 
