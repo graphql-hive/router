@@ -11,6 +11,15 @@ pub struct ArgumentsMap {
     arguments_map: BTreeMap<String, Value>,
 }
 
+impl<'a> IntoIterator for &'a ArgumentsMap {
+    type Item = (&'a String, &'a Value);
+    type IntoIter = std::collections::btree_map::Iter<'a, String, Value>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.arguments_map.iter()
+    }
+}
+
 impl PartialEq for ArgumentsMap {
     fn eq(&self, other: &Self) -> bool {
         self.arguments_map == other.arguments_map

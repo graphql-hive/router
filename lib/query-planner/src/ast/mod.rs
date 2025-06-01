@@ -1,9 +1,11 @@
-pub(crate) mod arguments;
 pub mod document;
-pub(crate) mod merge_path;
+pub mod hash;
 pub mod operation;
 pub mod selection_item;
 pub mod selection_set;
+
+pub(crate) mod arguments;
+pub(crate) mod merge_path;
 pub(crate) mod type_aware_selection;
 pub(crate) mod value;
 

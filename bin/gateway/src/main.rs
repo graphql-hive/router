@@ -73,7 +73,7 @@ async fn main() {
             .service(graphql_endpoint)
             .default_service(web::route().to(landing))
     })
-    .bind(("127.0.0.1", 4000))
+    .bind(("0.0.0.0", 4000))
     .expect("Failed to bind server")
     .run()
     .await
@@ -416,11 +416,14 @@ async fn handle_execution_request(
         }
     };
 
-    // TODO: Fix that, it should really be handled differently
-    let operation = match &document.definitions[0] {
-        graphql_parser::query::Definition::Operation(operation) => operation,
-        _ => panic!("Expected an operation definition"),
-    };
+    let operation = &document
+        .definitions
+        .iter()
+        .find_map(|def| match def {
+            graphql_parser::query::Definition::Operation(operation) => Some(operation),
+            _ => None,
+        })
+        .expect("Expected an operation definition");
 
     let variable_values = match collect_variables(operation, &execution_request.variables) {
         Ok(values) => values,

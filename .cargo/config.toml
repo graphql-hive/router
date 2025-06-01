@@ -2,6 +2,7 @@
 [alias]
 gateway = "run --package gateway"
 dev = "run --package qp-dev-cli"
+subgraphs = "run --package subgraphs"
 test_all = "test --workspace"
 test_qp = "test --package query-planner -- --nocapture"
 "clippy:fix" = "clippy --all --fix --allow-dirty --allow-staged"

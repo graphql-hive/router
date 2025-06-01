@@ -5,6 +5,7 @@ members = [
   "lib/query-plan-executor",
   "bin/dev-cli",
   "bin/gateway",
+  "bench/subgraphs",
 ]
 resolver = "2"
 default-members = ["bin/dev-cli"]

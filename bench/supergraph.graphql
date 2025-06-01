@@ -46,11 +46,11 @@ directive @link(
 scalar join__FieldSet
 
 enum join__Graph {
-  ACCOUNTS @join__graph(name: "accounts", url: "http://accounts:4001/graphql")
+  ACCOUNTS @join__graph(name: "accounts", url: "http://localhost:4200/accounts")
   INVENTORY
-    @join__graph(name: "inventory", url: "http://inventory:4002/graphql")
-  PRODUCTS @join__graph(name: "products", url: "http://products:4003/graphql")
-  REVIEWS @join__graph(name: "reviews", url: "http://reviews:4004/graphql")
+    @join__graph(name: "inventory", url: "http://localhost:4200/inventory")
+  PRODUCTS @join__graph(name: "products", url: "http://localhost:4200/products")
+  REVIEWS @join__graph(name: "reviews", url: "http://localhost:4200/reviews")
 }
 
 scalar link__Import
