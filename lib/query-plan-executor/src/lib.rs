@@ -334,7 +334,11 @@ impl ApplyOutputRewrite for KeyRenamer {
                 let type_condition = current_segment.strip_prefix("... on ");
                 match type_condition {
                     Some(type_condition) => {
-                        if entity_satisfies_type_condition(possible_types, obj, type_condition) {
+                        let type_name = match obj.get("__typename") {
+                            Some(Value::String(type_name)) => type_name,
+                            _ => type_condition, // Default to type_condition if not found
+                        };
+                        if entity_satisfies_type_condition(possible_types, type_name, type_condition) {
                             self.apply_path(possible_types, value, remaining_path)
                         }
                     }
@@ -403,7 +407,11 @@ impl ApplyInputRewrite for ValueSetter {
                 let remaining_path = &path[1..];
 
                 if let Some(type_condition) = current_key.strip_prefix("... on ") {
-                    if entity_satisfies_type_condition(possible_types, &map, type_condition) {
+                    let type_name = match map.get("__typename") {
+                        Some(Value::String(type_name)) => type_name,
+                        _ => type_condition, // Default to type_condition if not found
+                    };
+                    if entity_satisfies_type_condition(possible_types, &type_name, type_condition) {
                         let data = Value::Object(map);
                         return self.apply_path(possible_types, data, remaining_path);
                     }
@@ -802,9 +810,13 @@ impl QueryPlanExecutionContext<'_> {
                             }
                         }
                         SelectionItem::InlineFragment(requires_selection) => {
+                            let type_name = match entity_obj.get("__typename") {
+                                Some(Value::String(type_name)) => type_name,
+                                _ => requires_selection.type_condition.as_str(),
+                            };
                             if entity_satisfies_type_condition(
                                 &self.schema_metadata.possible_types,
-                                entity_obj,
+                                type_name,
                                 &requires_selection.type_condition,
                             ) {
                                 let projected = self
@@ -830,27 +842,22 @@ impl QueryPlanExecutionContext<'_> {
 
 fn entity_satisfies_type_condition(
     possible_types: &HashMap<String, Vec<String>>,
-    entity_map: &serde_json::Map<String, Value>,
+    type_name: &str,
     type_condition: &str,
 ) -> bool {
-    match entity_map.get("__typename") {
-        Some(Value::String(entity_type_name)) => {
-            if entity_type_name == type_condition {
-                true
-            } else {
-                let possible_types_for_type_condition = possible_types.get(type_condition);
-                match possible_types_for_type_condition {
-                    Some(possible_types_for_type_condition) => {
-                        possible_types_for_type_condition.contains(&entity_type_name.to_string())
-                    }
-                    None => {
-                        // If no possible types are found, return false
-                        false
-                    }
-                }
+    if type_name == type_condition {
+        true
+    } else {
+        let possible_types_for_type_condition = possible_types.get(type_condition);
+        match possible_types_for_type_condition {
+            Some(possible_types_for_type_condition) => {
+                possible_types_for_type_condition.contains(&type_name.to_string())
+            }
+            None => {
+                // If no possible types are found, return false
+                false
             }
         }
-        _ => true,
     }
 }
 
@@ -1148,7 +1155,7 @@ fn project_selection_set(
                         // }
                         if entity_satisfies_type_condition(
                             &schema_metadata.possible_types,
-                            obj,
+                            type_name,
                             &inline_fragment.type_condition,
                         ) {
                             let type_name = obj
