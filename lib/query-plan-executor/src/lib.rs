@@ -850,7 +850,7 @@ fn entity_satisfies_type_condition(
                 }
             }
         }
-        _ => false,
+        _ => true,
     }
 }
 
@@ -1148,29 +1148,24 @@ fn project_selection_set(
                         // if should_skip_per_variables(&inline_fragment.directives, variable_values) {
                         //     continue;
                         // }
-
                         if entity_satisfies_type_condition(
                             &schema_metadata.possible_types,
                             obj,
                             &inline_fragment.type_condition,
                         ) {
-                            let type_name = obj.get("__typename");
-                            match type_name {
-                                Some(Value::String(type_name)) => {
-                                    let projected = project_selection_set(
-                                        data,
-                                        &inline_fragment.selections,
-                                        type_name,
-                                        schema_metadata,
-                                        variable_values,
-                                    );
-                                    deep_merge(&mut result, projected);
-                                }
-                                _ => {
-                                    // Handle case where type_name is not a string
-                                    println!("Warning: Type name is not a string: {:?}", type_name);
-                                }
-                            }
+                            let type_name = obj
+                                .get("__typename")
+                                .and_then(|v| Some(v.to_string()))
+                                .unwrap_or(inline_fragment.type_condition.to_string());
+
+                            let projected = project_selection_set(
+                                data,
+                                &inline_fragment.selections,
+                                &type_name,
+                                schema_metadata,
+                                variable_values,
+                            );
+                            deep_merge(&mut result, projected);
                         }
                     }
                 }
