@@ -1,8 +1,10 @@
 use std::fmt::Display;
 
+use serde::{Deserialize, Serialize};
+
 use super::operation::OperationDefinition;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NormalizedDocument {
     pub operations: Vec<OperationDefinition>,
     pub operation_name: Option<String>,

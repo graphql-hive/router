@@ -87,7 +87,7 @@ struct ServeData {
     planner: Planner,
     subgraph_endpoint_map: HashMap<String, String>,
     http_client: reqwest::Client,
-    plan_cache: moka::future::Cache<String, Arc<query_planner::planner::plan_nodes::QueryPlan>>,
+    plan_cache: moka::future::Cache<u64, Arc<query_planner::planner::plan_nodes::QueryPlan>>,
     parse_cache: moka::future::Cache<String, Arc<NormalizedDocument>>,
     filtered_operation_cache: moka::future::Cache<
         String,
@@ -434,7 +434,9 @@ async fn handle_execution_request(
         }
     }
 
-    let query_plan = match serve_data.plan_cache.get(&query_and_operation_name).await {
+    let plan_cache_key = filtered_operation_for_plan.hash();
+
+    let query_plan = match serve_data.plan_cache.get(&plan_cache_key).await {
         Some(plan) => plan,
         None => {
             let query_plan =
@@ -462,7 +464,7 @@ async fn handle_execution_request(
             let query_plan_arc = Arc::new(query_plan);
             serve_data
                 .plan_cache
-                .insert(query_and_operation_name.clone(), query_plan_arc.clone())
+                .insert(plan_cache_key, query_plan_arc.clone())
                 .await;
             query_plan_arc
         }

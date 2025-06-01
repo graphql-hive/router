@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 use graphql_parser::query as parser;
 use serde::{Deserialize, Serialize};
+use crate::ast::hash::ast_hash;
 
 use crate::{
     state::supergraph_state::OperationKind,
@@ -29,6 +30,9 @@ impl OperationDefinition {
                 .unwrap_or(&OperationKind::Query),
             &self.selection_set,
         )
+    }
+    pub fn hash(&self) -> u64 {
+        ast_hash(&self)
     }
 }
 
