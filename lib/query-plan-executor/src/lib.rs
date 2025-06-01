@@ -1344,8 +1344,12 @@ pub async fn execute_query_plan(
             variable_values,
         ));
     }
-    let mut extensions = HashMap::new();
-    extensions.insert("queryPlan".to_string(), json!(query_plan));
-    result.extensions = Some(extensions);
+
+    #[cfg(debug_assertions)] // Only log in debug builds
+    {
+        let mut extensions = HashMap::new();
+        extensions.insert("queryPlan".to_string(), json!(query_plan));
+        result.extensions = Some(extensions);
+    }
     result
 }

@@ -395,10 +395,10 @@ async fn handle_execution_request(
         filter_introspection_fields_in_operation(operation);
 
     let query_plan = if filtered_operation_for_plan.selection_set.is_empty() && has_introspection {
-        Arc::new(query_planner::planner::plan_nodes::QueryPlan {
+        query_planner::planner::plan_nodes::QueryPlan {
             kind: "QueryPlan".to_string(),
             node: None,
-        })
+        }
     } else {
         match serve_data
             .planner
