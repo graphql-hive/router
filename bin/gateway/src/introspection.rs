@@ -436,7 +436,7 @@ pub fn introspection_query_from_ast(
                         })
                         .collect(),
                 });
-            },
+            }
             _ => {
                 // Ignore other definitions like TypeExtension, SchemaDefinition, etc.
             }

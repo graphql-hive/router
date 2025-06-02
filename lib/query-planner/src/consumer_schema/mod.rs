@@ -29,20 +29,27 @@ impl ConsumerSchema {
             .iter_mut()
             .for_each(|def| {
                 match def {
-                    Definition::TypeDefinition(TypeDefinition::Object(type_def_in_introspection)) => {
+                    Definition::TypeDefinition(TypeDefinition::Object(
+                        type_def_in_introspection,
+                    )) => {
                         if type_def_in_introspection.name == "Query" {
                             match result.definitions.iter_mut().find(|d| {
-                                if let Definition::TypeDefinition(TypeDefinition::Object(query_def)) = d {
+                                if let Definition::TypeDefinition(TypeDefinition::Object(
+                                    query_def,
+                                )) = d
+                                {
                                     query_def.name == "Query"
                                 } else {
                                     false
                                 }
                             }) {
-                                Some(Definition::TypeDefinition(TypeDefinition::Object(query_def))) => {
+                                Some(Definition::TypeDefinition(TypeDefinition::Object(
+                                    query_def,
+                                ))) => {
                                     // Query type already exists, extend it
-                                    query_def.fields.extend(
-                                        type_def_in_introspection.fields.clone(),
-                                    );
+                                    query_def
+                                        .fields
+                                        .extend(type_def_in_introspection.fields.clone());
                                 }
                                 _ => {
                                     // Add the Query type from introspection schema
@@ -56,7 +63,7 @@ impl ConsumerSchema {
                     }
                     _ => result.definitions.push(def.clone()),
                 }
-            });        
+            });
         result
     }
 }
