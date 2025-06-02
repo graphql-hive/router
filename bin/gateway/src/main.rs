@@ -6,10 +6,7 @@ use actix_web::http::Method;
 use actix_web::web::Html;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use graphql_parser::schema::TypeDefinition;
-use introspection::{
-    filter_introspection_fields_in_operation, get_introspection_metadata,
-    introspection_query_from_ast,
-};
+use introspection::{filter_introspection_fields_in_operation, introspection_query_from_ast};
 use query_plan_executor::ExecutionRequest;
 use query_plan_executor::SchemaMetadata;
 use query_plan_executor::{execute_query_plan, ExecutionResult};
@@ -301,9 +298,8 @@ trait SchemaWithMetadata {
 impl SchemaWithMetadata for ConsumerSchema {
     fn schema_metadata(&self) -> SchemaMetadata {
         let mut first_possible_types: HashMap<String, Vec<String>> = HashMap::new();
-        let introspection_metadata = get_introspection_metadata();
-        let mut type_fields = introspection_metadata.type_fields;
-        let mut enum_values = introspection_metadata.enum_values;
+        let mut type_fields: HashMap<String, HashMap<String, String>> = HashMap::new();
+        let mut enum_values: HashMap<String, Vec<String>> = HashMap::new();
         for definition in &self.document.definitions {
             match definition {
                 graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(
