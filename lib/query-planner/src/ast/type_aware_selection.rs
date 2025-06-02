@@ -195,7 +195,7 @@ fn find_selection_set_by_path<'a>(
                         .iter()
                         .find_map(|item| match item {
                             SelectionItem::Field(field) => {
-                                if field.name.eq(field_name) {
+                                if field.alias.as_ref().unwrap_or(&field.name).eq(field_name) {
                                     Some(&field.selections)
                                 } else {
                                     None
@@ -262,7 +262,7 @@ fn find_selection_set_by_path_mut(
                         .iter_mut()
                         .find_map(|item| match item {
                             SelectionItem::Field(field) => {
-                                if field.name.eq(field_name) {
+                                if field.alias.as_ref().unwrap_or(&field.name).eq(field_name) {
                                     Some(&mut field.selections)
                                 } else {
                                     None
