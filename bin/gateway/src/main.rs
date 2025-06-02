@@ -87,7 +87,7 @@ struct ServeData {
     http_client: reqwest::Client,
     plan_cache: moka::future::Cache<u64, Arc<query_planner::planner::plan_nodes::QueryPlan>>,
     validate_cache:
-        moka::future::Cache<String, Arc<Vec<graphql_tools::validation::utils::ValidationError>>>,
+        moka::future::Cache<u64, Arc<Vec<graphql_tools::validation::utils::ValidationError>>>,
 }
 
 fn validate_runtime_value(
@@ -454,14 +454,7 @@ async fn handle_execution_request(
         .get("Accept")
         .and_then(|h| h.to_str().ok())
         .map(|s| s.to_string());
-    let query_and_operation_name = format!(
-        "{}_{}",
-        execution_request.query,
-        execution_request.operation_name.clone().unwrap_or_default()
-    );
-
     // TODO: Maybe cache here later
-
     let original_document = match safe_parse_operation(&execution_request.query) {
         Ok(doc) => doc,
         Err(err) => {
@@ -505,11 +498,9 @@ async fn handle_execution_request(
             );
         }
     };
-    let (has_introspection, filtered_operation_for_plan) =
-        filter_introspection_fields_in_operation(operation);
 
-    if req.method() == Method::GET && filtered_operation_for_plan.operation_kind.is_some() {
-        if let Some(OperationKind::Mutation) = filtered_operation_for_plan.operation_kind {
+    if req.method() == Method::GET && operation.operation_kind.is_some() {
+        if let Some(OperationKind::Mutation) = operation.operation_kind {
             return HttpResponse::MethodNotAllowed()
                 .append_header(("allow", "POST"))
                 .json(json!({
@@ -523,11 +514,8 @@ async fn handle_execution_request(
     }
 
     let consumer_schema_ast = &serve_data.planner.consumer_schema.document;
-    let validation_result = match serve_data
-        .validate_cache
-        .get(&query_and_operation_name)
-        .await
-    {
+    let validation_cache_key = operation.hash();
+    let validation_result = match serve_data.validate_cache.get(&validation_cache_key).await {
         Some(cached_validation) => cached_validation,
         None => {
             let validation_result = graphql_tools::validation::validate::validate(
@@ -538,10 +526,7 @@ async fn handle_execution_request(
             let validation_result_arc = Arc::new(validation_result);
             serve_data
                 .validate_cache
-                .insert(
-                    query_and_operation_name.clone(),
-                    validation_result_arc.clone(),
-                )
+                .insert(validation_cache_key, validation_result_arc.clone())
                 .await;
             validation_result_arc
         }
@@ -564,6 +549,8 @@ async fn handle_execution_request(
         );
     }
 
+    let (has_introspection, filtered_operation_for_plan) =
+        filter_introspection_fields_in_operation(operation);
     let plan_cache_key = filtered_operation_for_plan.hash();
 
     let query_plan = match serve_data.plan_cache.get(&plan_cache_key).await {
@@ -699,68 +686,74 @@ async fn graphql_get(
             .content_type("text/html")
             .body(GRAPHILQL_HTML)
     } else {
-        if params.query.is_none() {
-            return make_error_response(
-                json!({
-                    "errors": [
-                        {
-                            "message": "Query parameter is required",
-                            "extensions": {
-                                "code": "BAD_REQUEST",
+        let query = match &params.query {
+            Some(q) => q,
+            None => {
+                return make_error_response(
+                    json!({
+                        "errors": [
+                            {
+                                "message": "Query parameter is required",
+                                "extensions": {
+                                    "code": "BAD_REQUEST",
+                                }
                             }
-                        }
-                    ]
-                }),
-                &accept_header,
-                true,
-            );
-        }
-        let variables = params
-            .variables
-            .as_ref()
-            .map(|v| serde_json::from_str::<HashMap<String, Value>>(v));
-        let extensions = params
-            .extensions
-            .as_ref()
-            .map(|e| serde_json::from_str::<HashMap<String, Value>>(e));
-        if let Some(Err(err)) = variables {
-            return make_error_response(
-                json!({
-                    "errors": [
-                        {
-                            "message": err.to_string(),
-                            "extensions": {
-                                "code": "BAD_REQUEST",
-                            }
-                        }
-                    ]
-                }),
-                &accept_header,
-                true,
-            );
-        }
-        if let Some(Err(err)) = extensions {
-            return make_error_response(
-                json!({
-                    "errors": [
-                        {
-                            "message": err.to_string(),
-                            "extensions": {
-                                "code": "BAD_REQUEST",
-                            }
-                        }
-                    ]
-                }),
-                &accept_header,
-                true,
-            );
-        }
-        let query = params.query.clone().unwrap();
+                        ]
+                    }),
+                    &accept_header,
+                    true,
+                );
+            }
+        };
+        let variables = match &params.variables {
+            Some(v) => match serde_json::from_str::<HashMap<String, Value>>(v) {
+                Ok(vars) => Some(vars),
+                Err(err) => {
+                    return make_error_response(
+                        json!({
+                            "errors": [
+                                {
+                                    "message": err.to_string(),
+                                    "extensions": {
+                                        "code": "BAD_REQUEST",
+                                    }
+                                }
+                            ]
+                        }),
+                        &accept_header,
+                        true,
+                    );
+                }
+            },
+            None => None,
+        };
+        let extensions = match &params.extensions {
+            Some(e) => match serde_json::from_str::<HashMap<String, Value>>(e) {
+                Ok(exts) => Some(exts),
+                Err(err) => {
+                    return make_error_response(
+                        json!({
+                            "errors": [
+                                {
+                                    "message": err.to_string(),
+                                    "extensions": {
+                                        "code": "BAD_REQUEST",
+                                    }
+                                }
+                            ]
+                        }),
+                        &accept_header,
+                        true,
+                    );
+                }
+            },
+            None => None,
+        };
         let execution_request = ExecutionRequest {
-            query,
+            query: query.clone(),
             operation_name: params.operation_name.clone(),
-            variables: variables.and_then(|v| v.ok()),
-            extensions: extensions.and_then(|v| v.ok()),
+            variables,
+            extensions,
         };
         handle_execution_request(&req, &execution_request, &serve_data).await
     }
