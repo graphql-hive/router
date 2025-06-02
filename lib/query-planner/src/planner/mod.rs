@@ -89,7 +89,7 @@ impl Planner {
         operation_document: query::Document<'static, String>,
         operation_name: Option<&str>,
     ) -> Result<QueryPlan, PlannerError> {
-        let document = prepare_document(operation_document, operation_name);
+        let document = prepare_document(&operation_document, operation_name);
         let operation = document
             .executable_operation()
             .ok_or(PlannerError::MissingOperationToExecute)?;

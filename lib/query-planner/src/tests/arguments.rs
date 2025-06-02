@@ -25,7 +25,7 @@ fn requires_with_arguments() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(document, None);
+    let document = prepare_document(&document, None);
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
@@ -82,7 +82,7 @@ fn arguments_in_different_levels() -> Result<(), Box<dyn Error>> {
 
         }"#,
     );
-    let document = prepare_document(document, None);
+    let document = prepare_document(&document, None);
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 4);
@@ -190,7 +190,7 @@ fn arguments_and_variables() -> Result<(), Box<dyn Error>> {
 
         }"#,
     );
-    let document = prepare_document(document, None);
+    let document = prepare_document(&document, None);
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 4);
@@ -307,7 +307,7 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(document, None);
+    let document = prepare_document(&document, None);
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 10);
@@ -510,7 +510,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(document, None);
+    let document = prepare_document(&document, None);
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 10);

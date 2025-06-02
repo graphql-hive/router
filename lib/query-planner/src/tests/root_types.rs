@@ -36,7 +36,7 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(document, None);
+    let document = prepare_document(&document, None);
     let operation = document.executable_operation().unwrap();
     let mut best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 9);

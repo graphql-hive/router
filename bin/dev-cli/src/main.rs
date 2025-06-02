@@ -132,7 +132,7 @@ fn process_merged_tree(supergraph_path: &str, operation_path: &str) -> (Graph, Q
 fn get_operation(operation_path: &str) -> OperationDefinition {
     let document_text = std::fs::read_to_string(operation_path).expect("Unable to read input file");
     let parsed_document = parse_operation(&document_text);
-    let document = prepare_document(parsed_document, None);
+    let document = prepare_document(&parsed_document, None);
     let operation = document.executable_operation().unwrap();
 
     operation.clone()

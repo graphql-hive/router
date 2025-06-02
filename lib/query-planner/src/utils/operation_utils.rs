@@ -15,10 +15,10 @@ use crate::{
 type KnownFragments<'a> = HashMap<&'a String, &'a parser::FragmentDefinition<'static, String>>;
 
 pub fn prepare_document(
-    original_document: parser::Document<'static, String>,
+    document: &parser::Document<'static, String>,
     operation_name: Option<&str>,
 ) -> NormalizedDocument {
-    let known_fragments = original_document
+    let known_fragments = document
         .definitions
         .iter()
         .filter_map(|definition| {
@@ -32,7 +32,7 @@ pub fn prepare_document(
 
     let mut operations: Vec<OperationDefinition> = vec![];
 
-    for definition in &original_document.definitions {
+    for definition in &document.definitions {
         if let parser::Definition::Operation(operation) = definition {
             let operation_definition = match &operation {
                 parser::OperationDefinition::Query(query) => OperationDefinition {
@@ -240,7 +240,7 @@ mod tests {
         )
         .expect("to parse");
 
-        let transformed = prepare_document(parsed, None);
+        let transformed = prepare_document(&parsed, None);
         insta::assert_snapshot!(transformed.to_string(), @"query{test{...on TestType{field1 field2} ...on TestType{field10 field21} otherField nested{...on SomeType{field3 nested{other} field4}} nested2{...on SomeType{field3 nested{other} field4} sibling}}}");
     }
 }
