@@ -1,13 +1,26 @@
-directive @skip(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
-directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+"Directs the executor to skip this field or fragment when the `if` argument is true."
+directive @skip(
+  "Skipped when true."
+  if: Boolean!
+) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+"Directs the executor to include this field or fragment only when the `if` argument is true."
+directive @include(
+  "Included when true."
+  if: Boolean!
+) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
 directive @deprecated(reason: String = "No longer supported") on FIELD_DEFINITION | ENUM_VALUE | INPUT_FIELD_DEFINITION
 directive @specifiedBy(url: String!) on SCALAR
 directive @oneOf on OBJECT | INTERFACE | UNION
 
+"The `Boolean` scalar type represents `true` or `false` values."
 scalar Boolean
+"The `Float` scalar type represents signed double-precision fractional values as specified by [IEEE 754](https://en.wikipedia.org/wiki/IEEE_floating_point). Float can represent values between -(2^53 - 1) and 2^53 - 1, inclusive."
 scalar Float
+"The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1."
 scalar Int
+"The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID."
 scalar ID
+"The `String` scalar type represents textual data, represented as UTF-8 character sequences. The String type is most often used by GraphQL to represent free-form human-readable text."
 scalar String
 
 type Query {

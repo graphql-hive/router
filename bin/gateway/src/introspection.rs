@@ -13,7 +13,7 @@ use query_planner::ast::{
     selection_set::InlineFragmentSelection,
 };
 
-use crate::{builtin_types, value_from_ast::value_from_ast};
+use crate::value_from_ast::value_from_ast;
 
 fn introspection_output_type_ref_from_ast(
     ast: &graphql_parser::schema::Type<'static, String>,
@@ -124,20 +124,6 @@ pub fn introspection_query_from_ast(
     // Add known scalar types to the type AST map
     let mut type_ast_map: HashMap<String, graphql_parser::schema::Definition<'static, String>> =
         HashMap::new();
-    let specified_scalars = builtin_types::get_specified_scalars();
-    for (name, scalar_type) in specified_scalars {
-        type_ast_map.insert(
-            name.clone(),
-            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Scalar(scalar_type)),
-        );
-    }
-    let specified_directives = builtin_types::get_specified_directives();
-    for (name, directive) in specified_directives {
-        type_ast_map.insert(
-            name.clone(),
-            graphql_parser::schema::Definition::DirectiveDefinition(directive),
-        );
-    }
     let mut schema_definition: Option<&graphql_parser::schema::SchemaDefinition<'static, String>> =
         None;
     for definition in &ast.definitions {

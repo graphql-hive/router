@@ -20,7 +20,6 @@ use serde_json::Value::{self};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-mod builtin_types;
 mod introspection;
 mod value_from_ast;
 
