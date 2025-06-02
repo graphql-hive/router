@@ -55,15 +55,17 @@ async fn main() {
     let supergraph_state = SupergraphState::new(&parsed_schema);
     let planner =
         Planner::new_from_supergraph_state(&supergraph_state).expect("failed to create planner");
-    let schema_metadata = planner.consumer_schema().schema_metadata();
+    let schema_metadata = planner.consumer_schema.schema_metadata();
     let serve_data = ServeData {
         supergraph_source: supergraph_path.to_string(),
         planner,
         schema_metadata,
+        validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
         subgraph_endpoint_map: supergraph_state.subgraph_endpoint_map,
         http_client: reqwest::Client::new(),
         plan_cache: moka::future::Cache::new(1000),
         parse_cache: moka::future::Cache::new(1000),
+        validate_cache: moka::future::Cache::new(1000),
     };
     let serve_data_arc = Arc::new(serve_data);
     println!("Starting server on http://localhost:4000");
@@ -85,6 +87,7 @@ struct ServeData {
     supergraph_source: String,
     schema_metadata: SchemaMetadata,
     planner: Planner,
+    validation_plan: graphql_tools::validation::validate::ValidationPlan,
     subgraph_endpoint_map: HashMap<String, String>,
     http_client: reqwest::Client,
     plan_cache: moka::future::Cache<u64, Arc<query_planner::planner::plan_nodes::QueryPlan>>,
@@ -93,9 +96,12 @@ struct ServeData {
         Arc<(
             NormalizedDocument,                                 // normalized document
             bool,                                               // has_introspection
-            query_planner::ast::operation::OperationDefinition, // filtered operation
+            query_planner::ast::operation::OperationDefinition, // filtered operation,
+            graphql_parser::query::Document<'static, String>,   // original document
         )>,
     >,
+    validate_cache:
+        moka::future::Cache<String, Arc<Vec<graphql_tools::validation::utils::ValidationError>>>,
 }
 
 fn validate_runtime_value(
@@ -437,47 +443,19 @@ async fn landing(serve_data: web::Data<Arc<ServeData>>) -> impl Responder {
 }
 
 fn make_error_response(
-    message: &str,
+    value: Value,
     accept_header: &Option<String>,
     is_graphql_error: bool,
-    error_code: &str,
 ) -> HttpResponse {
     if !is_graphql_error {
-        HttpResponse::BadRequest().json(json!({
-            "errors": [
-                {
-                    "message": message,
-                    "extensions": {
-                        "code": error_code
-                    }
-                }
-            ]
-        }))
+        HttpResponse::BadRequest().json(value)
     } else if accept_header
         .as_ref()
         .is_some_and(|header| header.contains("application/json"))
     {
-        HttpResponse::Ok().json(json!({
-            "errors": [
-                {
-                    "message": message,
-                    "extensions": {
-                        "code": error_code
-                    }
-                }
-            ]
-        }))
+        HttpResponse::Ok().json(value)
     } else {
-        HttpResponse::BadRequest().json(json!({
-            "errors": [
-                {
-                    "message": message,
-                    "extensions": {
-                        "code": error_code
-                    }
-                }
-            ]
-        }))
+        HttpResponse::BadRequest().json(value)
     }
 }
 
@@ -504,13 +482,22 @@ async fn handle_execution_request(
                 Ok(doc) => doc,
                 Err(err) => {
                     return make_error_response(
-                        &err.to_string(),
+                        json!({
+                            "errors": [
+                                {
+                                    "message": err.to_string(),
+                                    "extensions": {
+                                        "code": "BAD_REQUEST",
+                                    }
+                                }
+                            ]
+                        }),
                         &accept_header,
                         true,
-                        "BAD_REQUEST",
                     );
                 }
             };
+            let doc_to_cache = doc.clone();
             let normalized_document = query_planner::utils::operation_utils::prepare_document(
                 doc,
                 execution_request.operation_name.as_deref(),
@@ -520,10 +507,18 @@ async fn handle_execution_request(
                 Some(operation) => operation,
                 None => {
                     return make_error_response(
-                        "Unable to detect operation AST",
+                        json!({
+                            "errors": [
+                                {
+                                    "message": "Unable to detect operation AST",
+                                    "extensions": {
+                                        "code": "BAD_REQUEST",
+                                    }
+                                }
+                            ]
+                        }),
                         &accept_header,
                         true,
-                        "BAD_REQUEST",
                     );
                 }
             };
@@ -533,6 +528,7 @@ async fn handle_execution_request(
                 normalized_document,
                 has_introspection,
                 filtered_operation_for_plan,
+                doc_to_cache,
             ));
             serve_data
                 .parse_cache
@@ -542,7 +538,7 @@ async fn handle_execution_request(
         }
     };
 
-    let (normalized_document, has_introspection, filtered_operation_for_plan) =
+    let (normalized_document, has_introspection, filtered_operation_for_plan, original_document) =
         parse_cache_res.as_ref();
 
     if req.method() == Method::GET && filtered_operation_for_plan.operation_kind.is_some() {
@@ -557,6 +553,48 @@ async fn handle_execution_request(
                     ]
                 }));
         }
+    }
+
+    let consumer_schema_ast = &serve_data.planner.consumer_schema.document;
+    let validation_result = match serve_data
+        .validate_cache
+        .get(&query_and_operation_name)
+        .await
+    {
+        Some(cached_validation) => cached_validation,
+        None => {
+            let validation_result = graphql_tools::validation::validate::validate(
+                consumer_schema_ast,
+                original_document,
+                &serve_data.validation_plan,
+            );
+            let validation_result_arc = Arc::new(validation_result);
+            serve_data
+                .validate_cache
+                .insert(
+                    query_and_operation_name.clone(),
+                    validation_result_arc.clone(),
+                )
+                .await;
+            validation_result_arc
+        }
+    };
+
+    if !validation_result.is_empty() {
+        return make_error_response(
+            json!({
+                "errors": validation_result.iter().map(|err| {
+                    json!({
+                        "message": err.message,
+                        "extensions": {
+                            "code": err.error_code.to_string(),
+                        },
+                    })
+                }).collect::<Vec<_>>(),
+            }),
+            &accept_header,
+            true,
+        );
     }
 
     let plan_cache_key = filtered_operation_for_plan.hash();
@@ -578,10 +616,18 @@ async fn handle_execution_request(
                         Ok(plan) => plan,
                         Err(err) => {
                             return make_error_response(
-                                &err.to_string(),
+                                json!({
+                                    "errors": [
+                                        {
+                                            "message": err.to_string(),
+                                            "extensions": {
+                                                "code": "QUERY_PLAN_BUILD_FAILED",
+                                            }
+                                        }
+                                    ]
+                                }),
                                 &accept_header,
                                 true,
-                                "QUERY_PLANNER_ERROR",
                             );
                         }
                     }
@@ -602,7 +648,20 @@ async fn handle_execution_request(
     ) {
         Ok(values) => values,
         Err(err) => {
-            return make_error_response(&err, &accept_header, true, "BAD_REQUEST");
+            return make_error_response(
+                json!({
+                    "errors": [
+                        {
+                            "message": err,
+                            "extensions": {
+                                "code": "BAD_REQUEST",
+                            }
+                        }
+                    ]
+                }),
+                &accept_header,
+                true,
+            );
         }
     };
     let result = execute_query_plan(
@@ -675,10 +734,18 @@ async fn graphiql(
     } else {
         if params.query.is_none() {
             return make_error_response(
-                "Missing query parameter",
+                json!({
+                    "errors": [
+                        {
+                            "message": "Query parameter is required",
+                            "extensions": {
+                                "code": "BAD_REQUEST",
+                            }
+                        }
+                    ]
+                }),
                 &accept_header,
                 true,
-                "BAD_REQUEST",
             );
         }
         let variables = params
@@ -690,10 +757,36 @@ async fn graphiql(
             .as_ref()
             .map(|e| serde_json::from_str::<HashMap<String, Value>>(e));
         if let Some(Err(err)) = variables {
-            return make_error_response(&err.to_string(), &accept_header, true, "BAD_REQUEST");
+            return make_error_response(
+                json!({
+                    "errors": [
+                        {
+                            "message": err.to_string(),
+                            "extensions": {
+                                "code": "BAD_REQUEST",
+                            }
+                        }
+                    ]
+                }),
+                &accept_header,
+                true,
+            );
         }
         if let Some(Err(err)) = extensions {
-            return make_error_response(&err.to_string(), &accept_header, true, "BAD_REQUEST");
+            return make_error_response(
+                json!({
+                    "errors": [
+                        {
+                            "message": err.to_string(),
+                            "extensions": {
+                                "code": "BAD_REQUEST",
+                            }
+                        }
+                    ]
+                }),
+                &accept_header,
+                true,
+            );
         }
         let query = params.query.clone().unwrap();
         let execution_request = ExecutionRequest {

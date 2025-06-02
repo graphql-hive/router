@@ -5,6 +5,7 @@ use graphql_parser::schema::*;
 use prune_inacessible::PruneInaccessible;
 use strip_schema_internals::StripSchemaInternals;
 
+#[derive(Debug, Clone)]
 pub struct ConsumerSchema {
     pub document: Document<'static, String>,
 }

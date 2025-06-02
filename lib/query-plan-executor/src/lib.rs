@@ -971,8 +971,7 @@ impl HTTPSubgraphExecutor<'_> {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug)]
 pub struct SchemaMetadata {
     pub possible_types: HashMap<String, Vec<String>>,
     pub enum_values: HashMap<String, Vec<String>>,
