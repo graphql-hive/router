@@ -1069,9 +1069,6 @@ fn project_selection_set(
                         }
                     }
                     SelectionItem::InlineFragment(inline_fragment) => {
-                        // if should_skip_per_variables(&inline_fragment.directives, variable_values) {
-                        //     continue;
-                        // }
                         if entity_satisfies_type_condition(
                             &schema_metadata.possible_types,
                             type_name,
@@ -1182,7 +1179,10 @@ pub async fn execute_query_plan(
     let mut result = query_plan.execute(execution_context).await;
     if result.data.as_ref().is_some() || has_introspection {
         let (data, errors) = project_data_by_operation(
-            result.data.take().unwrap_or(Value::Null),
+            result
+                .data
+                .take()
+                .unwrap_or(Value::Object(serde_json::Map::new())),
             normalized_document,
             schema_metadata,
             variable_values,

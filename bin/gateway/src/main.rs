@@ -498,7 +498,7 @@ async fn handle_execution_request(
     );
 
     let parse_cache_res = match serve_data.parse_cache.get(&query_and_operation_name).await {
-        Some(normalized_document) => normalized_document,
+        Some(cached_res) => cached_res,
         None => {
             let doc = match safe_parse_operation(&execution_request.query) {
                 Ok(doc) => doc,
@@ -536,7 +536,7 @@ async fn handle_execution_request(
             ));
             serve_data
                 .parse_cache
-                .insert(execution_request.query.clone(), data_to_cache.clone())
+                .insert(query_and_operation_name.clone(), data_to_cache.clone())
                 .await;
             data_to_cache
         }
