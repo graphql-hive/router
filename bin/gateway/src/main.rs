@@ -636,7 +636,7 @@ async fn handle_execution_request(
         &serve_data.subgraph_endpoint_map,
         &variable_values,
         &serve_data.schema_metadata,
-        &normalized_document,
+        operation,
         has_introspection,
         &serve_data.http_client,
     )

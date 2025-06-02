@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use futures::future::join_all;
 use query_planner::{
     ast::{
-        document::NormalizedDocument, selection_item::SelectionItem, selection_set::SelectionSet,
+        operation::OperationDefinition, selection_item::SelectionItem, selection_set::SelectionSet,
     },
     planner::plan_nodes::{
         ConditionNode, FetchNode, FlattenNode, InputRewrite, KeyRenamer, OutputRewrite,
@@ -1136,11 +1136,10 @@ fn project_selection_set(
 
 fn project_data_by_operation(
     data: Value,
-    normalized_document: &NormalizedDocument,
+    operation: &OperationDefinition,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
 ) -> (Value, Vec<GraphQLError>) {
-    let operation = normalized_document.executable_operation().unwrap();
     let root_type_name = match operation.operation_kind {
         Some(OperationKind::Query) => "Query",
         Some(OperationKind::Mutation) => "Mutation",
@@ -1162,7 +1161,7 @@ pub async fn execute_query_plan(
     subgraph_endpoint_map: &HashMap<String, String>,
     variable_values: &Option<HashMap<String, Value>>,
     schema_metadata: &SchemaMetadata,
-    normalized_document: &NormalizedDocument,
+    operation: &OperationDefinition,
     has_introspection: bool,
     http_client: &reqwest::Client,
 ) -> ExecutionResult {
@@ -1179,7 +1178,7 @@ pub async fn execute_query_plan(
     if result.data.as_ref().is_some() || has_introspection {
         let (data, errors) = project_data_by_operation(
             result.data.unwrap_or(Value::Object(serde_json::Map::new())),
-            normalized_document,
+            operation,
             schema_metadata,
             variable_values,
         );
