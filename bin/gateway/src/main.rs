@@ -91,17 +91,16 @@ struct ServeData {
     subgraph_endpoint_map: HashMap<String, String>,
     http_client: reqwest::Client,
     plan_cache: moka::future::Cache<u64, Arc<query_planner::planner::plan_nodes::QueryPlan>>,
-    parse_cache: moka::future::Cache<
-        String,
-        Arc<(
-            NormalizedDocument,                                 // normalized document
-            bool,                                               // has_introspection
-            query_planner::ast::operation::OperationDefinition, // filtered operation,
-            graphql_parser::query::Document<'static, String>,   // original document
-        )>,
-    >,
+    parse_cache: moka::future::Cache<String, Arc<ParseCacheEntry>>,
     validate_cache:
         moka::future::Cache<String, Arc<Vec<graphql_tools::validation::utils::ValidationError>>>,
+}
+
+struct ParseCacheEntry {
+    normalized_document: NormalizedDocument,
+    has_introspection: bool,
+    filtered_operation_for_plan: query_planner::ast::operation::OperationDefinition,
+    original_document: graphql_parser::query::Document<'static, String>,
 }
 
 fn validate_runtime_value(
@@ -475,7 +474,7 @@ async fn handle_execution_request(
         execution_request.operation_name.clone().unwrap_or_default()
     );
 
-    let parse_cache_res = match serve_data.parse_cache.get(&query_and_operation_name).await {
+    let parse_cache_entry = match serve_data.parse_cache.get(&query_and_operation_name).await {
         Some(cached_res) => cached_res,
         None => {
             let doc = match safe_parse_operation(&execution_request.query) {
@@ -524,12 +523,12 @@ async fn handle_execution_request(
             };
             let (has_introspection, filtered_operation_for_plan) =
                 filter_introspection_fields_in_operation(operation);
-            let data_to_cache = Arc::new((
+            let data_to_cache = Arc::new(ParseCacheEntry {
                 normalized_document,
                 has_introspection,
                 filtered_operation_for_plan,
-                doc_to_cache,
-            ));
+                original_document: doc_to_cache,
+            });
             serve_data
                 .parse_cache
                 .insert(query_and_operation_name.clone(), data_to_cache.clone())
@@ -538,11 +537,15 @@ async fn handle_execution_request(
         }
     };
 
-    let (normalized_document, has_introspection, filtered_operation_for_plan, original_document) =
-        parse_cache_res.as_ref();
-
-    if req.method() == Method::GET && filtered_operation_for_plan.operation_kind.is_some() {
-        if let Some(OperationKind::Mutation) = filtered_operation_for_plan.operation_kind {
+    if req.method() == Method::GET
+        && parse_cache_entry
+            .filtered_operation_for_plan
+            .operation_kind
+            .is_some()
+    {
+        if let Some(OperationKind::Mutation) =
+            parse_cache_entry.filtered_operation_for_plan.operation_kind
+        {
             return HttpResponse::MethodNotAllowed()
                 .append_header(("allow", "POST"))
                 .json(json!({
@@ -565,7 +568,7 @@ async fn handle_execution_request(
         None => {
             let validation_result = graphql_tools::validation::validate::validate(
                 consumer_schema_ast,
-                original_document,
+                &parse_cache_entry.original_document,
                 &serve_data.validation_plan,
             );
             let validation_result_arc = Arc::new(validation_result);
@@ -597,41 +600,45 @@ async fn handle_execution_request(
         );
     }
 
-    let plan_cache_key = filtered_operation_for_plan.hash();
+    let plan_cache_key = parse_cache_entry.filtered_operation_for_plan.hash();
 
     let query_plan = match serve_data.plan_cache.get(&plan_cache_key).await {
         Some(plan) => plan,
         None => {
-            let query_plan =
-                if filtered_operation_for_plan.selection_set.is_empty() && *has_introspection {
-                    query_planner::planner::plan_nodes::QueryPlan {
-                        kind: "QueryPlan".to_string(),
-                        node: None,
-                    }
-                } else {
-                    match serve_data
-                        .planner
-                        .plan_from_normalized_operation(filtered_operation_for_plan)
-                    {
-                        Ok(plan) => plan,
-                        Err(err) => {
-                            return make_error_response(
-                                json!({
-                                    "errors": [
-                                        {
-                                            "message": err.to_string(),
-                                            "extensions": {
-                                                "code": "QUERY_PLAN_BUILD_FAILED",
-                                            }
+            let query_plan = if parse_cache_entry
+                .filtered_operation_for_plan
+                .selection_set
+                .is_empty()
+                && parse_cache_entry.has_introspection
+            {
+                query_planner::planner::plan_nodes::QueryPlan {
+                    kind: "QueryPlan".to_string(),
+                    node: None,
+                }
+            } else {
+                match serve_data
+                    .planner
+                    .plan_from_normalized_operation(&parse_cache_entry.filtered_operation_for_plan)
+                {
+                    Ok(plan) => plan,
+                    Err(err) => {
+                        return make_error_response(
+                            json!({
+                                "errors": [
+                                    {
+                                        "message": err.to_string(),
+                                        "extensions": {
+                                            "code": "QUERY_PLAN_BUILD_FAILED",
                                         }
-                                    ]
-                                }),
-                                &accept_header,
-                                true,
-                            );
-                        }
+                                    }
+                                ]
+                            }),
+                            &accept_header,
+                            true,
+                        );
                     }
-                };
+                }
+            };
             let query_plan_arc = Arc::new(query_plan);
             serve_data
                 .plan_cache
@@ -642,7 +649,7 @@ async fn handle_execution_request(
     };
 
     let variable_values = match collect_variables(
-        filtered_operation_for_plan,
+        &parse_cache_entry.filtered_operation_for_plan,
         &execution_request.variables,
         &serve_data.schema_metadata,
     ) {
@@ -669,8 +676,8 @@ async fn handle_execution_request(
         &serve_data.subgraph_endpoint_map,
         &variable_values,
         &serve_data.schema_metadata,
-        normalized_document,
-        *has_introspection,
+        &parse_cache_entry.normalized_document,
+        parse_cache_entry.has_introspection,
         &serve_data.http_client,
     )
     .await;
