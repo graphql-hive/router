@@ -619,6 +619,20 @@ impl SupergraphDefinition<'_> {
             }
         }
     }
+
+    pub fn join_union_members(&self) -> &Vec<JoinUnionMemberDirective> {
+        match self {
+            SupergraphDefinition::Union(union_type) => &union_type.union_members,
+            SupergraphDefinition::Object(_)
+            | SupergraphDefinition::Interface(_)
+            | SupergraphDefinition::Enum(_)
+            | SupergraphDefinition::Scalar(_)
+            | SupergraphDefinition::InputObject(_) => {
+                static EMPTY: Vec<JoinUnionMemberDirective> = Vec::new();
+                &EMPTY
+            }
+        }
+    }
 }
 
 #[derive(Debug)]

@@ -108,7 +108,7 @@ impl OperationPath {
         &self,
         edge_ref: &EdgeReference<'_>,
         requirement: Option<QueryTreeNode>,
-        field: &FieldSelection,
+        field: Option<&FieldSelection>,
     ) -> OperationPath {
         let prev_cost = self.cost;
         let edge_cost = edge_ref.weight().cost();
@@ -122,9 +122,9 @@ impl OperationPath {
             edge_index: edge_ref.id(),
             cumulative_cost: new_cost,
             requirement_tree: requirement,
-            selection_attributes: Some(SelectionAttributes {
-                alias: field.alias.clone(),
-                arguments: field.arguments.clone(),
+            selection_attributes: field.map(|f| SelectionAttributes {
+                alias: f.alias.clone(),
+                arguments: f.arguments.clone(),
             }),
         };
 

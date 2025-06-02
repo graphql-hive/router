@@ -5,7 +5,7 @@ pub(crate) mod node;
 mod tests;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::{Debug, Display},
 };
 
@@ -104,6 +104,7 @@ impl Graph {
         self.link_root_edges(state)?;
         self.build_field_edges(state)?;
         self.build_interface_implementation_edges(state)?;
+        self.build_union_member_edges(state)?;
         self.build_entity_reference_edges(state)?;
         self.build_viewed_field_edges(state)?;
 
@@ -273,6 +274,63 @@ impl Graph {
         Ok(())
     }
 
+    #[instrument(skip(self, state))]
+    fn build_union_member_edges(&mut self, state: &SupergraphState<'_>) -> Result<(), GraphError> {
+        for (def_name, definition) in state
+            .definitions
+            .iter()
+            .filter(|(_, d)| matches!(d, SupergraphDefinition::Union(_)))
+        {
+            // We need to add edges for types that are resolvable in all subgraphs.
+            // Basically an intersection, not a union.
+
+            let mut member_to_graph_ids_map: HashMap<&String, HashSet<&String>> = HashMap::new();
+            let mut subgraphs_resolving_union = HashSet::new();
+
+            for join_member in definition.join_union_members() {
+                member_to_graph_ids_map
+                    .entry(&join_member.member)
+                    .or_default()
+                    .insert(&join_member.graph);
+                subgraphs_resolving_union.insert(&join_member.graph);
+            }
+
+            // let mut subgraph_count: usize = 0;
+            // for join_member in definition.join_union_members() {
+            //   counts.ins
+            // }
+
+            for join_member in definition.join_union_members() {
+                if member_to_graph_ids_map
+                    .get(&join_member.member)
+                    .expect("Item should exists as we visited it before")
+                    .len()
+                    != subgraphs_resolving_union.len()
+                {
+                    continue;
+                }
+
+                let tail = self.upsert_node(Node::new_node(
+                    &join_member.member,
+                    state.resolve_graph_id(&join_member.graph)?,
+                ));
+                let head = self.upsert_node(Node::new_node(
+                    def_name,
+                    state.resolve_graph_id(&join_member.graph)?,
+                ));
+
+                info!(
+                    "Building union member edge from '{}/{}' to '{}/{}'",
+                    def_name, join_member.graph, join_member.member, join_member.graph
+                );
+
+                self.upsert_edge(head, tail, Edge::AbstractMove(join_member.member.clone()));
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn root_query_node(&self) -> &Node {
         &self.graph[self.query_root]
     }
@@ -359,6 +417,41 @@ impl Graph {
         for (def_name, definition) in state.definitions.iter() {
             for graph_id in definition.subgraphs().iter() {
                 if definition.is_defined_in_subgraph(graph_id) {
+                    let has_resolvable_typename = matches!(
+                        definition,
+                        SupergraphDefinition::Object(_)
+                            | SupergraphDefinition::Union(_)
+                            | SupergraphDefinition::Interface(_)
+                    );
+                    if has_resolvable_typename {
+                        let field_name = "__typename".to_string();
+                        info!(
+                            "[x] Creating owned field move edge '{}.__typename/{}' (type: {})",
+                            def_name, "__typename", graph_id
+                        );
+                        let head = self.upsert_node(Node::new_node(
+                            def_name,
+                            state.resolve_graph_id(graph_id)?,
+                        ));
+                        let tail = self.upsert_node(Node::new_node(
+                            "String",
+                            state.resolve_graph_id(graph_id)?,
+                        ));
+
+                        self.upsert_edge(
+                            head,
+                            tail,
+                            Edge::create_field_move(
+                                field_name,
+                                def_name.clone(),
+                                true,
+                                false,
+                                None,
+                                None,
+                            ),
+                        );
+                    }
+
                     for (field_name, field_definition) in definition.fields().iter() {
                         let (is_available, maybe_join_field) =
                             FederationRules::check_field_subgraph_availability(

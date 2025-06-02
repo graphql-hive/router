@@ -196,8 +196,22 @@ fn find_selection_set_by_path_mut(
             continue;
         }
 
-        let next_selection_set_option =
-            current_selection_set
+        let next_selection_set_option = match path_element.starts_with("(... on ") {
+            true => current_selection_set
+                .items
+                .iter_mut()
+                .find_map(|item| match item {
+                    SelectionItem::InlineFragment(f) => {
+                        // of course it's stupid :)
+                        if &format!("(... on {})", f.type_condition) == path_element {
+                            Some(&mut f.selections)
+                        } else {
+                            None
+                        }
+                    }
+                    SelectionItem::Field(_) => None,
+                }),
+            false => current_selection_set
                 .items
                 .iter_mut()
                 .find_map(|item| match item {
@@ -211,7 +225,8 @@ fn find_selection_set_by_path_mut(
                         }
                     }
                     SelectionItem::InlineFragment(..) => None,
-                });
+                }),
+        };
 
         match next_selection_set_option {
             Some(next_set) => {

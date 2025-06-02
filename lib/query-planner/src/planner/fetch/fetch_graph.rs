@@ -1,6 +1,6 @@
 use crate::ast::merge_path::MergePath;
 use crate::ast::selection_item::SelectionItem;
-use crate::ast::selection_set::{FieldSelection, SelectionSet};
+use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
 use crate::ast::type_aware_selection::TypeAwareSelection;
 use crate::graph::edge::{Edge, FieldMove};
 use crate::graph::node::Node;
@@ -1213,6 +1213,81 @@ fn process_subgraph_entrypoint_edge(
 #[instrument(skip_all, fields(
   parent_fetch_step_index = parent_fetch_step_index.map(|f| f.index()),
   requiring_fetch_step_index = requiring_fetch_step_index.map(|f| f.index()),
+  type_name = target_type_name,
+  response_path = response_path.to_string(),
+  fetch_path = fetch_path.to_string()
+))]
+fn process_abstract_edge(
+    graph: &Graph,
+    fetch_graph: &mut FetchGraph,
+    query_node: &QueryTreeNode,
+    parent_fetch_step_index: Option<NodeIndex>,
+    requiring_fetch_step_index: Option<NodeIndex>,
+    response_path: &MergePath,
+    fetch_path: &MergePath,
+    target_type_name: &String,
+    edge_index: &EdgeIndex,
+) -> Result<Vec<NodeIndex>, FetchGraphError> {
+    let parent_fetch_step_index = parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?;
+
+    // TODO: handle requirments (I guess?)
+
+    let head_index = graph.get_edge_head(edge_index)?;
+    let head = graph.node(head_index)?;
+    let head_type_name = match head {
+        Node::SubgraphType(t) => &t.name,
+        _ => panic!("Expected a subgraph type"),
+    };
+
+    let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
+    debug!(
+        "adding output field '__typename' and starting an inline fragment for type '{}' to fetch step [{}]",
+        parent_fetch_step_index.index(),
+        target_type_name,
+    );
+    parent_fetch_step.output.add_at_path(
+        &TypeAwareSelection {
+            selection_set: SelectionSet {
+                items: vec![
+                    SelectionItem::Field(FieldSelection {
+                        name: "__typename".to_string(),
+                        alias: None,
+                        selections: SelectionSet::default(),
+                        arguments: None,
+                    }),
+                    SelectionItem::InlineFragment(InlineFragmentSelection {
+                        type_condition: target_type_name.clone(),
+                        selections: SelectionSet::default(),
+                    }),
+                ],
+            },
+            type_name: head_type_name.clone(),
+        },
+        fetch_path.clone(),
+        false,
+    );
+
+    // TODO: either implement something different or turn MergePath into a vector of enums
+    let segment = format!("(... on {})", target_type_name);
+    let child_response_path = response_path.push(segment.clone());
+    let child_fetch_path = fetch_path.push(segment);
+
+    process_children_for_fetch_steps(
+        graph,
+        fetch_graph,
+        query_node,
+        Some(parent_fetch_step_index),
+        &child_response_path,
+        &child_fetch_path,
+        requiring_fetch_step_index,
+    )
+}
+
+// TODO: simplfy args
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip_all, fields(
+  parent_fetch_step_index = parent_fetch_step_index.map(|f| f.index()),
+  requiring_fetch_step_index = requiring_fetch_step_index.map(|f| f.index()),
   type_name = field_move.type_name,
   field = field_move.name,
   alias = query_node.selection_attributes.as_ref().and_then(|v| v.alias.as_ref()),
@@ -1624,9 +1699,17 @@ fn process_query_node(
                     field,
                 ),
             },
-            Edge::AbstractMove(_) => {
-                panic!("AbstractMove is not supported yet")
-            }
+            Edge::AbstractMove(type_name) => process_abstract_edge(
+                graph,
+                fetch_graph,
+                query_node,
+                parent_fetch_step_index,
+                requiring_fetch_step_index,
+                response_path,
+                fetch_path,
+                type_name,
+                &edge_index,
+            ),
         }
     } else {
         process_noop_edge(
