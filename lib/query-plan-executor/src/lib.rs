@@ -1179,10 +1179,7 @@ pub async fn execute_query_plan(
     let mut result = query_plan.execute(execution_context).await;
     if result.data.as_ref().is_some() || has_introspection {
         let (data, errors) = project_data_by_operation(
-            result
-                .data
-                .take()
-                .unwrap_or(Value::Object(serde_json::Map::new())),
+            result.data.unwrap_or(Value::Object(serde_json::Map::new())),
             normalized_document,
             schema_metadata,
             variable_values,
