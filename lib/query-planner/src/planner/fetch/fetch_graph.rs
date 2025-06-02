@@ -1,4 +1,4 @@
-use crate::ast::merge_path::MergePath;
+use crate::ast::merge_path::{MergePath, Segment};
 use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
 use crate::ast::type_aware_selection::TypeAwareSelection;
@@ -600,8 +600,12 @@ impl FetchStepData {
         // we should prevent merging steps with more than 1 parent
         // we should merge only if the parent of both is identical
 
-        let self_path = self.response_path.insert_front("*".to_string());
-        let other_path = other.response_path.insert_front("*".to_string());
+        let self_path = self
+            .response_path
+            .insert_front(Segment::Field("*".to_string()));
+        let other_path = other
+            .response_path
+            .insert_front(Segment::Field("*".to_string()));
         // If both are entities, their response_paths should match,
         // as we can't merge entity calls resolving different entities
         if matches!(self.kind, FetchStepKind::Entity) && self.kind == other.kind {
@@ -1267,10 +1271,8 @@ fn process_abstract_edge(
         false,
     );
 
-    // TODO: either implement something different or turn MergePath into a vector of enums
-    let segment = format!("(... on {})", target_type_name);
-    let child_response_path = response_path.push(segment.clone());
-    let child_fetch_path = fetch_path.push(segment);
+    let child_response_path = response_path.push(Segment::Cast(target_type_name.clone()));
+    let child_fetch_path = fetch_path.push(Segment::Cast(target_type_name.clone()));
 
     process_children_for_fetch_steps(
         graph,
@@ -1340,13 +1342,13 @@ fn process_plain_field_edge(
         false,
     );
 
-    let response_path_name = query_node.selection_alias().unwrap_or(&field_move.name);
-    let mut child_response_path = response_path.push(response_path_name.to_string());
-    let mut child_fetch_path = fetch_path.push(response_path_name.to_string());
+    let child_segment = query_node.selection_alias().unwrap_or(&field_move.name);
+    let mut child_response_path = response_path.push(Segment::Field(child_segment.to_string()));
+    let mut child_fetch_path = fetch_path.push(Segment::Field(child_segment.to_string()));
 
     if field_move.is_list {
-        child_response_path = child_response_path.push("@".to_string());
-        child_fetch_path = child_fetch_path.push("@".to_string());
+        child_response_path = child_response_path.push(Segment::List);
+        child_fetch_path = child_fetch_path.push(Segment::List);
     }
 
     process_children_for_fetch_steps(
@@ -1503,12 +1505,12 @@ fn process_requires_field_edge(
 
     fetch_graph.connect(real_parent_fetch_step_index, step_for_requirements_index);
 
-    let mut child_response_path = response_path.push(field_move.name.clone());
-    let mut child_fetch_path = MergePath::default().push(field_move.name.clone());
+    let mut child_response_path = response_path.push(Segment::Field(field_move.name.clone()));
+    let mut child_fetch_path = MergePath::default().push(Segment::Field(field_move.name.clone()));
 
     if field_move.is_list {
-        child_response_path = child_response_path.push("@".to_string());
-        child_fetch_path = child_fetch_path.push("@".to_string());
+        child_response_path = child_response_path.push(Segment::List);
+        child_fetch_path = child_fetch_path.push(Segment::List);
     }
 
     debug!("Processing requirements");

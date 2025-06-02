@@ -156,7 +156,11 @@ impl PlanNode {
 
 impl From<MergePath> for Vec<String> {
     fn from(path: MergePath) -> Self {
-        path.inner.iter().cloned().collect()
+        path.inner
+            .iter()
+            .cloned()
+            .map(|segment| format!("{}", segment))
+            .collect()
     }
 }
 
