@@ -86,6 +86,45 @@ fn transform_selection_set(
     for selection in &selection_set.items {
         match selection {
             parser::Selection::Field(field) => {
+                let mut skip_if: Option<String> = None;
+                let mut include_if: Option<String> = None;
+                for directive in &field.directives {
+                    match directive.name.as_str() {
+                        "skip" => {
+                            let if_arg = directive
+                                .arguments
+                                .iter()
+                                .find(|(name, _value)| name == "if")
+                                .map(|(_name, value)| value);
+                            match if_arg {
+                                Some(parser::Value::Boolean(true)) => {
+                                    continue;
+                                }
+                                Some(parser::Value::Variable(var_name)) => {
+                                    skip_if = Some(var_name.to_string());
+                                }
+                                _ => {}
+                            }
+                        }
+                        "include" => {
+                            let if_arg = directive
+                                .arguments
+                                .iter()
+                                .find(|(name, _value)| name == "if")
+                                .map(|(_name, value)| value);
+                            match if_arg {
+                                Some(parser::Value::Boolean(false)) => {
+                                    continue;
+                                }
+                                Some(parser::Value::Variable(var_name)) => {
+                                    include_if = Some(var_name.to_string());
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 transformed_selection_set
                     .items
                     .push(SelectionItem::Field(FieldSelection {
@@ -97,6 +136,8 @@ fn transform_selection_set(
                             Some((&field.arguments).into())
                         },
                         selections: transform_selection_set(&field.selection_set, known_fragments),
+                        skip_if,
+                        include_if,
                     }));
             }
             parser::Selection::InlineFragment(inline_fragment) => {

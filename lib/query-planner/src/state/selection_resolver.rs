@@ -86,6 +86,8 @@ impl SelectionResolver {
             selections: selections.unwrap_or_default(),
             alias: None,
             arguments: None,
+            skip_if: None,
+            include_if: None,
         }))
     }
 

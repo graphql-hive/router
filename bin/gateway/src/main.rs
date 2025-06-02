@@ -14,6 +14,7 @@ use query_plan_executor::ExecutionRequest;
 use query_plan_executor::SchemaMetadata;
 use query_plan_executor::{execute_query_plan, ExecutionResult};
 use query_planner::ast::document::NormalizedDocument;
+use query_planner::ast::operation::TypeNode;
 use query_planner::state::supergraph_state::{OperationKind, SupergraphState};
 use query_planner::utils::parsing::parse_schema;
 use query_planner::utils::parsing::safe_parse_operation;
@@ -63,7 +64,6 @@ async fn main() {
         http_client: reqwest::Client::new(),
         plan_cache: moka::future::Cache::new(1000),
         parse_cache: moka::future::Cache::new(1000),
-        filtered_operation_cache: moka::future::Cache::new(1000),
     };
     let serve_data_arc = Arc::new(serve_data);
     println!("Starting server on http://localhost:4000");
@@ -88,16 +88,149 @@ struct ServeData {
     subgraph_endpoint_map: HashMap<String, String>,
     http_client: reqwest::Client,
     plan_cache: moka::future::Cache<u64, Arc<query_planner::planner::plan_nodes::QueryPlan>>,
-    parse_cache: moka::future::Cache<String, Arc<NormalizedDocument>>,
-    filtered_operation_cache: moka::future::Cache<
+    parse_cache: moka::future::Cache<
         String,
-        Arc<(bool, query_planner::ast::operation::OperationDefinition)>,
+        Arc<(
+            NormalizedDocument,                                 // normalized document
+            bool,                                               // has_introspection
+            query_planner::ast::operation::OperationDefinition, // filtered operation
+        )>,
     >,
+}
+
+fn validate_runtime_value(
+    value: &Value,
+    type_node: &TypeNode,
+    schema_metadata: &SchemaMetadata,
+) -> Result<(), String> {
+    match type_node {
+        TypeNode::Named(name) => {
+            if let Some(enum_values) = schema_metadata.enum_values.get(name) {
+                if let Value::String(ref s) = value {
+                    if !enum_values.contains(&s.to_string()) {
+                        return Err(format!(
+                            "Value '{}' is not a valid enum value for type '{}'",
+                            s, name
+                        ));
+                    }
+                } else {
+                    return Err(format!(
+                        "Expected a string for enum type '{}', got {:?}",
+                        name, value
+                    ));
+                }
+            } else if let Some(fields) = schema_metadata.type_fields.get(name) {
+                if let Value::Object(obj) = value {
+                    for (field_name, field_type) in fields {
+                        if let Some(field_value) = obj.get(field_name) {
+                            validate_runtime_value(
+                                field_value,
+                                &TypeNode::Named(field_type.to_string()),
+                                schema_metadata,
+                            )?;
+                        } else {
+                            return Err(format!(
+                                "Missing field '{}' for type '{}'",
+                                field_name, name
+                            ));
+                        }
+                    }
+                } else {
+                    return Err(format!(
+                        "Expected an object for type '{}', got {:?}",
+                        name, value
+                    ));
+                }
+            } else {
+                return match name.as_str() {
+                    "String" => {
+                        if let Value::String(_) = value {
+                            Ok(())
+                        } else {
+                            Err(format!(
+                                "Expected a string for type '{}', got {:?}",
+                                name, value
+                            ))
+                        }
+                    }
+                    "Int" => {
+                        if let Value::Number(num) = value {
+                            if num.is_i64() {
+                                Ok(())
+                            } else {
+                                Err(format!(
+                                    "Expected an integer for type '{}', got {:?}",
+                                    name, value
+                                ))
+                            }
+                        } else {
+                            Err(format!(
+                                "Expected a number for type '{}', got {:?}",
+                                name, value
+                            ))
+                        }
+                    }
+                    "Float" => {
+                        if let Value::Number(num) = value {
+                            if num.is_f64() || num.is_i64() {
+                                Ok(())
+                            } else {
+                                Err(format!(
+                                    "Expected a float for type '{}', got {:?}",
+                                    name, value
+                                ))
+                            }
+                        } else {
+                            Err(format!(
+                                "Expected a number for type '{}', got {:?}",
+                                name, value
+                            ))
+                        }
+                    }
+                    "Boolean" => {
+                        if let Value::Bool(_) = value {
+                            Ok(())
+                        } else {
+                            Err(format!(
+                                "Expected a boolean for type '{}', got {:?}",
+                                name, value
+                            ))
+                        }
+                    }
+                    "ID" => {
+                        if let Value::String(_) = value {
+                            Ok(())
+                        } else {
+                            Err(format!("Expected a string for type 'ID', got {:?}", value))
+                        }
+                    }
+                    _ => Ok(()),
+                };
+            }
+        }
+        TypeNode::NonNull(inner_type) => {
+            if value.is_null() {
+                return Err("Value cannot be null for non-nullable type".to_string());
+            }
+            validate_runtime_value(value, inner_type, schema_metadata)?;
+        }
+        TypeNode::List(inner_type) => {
+            if let Value::Array(arr) = value {
+                for item in arr {
+                    validate_runtime_value(item, inner_type, schema_metadata)?;
+                }
+            } else {
+                return Err(format!("Expected an array for list type, got {:?}", value));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn collect_variables(
     operation: &query_planner::ast::operation::OperationDefinition,
     variables: &Option<HashMap<String, Value>>,
+    schema_metadata: &SchemaMetadata,
 ) -> Result<Option<HashMap<String, Value>>, String> {
     if operation.variable_definitions.is_none() {
         return Ok(None);
@@ -108,12 +241,11 @@ fn collect_variables(
         .map(|variable_definition| {
             let variable_name = variable_definition.name.to_string();
             if let Some(variable_value) = variables.as_ref().and_then(|v| v.get(&variable_name)) {
-                if variable_value.is_null() && variable_definition.variable_type.is_non_null() {
-                    return Err(format!(
-                        "Variable '{}' is non-nullable but no value was provided",
-                        variable_name
-                    ));
-                }
+                validate_runtime_value(
+                    variable_value,
+                    &variable_definition.variable_type,
+                    schema_metadata,
+                )?;
                 return Ok(Some((variable_name, variable_value.clone())));
             }
             if let Some(default_value) = &variable_definition.default_value {
@@ -121,9 +253,12 @@ fn collect_variables(
                 // and needs to be adapted if it returns Option or panics.
                 // For now, let's assume it can return an Err that needs to be propagated.
                 let default_value_coerced: Value = default_value.into();
-                if !default_value_coerced.is_null() {
-                    return Ok(Some((variable_name, default_value_coerced)));
-                }
+                validate_runtime_value(
+                    &default_value_coerced,
+                    &variable_definition.variable_type,
+                    schema_metadata,
+                )?;
+                return Ok(Some((variable_name, default_value_coerced)));
             }
             if variable_definition.variable_type.is_non_null() {
                 return Err(format!(
@@ -362,7 +497,7 @@ async fn handle_execution_request(
         execution_request.operation_name.clone().unwrap_or_default()
     );
 
-    let normalized_document = match serve_data.parse_cache.get(&query_and_operation_name).await {
+    let parse_cache_res = match serve_data.parse_cache.get(&query_and_operation_name).await {
         Some(normalized_document) => normalized_document,
         None => {
             let doc = match safe_parse_operation(&execution_request.query) {
@@ -376,26 +511,11 @@ async fn handle_execution_request(
                     );
                 }
             };
-            let normalized_document =
-                Arc::new(query_planner::utils::operation_utils::prepare_document(
-                    doc,
-                    execution_request.operation_name.as_deref(),
-                ));
-            serve_data
-                .parse_cache
-                .insert(execution_request.query.clone(), normalized_document.clone())
-                .await;
-            normalized_document
-        }
-    };
+            let normalized_document = query_planner::utils::operation_utils::prepare_document(
+                doc,
+                execution_request.operation_name.as_deref(),
+            );
 
-    let filtered_op_data = match serve_data
-        .filtered_operation_cache
-        .get(&query_and_operation_name)
-        .await
-    {
-        Some(filtered_op_data) => filtered_op_data,
-        None => {
             let operation = match normalized_document.executable_operation() {
                 Some(operation) => operation,
                 None => {
@@ -407,18 +527,23 @@ async fn handle_execution_request(
                     );
                 }
             };
-            let filtered_op_data = filter_introspection_fields_in_operation(operation);
-            let filtered_op_arc = Arc::new(filtered_op_data);
+            let (has_introspection, filtered_operation_for_plan) =
+                filter_introspection_fields_in_operation(operation);
+            let data_to_cache = Arc::new((
+                normalized_document,
+                has_introspection,
+                filtered_operation_for_plan,
+            ));
             serve_data
-                .filtered_operation_cache
-                .insert(query_and_operation_name.clone(), filtered_op_arc.clone())
+                .parse_cache
+                .insert(execution_request.query.clone(), data_to_cache.clone())
                 .await;
-            filtered_op_arc
+            data_to_cache
         }
     };
 
-    let has_introspection = filtered_op_data.0;
-    let filtered_operation_for_plan = &filtered_op_data.1;
+    let (normalized_document, has_introspection, filtered_operation_for_plan) =
+        parse_cache_res.as_ref();
 
     if req.method() == Method::GET && filtered_operation_for_plan.operation_kind.is_some() {
         if let Some(OperationKind::Mutation) = filtered_operation_for_plan.operation_kind {
@@ -440,7 +565,7 @@ async fn handle_execution_request(
         Some(plan) => plan,
         None => {
             let query_plan =
-                if filtered_operation_for_plan.selection_set.is_empty() && has_introspection {
+                if filtered_operation_for_plan.selection_set.is_empty() && *has_introspection {
                     query_planner::planner::plan_nodes::QueryPlan {
                         kind: "QueryPlan".to_string(),
                         node: None,
@@ -470,20 +595,23 @@ async fn handle_execution_request(
         }
     };
 
-    let variable_values =
-        match collect_variables(filtered_operation_for_plan, &execution_request.variables) {
-            Ok(values) => values,
-            Err(err) => {
-                return make_error_response(&err, &accept_header, true, "BAD_REQUEST");
-            }
-        };
+    let variable_values = match collect_variables(
+        filtered_operation_for_plan,
+        &execution_request.variables,
+        &serve_data.schema_metadata,
+    ) {
+        Ok(values) => values,
+        Err(err) => {
+            return make_error_response(&err, &accept_header, true, "BAD_REQUEST");
+        }
+    };
     let result = execute_query_plan(
         &query_plan,
         &serve_data.subgraph_endpoint_map,
         &variable_values,
         &serve_data.schema_metadata,
-        &normalized_document,
-        has_introspection,
+        normalized_document,
+        *has_introspection,
         &serve_data.http_client,
     )
     .await;

@@ -197,6 +197,8 @@ fn create_output_operation(type_aware_selection: &TypeAwareSelection) -> Subgrap
                     )
                         .into(),
                 ),
+                skip_if: None,
+                include_if: None,
             })],
         },
     })

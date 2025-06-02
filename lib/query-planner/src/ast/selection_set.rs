@@ -82,6 +82,10 @@ pub struct FieldSelection {
     pub alias: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<ArgumentsMap>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_if: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_if: Option<String>,
 }
 
 impl Hash for FieldSelection {
@@ -110,6 +114,8 @@ impl FieldSelection {
             alias: None,
             selections: SelectionSet::default(),
             arguments: None,
+            skip_if: None,
+            include_if: None,
         }
     }
 
@@ -235,6 +241,8 @@ mod tests {
                     selections: SelectionSet::default(),
                     alias: Some("f".to_string()),
                     arguments: None,
+                    skip_if: None,
+                    include_if: None,
                 }),
                 SelectionItem::Field(FieldSelection {
                     name: "field2".to_string(),
@@ -244,10 +252,14 @@ mod tests {
                             selections: SelectionSet::default(),
                             alias: Some("n".to_string()),
                             arguments: Some(("a".to_string(), Value::Int(1)).into()),
+                            skip_if: None,
+                            include_if: None,
                         })],
                     },
                     alias: Some("f2".to_string()),
                     arguments: None,
+                    skip_if: None,
+                    include_if: None,
                 }),
             ],
         };
@@ -266,6 +278,8 @@ mod tests {
                 selections: SelectionSet::default(),
                 alias: None,
                 arguments: None,
+                skip_if: None,
+                include_if: None,
             })],
         };
 
@@ -283,6 +297,8 @@ mod tests {
                 selections: SelectionSet::default(),
                 alias: None,
                 arguments: Some(vec![("id".to_string(), Value::Int(1))].into()),
+                skip_if: None,
+                include_if: None,
             })],
         };
 
@@ -318,6 +334,8 @@ mod tests {
                     ]
                     .into(),
                 ),
+                skip_if: None,
+                include_if: None,
             })],
         };
 
