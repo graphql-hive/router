@@ -481,7 +481,6 @@ async fn handle_execution_request(
             );
         }
     };
-    let document_for_validation = original_document.clone();
     let normalized_document = query_planner::utils::operation_utils::prepare_document(
         &original_document,
         execution_request.operation_name.as_deref(),
@@ -533,7 +532,7 @@ async fn handle_execution_request(
         None => {
             let validation_result = graphql_tools::validation::validate::validate(
                 consumer_schema_ast,
-                &document_for_validation,
+                &original_document,
                 &serve_data.validation_plan,
             );
             let validation_result_arc = Arc::new(validation_result);
