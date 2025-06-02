@@ -11,7 +11,7 @@ use query_planner::{
     state::supergraph_state::OperationKind,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::{collections::HashMap, vec};
 
 #[async_trait]
@@ -1087,7 +1087,8 @@ fn project_selection_set(
     selection_set: &SelectionSet,
     type_name: &str,
     schema_metadata: &SchemaMetadata,
-) -> Value {
+) -> (Value, Vec<GraphQLError>) {
+    let mut errors: Vec<GraphQLError> = Vec::new();
     // If selection_set is empty, return the original data
     let type_name = match data.get("__typename") {
         Some(Value::String(type_name)) => type_name,
@@ -1106,9 +1107,9 @@ fn project_selection_set(
             // Type is not found in the schema
             if field_map.is_none() {
                 if selection_set.items.is_empty() {
-                    return data.clone(); // No fields to project, return original data
+                    return (data.clone(), vec![]); // No fields to project, return original data
                 }
-                return Value::Null; // No fields found for the type
+                return (Value::Null, vec![]); // No fields found for the type
             }
             let field_map = field_map.unwrap();
             let mut result = Value::Object(serde_json::Map::new());
@@ -1133,12 +1134,13 @@ fn project_selection_set(
                         };
                         match (field_type, field_val) {
                             (Some(field_type), Some(field_val)) => {
-                                let projected = project_selection_set(
+                                let (projected, projected_errs) = project_selection_set(
                                     field_val,
                                     &field.selections,
                                     field_type,
                                     schema_metadata,
                                 );
+                                errors.extend(projected_errs);
                                 result_map.insert(response_key, projected);
                             }
                             (Some(_field_type), None) => {
@@ -1167,35 +1169,55 @@ fn project_selection_set(
                                 .map(|v| v.to_string())
                                 .unwrap_or(inline_fragment.type_condition.to_string());
 
-                            let projected = project_selection_set(
+                            let (projected, projected_errs) = project_selection_set(
                                 data,
                                 &inline_fragment.selections,
                                 &type_name,
                                 schema_metadata,
                             );
+                            errors.extend(projected_errs);
                             deep_merge(&mut result, projected);
                         }
                     }
                 }
             }
-            result
+            (result, errors)
         }
         // In case of an array
-        (_, _, Value::Array(arr)) => Value::Array(
-            arr.iter()
-                .map(|item| project_selection_set(item, selection_set, type_name, schema_metadata))
-                .collect(),
-        ),
+        (_, _, Value::Array(arr)) => {
+            let data = Value::Array(
+                arr.iter()
+                    .map(|item| {
+                        let (item_projected, item_errors) =
+                            project_selection_set(item, selection_set, type_name, schema_metadata);
+                        errors.extend(item_errors);
+                        item_projected
+                    })
+                    .collect()
+            );
+            (data, errors)
+        },
         // In case of enum type with a string
         (_, Some(enum_values), Value::String(value)) => {
             // Check if the value is in the enum values
             if enum_values.contains(&value.to_string()) {
-                Value::String(value.to_string())
+                (Value::String(value.to_string()), errors) // Return the value as is
             } else {
-                Value::Null // If not found, return Null
+                errors.push(
+                    GraphQLError {
+                        message: format!(
+                            "Value '{}' is not a valid enum value for type '{}'",
+                            value, type_name
+                        ),
+                        location: None,
+                        path: None,
+                        extensions: None,
+                    }
+                );
+                (Value::Null, errors)// If not found, return Null
             }
         }
-        (_, _, value) => value.clone(), // No fields found for the type
+        (_, _, value) => (value.clone(), errors), // No fields found for the type
     }
 }
 
@@ -1203,7 +1225,7 @@ fn project_data_by_operation(
     data: Value,
     normalized_document: &NormalizedDocument,
     schema_metadata: &SchemaMetadata,
-) -> Value {
+) -> (Value, Vec<GraphQLError>) {
     let operation = normalized_document.executable_operation().unwrap();
     let root_type_name = match operation.operation_kind {
         Some(OperationKind::Query) => "Query",
@@ -1240,11 +1262,25 @@ pub async fn execute_query_plan(
     };
     let mut result = query_plan.execute(execution_context).await;
     if result.data.as_ref().is_some() || has_introspection {
-        result.data = Some(project_data_by_operation(
-            result.data.unwrap_or(Value::Object(Map::new())),
+        let (data, errors) = project_data_by_operation(
+            result.data.take().unwrap_or(Value::Null),
             normalized_document,
             schema_metadata,
-        ));
+        );
+        result.data = Some(data);
+        result.errors = match result.errors {
+            Some(mut existing_errors) => {
+                existing_errors.extend(errors);
+                Some(existing_errors)
+            }
+            None => {
+                if errors.is_empty() {
+                    None
+                } else {
+                    Some(errors)
+                }
+            }
+        }
     }
 
     #[cfg(debug_assertions)] // Only log in debug builds
