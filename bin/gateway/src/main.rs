@@ -67,8 +67,8 @@ async fn main() {
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(serve_data_arc.clone()))
-            .service(graphiql)
-            .service(graphql_endpoint)
+            .service(graphql_get)
+            .service(graphql_post)
             .default_service(web::route().to(landing))
     })
     .bind(("0.0.0.0", 4000))
@@ -662,7 +662,7 @@ async fn handle_execution_request(
 }
 
 #[post("/graphql")]
-async fn graphql_endpoint(
+async fn graphql_post(
     req: HttpRequest,
     request_body: web::Json<ExecutionRequest>,
     serve_data: web::Data<Arc<ServeData>>,
@@ -682,7 +682,7 @@ struct QueryParamsBody {
 }
 
 #[get("/graphql")]
-async fn graphiql(
+async fn graphql_get(
     req: HttpRequest,
     params: web::Query<QueryParamsBody>,
     serve_data: web::Data<Arc<ServeData>>,
