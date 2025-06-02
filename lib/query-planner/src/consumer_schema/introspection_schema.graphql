@@ -1,5 +1,8 @@
 directive @skip(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
 directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+directive @deprecated(reason: String = "No longer supported") on FIELD_DEFINITION | ENUM_VALUE | INPUT_FIELD_DEFINITION
+directive @specifiedBy(url: String!) on SCALAR
+directive @oneOf on OBJECT | INTERFACE | UNION
 
 scalar Boolean
 scalar Float
@@ -13,6 +16,7 @@ type Query {
 }
 
 type __Schema {
+  description: String
   types: [__Type!]!
   queryType: __Type!
   mutationType: __Type
@@ -38,7 +42,7 @@ type __Type {
   enumValues(includeDeprecated: Boolean = false): [__EnumValue!]
 
   # INPUT_OBJECT only
-  inputFields: [__InputValue!]
+  inputFields(includeDeprecated: Boolean = false): [__InputValue!]
 
   # NON_NULL and LIST only
   ofType: __Type
@@ -47,7 +51,7 @@ type __Type {
 type __Field {
   name: String!
   description: String
-  args: [__InputValue!]!
+  args(includeDeprecated: Boolean = false): [__InputValue!]!
   type: __Type!
   isDeprecated: Boolean!
   deprecationReason: String
@@ -58,6 +62,8 @@ type __InputValue {
   description: String
   type: __Type!
   defaultValue: String
+  isDeprecated: Boolean!
+  deprecationReason: String
 }
 
 type __EnumValue {
@@ -82,7 +88,7 @@ type __Directive {
   name: String!
   description: String
   locations: [__DirectiveLocation!]!
-  args: [__InputValue!]!
+  args(includeDeprecated: Boolean = false): [__InputValue!]!
 }
 
 enum __DirectiveLocation {

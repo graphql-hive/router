@@ -192,57 +192,71 @@ pub fn introspection_query_from_ast(
             graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Object(
                 object_type,
             )) => {
-                types.push(IntrospectionType::OBJECT(IntrospectionObjectType {
-                    name: object_type.name.to_string(),
-                    description: object_type.description.clone(),
-                    fields: object_type
-                        .fields
-                        .iter()
-                        .map(|field| {
-                            let builtin_props =
-                                get_builtin_props_from_directives(&field.directives);
-                            IntrospectionField {
-                                name: field.name.to_string(),
-                                description: field.description.clone(),
-                                is_deprecated: builtin_props.is_deprecated,
-                                deprecation_reason: builtin_props.deprecation_reason,
-                                args: field
-                                    .arguments
-                                    .iter()
-                                    .map(|arg| {
-                                        let builtin_props =
-                                            get_builtin_props_from_directives(&arg.directives);
-                                        IntrospectionInputValue {
-                                            name: arg.name.to_string(),
-                                            description: arg.description.clone(),
-                                            type_ref: Some(introspection_input_type_ref_from_ast(
-                                                &arg.value_type,
-                                                &type_ast_map,
-                                            )),
-                                            default_value: arg
-                                                .default_value
-                                                .as_ref()
-                                                .map(|v| serde_json::Value::String(v.to_string())),
-                                            is_deprecated: builtin_props.is_deprecated,
-                                            deprecation_reason: builtin_props.deprecation_reason,
-                                        }
+                if !object_type.name.starts_with("__") {
+                    // Skip introspection types like __Schema, __Type, etc.
+                    types.push(IntrospectionType::OBJECT(IntrospectionObjectType {
+                        name: object_type.name.to_string(),
+                        description: object_type.description.clone(),
+                        fields: object_type
+                            .fields
+                            .iter()
+                            .filter_map(|field| {
+                                if field.name.starts_with("__") {
+                                    // Skip introspection fields
+                                    None
+                                } else {
+                                    let builtin_props =
+                                        get_builtin_props_from_directives(&field.directives);
+                                    Some(IntrospectionField {
+                                        name: field.name.to_string(),
+                                        description: field.description.clone(),
+                                        is_deprecated: builtin_props.is_deprecated,
+                                        deprecation_reason: builtin_props.deprecation_reason,
+                                        args: field
+                                            .arguments
+                                            .iter()
+                                            .map(|arg| {
+                                                let builtin_props =
+                                                    get_builtin_props_from_directives(
+                                                        &arg.directives,
+                                                    );
+                                                IntrospectionInputValue {
+                                                    name: arg.name.to_string(),
+                                                    description: arg.description.clone(),
+                                                    type_ref: Some(
+                                                        introspection_input_type_ref_from_ast(
+                                                            &arg.value_type,
+                                                            &type_ast_map,
+                                                        ),
+                                                    ),
+                                                    default_value: arg.default_value.as_ref().map(
+                                                        |v| {
+                                                            serde_json::Value::String(v.to_string())
+                                                        },
+                                                    ),
+                                                    is_deprecated: builtin_props.is_deprecated,
+                                                    deprecation_reason: builtin_props
+                                                        .deprecation_reason,
+                                                }
+                                            })
+                                            .collect(),
+                                        type_ref: introspection_output_type_ref_from_ast(
+                                            &field.field_type,
+                                            &type_ast_map,
+                                        ),
                                     })
-                                    .collect(),
-                                type_ref: introspection_output_type_ref_from_ast(
-                                    &field.field_type,
-                                    &type_ast_map,
-                                ),
-                            }
-                        })
-                        .collect(),
-                    interfaces: object_type
-                        .implements_interfaces
-                        .iter()
-                        .map(|i| IntrospectionNamedTypeRef {
-                            name: i.to_string(),
-                        })
-                        .collect(),
-                }));
+                                }
+                            })
+                            .collect(),
+                        interfaces: object_type
+                            .implements_interfaces
+                            .iter()
+                            .map(|i| IntrospectionNamedTypeRef {
+                                name: i.to_string(),
+                            })
+                            .collect(),
+                    }));
+                }
             }
             graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Interface(
                 interface_type,
@@ -422,7 +436,7 @@ pub fn introspection_query_from_ast(
                         })
                         .collect(),
                 });
-            }
+            },
             _ => {
                 // Ignore other definitions like TypeExtension, SchemaDefinition, etc.
             }
