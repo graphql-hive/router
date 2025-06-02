@@ -231,8 +231,8 @@ pub fn find_direct_paths(
     let mut result: Vec<OperationPath> = vec![];
     let path_tail_index = path.tail();
 
-    match target {
-        &NavigationTarget::Field(field) => {
+    match *target {
+        NavigationTarget::Field(field) => {
             let edges_iter = graph
                 .edges_from(path_tail_index)
                 .filter(|e| matches!(e.weight(), Edge::FieldMove(f) if f.name == field.name));
@@ -271,7 +271,7 @@ pub fn find_direct_paths(
 
             Ok(result)
         }
-        &NavigationTarget::ConcreteType(type_name) => {
+        NavigationTarget::ConcreteType(type_name) => {
             let edges_iter = graph
                 .edges_from(path_tail_index)
                 .filter(|e| matches!(e.weight(), Edge::AbstractMove(t) if t == type_name));
