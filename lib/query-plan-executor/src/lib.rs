@@ -11,7 +11,7 @@ use query_planner::{
     state::supergraph_state::OperationKind,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::{collections::HashMap, vec};
 
 #[async_trait]
@@ -1201,7 +1201,7 @@ pub async fn execute_query_plan(
     #[cfg(debug_assertions)] // Only log in debug builds
     {
         let mut extensions = HashMap::new();
-        extensions.insert("queryPlan".to_string(), json!(query_plan));
+        extensions.insert("queryPlan".to_string(), serde_json::json!(query_plan));
         result.extensions = Some(extensions);
     }
     result
