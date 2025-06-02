@@ -1,12 +1,9 @@
 schema
   @link(url: "https://specs.apollo.dev/link/v1.0")
   @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION)
-  @link(url: "https://specs.apollo.dev/inaccessible/v0.2", for: SECURITY)
 {
   query: Query
 }
-
-directive @inaccessible on FIELD_DEFINITION | OBJECT | INTERFACE | UNION | ARGUMENT_DEFINITION | SCALAR | ENUM | ENUM_VALUE | INPUT_OBJECT | INPUT_FIELD_DEFINITION
 
 directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
 
@@ -22,11 +19,33 @@ directive @join__unionMember(graph: join__Graph!, member: String!) repeatable on
 
 directive @link(url: String, as: String, for: link__Purpose, import: [link__Import]) repeatable on SCHEMA
 
+type Account implements Node
+  @join__implements(graph: A, interface: "Node")
+  @join__implements(graph: B, interface: "Node")
+  @join__type(graph: A, key: "id")
+  @join__type(graph: B, key: "id")
+{
+  id: ID! @join__field(graph: A) @join__field(graph: B, external: true)
+  username: String! @join__field(graph: A)
+  chats: [Chat!]! @join__field(graph: B)
+}
+
+type Chat implements Node
+  @join__implements(graph: A, interface: "Node")
+  @join__implements(graph: B, interface: "Node")
+  @join__type(graph: A, key: "id")
+  @join__type(graph: B, key: "id")
+{
+  id: ID! @join__field(graph: A, external: true) @join__field(graph: B)
+  account: Account! @join__field(graph: A)
+  text: String! @join__field(graph: B)
+}
+
 scalar join__FieldSet
 
 enum join__Graph {
-  A @join__graph(name: "a", url: "http://localhost:4200/enum-intersection/a")
-  B @join__graph(name: "b", url: "http://localhost:4200/enum-intersection/b")
+  A @join__graph(name: "a", url: "http://localhost:4200/corrupted-supergraph-node-id/a")
+  B @join__graph(name: "b", url: "http://localhost:4200/corrupted-supergraph-node-id/b")
 }
 
 scalar link__Import
@@ -43,27 +62,18 @@ enum link__Purpose {
   EXECUTION
 }
 
+interface Node
+  @join__type(graph: A)
+  @join__type(graph: B)
+{
+  id: ID!
+}
+
 type Query
   @join__type(graph: A)
   @join__type(graph: B)
 {
-  users: [User] @join__field(graph: A)
-  usersByType(type: UserType!): [User!] @join__field(graph: B)
-  usersB: [User!] @join__field(graph: B)
-}
-
-type User
-  @join__type(graph: A, key: "id")
-  @join__type(graph: B, key: "id", extension: true)
-{
-  id: ID
-  type: UserType
-}
-
-enum UserType
-  @join__type(graph: A)
-  @join__type(graph: B)
-{
-  REGULAR @join__enumValue(graph: A) @join__enumValue(graph: B)
-  ANONYMOUS @inaccessible @join__enumValue(graph: B)
+  node(id: ID!): Node
+  account(id: String!): Account @join__field(graph: A)
+  chat(id: String!): Chat @join__field(graph: B)
 }
