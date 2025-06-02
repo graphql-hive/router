@@ -735,8 +735,8 @@ pub struct GraphQLError {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GraphQLErrorLocation {
-    pub line: u32,
-    pub column: u32,
+    pub line: usize,
+    pub column: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

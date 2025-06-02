@@ -7,9 +7,9 @@ use actix_web::web::Html;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use graphql_parser::schema::TypeDefinition;
 use introspection::{filter_introspection_fields_in_operation, introspection_query_from_ast};
-use query_plan_executor::ExecutionRequest;
 use query_plan_executor::SchemaMetadata;
 use query_plan_executor::{execute_query_plan, ExecutionResult};
+use query_plan_executor::{ExecutionRequest, GraphQLError, GraphQLErrorLocation};
 use query_planner::ast::operation::TypeNode;
 use query_planner::state::supergraph_state::{OperationKind, SupergraphState};
 use query_planner::utils::parsing::parse_schema;
@@ -428,19 +428,19 @@ async fn landing(serve_data: web::Data<Arc<ServeData>>) -> impl Responder {
 }
 
 fn make_error_response(
-    value: Value,
+    execution_result: ExecutionResult,
     accept_header: &Option<String>,
     is_graphql_error: bool,
 ) -> HttpResponse {
     if !is_graphql_error {
-        HttpResponse::BadRequest().json(value)
+        HttpResponse::BadRequest().json(execution_result)
     } else if accept_header
         .as_ref()
         .is_some_and(|header| header.contains("application/json"))
     {
-        HttpResponse::Ok().json(value)
+        HttpResponse::Ok().json(execution_result)
     } else {
-        HttpResponse::BadRequest().json(value)
+        HttpResponse::BadRequest().json(execution_result)
     }
 }
 
@@ -459,16 +459,19 @@ async fn handle_execution_request(
         Ok(doc) => doc,
         Err(err) => {
             return make_error_response(
-                json!({
-                    "errors": [
-                        {
-                            "message": err.to_string(),
-                            "extensions": {
-                                "code": "BAD_REQUEST",
-                            }
-                        }
-                    ]
-                }),
+                ExecutionResult {
+                    data: None,
+                    errors: Some(vec![GraphQLError {
+                        message: err.to_string(),
+                        location: None,
+                        path: None,
+                        extensions: Some(HashMap::from([(
+                            "code".to_string(),
+                            Value::String("BAD_REQUEST".to_string()),
+                        )])),
+                    }]),
+                    extensions: None,
+                },
                 &accept_header,
                 true,
             );
@@ -483,16 +486,19 @@ async fn handle_execution_request(
         Some(operation) => operation,
         None => {
             return make_error_response(
-                json!({
-                    "errors": [
-                        {
-                            "message": "Unable to detect operation AST",
-                            "extensions": {
-                                "code": "BAD_REQUEST",
-                            }
-                        }
-                    ]
-                }),
+                ExecutionResult {
+                    data: None,
+                    errors: Some(vec![GraphQLError {
+                        message: "Unable to detect operation AST".to_string(),
+                        location: None,
+                        extensions: Some(HashMap::from([(
+                            "code".to_string(),
+                            Value::String("BAD_REQUEST".to_string()),
+                        )])),
+                        path: None,
+                    }]),
+                    extensions: None,
+                },
                 &accept_header,
                 true,
             );
@@ -534,16 +540,29 @@ async fn handle_execution_request(
 
     if !validation_result.is_empty() {
         return make_error_response(
-            json!({
-                "errors": validation_result.iter().map(|err| {
-                    json!({
-                        "message": err.message,
-                        "extensions": {
-                            "code": err.error_code.to_string(),
-                        },
-                    })
-                }).collect::<Vec<_>>(),
-            }),
+            ExecutionResult {
+                data: None,
+                errors: Some(
+                    validation_result
+                        .iter()
+                        .map(|err| GraphQLError {
+                            message: err.message.to_string(),
+                            location: Some(
+                                err.locations
+                                    .iter()
+                                    .map(|locs| GraphQLErrorLocation {
+                                        line: locs.line,
+                                        column: locs.column,
+                                    })
+                                    .collect::<Vec<_>>(),
+                            ),
+                            path: None,
+                            extensions: None,
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+                extensions: None,
+            },
             &accept_header,
             true,
         );
@@ -570,16 +589,19 @@ async fn handle_execution_request(
                         Ok(plan) => plan,
                         Err(err) => {
                             return make_error_response(
-                                json!({
-                                    "errors": [
-                                        {
-                                            "message": err.to_string(),
-                                            "extensions": {
-                                                "code": "QUERY_PLAN_BUILD_FAILED",
-                                            }
-                                        }
-                                    ]
-                                }),
+                                ExecutionResult {
+                                    data: None,
+                                    errors: Some(vec![GraphQLError {
+                                        message: err.to_string(),
+                                        location: None,
+                                        extensions: Some(HashMap::from([(
+                                            "code".to_string(),
+                                            Value::String("QUERY_PLAN_BUILD_FAILED".to_string()),
+                                        )])),
+                                        path: None,
+                                    }]),
+                                    extensions: None,
+                                },
                                 &accept_header,
                                 true,
                             );
@@ -603,16 +625,19 @@ async fn handle_execution_request(
         Ok(values) => values,
         Err(err) => {
             return make_error_response(
-                json!({
-                    "errors": [
-                        {
-                            "message": err,
-                            "extensions": {
-                                "code": "BAD_REQUEST",
-                            }
-                        }
-                    ]
-                }),
+                ExecutionResult {
+                    data: None,
+                    errors: Some(vec![GraphQLError {
+                        message: err,
+                        location: None,
+                        extensions: Some(HashMap::from([(
+                            "code".to_string(),
+                            Value::String("BAD_REQUEST".to_string()),
+                        )])),
+                        path: None,
+                    }]),
+                    extensions: None,
+                },
                 &accept_header,
                 true,
             );
@@ -690,16 +715,19 @@ async fn graphql_get(
             Some(q) => q,
             None => {
                 return make_error_response(
-                    json!({
-                        "errors": [
-                            {
-                                "message": "Query parameter is required",
-                                "extensions": {
-                                    "code": "BAD_REQUEST",
-                                }
-                            }
-                        ]
-                    }),
+                    ExecutionResult {
+                        data: None,
+                        errors: Some(vec![GraphQLError {
+                            message: "Query parameter is required".to_string(),
+                            location: None,
+                            extensions: Some(HashMap::from([(
+                                "code".to_string(),
+                                Value::String("BAD_REQUEST".to_string()),
+                            )])),
+                            path: None,
+                        }]),
+                        extensions: None,
+                    },
                     &accept_header,
                     true,
                 );
@@ -710,16 +738,19 @@ async fn graphql_get(
                 Ok(vars) => Some(vars),
                 Err(err) => {
                     return make_error_response(
-                        json!({
-                            "errors": [
-                                {
-                                    "message": err.to_string(),
-                                    "extensions": {
-                                        "code": "BAD_REQUEST",
-                                    }
-                                }
-                            ]
-                        }),
+                        ExecutionResult {
+                            data: None,
+                            errors: Some(vec![GraphQLError {
+                                message: err.to_string(),
+                                location: None,
+                                extensions: Some(HashMap::from([(
+                                    "code".to_string(),
+                                    Value::String("BAD_REQUEST".to_string()),
+                                )])),
+                                path: None,
+                            }]),
+                            extensions: None,
+                        },
                         &accept_header,
                         true,
                     );
@@ -732,16 +763,19 @@ async fn graphql_get(
                 Ok(exts) => Some(exts),
                 Err(err) => {
                     return make_error_response(
-                        json!({
-                            "errors": [
-                                {
-                                    "message": err.to_string(),
-                                    "extensions": {
-                                        "code": "BAD_REQUEST",
-                                    }
-                                }
-                            ]
-                        }),
+                        ExecutionResult {
+                            data: None,
+                            errors: Some(vec![GraphQLError {
+                                message: err.to_string(),
+                                location: None,
+                                extensions: Some(HashMap::from([(
+                                    "code".to_string(),
+                                    Value::String("BAD_REQUEST".to_string()),
+                                )])),
+                                path: None,
+                            }]),
+                            extensions: None,
+                        },
                         &accept_header,
                         true,
                     );
