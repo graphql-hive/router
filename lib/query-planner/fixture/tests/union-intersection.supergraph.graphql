@@ -1,5 +1,3 @@
-# https://github.com/graphql-hive/federation-gateway-audit/blob/main/src/test-suites/union-intersection
-
 schema
   @link(url: "https://specs.apollo.dev/link/v1.0")
   @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
@@ -45,8 +43,11 @@ directive @link(
   import: [link__Import]
 ) repeatable on SCHEMA
 
-type Book @join__type(graph: A) @join__type(graph: B) {
+type Book @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+  id: ID!
   title: String!
+  aTitle: String! @join__field(graph: A)
+  bTitle: String! @join__field(graph: B)
 }
 
 scalar join__FieldSet
@@ -81,29 +82,37 @@ union Media
   | Song
   | Movie
 
-type Movie @join__type(graph: B) {
+type Movie @join__type(graph: B, key: "id") {
+  id: ID!
   title: String!
+  bTitle: String!
 }
 
 type Query @join__type(graph: A) @join__type(graph: B) {
   media: Media
+  aMedia: Media @join__field(graph: A)
   book: Media
     @join__field(graph: A, type: "Book")
     @join__field(graph: B, type: "Media")
   song: Media @join__field(graph: A)
   viewer: Viewer
+  bMedia: Media @join__field(graph: B)
 }
 
-type Song @join__type(graph: A) {
+type Song @join__type(graph: A, key: "id") {
+  id: ID!
   title: String!
+  aTitle: String!
 }
 
 type Viewer @join__type(graph: A) @join__type(graph: B) {
   media: ViewerMedia
+  aMedia: ViewerMedia @join__field(graph: A)
   book: ViewerMedia
     @join__field(graph: A, type: "Book")
     @join__field(graph: B, type: "ViewerMedia")
   song: ViewerMedia @join__field(graph: A)
+  bMedia: ViewerMedia @join__field(graph: B)
 }
 
 union ViewerMedia

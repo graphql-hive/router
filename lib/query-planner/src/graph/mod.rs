@@ -7,6 +7,7 @@ mod tests;
 use std::{
     collections::{HashMap, HashSet},
     fmt::{Debug, Display},
+    hash::{DefaultHasher, Hash, Hasher},
 };
 
 use crate::{
@@ -40,6 +41,70 @@ impl TypeHelpers for Type<'static, String> {
             Type::NonNullType(child) => child.is_list_like_type(),
         }
     }
+}
+
+#[derive(Debug, Default)]
+struct UnionDefinitions<'a> {
+    registry: HashMap<&'a String, HashMap<&'a String, HashSet<&'a String>>>,
+}
+
+impl<'a> UnionDefinitions<'a> {
+    pub fn new(state: &'a SupergraphState<'a>) -> Self {
+        let mut registry: HashMap<&'a String, HashMap<&'a String, HashSet<&'a String>>> =
+            HashMap::new();
+
+        for (def_name, definition) in state
+            .definitions
+            .iter()
+            .filter(|(_, d)| matches!(d, SupergraphDefinition::Union(_)))
+        {
+            let mut in_subgraphs: HashMap<&'a String, HashSet<&'a String>> = HashMap::new();
+
+            for join_member in definition.join_union_members() {
+                in_subgraphs
+                    .entry(&join_member.graph)
+                    .and_modify(|e| {
+                        e.insert(&join_member.member);
+                    })
+                    .or_insert_with(|| {
+                        let mut set: HashSet<&'a String> = HashSet::new();
+                        set.insert(&join_member.member);
+                        set
+                    });
+            }
+
+            registry.insert(def_name, in_subgraphs);
+        }
+
+        Self { registry }
+    }
+
+    pub fn contains(&self, type_name: &'a String) -> bool {
+        self.registry.contains_key(type_name)
+    }
+
+    pub fn members_in_subgraph(
+        &self,
+        type_name: &String,
+        graph: &'a String,
+    ) -> Option<&HashSet<&'a String>> {
+        self.registry.get(type_name).and_then(|r| r.get(graph))
+    }
+
+    // pub fn intersection(
+    //     &self,
+    //     union_name: &'a String,
+    //     subgraphs: &'a Vec<&'a String>,
+    // ) -> Option<HashSet<&'a String>> {
+    //     self.registry.get(union_name).map(|in_subgraphs| {
+    //         let sets: Vec<&HashSet<&'a String>> = subgraphs
+    //             .iter()
+    //             .map(|subgraph| in_subgraphs.get(subgraph).expect("Unknown subgraph"))
+    //             .collect();
+
+    //         intersections(sets)
+    //     })
+    // }
 }
 
 #[derive(Debug, Default)]
@@ -104,7 +169,6 @@ impl Graph {
         self.link_root_edges(state)?;
         self.build_field_edges(state)?;
         self.build_interface_implementation_edges(state)?;
-        self.build_union_member_edges(state)?;
         self.build_entity_reference_edges(state)?;
         self.build_viewed_field_edges(state)?;
 
@@ -274,63 +338,6 @@ impl Graph {
         Ok(())
     }
 
-    #[instrument(skip(self, state))]
-    fn build_union_member_edges(&mut self, state: &SupergraphState<'_>) -> Result<(), GraphError> {
-        for (def_name, definition) in state
-            .definitions
-            .iter()
-            .filter(|(_, d)| matches!(d, SupergraphDefinition::Union(_)))
-        {
-            // We need to add edges for types that are resolvable in all subgraphs.
-            // Basically an intersection, not a union.
-
-            let mut member_to_graph_ids_map: HashMap<&String, HashSet<&String>> = HashMap::new();
-            let mut subgraphs_resolving_union = HashSet::new();
-
-            for join_member in definition.join_union_members() {
-                member_to_graph_ids_map
-                    .entry(&join_member.member)
-                    .or_default()
-                    .insert(&join_member.graph);
-                subgraphs_resolving_union.insert(&join_member.graph);
-            }
-
-            // let mut subgraph_count: usize = 0;
-            // for join_member in definition.join_union_members() {
-            //   counts.ins
-            // }
-
-            for join_member in definition.join_union_members() {
-                if member_to_graph_ids_map
-                    .get(&join_member.member)
-                    .expect("Item should exists as we visited it before")
-                    .len()
-                    != subgraphs_resolving_union.len()
-                {
-                    continue;
-                }
-
-                let tail = self.upsert_node(Node::new_node(
-                    &join_member.member,
-                    state.resolve_graph_id(&join_member.graph)?,
-                ));
-                let head = self.upsert_node(Node::new_node(
-                    def_name,
-                    state.resolve_graph_id(&join_member.graph)?,
-                ));
-
-                info!(
-                    "Building union member edge from '{}/{}' to '{}/{}'",
-                    def_name, join_member.graph, join_member.member, join_member.graph
-                );
-
-                self.upsert_edge(head, tail, Edge::AbstractMove(join_member.member.clone()));
-            }
-        }
-
-        Ok(())
-    }
-
     pub fn root_query_node(&self) -> &Node {
         &self.graph[self.query_root]
     }
@@ -414,154 +421,328 @@ impl Graph {
 
     #[instrument(skip(self, state))]
     fn build_field_edges(&mut self, state: &SupergraphState<'_>) -> Result<(), GraphError> {
+        let unions = UnionDefinitions::new(state);
+
         for (def_name, definition) in state.definitions.iter() {
             for graph_id in definition.subgraphs().iter() {
-                if definition.is_defined_in_subgraph(graph_id) {
-                    let has_resolvable_typename = matches!(
-                        definition,
-                        SupergraphDefinition::Object(_)
-                            | SupergraphDefinition::Union(_)
-                            | SupergraphDefinition::Interface(_)
+                if !definition.is_defined_in_subgraph(graph_id) {
+                    continue;
+                }
+
+                let has_resolvable_typename = matches!(
+                    definition,
+                    SupergraphDefinition::Object(_)
+                        | SupergraphDefinition::Union(_)
+                        | SupergraphDefinition::Interface(_)
+                );
+
+                if has_resolvable_typename {
+                    let field_name = "__typename".to_string();
+                    info!(
+                        "[x] Creating owned field move edge '{}.__typename/{}' (type: String)",
+                        def_name, graph_id
                     );
-                    if has_resolvable_typename {
-                        let field_name = "__typename".to_string();
-                        info!(
-                            "[x] Creating owned field move edge '{}.__typename/{}' (type: String)",
-                            def_name, graph_id
+                    let head = self
+                        .upsert_node(Node::new_node(def_name, state.resolve_graph_id(graph_id)?));
+                    let tail = self
+                        .upsert_node(Node::new_node("String", state.resolve_graph_id(graph_id)?));
+
+                    self.upsert_edge(
+                        head,
+                        tail,
+                        Edge::create_field_move(
+                            field_name,
+                            def_name.clone(),
+                            true,
+                            false,
+                            None,
+                            None,
+                        ),
+                    );
+                }
+
+                for (field_name, field_definition) in definition.fields().iter() {
+                    let (is_available, maybe_join_field) =
+                        FederationRules::check_field_subgraph_availability(
+                            field_definition,
+                            graph_id,
+                            definition,
                         );
+
+                    let target_type = field_definition.source.field_type.inner_type();
+
+                    if !is_available {
+                        // The field is not available in the current subgraph
+                        info!(
+                              "[ ] Field '{}.{}/{}' does is not available in the subgraph, skipping edge creation (type: {})",
+                              def_name, field_name, graph_id, target_type
+                          );
+                        continue;
+                    }
+
+                    // If a field points to a union type:
+                    //
+                    // ```
+                    //
+                    // type Viewer @join__type(graph: A) @join__type(graph: B) {
+                    //   media: ViewerMedia
+                    //   aMedia: ViewerMedia @join__field(graph: A)
+                    //   bMedia: ViewerMedia @join__field(graph: B)
+                    //   book: ViewerMedia @join__field(graph: A, type: "Book") @join__field(graph: B, type: "ViewerMedia")
+                    //   song: ViewerMedia @join__field(graph: A)
+                    // }
+                    //
+                    // union ViewerMedia
+                    //   @join__type(graph: A)
+                    //   @join__type(graph: B)
+                    //   @join__unionMember(graph: A, member: "Book")
+                    //   @join__unionMember(graph: B, member: "Book")
+                    //   @join__unionMember(graph: A, member: "Song")
+                    //   @join__unionMember(graph: B, member: "Movie") =
+                    //   | Book
+                    //   | Song
+                    //   | Movie
+                    //
+                    // ```
+                    //
+                    // Viewer.media  (A,B)   = Book            (product of the intersection of A and B)
+                    // Viewer.aMedia (A)     = Book | Song     (no intersection - it lives in a single subgraph)
+                    // Viewer.bMedia (A)     = Book | Movie    (no intersection - it lives in a single subgraph)
+                    // Viewer.book   (A,B)   = Book            (product of the intersection of A and B)
+                    // Viewer.song   (A)     = Book | Sing     (no intersection - it lives in a single subgraph)
+                    //
+                    // We need to point it to a subset of object types.
+                    // We do it by creating a new Node for each edge's tail,
+                    // and from the tail we create abstract-move edges to the object types.
+                    //
+                    let target_type_is_union = unions.contains(&target_type.to_string());
+                    if target_type_is_union {
                         let head = self.upsert_node(Node::new_node(
                             def_name,
                             state.resolve_graph_id(graph_id)?,
                         ));
-                        let tail = self.upsert_node(Node::new_node(
-                            "String",
-                            state.resolve_graph_id(graph_id)?,
-                        ));
 
-                        self.upsert_edge(
-                            head,
-                            tail,
-                            Edge::create_field_move(
-                                field_name,
-                                def_name.clone(),
-                                true,
-                                false,
-                                None,
-                                None,
-                            ),
-                        );
-                    }
+                        // Collect subgraphs the field was defined in.
+                        // First, look for join__field(graph:),
+                        // If not defined, look at type's join__type(graph:).
 
-                    for (field_name, field_definition) in definition.fields().iter() {
-                        let (is_available, maybe_join_field) =
-                            FederationRules::check_field_subgraph_availability(
-                                field_definition,
-                                graph_id,
-                                definition,
-                            );
+                        // look for join__field(type:) - it could point to `Object` or `Union`
+                        let mut members_per_subgraph: HashMap<&String, HashSet<&String>> =
+                            HashMap::new();
 
-                        let target_type = field_definition.source.field_type.inner_type();
-
-                        match (is_available, maybe_join_field) {
-                            (true, Some(join_field)) => {
-                                let is_external =
-                                    join_field.external && join_field.requires.is_none();
-
-                                if is_external {
-                                    info!(
-                                        "[ ] Field '{}.{}/{}' is external, skipping edge creation",
-                                        def_name, field_name, graph_id
-                                    );
-
-                                    continue;
+                        if field_definition.join_field.is_empty() {
+                            for join_type in definition.join_types() {
+                                let mut members_in_subgraph: HashSet<&String> = HashSet::new();
+                                for union_member in unions
+                                    .members_in_subgraph(
+                                        &target_type.to_string(),
+                                        &join_type.graph_id,
+                                    )
+                                    .unwrap()
+                                    .iter()
+                                {
+                                    members_in_subgraph.insert(union_member);
                                 }
 
-                                let head = self.upsert_node(Node::new_node(
-                                    def_name,
-                                    state.resolve_graph_id(graph_id)?,
-                                ));
-                                let tail = self.upsert_node(Node::new_node(
-                                    target_type,
-                                    state.resolve_graph_id(graph_id)?,
-                                ));
+                                members_per_subgraph
+                                    .insert(&join_type.graph_id, members_in_subgraph);
+                            }
+                        }
 
-                                info!(
-                                    "[x] Creating owned field move edge '{}.{}/{}' (type: {})",
-                                    def_name, field_name, graph_id, target_type
-                                );
+                        for join_field in field_definition.join_field.iter() {
+                            if let Some(graph_id) = join_field.graph_id.as_ref() {
+                                let mut members_in_subgraph: HashSet<&String> = HashSet::new();
 
-                                let requirements = match join_field.requires.as_ref() {
-                                    Some(requires_str) => {
-                                        let selection_resolver = state
-                                            .selection_resolvers_for_subgraph(
-                                                join_field.graph_id.as_ref().unwrap(),
-                                            )?;
-
-                                        Some(selection_resolver.resolve(def_name, requires_str)?)
+                                if let Some(type_in_graph) = join_field.type_in_graph.as_ref() {
+                                    // TODO: remove [] and ! modifier from `type_in_graph` - it may not represent type's name
+                                    if type_in_graph != target_type {
+                                        // the target_type is a union, as we previously checked,
+                                        // so if the type_in_graph is different,
+                                        // it means it's an object type (one of the members).
+                                        members_in_subgraph.insert(type_in_graph);
+                                        members_per_subgraph.insert(graph_id, members_in_subgraph);
+                                        continue;
                                     }
-                                    None => None,
-                                };
+                                }
 
-                                self.upsert_edge(
-                                    head,
-                                    tail,
-                                    // This is done in order to "reset" the provided field info, we can probably
-                                    // do this in a better way, and extract info from the JoinFieldDirective into the edges, instead of depending on
-                                    // the raw directive info.
-                                    Edge::create_field_move(
-                                        field_name.clone(),
-                                        def_name.clone(),
-                                        state.is_scalar_type(target_type),
-                                        field_definition.source.field_type.is_list_like_type(),
-                                        Some(match join_field.provides {
-                                            Some(_) => {
-                                                let mut new = join_field.clone();
-                                                new.provides = None;
-                                                new
-                                            }
-                                            None => join_field.clone(),
-                                        }),
-                                        requirements,
-                                    ),
-                                );
+                                for union_member in unions
+                                    .members_in_subgraph(&target_type.to_string(), graph_id)
+                                    .unwrap()
+                                    .iter()
+                                {
+                                    members_in_subgraph.insert(union_member);
+                                }
+                                members_per_subgraph.insert(graph_id, members_in_subgraph);
                             }
-                            (true, None) => {
-                                let head = self.upsert_node(Node::new_node(
-                                    def_name,
-                                    state.resolve_graph_id(graph_id)?,
-                                ));
-                                let tail = self.upsert_node(Node::new_node(
-                                    target_type,
-                                    state.resolve_graph_id(graph_id)?,
-                                ));
+                        }
 
-                                info!(
-                                    "[x] Creating field move edge for '{}.{}/{}' (type: {})",
-                                    def_name, field_name, graph_id, target_type
-                                );
+                        let member_types = intersections(members_per_subgraph.values().collect());
 
-                                self.upsert_edge(
-                                    head,
-                                    tail,
-                                    Edge::create_field_move(
-                                        field_name.clone(),
-                                        def_name.clone(),
-                                        state.is_scalar_type(target_type),
-                                        field_definition.source.field_type.is_list_like_type(),
-                                        None,
-                                        None,
-                                    ),
-                                );
-                            }
-                            // The field is not available in the current subgraph
-                            _ => {
-                                info!(
-                                    "[ ] Field '{}.{}/{}' does is not available in the subgraph, skipping edge creation (type: {})",
-                                    def_name, field_name, graph_id, target_type
-                                );
-                            }
-                        };
+                        for member in member_types {
+                            let unique_id = format!("{}.{} -> {}", def_name, field_name, member);
+                            let mut hasher = DefaultHasher::new();
+                            unique_id.hash(&mut hasher);
+                            let unique_u64 = hasher.finish();
+                            let tail = self.upsert_node(Node::new_provides_node(
+                                target_type,
+                                state.resolve_graph_id(graph_id)?,
+                                unique_u64,
+                            ));
+                            let abstract_tail = self.upsert_node(Node::new_node(
+                                member,
+                                state.resolve_graph_id(graph_id)?,
+                            ));
+                            // because we duplicate tails, we need to add __typename to all of them
+                            let typename_tail = self.upsert_node(Node::new_node(
+                                "String",
+                                state.resolve_graph_id(graph_id)?,
+                            ));
+
+                            info!(
+                                "[x] Creating owned field move edge '{}.__typename/{}' (type: String)",
+                                def_name, graph_id
+                            );
+
+                            self.upsert_edge(
+                                tail,
+                                typename_tail,
+                                Edge::create_field_move(
+                                    "__typename".to_string(),
+                                    target_type.to_string(),
+                                    true,
+                                    false,
+                                    None,
+                                    None,
+                                ),
+                            );
+
+                            info!(
+                                "[x] Creating field move edge for '{}.{}/{}' (type: {})",
+                                def_name, field_name, graph_id, target_type
+                            );
+
+                            // TODO: handle requirements and external
+
+                            self.upsert_edge(
+                                head,
+                                tail,
+                                Edge::create_field_move(
+                                    field_name.clone(),
+                                    def_name.clone(),
+                                    state.is_scalar_type(target_type),
+                                    field_definition.source.field_type.is_list_like_type(),
+                                    None,
+                                    None,
+                                ),
+                            );
+
+                            // todo: uncomment and do a proper message
+                            // info!(
+                            //     "[x] Creating abstract move edge for '{}.{}/{}' (type: {})",
+                            //     def_name, field_name, graph_id, target_type
+                            // );
+
+                            self.upsert_edge(
+                                tail,
+                                abstract_tail,
+                                Edge::AbstractMove(member.clone()),
+                            );
+                        }
+
+                        continue;
                     }
+
+                    match maybe_join_field {
+                        Some(join_field) => {
+                            let is_external = join_field.external && join_field.requires.is_none();
+
+                            if is_external {
+                                info!(
+                                    "[ ] Field '{}.{}/{}' is external, skipping edge creation",
+                                    def_name, field_name, graph_id
+                                );
+
+                                continue;
+                            }
+
+                            let head = self.upsert_node(Node::new_node(
+                                def_name,
+                                state.resolve_graph_id(graph_id)?,
+                            ));
+                            let tail = self.upsert_node(Node::new_node(
+                                target_type,
+                                state.resolve_graph_id(graph_id)?,
+                            ));
+
+                            info!(
+                                "[x] Creating owned field move edge '{}.{}/{}' (type: {})",
+                                def_name, field_name, graph_id, target_type
+                            );
+
+                            let requirements = match join_field.requires.as_ref() {
+                                Some(requires_str) => {
+                                    let selection_resolver = state
+                                        .selection_resolvers_for_subgraph(
+                                            join_field.graph_id.as_ref().unwrap(),
+                                        )?;
+
+                                    Some(selection_resolver.resolve(def_name, requires_str)?)
+                                }
+                                None => None,
+                            };
+
+                            self.upsert_edge(
+                                head,
+                                tail,
+                                // This is done in order to "reset" the provided field info, we can probably
+                                // do this in a better way, and extract info from the JoinFieldDirective into the edges, instead of depending on
+                                // the raw directive info.
+                                Edge::create_field_move(
+                                    field_name.clone(),
+                                    def_name.clone(),
+                                    state.is_scalar_type(target_type),
+                                    field_definition.source.field_type.is_list_like_type(),
+                                    Some(match join_field.provides {
+                                        Some(_) => {
+                                            let mut new = join_field.clone();
+                                            new.provides = None;
+                                            new
+                                        }
+                                        None => join_field.clone(),
+                                    }),
+                                    requirements,
+                                ),
+                            );
+                        }
+                        None => {
+                            let head = self.upsert_node(Node::new_node(
+                                def_name,
+                                state.resolve_graph_id(graph_id)?,
+                            ));
+                            let tail = self.upsert_node(Node::new_node(
+                                target_type,
+                                state.resolve_graph_id(graph_id)?,
+                            ));
+
+                            info!(
+                                "[x] Creating field move edge for '{}.{}/{}' (type: {})",
+                                def_name, field_name, graph_id, target_type
+                            );
+
+                            self.upsert_edge(
+                                head,
+                                tail,
+                                Edge::create_field_move(
+                                    field_name.clone(),
+                                    def_name.clone(),
+                                    state.is_scalar_type(target_type),
+                                    field_definition.source.field_type.is_list_like_type(),
+                                    None,
+                                    None,
+                                ),
+                            );
+                        }
+                    };
                 }
             }
         }
@@ -740,4 +921,27 @@ impl Display for Graph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", Dot::with_config(&self.graph, &[]))
     }
+}
+
+fn intersections<T>(sets: Vec<&HashSet<T>>) -> HashSet<T>
+where
+    T: Clone + Eq + Hash,
+{
+    sets.iter()
+        .enumerate()
+        .min_by_key(|&(_, s)| s.len())
+        .map(|(smallest_set_index, _)| {
+            let (other_sets_left, [smallest_set, other_sets_right @ ..]) =
+                sets.split_at(smallest_set_index)
+            else {
+                unreachable!()
+            };
+            let other_sets = || other_sets_left.iter().chain(other_sets_right);
+            smallest_set
+                .iter()
+                .filter(|item| other_sets().all(|o| o.contains(item)))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
 }

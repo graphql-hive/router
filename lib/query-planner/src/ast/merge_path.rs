@@ -42,7 +42,10 @@ impl MergePath {
         }
 
         let mut result = String::new();
-        let mut iter = self.inner.iter();
+        let mut iter = self
+            .inner
+            .iter()
+            .filter(|segment| !matches!(segment, Segment::Cast(_)));
 
         // We take the first to avoid a leading separator
         if let Some(first_segment) = iter.next() {
@@ -99,7 +102,10 @@ impl MergePath {
 
 impl Display for MergePath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut iter = self.inner.iter();
+        let mut iter = self
+            .inner
+            .iter()
+            .filter(|segment| !matches!(segment, Segment::Cast(_)));
 
         // We take the first to avoid a leading separator
         if let Some(first_segment) = iter.next() {
@@ -111,5 +117,16 @@ impl Display for MergePath {
         }
 
         Ok(())
+    }
+}
+
+impl From<MergePath> for Vec<String> {
+    fn from(path: MergePath) -> Self {
+        path.inner
+            .iter()
+            .filter(|segment| !matches!(segment, Segment::Cast(_)))
+            .cloned()
+            .map(|segment| format!("{}", segment))
+            .collect()
     }
 }
