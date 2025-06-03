@@ -49,6 +49,6 @@ impl Ord for JoinImplementsDirective {
 
 impl PartialOrd for JoinImplementsDirective {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.graph_id.partial_cmp(&other.graph_id)
+        Some(self.cmp(other))
     }
 }

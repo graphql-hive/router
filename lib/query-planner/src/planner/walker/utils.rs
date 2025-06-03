@@ -21,6 +21,6 @@ pub fn get_entrypoints<'a>(
     // Sort to return a deterministic result.
     // We don't want to return Query/b, Query/a, but Query/a, Query/b
     let mut result: Vec<EdgeReference<'a>> = graph.edges_from(entrypoint_root).collect();
-    result.sort_by(|a, b| a.id().cmp(&b.id()));
+    result.sort_by_key(|a| a.id());
     Ok(result)
 }

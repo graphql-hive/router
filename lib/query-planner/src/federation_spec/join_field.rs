@@ -91,6 +91,6 @@ impl Ord for JoinFieldDirective {
 
 impl PartialOrd for JoinFieldDirective {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.graph_id.partial_cmp(&other.graph_id)
+        Some(self.cmp(other))
     }
 }

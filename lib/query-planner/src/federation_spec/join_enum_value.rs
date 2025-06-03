@@ -44,6 +44,6 @@ impl Ord for JoinEnumValueDirective {
 
 impl PartialOrd for JoinEnumValueDirective {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.graph.partial_cmp(&other.graph)
+        Some(self.cmp(other))
     }
 }

@@ -26,7 +26,7 @@ impl Ord for InaccessibleDirective {
 }
 
 impl PartialOrd for InaccessibleDirective {
-    fn partial_cmp(&self, _other: &Self) -> Option<std::cmp::Ordering> {
-        Some(std::cmp::Ordering::Equal)
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
