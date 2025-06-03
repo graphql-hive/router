@@ -236,19 +236,10 @@ impl ExecutableFetchNode for FetchNode {
             // Process _entities array
             match entities_option {
                 Some(Value::Array(entities)) => {
-                    for (i, entity) in entities.into_iter().enumerate() {
-                        let representation_index = filtered_repr_indexes.get(i);
-                        match representation_index {
-                            Some(&representation_index) => {
-                                final_representations[representation_index] = entity;
-                            }
-                            None => {
-                                println!(
-                        "Warning: Entity index {} out of bounds for representations. Skipping merge.",
-                        i
-                    );
-                            }
-                        }
+                    for (entity, representation_index) in
+                        entities.into_iter().zip(filtered_repr_indexes.iter_mut())
+                    {
+                        final_representations[*representation_index] = entity;
                     }
                 }
                 _ => {
@@ -473,17 +464,11 @@ impl ExecutablePlanNode for SequenceNode {
             if is_data_merge {
                 deep_merge(&mut data, result_data);
             } else {
-                for (i, result_representation) in result_representations.into_iter().enumerate() {
-                    let current_representation = representations.get_mut(i);
-                    if let Some(current_repr) = current_representation {
-                        // Merge the result into the current representation
-                        deep_merge(current_repr, result_representation);
-                    } else {
-                        println!(
-                            "Warning: Entity index {} out of bounds for representations. Skipping merge.",
-                            i,
-                        );
-                    }
+                for (result_representation, current_repr) in result_representations
+                    .into_iter()
+                    .zip(representations.iter_mut())
+                {
+                    deep_merge(current_repr, result_representation);
                 }
             }
 
@@ -518,17 +503,12 @@ impl ExecutablePlanNode for ParallelNode {
             if is_data_merge {
                 deep_merge(&mut data, result_data);
             } else {
-                for (i, result) in result_representations.into_iter().enumerate() {
-                    let current_representation = representations.get_mut(i);
-                    if let Some(current_repr) = current_representation {
-                        // Merge the result into the current representation
-                        deep_merge(current_repr, result);
-                    } else {
-                        println!(
-                            "Warning: Entity index {} out of bounds for representations. Skipping merge.",
-                            i,
-                        );
-                    }
+                for (current_repr, result_repr) in representations
+                    .iter_mut()
+                    .zip(result_representations.into_iter())
+                {
+                    // Merge the result representation into the current representation
+                    deep_merge(current_repr, result_repr);
                 }
             }
             errors.extend(result_errors);
@@ -549,7 +529,7 @@ impl ExecutablePlanNode for FlattenNode {
         let errors: Vec<GraphQLError>;
 
         // Use the recursive traversal function on the temporarily owned data
-        let mut collected_representations = traverse_and_collect(
+        let collected_representations = traverse_and_collect(
             &mut data, // Operate on the separated data
             self.path
                 .iter()
@@ -575,19 +555,12 @@ impl ExecutablePlanNode for FlattenNode {
                 .await;
             errors = result_errors;
             // Merge the results back into the data
-            for (i, result_representation) in result_representations.into_iter().enumerate() {
-                match collected_representations.get_mut(i) {
-                    Some(current_repr) => {
-                        // Merge the entity into the current representation
-                        deep_merge(current_repr, result_representation);
-                    }
-                    None => {
-                        println!(
-                            "Warning: Entity index {} out of bounds for collected representations. Skipping merge.",
-                            i,
-                        );
-                    }
-                }
+            for (result_representation, current_repr) in result_representations
+                .into_iter()
+                .zip(collected_representations)
+            {
+                // Merge the entity into the current representation
+                deep_merge(current_repr, result_representation);
             }
             // Borrows held by collected_representations end here
         } else {
