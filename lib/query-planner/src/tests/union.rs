@@ -78,7 +78,6 @@ fn union_member_unresolvable() -> Result<(), Box<dyn Error>> {
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-    println!("{}", graph);
     let query_tree = QueryTree::merge_trees(qtps);
 
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
@@ -95,8 +94,6 @@ fn union_member_unresolvable() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-
-    println!("{}", graph);
 
     Ok(())
 }

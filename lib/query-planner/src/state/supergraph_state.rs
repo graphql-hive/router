@@ -375,7 +375,7 @@ impl<'a> SupergraphState<'a> {
     fn extract_directives<D: FederationDirective<'a>>(
         directives: &[Directive<'static, String>],
     ) -> Vec<D> {
-        directives
+        let mut result = directives
             .iter()
             .filter_map(|directive| {
                 if D::is(directive) {
@@ -384,7 +384,10 @@ impl<'a> SupergraphState<'a> {
                     None
                 }
             })
-            .collect()
+            .collect::<Vec<D>>();
+
+        result.sort();
+        result
     }
 }
 
@@ -599,11 +602,14 @@ impl SupergraphDefinition<'_> {
         }
     }
 
-    pub fn subgraphs(&self) -> HashSet<&str> {
-        self.join_types()
+    pub fn subgraphs(&self) -> Vec<&str> {
+        let mut result = self
+            .join_types()
             .iter()
             .map(|join_type| join_type.graph_id.as_str())
-            .collect::<HashSet<&str>>()
+            .collect::<Vec<&str>>();
+        result.sort();
+        result
     }
 
     pub fn join_implements(&self) -> &Vec<JoinImplementsDirective> {

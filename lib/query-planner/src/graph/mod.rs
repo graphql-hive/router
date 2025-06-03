@@ -426,8 +426,8 @@ impl Graph {
                     if has_resolvable_typename {
                         let field_name = "__typename".to_string();
                         info!(
-                            "[x] Creating owned field move edge '{}.__typename/{}' (type: {})",
-                            def_name, "__typename", graph_id
+                            "[x] Creating owned field move edge '{}.__typename/{}' (type: String)",
+                            def_name, graph_id
                         );
                         let head = self.upsert_node(Node::new_node(
                             def_name,

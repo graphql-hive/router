@@ -1,3 +1,5 @@
+use petgraph::visit::EdgeRef;
+
 use crate::{
     graph::{edge::EdgeReference, Graph},
     state::supergraph_state::OperationKind,
@@ -16,5 +18,9 @@ pub fn get_entrypoints<'a>(
     }
     .ok_or(WalkOperationError::MissingRootType(operation_type.clone()))?;
 
-    Ok(graph.edges_from(entrypoint_root).collect())
+    // Sort to return a deterministic result.
+    // We don't want to return Query/b, Query/a, but Query/a, Query/b
+    let mut result: Vec<EdgeReference<'a>> = graph.edges_from(entrypoint_root).collect();
+    result.sort_by(|a, b| a.id().cmp(&b.id()));
+    Ok(result)
 }

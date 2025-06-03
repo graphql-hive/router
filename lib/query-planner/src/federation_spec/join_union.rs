@@ -2,7 +2,7 @@ use graphql_parser::schema::{Directive, Value};
 
 use super::directives::FederationDirective;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub struct JoinUnionMemberDirective {
     pub graph: String,
     pub member: String,
@@ -38,5 +38,17 @@ impl<'a> FederationDirective<'a> for JoinUnionMemberDirective {
         }
 
         result
+    }
+}
+
+impl Ord for JoinUnionMemberDirective {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.graph.cmp(&other.graph)
+    }
+}
+
+impl PartialOrd for JoinUnionMemberDirective {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.graph.partial_cmp(&other.graph)
     }
 }

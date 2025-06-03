@@ -35,3 +35,15 @@ impl<'a> FederationDirective<'a> for JoinEnumValueDirective {
         result
     }
 }
+
+impl Ord for JoinEnumValueDirective {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.graph.cmp(&other.graph)
+    }
+}
+
+impl PartialOrd for JoinEnumValueDirective {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.graph.partial_cmp(&other.graph)
+    }
+}
