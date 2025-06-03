@@ -14,6 +14,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::HashMap, vec};
 
+use crate::schema_metadata::SchemaMetadata;
+pub mod introspection;
+pub mod schema_metadata;
+mod value_from_ast;
+pub mod variables;
+
 #[async_trait]
 trait ExecutablePlanNode {
     async fn execute(
@@ -971,14 +977,6 @@ impl HTTPSubgraphExecutor<'_> {
     }
 }
 
-#[derive(Debug)]
-pub struct SchemaMetadata {
-    pub possible_types: HashMap<String, Vec<String>>,
-    pub enum_values: HashMap<String, Vec<String>>,
-    pub type_fields: HashMap<String, HashMap<String, String>>,
-    pub introspection_schema_root_json: Value,
-}
-
 fn project_selection_set(
     data: &Value,
     selection_set: &SelectionSet,
@@ -1005,9 +1003,9 @@ fn project_selection_set(
             // Type is not found in the schema
             if field_map.is_none() {
                 if selection_set.items.is_empty() {
-                    return (data.clone(), vec![]); // No fields to project, return original data
+                    return (data.clone(), errors); // No fields to project, return original data
                 }
-                return (Value::Null, vec![]); // No fields found for the type
+                return (Value::Null, errors); // No fields found for the type
             }
             let field_map = field_map.unwrap();
             let mut result = Value::Object(serde_json::Map::new());
@@ -1115,7 +1113,7 @@ fn project_selection_set(
         // In case of enum type with a string
         (_, Some(enum_values), Value::String(value)) => {
             // Check if the value is in the enum values
-            if enum_values.contains(&value.to_string()) {
+            if enum_values.contains(value) {
                 (Value::String(value.to_string()), errors) // Return the value as is
             } else {
                 errors.push(GraphQLError {
@@ -1135,7 +1133,7 @@ fn project_selection_set(
 }
 
 fn project_data_by_operation(
-    data: Value,
+    data: &Value,
     operation: &OperationDefinition,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
@@ -1148,7 +1146,7 @@ fn project_data_by_operation(
     };
     // Project the data based on the selection set
     project_selection_set(
-        &data,
+        data,
         &operation.selection_set,
         root_type_name,
         schema_metadata,
@@ -1177,7 +1175,7 @@ pub async fn execute_query_plan(
     let mut result = query_plan.execute(execution_context).await;
     if result.data.as_ref().is_some() || has_introspection {
         let (data, errors) = project_data_by_operation(
-            result.data.unwrap_or(Value::Object(serde_json::Map::new())),
+            &result.data.unwrap_or(Value::Object(serde_json::Map::new())),
             operation,
             schema_metadata,
             variable_values,

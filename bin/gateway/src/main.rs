@@ -5,23 +5,17 @@ use std::{env, vec};
 use actix_web::http::Method;
 use actix_web::web::Html;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
-use graphql_parser::schema::TypeDefinition;
-use introspection::{filter_introspection_fields_in_operation, introspection_query_from_ast};
-use query_plan_executor::SchemaMetadata;
+use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
 use query_plan_executor::{execute_query_plan, ExecutionResult};
 use query_plan_executor::{ExecutionRequest, GraphQLError, GraphQLErrorLocation};
-use query_planner::ast::operation::TypeNode;
+use query_planner::planner::Planner;
 use query_planner::state::supergraph_state::{OperationKind, SupergraphState};
 use query_planner::utils::parsing::parse_schema;
 use query_planner::utils::parsing::safe_parse_operation;
-use query_planner::{consumer_schema::ConsumerSchema, planner::Planner};
 use serde_json::json;
 use serde_json::Value::{self};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-
-mod introspection;
-mod value_from_ast;
 
 #[actix_web::main]
 async fn main() {
@@ -87,291 +81,6 @@ struct ServeData {
     plan_cache: moka::future::Cache<u64, Arc<query_planner::planner::plan_nodes::QueryPlan>>,
     validate_cache:
         moka::future::Cache<u64, Arc<Vec<graphql_tools::validation::utils::ValidationError>>>,
-}
-
-fn validate_runtime_value(
-    value: &Value,
-    type_node: &TypeNode,
-    schema_metadata: &SchemaMetadata,
-) -> Result<(), String> {
-    match type_node {
-        TypeNode::Named(name) => {
-            if let Some(enum_values) = schema_metadata.enum_values.get(name) {
-                if let Value::String(ref s) = value {
-                    if !enum_values.contains(&s.to_string()) {
-                        return Err(format!(
-                            "Value '{}' is not a valid enum value for type '{}'",
-                            s, name
-                        ));
-                    }
-                } else {
-                    return Err(format!(
-                        "Expected a string for enum type '{}', got {:?}",
-                        name, value
-                    ));
-                }
-            } else if let Some(fields) = schema_metadata.type_fields.get(name) {
-                if let Value::Object(obj) = value {
-                    for (field_name, field_type) in fields {
-                        if let Some(field_value) = obj.get(field_name) {
-                            validate_runtime_value(
-                                field_value,
-                                &TypeNode::Named(field_type.to_string()),
-                                schema_metadata,
-                            )?;
-                        } else {
-                            return Err(format!(
-                                "Missing field '{}' for type '{}'",
-                                field_name, name
-                            ));
-                        }
-                    }
-                } else {
-                    return Err(format!(
-                        "Expected an object for type '{}', got {:?}",
-                        name, value
-                    ));
-                }
-            } else {
-                return match name.as_str() {
-                    "String" => {
-                        if let Value::String(_) = value {
-                            Ok(())
-                        } else {
-                            Err(format!(
-                                "Expected a string for type '{}', got {:?}",
-                                name, value
-                            ))
-                        }
-                    }
-                    "Int" => {
-                        if let Value::Number(num) = value {
-                            if num.is_i64() {
-                                Ok(())
-                            } else {
-                                Err(format!(
-                                    "Expected an integer for type '{}', got {:?}",
-                                    name, value
-                                ))
-                            }
-                        } else {
-                            Err(format!(
-                                "Expected a number for type '{}', got {:?}",
-                                name, value
-                            ))
-                        }
-                    }
-                    "Float" => {
-                        if let Value::Number(num) = value {
-                            if num.is_f64() || num.is_i64() {
-                                Ok(())
-                            } else {
-                                Err(format!(
-                                    "Expected a float for type '{}', got {:?}",
-                                    name, value
-                                ))
-                            }
-                        } else {
-                            Err(format!(
-                                "Expected a number for type '{}', got {:?}",
-                                name, value
-                            ))
-                        }
-                    }
-                    "Boolean" => {
-                        if let Value::Bool(_) = value {
-                            Ok(())
-                        } else {
-                            Err(format!(
-                                "Expected a boolean for type '{}', got {:?}",
-                                name, value
-                            ))
-                        }
-                    }
-                    "ID" => {
-                        if let Value::String(_) = value {
-                            Ok(())
-                        } else {
-                            Err(format!("Expected a string for type 'ID', got {:?}", value))
-                        }
-                    }
-                    _ => Ok(()),
-                };
-            }
-        }
-        TypeNode::NonNull(inner_type) => {
-            if value.is_null() {
-                return Err("Value cannot be null for non-nullable type".to_string());
-            }
-            validate_runtime_value(value, inner_type, schema_metadata)?;
-        }
-        TypeNode::List(inner_type) => {
-            if let Value::Array(arr) = value {
-                for item in arr {
-                    validate_runtime_value(item, inner_type, schema_metadata)?;
-                }
-            } else {
-                return Err(format!("Expected an array for list type, got {:?}", value));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn collect_variables(
-    operation: &query_planner::ast::operation::OperationDefinition,
-    variables: &Option<HashMap<String, Value>>,
-    schema_metadata: &SchemaMetadata,
-) -> Result<Option<HashMap<String, Value>>, String> {
-    if operation.variable_definitions.is_none() {
-        return Ok(None);
-    }
-    let variable_definitions = operation.variable_definitions.as_ref().unwrap();
-    let collected_variables: Result<Vec<Option<(String, Value)>>, String> = variable_definitions
-        .iter()
-        .map(|variable_definition| {
-            let variable_name = variable_definition.name.to_string();
-            if let Some(variable_value) = variables.as_ref().and_then(|v| v.get(&variable_name)) {
-                validate_runtime_value(
-                    variable_value,
-                    &variable_definition.variable_type,
-                    schema_metadata,
-                )?;
-                return Ok(Some((variable_name, variable_value.clone())));
-            }
-            if let Some(default_value) = &variable_definition.default_value {
-                // Assuming value_from_ast now returns Result<Value, String> or similar
-                // and needs to be adapted if it returns Option or panics.
-                // For now, let's assume it can return an Err that needs to be propagated.
-                let default_value_coerced: Value = default_value.into();
-                validate_runtime_value(
-                    &default_value_coerced,
-                    &variable_definition.variable_type,
-                    schema_metadata,
-                )?;
-                return Ok(Some((variable_name, default_value_coerced)));
-            }
-            if variable_definition.variable_type.is_non_null() {
-                return Err(format!(
-                    "Variable '{}' is non-nullable but no value was provided",
-                    variable_name
-                ));
-            }
-            Ok(None)
-        })
-        .collect();
-
-    let variable_values: HashMap<String, Value> =
-        collected_variables?.into_iter().flatten().collect();
-
-    if variable_values.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(variable_values))
-    }
-}
-
-fn get_type_name_of_ast(type_ast: &graphql_parser::schema::Type<'static, String>) -> String {
-    match type_ast {
-        graphql_parser::schema::Type::NamedType(named_type) => named_type.to_string(),
-        graphql_parser::schema::Type::NonNullType(non_null_type) => {
-            get_type_name_of_ast(non_null_type)
-        }
-        graphql_parser::schema::Type::ListType(list_type) => get_type_name_of_ast(list_type),
-    }
-}
-trait SchemaWithMetadata {
-    fn schema_metadata(&self) -> SchemaMetadata;
-}
-
-impl SchemaWithMetadata for ConsumerSchema {
-    fn schema_metadata(&self) -> SchemaMetadata {
-        let mut first_possible_types: HashMap<String, Vec<String>> = HashMap::new();
-        let mut type_fields: HashMap<String, HashMap<String, String>> = HashMap::new();
-        let mut enum_values: HashMap<String, Vec<String>> = HashMap::new();
-        for definition in &self.document.definitions {
-            match definition {
-                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(
-                    enum_type,
-                )) => {
-                    let name = enum_type.name.to_string();
-                    let mut values = vec![];
-                    for enum_value in &enum_type.values {
-                        values.push(enum_value.name.to_string());
-                    }
-                    enum_values.insert(name, values);
-                }
-                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Object(
-                    object_type,
-                )) => {
-                    let name = object_type.name.to_string();
-                    let fields = type_fields.entry(name).or_default();
-                    for field in &object_type.fields {
-                        let field_type_name = get_type_name_of_ast(&field.field_type);
-                        fields.insert(field.name.to_string(), field_type_name);
-                    }
-
-                    for interface in &object_type.implements_interfaces {
-                        let interface_name = interface.to_string();
-                        let possible_types_entry =
-                            first_possible_types.entry(interface_name).or_default();
-                        possible_types_entry.push(object_type.name.to_string());
-                    }
-                }
-                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Interface(
-                    interface_type,
-                )) => {
-                    let name = interface_type.name.to_string();
-                    let mut fields = HashMap::new();
-                    for field in &interface_type.fields {
-                        let field_type_name = get_type_name_of_ast(&field.field_type);
-                        fields.insert(field.name.to_string(), field_type_name);
-                    }
-                    type_fields.insert(name, fields);
-                    for interface_name in &interface_type.implements_interfaces {
-                        let interface_name = interface_name.to_string();
-                        let possible_types_entry =
-                            first_possible_types.entry(interface_name).or_default();
-                        possible_types_entry.push(interface_type.name.to_string());
-                    }
-                }
-                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Union(
-                    union_type,
-                )) => {
-                    let name = union_type.name.to_string();
-                    let mut types = vec![];
-                    for member in &union_type.types {
-                        types.push(member.to_string());
-                    }
-                    first_possible_types.insert(name, types);
-                }
-                _ => {}
-            }
-        }
-        let mut final_possible_types: HashMap<String, Vec<String>> = HashMap::new();
-        // Re-iterate over the possible_types
-        for (definition_name_of_x, first_possible_types_of_x) in &first_possible_types {
-            let mut possible_types_of_x: Vec<String> = Vec::new();
-            for definition_name_of_y in first_possible_types_of_x {
-                possible_types_of_x.push(definition_name_of_y.to_string());
-                let possible_types_of_y = first_possible_types.get(definition_name_of_y);
-                if let Some(possible_types_of_y) = possible_types_of_y {
-                    for definition_name_of_z in possible_types_of_y {
-                        possible_types_of_x.push(definition_name_of_z.to_string());
-                    }
-                }
-            }
-            final_possible_types.insert(definition_name_of_x.to_string(), possible_types_of_x);
-        }
-        let introspection_query = introspection_query_from_ast(&self.document);
-        let introspection_schema_root_json = json!(introspection_query.__schema);
-        SchemaMetadata {
-            possible_types: final_possible_types,
-            enum_values,
-            type_fields,
-            introspection_schema_root_json,
-        }
-    }
 }
 
 static LANDING_PAGE_HTML: &str = include_str!("../static/landing-page.html");
@@ -568,7 +277,7 @@ async fn handle_execution_request(
     }
 
     let (has_introspection, filtered_operation_for_plan) =
-        filter_introspection_fields_in_operation(operation);
+        query_plan_executor::introspection::filter_introspection_fields_in_operation(operation);
     let plan_cache_key = filtered_operation_for_plan.hash();
 
     let query_plan = match serve_data.plan_cache.get(&plan_cache_key).await {
@@ -616,7 +325,7 @@ async fn handle_execution_request(
         }
     };
 
-    let variable_values = match collect_variables(
+    let variable_values = match query_plan_executor::variables::collect_variables(
         &filtered_operation_for_plan,
         &execution_request.variables,
         &serve_data.schema_metadata,

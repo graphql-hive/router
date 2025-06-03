@@ -2088,6 +2088,8 @@ version = "0.0.1"
 dependencies = [
  "async-trait",
  "futures",
+ "graphql-parser",
+ "graphql-tools",
  "query-planner",
  "reqwest",
  "serde",

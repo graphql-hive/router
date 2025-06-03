@@ -25,14 +25,12 @@ pub fn value_from_ast(
             )
         }
         graphql_parser::query::Value::List(l) => {
-            let arr: Result<Vec<serde_json::Value>, String> =
+            let list: Result<Vec<serde_json::Value>, String> =
                 l.iter().map(|v| value_from_ast(v, variables)).collect();
-            match arr {
+
+            match list {
                 Err(e) => Err(e),
-                Ok(values) => {
-                    // Convert Vec<serde_json::Value> to serde_json::Value::Array
-                    Ok(serde_json::Value::Array(values))
-                }
+                Ok(vec) => Ok(serde_json::Value::Array(vec)),
             }
         }
         graphql_parser::query::Value::Object(o) => {
