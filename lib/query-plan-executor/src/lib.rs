@@ -17,6 +17,7 @@ use std::{collections::HashMap, vec};
 use crate::schema_metadata::SchemaMetadata;
 pub mod introspection;
 pub mod schema_metadata;
+pub mod validation;
 mod value_from_ast;
 pub mod variables;
 
@@ -719,7 +720,7 @@ impl ExecutionResult {
             data: None,
             errors: Some(vec![GraphQLError {
                 message,
-                location: None,
+                locations: None,
                 path: None,
                 extensions: None,
             }]),
@@ -732,7 +733,7 @@ impl ExecutionResult {
 pub struct GraphQLError {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub location: Option<Vec<GraphQLErrorLocation>>,
+    pub locations: Option<Vec<GraphQLErrorLocation>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<Vec<Value>>, // Path can be string or number
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1121,7 +1122,7 @@ fn project_selection_set(
                         "Value '{}' is not a valid enum value for type '{}'",
                         value, type_name
                     ),
-                    location: None,
+                    locations: None,
                     path: None,
                     extensions: None,
                 });
