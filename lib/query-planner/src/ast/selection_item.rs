@@ -88,6 +88,7 @@ impl SelectionItem {
             SelectionItem::InlineFragment(_fragment_selection) => BTreeSet::new(),
         }
     }
+
     pub fn selections(&self) -> Option<&Vec<SelectionItem>> {
         match self {
             SelectionItem::Field(FieldSelection { selections, .. }) => Some(&selections.items),
@@ -133,6 +134,23 @@ impl SelectionItem {
 
     pub fn is_field(&self) -> bool {
         matches!(self, SelectionItem::Field(_))
+    }
+
+    pub fn strip_for_plan_input(&self) -> Self {
+        match self {
+            SelectionItem::Field(field_selection) => SelectionItem::Field(FieldSelection {
+                name: field_selection.name.clone(),
+                selections: field_selection.selections.strip_for_plan_input(),
+                alias: None,
+                arguments: None,
+            }),
+            SelectionItem::InlineFragment(fragment_selection) => {
+                SelectionItem::InlineFragment(InlineFragmentSelection {
+                    type_condition: fragment_selection.type_condition.clone(),
+                    selections: fragment_selection.selections.strip_for_plan_input(),
+                })
+            }
+        }
     }
 }
 

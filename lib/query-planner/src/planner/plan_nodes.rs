@@ -1,7 +1,6 @@
 use super::fetch::fetch_graph::FetchStepData;
 use crate::{
     ast::{
-        merge_path::MergePath,
         operation::{OperationDefinition, SubgraphFetchOperation, TypeNode, VariableDefinition},
         selection_item::SelectionItem,
         selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
@@ -154,16 +153,10 @@ impl PlanNode {
     }
 }
 
-impl From<MergePath> for Vec<String> {
-    fn from(path: MergePath) -> Self {
-        path.inner.iter().cloned().collect()
-    }
-}
-
 fn create_input_selection_set(input_selections: &TypeAwareSelection) -> SelectionSet {
     SelectionSet {
         items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-            selections: input_selections.selection_set.clone(),
+            selections: input_selections.selection_set.strip_for_plan_input(),
             type_condition: input_selections.type_name.clone(),
         })],
     }

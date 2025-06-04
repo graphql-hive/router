@@ -1,6 +1,6 @@
-use crate::ast::merge_path::MergePath;
+use crate::ast::merge_path::{MergePath, Segment};
 use crate::ast::selection_item::SelectionItem;
-use crate::ast::selection_set::{FieldSelection, SelectionSet};
+use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
 use crate::ast::type_aware_selection::TypeAwareSelection;
 use crate::graph::edge::{Edge, FieldMove};
 use crate::graph::node::Node;
@@ -600,8 +600,12 @@ impl FetchStepData {
         // we should prevent merging steps with more than 1 parent
         // we should merge only if the parent of both is identical
 
-        let self_path = self.response_path.insert_front("*".to_string());
-        let other_path = other.response_path.insert_front("*".to_string());
+        let self_path = self
+            .response_path
+            .insert_front(Segment::Field("*".to_string()));
+        let other_path = other
+            .response_path
+            .insert_front(Segment::Field("*".to_string()));
         // If both are entities, their response_paths should match,
         // as we can't merge entity calls resolving different entities
         if matches!(self.kind, FetchStepKind::Entity) && self.kind == other.kind {
@@ -1213,6 +1217,72 @@ fn process_subgraph_entrypoint_edge(
 #[instrument(skip_all, fields(
   parent_fetch_step_index = parent_fetch_step_index.map(|f| f.index()),
   requiring_fetch_step_index = requiring_fetch_step_index.map(|f| f.index()),
+  type_name = target_type_name,
+  response_path = response_path.to_string(),
+  fetch_path = fetch_path.to_string()
+))]
+fn process_abstract_edge(
+    graph: &Graph,
+    fetch_graph: &mut FetchGraph,
+    query_node: &QueryTreeNode,
+    parent_fetch_step_index: Option<NodeIndex>,
+    requiring_fetch_step_index: Option<NodeIndex>,
+    response_path: &MergePath,
+    fetch_path: &MergePath,
+    target_type_name: &String,
+    edge_index: &EdgeIndex,
+) -> Result<Vec<NodeIndex>, FetchGraphError> {
+    let parent_fetch_step_index = parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?;
+
+    let head_index = graph.get_edge_head(edge_index)?;
+    let head = graph.node(head_index)?;
+    let head_type_name = match head {
+        Node::SubgraphType(t) => &t.name,
+        _ => panic!("Expected a subgraph type"),
+    };
+
+    let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
+    debug!(
+        "adding output field '__typename' and starting an inline fragment for type '{}' to fetch step [{}]",
+        parent_fetch_step_index.index(),
+        target_type_name,
+    );
+    parent_fetch_step.output.add_at_path(
+        &TypeAwareSelection {
+            selection_set: SelectionSet {
+                items: vec![
+                    SelectionItem::Field(FieldSelection::new_typename()),
+                    SelectionItem::InlineFragment(InlineFragmentSelection {
+                        type_condition: target_type_name.clone(),
+                        selections: SelectionSet::default(),
+                    }),
+                ],
+            },
+            type_name: head_type_name.clone(),
+        },
+        fetch_path.clone(),
+        false,
+    );
+
+    let child_response_path = response_path.push(Segment::Cast(target_type_name.clone()));
+    let child_fetch_path = fetch_path.push(Segment::Cast(target_type_name.clone()));
+
+    process_children_for_fetch_steps(
+        graph,
+        fetch_graph,
+        query_node,
+        Some(parent_fetch_step_index),
+        &child_response_path,
+        &child_fetch_path,
+        requiring_fetch_step_index,
+    )
+}
+
+// TODO: simplfy args
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip_all, fields(
+  parent_fetch_step_index = parent_fetch_step_index.map(|f| f.index()),
+  requiring_fetch_step_index = requiring_fetch_step_index.map(|f| f.index()),
   type_name = field_move.type_name,
   field = field_move.name,
   alias = query_node.selection_attributes.as_ref().and_then(|v| v.alias.as_ref()),
@@ -1267,13 +1337,13 @@ fn process_plain_field_edge(
         false,
     );
 
-    let response_path_name = query_node.selection_alias().unwrap_or(&field_move.name);
-    let mut child_response_path = response_path.push(response_path_name.to_string());
-    let mut child_fetch_path = fetch_path.push(response_path_name.to_string());
+    let child_segment = query_node.selection_alias().unwrap_or(&field_move.name);
+    let mut child_response_path = response_path.push(Segment::Field(child_segment.to_string()));
+    let mut child_fetch_path = fetch_path.push(Segment::Field(child_segment.to_string()));
 
     if field_move.is_list {
-        child_response_path = child_response_path.push("@".to_string());
-        child_fetch_path = child_fetch_path.push("@".to_string());
+        child_response_path = child_response_path.push(Segment::List);
+        child_fetch_path = child_fetch_path.push(Segment::List);
     }
 
     process_children_for_fetch_steps(
@@ -1432,12 +1502,12 @@ fn process_requires_field_edge(
 
     fetch_graph.connect(real_parent_fetch_step_index, step_for_requirements_index);
 
-    let mut child_response_path = response_path.push(field_move.name.clone());
-    let mut child_fetch_path = MergePath::default().push(field_move.name.clone());
+    let mut child_response_path = response_path.push(Segment::Field(field_move.name.clone()));
+    let mut child_fetch_path = MergePath::default().push(Segment::Field(field_move.name.clone()));
 
     if field_move.is_list {
-        child_response_path = child_response_path.push("@".to_string());
-        child_fetch_path = child_fetch_path.push("@".to_string());
+        child_response_path = child_response_path.push(Segment::List);
+        child_fetch_path = child_fetch_path.push(Segment::List);
     }
 
     debug!("Processing requirements");
@@ -1628,9 +1698,17 @@ fn process_query_node(
                     field,
                 ),
             },
-            Edge::AbstractMove(_) => {
-                panic!("AbstractMove is not supported yet")
-            }
+            Edge::AbstractMove(type_name) => process_abstract_edge(
+                graph,
+                fetch_graph,
+                query_node,
+                parent_fetch_step_index,
+                requiring_fetch_step_index,
+                response_path,
+                fetch_path,
+                type_name,
+                &edge_index,
+            ),
         }
     } else {
         process_noop_edge(

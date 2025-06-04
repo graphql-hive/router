@@ -11,7 +11,101 @@ use crate::{
 use std::error::Error;
 
 #[test]
-#[ignore] // blocked by https://github.com/graphql-hive/gateway-rs/pull/64
+fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let graph = read_supergraph("fixture/tests/simple-requires-args.supergraph.graphql");
+    let document = parse_operation(
+        r#"
+        {
+          test {
+            id
+            fieldWithRequiresAndArgs
+          }
+        }"#,
+    );
+    let document = prepare_document(&document, None);
+    let operation = document.executable_operation().unwrap();
+    let best_paths_per_leaf = walk_operation(&graph, operation)?;
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
+
+    let query_tree = QueryTree::merge_trees(qtps);
+    insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
+    root(Query)
+      🚪 (Query/a)
+        test of Test/a
+          🧩 [
+            🧩 [
+              id of ID/a
+            ]
+            🔑 Test/b
+              otherField(arg: 2) of String/b
+          ]
+          fieldWithRequiresAndArgs of String/a
+          id of ID/a
+    ");
+
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
+    Nodes:
+    [1] Query/a {} → {test{id __typename}} at $.
+    [2] Test/a {__typename otherField(arg: 2) id} → {fieldWithRequiresAndArgs} at $.test
+    [4] Test/b {__typename id} → {otherField(arg: 2)} at $.test
+
+    Tree:
+    [1]
+      [4]
+        [2]
+    ");
+
+    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            test {
+              id
+              __typename
+            }
+          }
+        },
+        Flatten(path: "test") {
+          Fetch(service: "b") {
+              ... on Test {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Test {
+                otherField(arg: 2)
+              }
+            }
+          },
+        },
+        Flatten(path: "test") {
+          Fetch(service: "a") {
+              ... on Test {
+                __typename
+                otherField
+                id
+              }
+            } =>
+            {
+              ... on Test {
+                fieldWithRequiresAndArgs
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
 fn requires_with_arguments() -> Result<(), Box<dyn Error>> {
     init_logger();
     let graph = read_supergraph("fixture/tests/arguments-requires.supergraph.graphql");
@@ -40,7 +134,7 @@ fn requires_with_arguments() -> Result<(), Box<dyn Error>> {
           ]
           🔑 Post/b
             🧩 [
-              comments of Comment/b
+              comments(limit: 3) of Comment/b
                 🧩 [
                   id of ID/b
                 ]
@@ -52,10 +146,85 @@ fn requires_with_arguments() -> Result<(), Box<dyn Error>> {
     ");
 
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
+    Nodes:
+    [1] Query/a {} → {feed{__typename id}} at $.
+    [3] Post/b {__typename comments(limit: 3){somethingElse} id} → {author{id}} at $.feed.@
+    [4] Post/b {__typename id} → {comments(limit: 3){__typename id}} at $.feed.@
+    [5] Comment/a {__typename id} → {somethingElse} at $.feed.@.comments.@
+
+    Tree:
+    [1]
+      [4]
+        [5]
+          [3]
+    ");
 
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
-    insta::assert_snapshot!(format!("{}", query_plan), @r#""#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            feed {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "feed.@") {
+          Fetch(service: "b") {
+              ... on Post {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Post {
+                comments(limit: 3) {
+                  __typename
+                  id
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "feed.@.comments.@") {
+          Fetch(service: "a") {
+              ... on Comment {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Comment {
+                somethingElse
+              }
+            }
+          },
+        },
+        Flatten(path: "feed.@") {
+          Fetch(service: "b") {
+              ... on Post {
+                __typename
+                comments {
+                  somethingElse
+                }
+                id
+              }
+            } =>
+            {
+              ... on Post {
+                author {
+                  id
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }

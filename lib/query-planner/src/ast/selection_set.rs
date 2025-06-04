@@ -52,6 +52,16 @@ impl SelectionSet {
             .flat_map(|item| item.variable_usages())
             .collect()
     }
+
+    pub fn strip_for_plan_input(&self) -> Self {
+        SelectionSet {
+            items: self
+                .items
+                .iter()
+                .map(|item| item.strip_for_plan_input())
+                .collect(),
+        }
+    }
 }
 
 impl Hash for SelectionSet {

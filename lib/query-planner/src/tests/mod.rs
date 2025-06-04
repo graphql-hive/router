@@ -10,3 +10,4 @@ mod requires_provides;
 mod requires_requires;
 mod root_types;
 mod testkit;
+mod union;

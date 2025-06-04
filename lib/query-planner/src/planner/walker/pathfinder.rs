@@ -55,6 +55,12 @@ impl IndirectPathsLookupQueue {
     }
 }
 
+#[derive(Debug)]
+pub enum NavigationTarget<'a> {
+    Field(&'a FieldSelection),
+    ConcreteType(&'a str),
+}
+
 #[instrument(skip(graph, excluded), ret(), fields(
   path = path.pretty_print(graph),
   current_cost = path.cost
@@ -62,7 +68,7 @@ impl IndirectPathsLookupQueue {
 pub fn find_indirect_paths(
     graph: &Graph,
     path: &OperationPath,
-    field: &FieldSelection,
+    target: &NavigationTarget,
     excluded: &ExcludedFromLookup,
 ) -> Result<Vec<OperationPath>, WalkOperationError> {
     let mut tracker = BestPathTracker::new(graph);
@@ -145,15 +151,21 @@ pub fn find_indirect_paths(
                         graph.pretty_print_edge(edge_ref.id(), false)
                     );
 
-                    let next_resolution_path =
-                        path.advance(&edge_ref, QueryTreeNode::from_paths(graph, &paths)?, field);
+                    let next_resolution_path = path.advance(
+                        &edge_ref,
+                        QueryTreeNode::from_paths(graph, &paths)?,
+                        match target {
+                            NavigationTarget::Field(field) => Some(field),
+                            NavigationTarget::ConcreteType(_) => None,
+                        },
+                    );
 
                     let direct_paths_excluded =
                         excluded.next(edge_tail_graph_id, &visited_key_fields, &[]);
                     let direct_paths = find_direct_paths(
                         graph,
                         &next_resolution_path,
-                        field,
+                        target,
                         &direct_paths_excluded,
                     )?;
 
@@ -208,57 +220,76 @@ pub fn find_indirect_paths(
 
 #[instrument(skip(graph, excluded), ret(), fields(
     path = path.pretty_print(graph),
-    current_cost = path.cost
+    current_cost = path.cost,
 ))]
 pub fn find_direct_paths(
     graph: &Graph,
     path: &OperationPath,
-    field: &FieldSelection,
+    target: &NavigationTarget,
     excluded: &ExcludedFromLookup,
 ) -> Result<Vec<OperationPath>, WalkOperationError> {
-    let field_name = &field.name;
     let mut result: Vec<OperationPath> = vec![];
     let path_tail_index = path.tail();
 
-    // Get all the edges from the current tail
-    // Filter by FieldMove edges with matching field name and not already in path, to avoid loops
-    let edges_iter = graph
-        .edges_from(path_tail_index)
-        .filter(|e| matches!(e.weight(), Edge::FieldMove(f) if f.name == *field_name));
-    // We no longer avoid loops, but let's see if it's an issue or not,
-    // right now it's incorrect loop check detection as it prevents using the same edge multiple times.
-    // .filter(|e| matches!(e.weight(), Edge::FieldMove(f) if f.name == *field_name && !path.has_visited_edge(&e.id())));
+    match *target {
+        NavigationTarget::Field(field) => {
+            let edges_iter = graph
+                .edges_from(path_tail_index)
+                .filter(|e| matches!(e.weight(), Edge::FieldMove(f) if f.name == field.name));
+            for edge_ref in edges_iter {
+                debug!(
+                    "checking edge {}",
+                    graph.pretty_print_edge(edge_ref.id(), false)
+                );
 
-    for edge_ref in edges_iter {
-        debug!(
-            "checking edge {}",
-            graph.pretty_print_edge(edge_ref.id(), false)
-        );
+                let node = graph.node(edge_ref.target())?;
+                let new_excluded = excluded.next_with_graph_id(node.graph_id().unwrap());
+                let can_be_satisfied =
+                    can_satisfy_edge(graph, &edge_ref, path, &new_excluded, false)?;
 
-        let node = graph.node(edge_ref.target())?;
-        let new_excluded = excluded.next_with_graph_id(node.graph_id().unwrap());
-        let can_be_satisfied = can_satisfy_edge(graph, &edge_ref, path, &new_excluded, false)?;
+                match can_be_satisfied {
+                    Some(paths) => {
+                        debug!(
+                            "Advancing path {} with edge {}",
+                            path.pretty_print(graph),
+                            graph.pretty_print_edge(edge_ref.id(), false)
+                        );
 
-        match can_be_satisfied {
-            Some(paths) => {
+                        let next_resolution_path = path.advance(
+                            &edge_ref,
+                            QueryTreeNode::from_paths(graph, &paths)?,
+                            Some(field),
+                        );
+
+                        result.push(next_resolution_path);
+                    }
+                    None => {
+                        debug!("Edge not satisfied, continue look up...");
+                    }
+                }
+            }
+
+            Ok(result)
+        }
+        NavigationTarget::ConcreteType(type_name) => {
+            let edges_iter = graph
+                .edges_from(path_tail_index)
+                .filter(|e| matches!(e.weight(), Edge::AbstractMove(t) if t == type_name));
+            for edge_ref in edges_iter {
                 debug!(
                     "Advancing path {} with edge {}",
                     path.pretty_print(graph),
                     graph.pretty_print_edge(edge_ref.id(), false)
                 );
 
-                let next_resolution_path =
-                    path.advance(&edge_ref, QueryTreeNode::from_paths(graph, &paths)?, field);
+                let next_resolution_path = path.advance(&edge_ref, None, None);
 
                 result.push(next_resolution_path);
             }
-            None => {
-                debug!("Edge not satisfied, continue look up...");
-            }
+
+            Ok(result)
         }
     }
-
-    Ok(result)
 }
 
 #[instrument(skip_all, ret(), fields(
@@ -371,7 +402,8 @@ fn validate_field_requirement(
     let mut next_paths: Vec<OperationPath> = Vec::new();
 
     for path in move_requirement.paths.iter() {
-        let direct_paths = find_direct_paths(graph, path, field, excluded)?;
+        let direct_paths =
+            find_direct_paths(graph, path, &NavigationTarget::Field(field), excluded)?;
 
         for direct_path in direct_paths.into_iter() {
             next_paths.push(direct_path);
@@ -380,7 +412,8 @@ fn validate_field_requirement(
 
     if !use_only_direct_edges {
         for path in move_requirement.paths.iter() {
-            let indirect_paths = find_indirect_paths(graph, path, field, excluded)?;
+            let indirect_paths =
+                find_indirect_paths(graph, path, &NavigationTarget::Field(field), excluded)?;
 
             for indirect_path in indirect_paths.into_iter() {
                 next_paths.push(indirect_path);
