@@ -1251,12 +1251,7 @@ fn process_abstract_edge(
         &TypeAwareSelection {
             selection_set: SelectionSet {
                 items: vec![
-                    SelectionItem::Field(FieldSelection {
-                        name: "__typename".to_string(),
-                        alias: None,
-                        selections: SelectionSet::default(),
-                        arguments: None,
-                    }),
+                    SelectionItem::Field(FieldSelection::new_typename()),
                     SelectionItem::InlineFragment(InlineFragmentSelection {
                         type_condition: target_type_name.clone(),
                         selections: SelectionSet::default(),

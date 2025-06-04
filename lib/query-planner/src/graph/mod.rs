@@ -16,6 +16,7 @@ use crate::{
     state::supergraph_state::{
         OperationKind, SupergraphDefinition, SupergraphField, SupergraphState,
     },
+    utils::ast::strip_modifiers_from_type_string,
 };
 use error::GraphError;
 use graphql_parser::query::{Selection, SelectionSet, Type};
@@ -102,22 +103,21 @@ impl<'a> UnionDefinitions<'a> {
         type_def: &'a SupergraphDefinition<'_>,
         field_def: &'a SupergraphField<'_>,
         field_type: &String,
-    ) -> HashSet<&'a std::string::String> {
+    ) -> HashSet<String> {
         // Collect subgraphs the field was defined in.
         // First, look for join__field(graph:),
         // If not defined, look at type's join__type(graph:).
 
-        let mut members_per_subgraph: HashMap<&String, HashSet<&String>> = HashMap::new();
+        let mut members_per_subgraph: HashMap<&String, HashSet<String>> = HashMap::new();
 
         if field_def.join_field.is_empty() {
             for join_type in type_def.join_types() {
-                let mut members_in_subgraph: HashSet<&String> = HashSet::new();
+                let mut members_in_subgraph: HashSet<String> = HashSet::new();
                 for union_member in self
                     .members_in_subgraph(field_type, &join_type.graph_id)
                     .unwrap()
-                    .iter()
                 {
-                    members_in_subgraph.insert(union_member);
+                    members_in_subgraph.insert(union_member.to_string());
                 }
 
                 members_per_subgraph.insert(&join_type.graph_id, members_in_subgraph);
@@ -126,12 +126,15 @@ impl<'a> UnionDefinitions<'a> {
 
         for join_field in field_def.join_field.iter() {
             if let Some(graph_id) = join_field.graph_id.as_ref() {
-                let mut members_in_subgraph: HashSet<&String> = HashSet::new();
+                let mut members_in_subgraph: HashSet<String> = HashSet::new();
 
-                if let Some(type_in_graph) = join_field.type_in_graph.as_ref() {
-                    // TODO: remove [] and ! modifier from `type_in_graph` - it may not represent type's name
+                if let Some(type_in_graph) = join_field
+                    .type_in_graph
+                    .as_ref()
+                    .map(strip_modifiers_from_type_string)
+                {
                     // look for join__field(type:) - it could point to `Object` or `Union`
-                    if type_in_graph != field_type {
+                    if &type_in_graph != field_type {
                         // the field_type is a union, as we previously checked,
                         // so if the type_in_graph is different,
                         // it means it's an object type (one of the members).
@@ -141,12 +144,8 @@ impl<'a> UnionDefinitions<'a> {
                     }
                 }
 
-                for union_member in self
-                    .members_in_subgraph(field_type, graph_id)
-                    .unwrap()
-                    .iter()
-                {
-                    members_in_subgraph.insert(union_member);
+                for union_member in self.members_in_subgraph(field_type, graph_id).unwrap() {
+                    members_in_subgraph.insert(union_member.to_string());
                 }
                 members_per_subgraph.insert(graph_id, members_in_subgraph);
             }
@@ -620,7 +619,7 @@ impl Graph {
                                 }),
                             ));
                             let abstract_tail = self.upsert_node(Node::new_node(
-                                member,
+                                &member,
                                 state.resolve_graph_id(graph_id)?,
                             ));
                             // because we duplicate tails, we need to add __typename to all of them

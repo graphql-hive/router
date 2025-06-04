@@ -195,12 +195,7 @@ fn process_inline_fragment<'a>(
             let direct_paths = find_direct_paths(
                 graph,
                 path,
-                &NavigationTarget::Field(&FieldSelection {
-                    name: "__typename".to_string(),
-                    selections: Default::default(),
-                    alias: None,
-                    arguments: None,
-                }),
+                &NavigationTarget::Field(&FieldSelection::new_typename()),
                 &excluded,
             )?;
 
