@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::{cmp, collections::HashSet, fmt::Debug, mem};
 
 use petgraph::{
@@ -142,45 +143,39 @@ impl OperationPath {
     }
 
     pub fn get_segments(&self) -> Vec<&PathSegment> {
-        // TODO: Consider VecDeque so we can just do push_front
-        let mut segments: Vec<&PathSegment> = vec![];
+        let mut segments: VecDeque<&PathSegment> = VecDeque::new();
 
         let mut current = self.last_segment.as_ref();
         while let Some(segment) = current {
-            segments.push(segment);
+            segments.push_front(segment);
             current = segment.prev.as_deref();
         }
 
-        segments.reverse();
-        segments
+        segments.into_iter().collect()
     }
 
     pub fn get_edges(&self) -> Vec<EdgeIndex> {
-        // TODO: Consider VecDeque so we can just do push_front
-        let mut edges: Vec<EdgeIndex> = vec![];
+        let mut edges: VecDeque<EdgeIndex> = VecDeque::new();
 
         let mut current = self.last_segment.as_ref();
         while let Some(segment) = current {
-            edges.push(segment.edge_index);
+            edges.push_front(segment.edge_index);
             current = segment.prev.as_deref();
         }
 
-        edges.reverse();
-        edges
+        edges.into_iter().collect()
     }
 
     pub fn get_requirement_tree(&self) -> Vec<Option<&QueryTreeNode>> {
-        // TODO: Consider VecDeque so we can just do push_front
-        let mut requirement_tree: Vec<Option<&QueryTreeNode>> = vec![];
+        let mut requirement_tree: VecDeque<Option<&QueryTreeNode>> = VecDeque::new();
 
         let mut current = self.last_segment.as_ref();
         while let Some(segment) = current {
-            requirement_tree.push(segment.requirement_tree.as_ref());
+            requirement_tree.push_front(segment.requirement_tree.as_ref());
             current = segment.prev.as_deref();
         }
 
-        requirement_tree.reverse();
-        requirement_tree
+        requirement_tree.into_iter().collect()
     }
 
     pub fn pretty_print(&self, graph: &Graph) -> String {
