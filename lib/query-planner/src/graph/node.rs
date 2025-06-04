@@ -3,10 +3,34 @@ use std::fmt::{Debug, Display};
 use crate::state::supergraph_state::SubgraphName;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
+pub struct UnionSubsetData {
+    /// Represents the type owning the field
+    pub type_name: String,
+    /// Represents the field resolving a union type
+    pub field_name: String,
+    /// Represents a union member
+    pub object_type_name: String,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum SubgraphTypeSpecialization {
+    /// Node was created due to @provides path.
+    Provides(u64),
+    /// Node is part of the union intersection.
+    /// When dealing with unions,
+    /// we need to point field-move edge's tails (union)
+    /// to a subset of object types.
+    /// We do it by creating a new Node for each edge's tail (union),
+    /// and from that tail we create an abstract-move edges to the object types.
+    /// (type_name, field_name, union_member_name)
+    UnionSubset(UnionSubsetData),
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SubgraphType {
     pub name: String,
     pub subgraph: SubgraphName,
-    provides_identifier: Option<u64>,
+    specialization: Option<SubgraphTypeSpecialization>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -24,8 +48,20 @@ impl Node {
             Node::QueryRoot(name) => format!("root({})", name),
             Node::MutationRoot(name) => format!("root({})", name),
             Node::SubscriptionRoot(name) => format!("root({})", name),
-            Node::SubgraphType(st) => match st.provides_identifier {
-                Some(provides_id) => format!("{}/{}/{}", st.name, st.subgraph.0, provides_id),
+            Node::SubgraphType(st) => match &st.specialization {
+                Some(spec) => match spec {
+                    SubgraphTypeSpecialization::Provides(provides_id) => {
+                        format!("{}/{}/{}", st.name, st.subgraph.0, provides_id)
+                    }
+                    SubgraphTypeSpecialization::UnionSubset(u) => {
+                        // we rely on display_name when it comes to deduplicating nodes (upsert_node),
+                        // that's why the string produced here should "mimic" hashing
+                        format!(
+                            "{}/{}/{}.{}/{}",
+                            st.name, st.subgraph.0, u.type_name, u.field_name, u.object_type_name
+                        )
+                    }
+                },
                 None => format!("{}/{}", st.name, st.subgraph.0),
             },
         }
@@ -36,7 +72,10 @@ impl Node {
             Node::QueryRoot(_) => false,
             Node::MutationRoot(_) => false,
             Node::SubscriptionRoot(_) => false,
-            Node::SubgraphType(st) => st.provides_identifier.is_some(),
+            Node::SubgraphType(st) => st
+                .specialization
+                .as_ref()
+                .is_some_and(|spec| matches!(spec, SubgraphTypeSpecialization::Provides(_))),
         }
     }
 
@@ -44,15 +83,19 @@ impl Node {
         Node::SubgraphType(SubgraphType {
             name: name.to_string(),
             subgraph,
-            provides_identifier: None,
+            specialization: None,
         })
     }
 
-    pub fn new_provides_node(name: &str, subgraph: SubgraphName, provides_id: u64) -> Node {
+    pub fn new_specialized_node(
+        name: &str,
+        subgraph: SubgraphName,
+        specialization: SubgraphTypeSpecialization,
+    ) -> Node {
         Node::SubgraphType(SubgraphType {
             name: name.to_string(),
             subgraph,
-            provides_identifier: Some(provides_id),
+            specialization: Some(specialization),
         })
     }
 

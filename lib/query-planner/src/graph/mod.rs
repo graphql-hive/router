@@ -7,11 +7,12 @@ mod tests;
 use std::{
     collections::{HashMap, HashSet},
     fmt::{Debug, Display},
-    hash::{DefaultHasher, Hash, Hasher},
+    hash::Hash,
 };
 
 use crate::{
     federation_spec::FederationRules,
+    graph::node::{SubgraphTypeSpecialization, UnionSubsetData},
     state::supergraph_state::{OperationKind, SupergraphDefinition, SupergraphState},
 };
 use error::GraphError;
@@ -579,14 +580,14 @@ impl Graph {
                         let member_types = intersections(members_per_subgraph.values().collect());
 
                         for member in member_types {
-                            let unique_id = format!("{}.{} -> {}", def_name, field_name, member);
-                            let mut hasher = DefaultHasher::new();
-                            unique_id.hash(&mut hasher);
-                            let unique_u64 = hasher.finish();
-                            let tail = self.upsert_node(Node::new_provides_node(
+                            let tail = self.upsert_node(Node::new_specialized_node(
                                 target_type,
                                 state.resolve_graph_id(graph_id)?,
-                                unique_u64,
+                                SubgraphTypeSpecialization::UnionSubset(UnionSubsetData {
+                                    type_name: def_name.clone(),
+                                    field_name: field_name.clone(),
+                                    object_type_name: member.clone(),
+                                }),
                             ));
                             let abstract_tail = self.upsert_node(Node::new_node(
                                 member,
@@ -778,10 +779,10 @@ impl Graph {
                         return_type_name, graph_id,
                     );
 
-                    let tail = self.upsert_node(Node::new_provides_node(
+                    let tail = self.upsert_node(Node::new_specialized_node(
                         return_type_name,
                         state.resolve_graph_id(graph_id)?,
-                        view_id,
+                        SubgraphTypeSpecialization::Provides(view_id),
                     ));
 
                     info!(
@@ -854,10 +855,10 @@ impl Graph {
                                 let return_type_name =
                                     field_definition.source.field_type.inner_type();
 
-                                let tail = self.upsert_node(Node::new_provides_node(
+                                let tail = self.upsert_node(Node::new_specialized_node(
                                     return_type_name,
                                     state.resolve_graph_id(&join_type.graph_id)?,
-                                    view_id,
+                                    SubgraphTypeSpecialization::Provides(view_id),
                                 ));
 
                                 info!(
