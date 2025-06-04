@@ -1,5 +1,7 @@
 use std::{fmt::Display, hash::Hash};
 
+use crate::ast::merge_path::Segment;
+
 use super::{merge_path::MergePath, selection_item::SelectionItem, selection_set::SelectionSet};
 
 #[derive(Debug, Clone)]
@@ -73,7 +75,11 @@ impl TypeAwareSelection {
     }
 
     pub fn has_typename_at_path(&self, lookup_path: &MergePath) -> bool {
-        find_selection_set_by_path(&self.selection_set, &lookup_path.push("__typename")).is_some()
+        find_selection_set_by_path(
+            &self.selection_set,
+            &lookup_path.push(Segment::Field("__typename".to_string())),
+        )
+        .is_some()
     }
 }
 
@@ -153,31 +159,59 @@ fn find_selection_set_by_path<'a>(
     let mut current_selection_set = root_selection_set;
 
     for path_element in path.inner.iter() {
-        if path_element == "@" {
-            continue;
-        }
-
-        let next_selection_set_option =
-            current_selection_set
-                .items
-                .iter()
-                .find_map(|item| match item {
-                    SelectionItem::Field(field) => {
-                        if field.name.eq(path_element) {
-                            Some(&field.selections)
-                        } else {
-                            None
-                        }
-                    }
-                    SelectionItem::InlineFragment(..) => None,
-                });
-
-        match next_selection_set_option {
-            Some(next_set) => {
-                current_selection_set = next_set;
+        match path_element {
+            Segment::List => {
+                continue;
             }
-            None => {
-                return None;
+            Segment::Cast(type_name) => {
+                let next_selection_set_option =
+                    current_selection_set
+                        .items
+                        .iter()
+                        .find_map(|item| match item {
+                            SelectionItem::Field(_) => None,
+                            SelectionItem::InlineFragment(f) => {
+                                if f.type_condition.eq(type_name) {
+                                    Some(&f.selections)
+                                } else {
+                                    None
+                                }
+                            }
+                        });
+
+                match next_selection_set_option {
+                    Some(next_set) => {
+                        current_selection_set = next_set;
+                    }
+                    None => {
+                        return None;
+                    }
+                }
+            }
+            Segment::Field(field_name) => {
+                let next_selection_set_option =
+                    current_selection_set
+                        .items
+                        .iter()
+                        .find_map(|item| match item {
+                            SelectionItem::Field(field) => {
+                                if field.alias.as_ref().unwrap_or(&field.name).eq(field_name) {
+                                    Some(&field.selections)
+                                } else {
+                                    None
+                                }
+                            }
+                            SelectionItem::InlineFragment(..) => None,
+                        });
+
+                match next_selection_set_option {
+                    Some(next_set) => {
+                        current_selection_set = next_set;
+                    }
+                    None => {
+                        return None;
+                    }
+                }
             }
         }
     }
@@ -192,36 +226,61 @@ fn find_selection_set_by_path_mut(
     let mut current_selection_set = root_selection_set;
 
     for path_element in path.inner.iter() {
-        if path_element == "@" {
-            continue;
-        }
-
-        let next_selection_set_option =
-            current_selection_set
-                .items
-                .iter_mut()
-                .find_map(|item| match item {
-                    SelectionItem::Field(field) => {
-                        let field_identifier = field.alias.as_ref().unwrap_or(&field.name);
-
-                        if field_identifier == path_element {
-                            Some(&mut field.selections)
-                        } else {
-                            None
-                        }
-                    }
-                    SelectionItem::InlineFragment(..) => None,
-                });
-
-        match next_selection_set_option {
-            Some(next_set) => {
-                current_selection_set = next_set;
+        match path_element {
+            Segment::List => {
+                continue;
             }
-            None => {
-                return None;
+            Segment::Cast(type_name) => {
+                let next_selection_set_option =
+                    current_selection_set
+                        .items
+                        .iter_mut()
+                        .find_map(|item| match item {
+                            SelectionItem::Field(_) => None,
+                            SelectionItem::InlineFragment(f) => {
+                                if f.type_condition.eq(type_name) {
+                                    Some(&mut f.selections)
+                                } else {
+                                    None
+                                }
+                            }
+                        });
+
+                match next_selection_set_option {
+                    Some(next_set) => {
+                        current_selection_set = next_set;
+                    }
+                    None => {
+                        return None;
+                    }
+                }
+            }
+            Segment::Field(field_name) => {
+                let next_selection_set_option =
+                    current_selection_set
+                        .items
+                        .iter_mut()
+                        .find_map(|item| match item {
+                            SelectionItem::Field(field) => {
+                                if field.alias.as_ref().unwrap_or(&field.name).eq(field_name) {
+                                    Some(&mut field.selections)
+                                } else {
+                                    None
+                                }
+                            }
+                            SelectionItem::InlineFragment(..) => None,
+                        });
+
+                match next_selection_set_option {
+                    Some(next_set) => {
+                        current_selection_set = next_set;
+                    }
+                    None => {
+                        return None;
+                    }
+                }
             }
         }
     }
-
     Some(current_selection_set)
 }

@@ -82,3 +82,15 @@ impl<'a> FederationDirective<'a> for JoinFieldDirective {
         result
     }
 }
+
+impl Ord for JoinFieldDirective {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.graph_id.cmp(&other.graph_id)
+    }
+}
+
+impl PartialOrd for JoinFieldDirective {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}

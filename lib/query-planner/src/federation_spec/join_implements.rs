@@ -2,7 +2,7 @@ use graphql_parser::query::Directive;
 
 use super::directives::FederationDirective;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Eq, PartialEq)]
 pub struct JoinImplementsDirective {
     pub graph_id: String,
     pub interface: String,
@@ -38,5 +38,17 @@ impl<'a> FederationDirective<'a> for JoinImplementsDirective {
         }
 
         result
+    }
+}
+
+impl Ord for JoinImplementsDirective {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.graph_id.cmp(&other.graph_id)
+    }
+}
+
+impl PartialOrd for JoinImplementsDirective {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }

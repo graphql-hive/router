@@ -1,15 +1,32 @@
 use std::{
-    fmt::{Debug, Display},
+    fmt::{Debug, Display, Write},
     sync::Arc,
 };
 
-#[derive(Clone, Debug, Default)] // Clone is cheap with Arc inside
+#[derive(Clone, Debug, PartialEq)]
+pub enum Segment {
+    Field(String),
+    List,
+    Cast(String),
+}
+
+impl Display for Segment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::List => write!(f, "@"),
+            Self::Cast(type_name) => write!(f, "... on {}", type_name),
+            Self::Field(field_name) => write!(f, "{}", field_name),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)] // Clone is cheap with Arc inside
 pub struct MergePath {
-    pub inner: Arc<[String]>,
+    pub inner: Arc<[Segment]>,
 }
 
 impl MergePath {
-    pub fn new(path: Vec<String>) -> Self {
+    pub fn new(path: Vec<Segment>) -> Self {
         Self { inner: path.into() }
     }
 
@@ -20,11 +37,31 @@ impl MergePath {
     }
 
     pub fn join(&self, sep: &str) -> String {
-        self.inner.join(sep)
+        if self.inner.is_empty() {
+            return String::new();
+        }
+
+        let mut result = String::new();
+        let mut iter = self
+            .inner
+            .iter()
+            .filter(|segment| !matches!(segment, Segment::Cast(_)));
+
+        // We take the first to avoid a leading separator
+        if let Some(first_segment) = iter.next() {
+            write!(result, "{}", first_segment).unwrap();
+        }
+
+        for segment in iter {
+            result.push_str(sep);
+            write!(result, "{}", segment).unwrap();
+        }
+
+        result
     }
 
     /// Insert a string at the beginning of the path
-    pub fn insert_front(&self, segment: impl Into<String>) -> Self {
+    pub fn insert_front(&self, segment: impl Into<Segment>) -> Self {
         let mut new_segments = Vec::with_capacity(self.inner.len() + 1);
         new_segments.push(segment.into());
         new_segments.extend_from_slice(&self.inner);
@@ -32,7 +69,7 @@ impl MergePath {
     }
 
     /// Inserts a string at the end of the path
-    pub fn push(&self, segment: impl Into<String>) -> Self {
+    pub fn push(&self, segment: impl Into<Segment>) -> Self {
         let mut new_segments = Vec::with_capacity(self.inner.len() + 1);
         new_segments.extend_from_slice(&self.inner);
         new_segments.push(segment.into());
@@ -63,22 +100,33 @@ impl MergePath {
     }
 }
 
-impl PartialEq for MergePath {
-    fn eq(&self, other: &Self) -> bool {
-        self.inner == other.inner
-    }
-}
-
 impl Display for MergePath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (index, segment) in self.inner.iter().enumerate() {
-            if index == self.inner.len() - 1 {
-                write!(f, "{segment}")?;
-            } else {
-                write!(f, "{segment}.")?;
-            }
+        let mut iter = self
+            .inner
+            .iter()
+            .filter(|segment| !matches!(segment, Segment::Cast(_)));
+
+        // We take the first to avoid a leading separator
+        if let Some(first_segment) = iter.next() {
+            write!(f, "{}", first_segment).unwrap();
+        }
+
+        for segment in iter {
+            write!(f, ".{}", segment).unwrap();
         }
 
         Ok(())
+    }
+}
+
+impl From<MergePath> for Vec<String> {
+    fn from(path: MergePath) -> Self {
+        path.inner
+            .iter()
+            .filter(|segment| !matches!(segment, Segment::Cast(_)))
+            .cloned()
+            .map(|segment| format!("{}", segment))
+            .collect()
     }
 }

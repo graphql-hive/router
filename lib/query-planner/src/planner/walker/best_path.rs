@@ -1,4 +1,4 @@
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{btree_map::Entry, BTreeMap};
 
 use crate::graph::Graph;
 
@@ -7,7 +7,8 @@ use super::{error::WalkOperationError, path::OperationPath};
 pub struct BestPathTracker<'graph> {
     graph: &'graph Graph,
     /// A map from subgraph name to the best path and its cost.
-    subgraph_to_best_paths: HashMap<String, (Vec<OperationPath>, u64)>,
+    /// BTreeMap instead of HashMap to keep the order of inserted keys deterministic.
+    subgraph_to_best_paths: BTreeMap<String, (Vec<OperationPath>, u64)>,
 }
 
 pub fn find_best_paths(paths: Vec<OperationPath>) -> Vec<OperationPath> {
@@ -33,7 +34,7 @@ impl<'graph> BestPathTracker<'graph> {
     pub fn new(graph: &'graph Graph) -> Self {
         Self {
             graph,
-            subgraph_to_best_paths: HashMap::new(),
+            subgraph_to_best_paths: BTreeMap::new(),
         }
     }
 

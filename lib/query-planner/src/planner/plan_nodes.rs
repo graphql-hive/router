@@ -1,7 +1,6 @@
 use super::fetch::fetch_graph::FetchStepData;
 use crate::{
     ast::{
-        merge_path::MergePath,
         operation::{OperationDefinition, SubgraphFetchOperation, TypeNode, VariableDefinition},
         selection_item::SelectionItem,
         selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
@@ -151,12 +150,6 @@ impl PlanNode {
             PlanNode::Parallel(node) => node.nodes,
             other => vec![other],
         }
-    }
-}
-
-impl From<MergePath> for Vec<String> {
-    fn from(path: MergePath) -> Self {
-        path.inner.iter().cloned().collect()
     }
 }
 
