@@ -109,7 +109,7 @@ impl OperationPath {
     pub fn advance(
         &self,
         edge_ref: &EdgeReference<'_>,
-        requirement: Option<QueryTreeNode>,
+        requirement: Option<Arc<QueryTreeNode>>,
         field: Option<&FieldSelection>,
     ) -> OperationPath {
         let prev_cost = self.cost;
@@ -123,7 +123,7 @@ impl OperationPath {
             tail_node: edge_ref.target(),
             edge_index: edge_ref.id(),
             cumulative_cost: new_cost,
-            requirement_tree: requirement.map(Arc::new),
+            requirement_tree: requirement,
             selection_attributes: field.map(|f| SelectionAttributes {
                 alias: f.alias.clone(),
                 arguments: f.arguments.clone(),

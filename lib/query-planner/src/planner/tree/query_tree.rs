@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use std::{fmt::Write, sync::Arc};
 
 use tracing::instrument;
 
@@ -11,12 +11,14 @@ use super::query_tree_node::QueryTreeNode;
 
 #[derive(Debug, Clone)]
 pub struct QueryTree {
-    pub root: QueryTreeNode,
+    pub root: Arc<QueryTreeNode>,
 }
 
 impl QueryTree {
-    fn new(root: QueryTreeNode) -> Self {
-        QueryTree { root }
+    fn new(root_node: QueryTreeNode) -> Self {
+        QueryTree {
+            root: Arc::new(root_node),
+        }
     }
 
     #[instrument(skip(graph), fields(
@@ -45,8 +47,8 @@ impl QueryTree {
 
         // Iterate over the remaining trees in the iterator.
         for item in iter {
-            // modifies `accumulator.root` in-place
-            accumulator.root.merge_nodes(&item.root);
+            let accumulator_root_mut = Arc::make_mut(&mut accumulator.root);
+            accumulator_root_mut.merge_nodes(&item.root);
         }
 
         accumulator

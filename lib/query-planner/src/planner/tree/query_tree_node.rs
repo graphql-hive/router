@@ -18,8 +18,8 @@ pub struct QueryTreeNode {
     /// The edge from the parent QueryTreeNode that led to this node (null for root)
     pub edge_from_parent: Option<EdgeIndex>,
     /// Nodes required to execute the move
-    pub requirements: Vec<QueryTreeNode>,
-    pub children: Vec<QueryTreeNode>,
+    pub requirements: Vec<Arc<QueryTreeNode>>,
+    pub children: Vec<Arc<QueryTreeNode>>,
     pub selection_attributes: Option<SelectionAttributes>,
 }
 
@@ -34,7 +34,10 @@ impl PartialEq for QueryTreeNode {
     }
 }
 
-fn merge_query_tree_node_list(target_list: &mut Vec<QueryTreeNode>, source_list: &[QueryTreeNode]) {
+fn merge_query_tree_node_list(
+    target_list: &mut Vec<Arc<QueryTreeNode>>,
+    source_list: &[Arc<QueryTreeNode>],
+) {
     if source_list.is_empty() {
         return; // nothing to merge from the source
     }
@@ -42,16 +45,16 @@ fn merge_query_tree_node_list(target_list: &mut Vec<QueryTreeNode>, source_list:
     for source_node in source_list.iter() {
         let matching_target_node = target_list
             .iter_mut()
-            .find(|target_node| *target_node == source_node);
+            .find(|target_node| target_node.as_ref() == source_node.as_ref());
 
         match matching_target_node {
             Some(target_node) => {
-                // Match found, recursively merge the content
-                target_node.merge_nodes(source_node);
+                let target_node_mut = Arc::make_mut(target_node);
+                target_node_mut.merge_nodes(source_node.as_ref());
             }
             None => {
-                // No match found, add the source node (and its subtree) to the target list
-                target_list.push(source_node.clone());
+                // No match found, add a clone of the source Arc to the target list.
+                target_list.push(Arc::clone(source_node));
             }
         }
     }
@@ -93,7 +96,10 @@ impl QueryTreeNode {
         merge_query_tree_node_list(&mut self.requirements, &other.requirements);
     }
 
-    pub fn from_paths(graph: &Graph, paths: &[OperationPath]) -> Result<Option<Self>, GraphError> {
+    pub fn from_paths(
+        graph: &Graph,
+        paths: &[OperationPath],
+    ) -> Result<Option<Arc<Self>>, GraphError> {
         if paths.is_empty() {
             return Ok(None);
         }
@@ -119,7 +125,7 @@ impl QueryTreeNode {
         graph: &Graph,
         segments: &[Arc<PathSegment>],
         current_index: usize,
-    ) -> Result<Option<Self>, GraphError> {
+    ) -> Result<Option<Arc<Self>>, GraphError> {
         if current_index >= segments.len() {
             return Ok(None);
         }
@@ -143,11 +149,9 @@ impl QueryTreeNode {
         );
 
         if let Some(requirements_tree_arc) = requirements_tree_at_index {
-            // requirements_tree_arc is &Arc<QueryTreeNode>
-            // tree_node.requirements is Vec<QueryTreeNode>, so we need to clone the underlying QueryTreeNode
             tree_node
                 .requirements
-                .push((**requirements_tree_arc).clone());
+                .push(Arc::clone(requirements_tree_arc));
         }
 
         let subsequent_query_tree_node =
@@ -162,8 +166,7 @@ impl QueryTreeNode {
                 debug!("No subsequent steps (leaf or end of path)");
             }
         }
-
-        Ok(Some(tree_node))
+        Ok(Some(Arc::new(tree_node)))
     }
 
     #[instrument(skip_all, fields(
@@ -204,7 +207,9 @@ impl QueryTreeNode {
         let mut result = String::new();
         let indent = "  ".repeat(indent_level);
 
-        let edge_index = self.edge_from_parent.unwrap();
+        let edge_index = self
+            .edge_from_parent
+            .expect("internal_pretty_print called on a node without a parent edge");
         let edge = graph.edge(edge_index).unwrap();
 
         let node = graph.node(self.node_index).unwrap();
