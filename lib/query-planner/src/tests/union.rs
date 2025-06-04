@@ -12,7 +12,6 @@ use std::error::Error;
 
 // TODO: add a test that involves an entity call to fetch non-local fields from Book and Movie
 //       to test how `... on X` affects the FetchGraph and FlattenNode.
-
 #[test]
 fn union_member_resolvable() -> Result<(), Box<dyn Error>> {
     init_logger();
