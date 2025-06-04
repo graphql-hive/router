@@ -156,7 +156,7 @@ impl PlanNode {
 fn create_input_selection_set(input_selections: &TypeAwareSelection) -> SelectionSet {
     SelectionSet {
         items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-            selections: input_selections.selection_set.clone(),
+            selections: input_selections.selection_set.strip_for_plan_input(),
             type_condition: input_selections.type_name.clone(),
         })],
     }

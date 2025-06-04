@@ -87,7 +87,7 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
           Fetch(service: "a") {
               ... on Test {
                 __typename
-                otherField(arg: 2)
+                otherField
                 id
               }
             } =>
@@ -207,7 +207,7 @@ fn requires_with_arguments() -> Result<(), Box<dyn Error>> {
           Fetch(service: "b") {
               ... on Post {
                 __typename
-                comments(limit: 3) {
+                comments {
                   somethingElse
                 }
                 id

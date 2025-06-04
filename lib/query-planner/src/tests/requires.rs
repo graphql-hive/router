@@ -1226,7 +1226,7 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
           Fetch(service: "b") {
               ... on Post {
                 __typename
-                comments(limit: 3) {
+                comments {
                   authorId
                 }
                 id
