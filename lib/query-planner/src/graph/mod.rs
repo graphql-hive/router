@@ -529,6 +529,33 @@ impl Graph {
                         continue;
                     }
 
+                    let is_external = maybe_join_field.is_some_and(|join_field| {
+                        join_field.external && join_field.requires.is_none()
+                    });
+
+                    if is_external {
+                        info!(
+                            "[ ] Field '{}.{}/{}' is external, skipping edge creation",
+                            def_name, field_name, graph_id
+                        );
+
+                        continue;
+                    }
+
+                    let requirements = match maybe_join_field.and_then(|join_field| {
+                        join_field.requires.as_ref().and_then(|requires_str| {
+                            Some((requires_str, join_field.graph_id.as_ref().expect("join__field(graph:) should exist when join__field(requires:) exists")))
+                        })
+                    }) {
+                        Some((requires_str, graph_id)) => {
+                            let selection_resolver = state
+                                .selection_resolvers_for_subgraph(graph_id)?;
+
+                            Some(selection_resolver.resolve(def_name, requires_str)?)
+                        }
+                        None => None,
+                    };
+
                     // If a field points to a union type:
                     //
                     // ```
@@ -566,19 +593,6 @@ impl Graph {
                     //
                     let target_type_is_union = unions.contains(&target_type.to_string());
                     if target_type_is_union {
-                        let is_external = maybe_join_field.is_some_and(|join_field| {
-                            join_field.external && join_field.requires.is_none()
-                        });
-
-                        if is_external {
-                            info!(
-                                "[ ] Field '{}.{}/{}' is external, skipping edge creation",
-                                def_name, field_name, graph_id
-                            );
-
-                            continue;
-                        }
-
                         let head = self.upsert_node(Node::new_node(
                             def_name,
                             state.resolve_graph_id(graph_id)?,
@@ -594,20 +608,6 @@ impl Graph {
                             "Handling a field {}.{}/{} resolving a union type {}",
                             def_name, field_name, graph_id, target_type
                         );
-
-                        let requirements = match maybe_join_field.and_then(|join_field| {
-                            join_field.requires.as_ref().and_then(|requires_str| {
-                                Some((requires_str, join_field.graph_id.as_ref().expect("join__field(graph:) should exist when join__field(requires:) exists")))
-                            })
-                        }) {
-                            Some((requires_str, graph_id)) => {
-                                let selection_resolver = state
-                                    .selection_resolvers_for_subgraph(graph_id)?;
-
-                                Some(selection_resolver.resolve(def_name, requires_str)?)
-                            }
-                            None => None,
-                        };
 
                         for member in member_types {
                             let tail = self.upsert_node(Node::new_specialized_node(
@@ -677,97 +677,48 @@ impl Graph {
                         continue;
                     }
 
-                    match maybe_join_field {
-                        Some(join_field) => {
-                            let is_external = join_field.external && join_field.requires.is_none();
+                    info!(
+                        "[x] Creating field move edge '{}.{}/{}' (type: {})",
+                        def_name, field_name, graph_id, target_type
+                    );
 
-                            if is_external {
-                                info!(
-                                    "[ ] Field '{}.{}/{}' is external, skipping edge creation",
-                                    def_name, field_name, graph_id
-                                );
+                    let head = self
+                        .upsert_node(Node::new_node(def_name, state.resolve_graph_id(graph_id)?));
+                    let tail = self.upsert_node(Node::new_node(
+                        target_type,
+                        state.resolve_graph_id(graph_id)?,
+                    ));
 
-                                continue;
-                            }
+                    info!(
+                        "[x] Creating field move edge '{}.{}/{}' (type: {})",
+                        def_name, field_name, graph_id, target_type
+                    );
 
-                            let head = self.upsert_node(Node::new_node(
-                                def_name,
-                                state.resolve_graph_id(graph_id)?,
-                            ));
-                            let tail = self.upsert_node(Node::new_node(
-                                target_type,
-                                state.resolve_graph_id(graph_id)?,
-                            ));
-
-                            info!(
-                                "[x] Creating owned field move edge '{}.{}/{}' (type: {})",
-                                def_name, field_name, graph_id, target_type
-                            );
-
-                            let requirements = match join_field.requires.as_ref() {
-                                Some(requires_str) => {
-                                    let selection_resolver = state
-                                        .selection_resolvers_for_subgraph(
-                                            join_field.graph_id.as_ref().unwrap(),
-                                        )?;
-
-                                    Some(selection_resolver.resolve(def_name, requires_str)?)
-                                }
-                                None => None,
-                            };
-
-                            self.upsert_edge(
-                                head,
-                                tail,
-                                // This is done in order to "reset" the provided field info, we can probably
-                                // do this in a better way, and extract info from the JoinFieldDirective into the edges, instead of depending on
-                                // the raw directive info.
-                                Edge::create_field_move(
-                                    field_name.clone(),
-                                    def_name.clone(),
-                                    state.is_scalar_type(target_type),
-                                    field_definition.source.field_type.is_list_like_type(),
-                                    Some(match join_field.provides {
-                                        Some(_) => {
-                                            let mut new = join_field.clone();
-                                            new.provides = None;
-                                            new
-                                        }
-                                        None => join_field.clone(),
-                                    }),
-                                    requirements,
-                                ),
-                            );
-                        }
-                        None => {
-                            let head = self.upsert_node(Node::new_node(
-                                def_name,
-                                state.resolve_graph_id(graph_id)?,
-                            ));
-                            let tail = self.upsert_node(Node::new_node(
-                                target_type,
-                                state.resolve_graph_id(graph_id)?,
-                            ));
-
-                            info!(
-                                "[x] Creating field move edge for '{}.{}/{}' (type: {})",
-                                def_name, field_name, graph_id, target_type
-                            );
-
-                            self.upsert_edge(
-                                head,
-                                tail,
-                                Edge::create_field_move(
-                                    field_name.clone(),
-                                    def_name.clone(),
-                                    state.is_scalar_type(target_type),
-                                    field_definition.source.field_type.is_list_like_type(),
-                                    None,
-                                    None,
-                                ),
-                            );
-                        }
-                    };
+                    self.upsert_edge(
+                        head,
+                        tail,
+                        Edge::create_field_move(
+                            field_name.clone(),
+                            def_name.clone(),
+                            state.is_scalar_type(target_type),
+                            field_definition.source.field_type.is_list_like_type(),
+                            maybe_join_field.and_then(|join_field| {
+                                Some(match join_field.provides {
+                                    Some(_) => {
+                                        // This is done in order to "reset" the provided field info, we can probably
+                                        // do this in a better way, and extract info from the JoinFieldDirective into the edges, instead of depending on
+                                        // the raw directive info.
+                                        // TODO: @dotan, can you explain it?
+                                        let mut new = join_field.clone();
+                                        new.provides = None;
+                                        new
+                                    }
+                                    None => join_field.clone(),
+                                })
+                            }),
+                            requirements,
+                        ),
+                    );
                 }
             }
         }
