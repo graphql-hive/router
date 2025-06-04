@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use std::{fmt::Write, sync::Arc};
 
 use tracing::instrument;
 
@@ -11,12 +11,14 @@ use super::query_tree_node::QueryTreeNode;
 
 #[derive(Debug, Clone)]
 pub struct QueryTree {
-    pub root: QueryTreeNode,
+    pub root: Arc<QueryTreeNode>,
 }
 
 impl QueryTree {
-    fn new(root: QueryTreeNode) -> Self {
-        QueryTree { root }
+    fn new(root_node: QueryTreeNode) -> Self {
+        QueryTree {
+            root: Arc::new(root_node),
+        }
     }
 
     #[instrument(skip(graph), fields(
@@ -34,11 +36,19 @@ impl QueryTree {
     #[instrument(skip_all, fields(
       tree_count = trees.len()
     ))]
-    pub fn merge_trees(mut trees: Vec<QueryTree>) -> QueryTree {
-        let mut accumulator = trees.remove(0);
+    pub fn merge_trees(trees: Vec<QueryTree>) -> QueryTree {
+        if trees.is_empty() {
+            panic!("merge_trees cannot be called with an empty Vec<QueryTree>.");
+        }
 
-        for item in trees {
-            accumulator.root = accumulator.root.merge_nodes(&item.root);
+        let mut iter = trees.into_iter();
+        // `unwrap()` is safe here because we've just checked that `trees` is not empty.
+        let mut accumulator = iter.next().unwrap();
+
+        // Iterate over the remaining trees in the iterator.
+        for item in iter {
+            let accumulator_root_mut = Arc::make_mut(&mut accumulator.root);
+            accumulator_root_mut.merge_nodes(&item.root);
         }
 
         accumulator
