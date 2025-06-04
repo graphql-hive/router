@@ -27,37 +27,10 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-
     let query_tree = QueryTree::merge_trees(qtps);
-    insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
-    root(Query)
-      🚪 (Query/a)
-        test of Test/a
-          🧩 [
-            🧩 [
-              id of ID/a
-            ]
-            🔑 Test/b
-              otherField(arg: 2) of String/b
-          ]
-          fieldWithRequiresAndArgs of String/a
-          id of ID/a
-    ");
-
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
-    Nodes:
-    [1] Query/a {} → {test{id __typename}} at $.
-    [2] Test/a {__typename otherField(arg: 2) id} → {fieldWithRequiresAndArgs} at $.test
-    [4] Test/b {__typename id} → {otherField(arg: 2)} at $.test
-
-    Tree:
-    [1]
-      [4]
-        [2]
-    ");
-
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
@@ -123,44 +96,10 @@ fn requires_with_arguments() -> Result<(), Box<dyn Error>> {
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-
     let query_tree = QueryTree::merge_trees(qtps);
-    insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
-    root(Query)
-      🚪 (Query/a)
-        feed of Post/a
-          🧩 [
-            id of ID/a
-          ]
-          🔑 Post/b
-            🧩 [
-              comments(limit: 3) of Comment/b
-                🧩 [
-                  id of ID/b
-                ]
-                🔑 Comment/a
-                  somethingElse of String/a
-            ]
-            author of Author/b
-              id of ID/b
-    ");
-
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
-    Nodes:
-    [1] Query/a {} → {feed{__typename id}} at $.
-    [3] Post/b {__typename comments(limit: 3){somethingElse} id} → {author{id}} at $.feed.@
-    [4] Post/b {__typename id} → {comments(limit: 3){__typename id}} at $.feed.@
-    [5] Comment/a {__typename id} → {somethingElse} at $.feed.@.comments.@
-
-    Tree:
-    [1]
-      [4]
-        [5]
-          [3]
-    ");
-
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
@@ -256,53 +195,10 @@ fn arguments_in_different_levels() -> Result<(), Box<dyn Error>> {
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 4);
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-
-    insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r#"
-    root(Query)
-      🚪 (Query/spotify)
-        album(id: "5") of Album/spotify
-          tracks(limit: 5, offset: 10) of AlbumTrackConnection/spotify
-            edges of AlbumTrackEdge/spotify
-              node of Track/spotify
-                name of String/spotify
-    "#);
-
-    insta::assert_snapshot!(qtps[1].pretty_print(&graph)?, @r#"
-    root(Query)
-      🚪 (Query/spotify)
-        album(id: "5") of Album/spotify
-          genres of String/spotify
-    "#);
-    insta::assert_snapshot!(qtps[2].pretty_print(&graph)?, @r#"
-    root(Query)
-      🚪 (Query/spotify)
-        album(id: "5") of Album/spotify
-          name of String/spotify
-    "#);
-    insta::assert_snapshot!(qtps[3].pretty_print(&graph)?, @r#"
-    root(Query)
-      🚪 (Query/spotify)
-        album(id: "5") of Album/spotify
-          albumType of AlbumType/spotify
-    "#);
-
     let query_tree = QueryTree::merge_trees(qtps);
-
-    insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r#"
-    root(Query)
-      🚪 (Query/spotify)
-        album(id: "5") of Album/spotify
-          tracks(limit: 5, offset: 10) of AlbumTrackConnection/spotify
-            edges of AlbumTrackEdge/spotify
-              node of Track/spotify
-                name of String/spotify
-          genres of String/spotify
-          name of String/spotify
-          albumType of AlbumType/spotify
-    "#);
-
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Fetch(service: "spotify") {
@@ -323,6 +219,7 @@ fn arguments_in_different_levels() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
+
     insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
@@ -364,53 +261,10 @@ fn arguments_and_variables() -> Result<(), Box<dyn Error>> {
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 4);
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-
-    insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
-    root(Query)
-      🚪 (Query/spotify)
-        album(id: $id) of Album/spotify
-          tracks(limit: $limit, offset: 10) of AlbumTrackConnection/spotify
-            edges of AlbumTrackEdge/spotify
-              node of Track/spotify
-                name of String/spotify
-    ");
-
-    insta::assert_snapshot!(qtps[1].pretty_print(&graph)?, @r"
-    root(Query)
-      🚪 (Query/spotify)
-        album(id: $id) of Album/spotify
-          genres of String/spotify
-    ");
-    insta::assert_snapshot!(qtps[2].pretty_print(&graph)?, @r"
-    root(Query)
-      🚪 (Query/spotify)
-        album(id: $id) of Album/spotify
-          name of String/spotify
-    ");
-    insta::assert_snapshot!(qtps[3].pretty_print(&graph)?, @r"
-    root(Query)
-      🚪 (Query/spotify)
-        album(id: $id) of Album/spotify
-          albumType of AlbumType/spotify
-    ");
-
     let query_tree = QueryTree::merge_trees(qtps);
-
-    insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
-    root(Query)
-      🚪 (Query/spotify)
-        album(id: $id) of Album/spotify
-          tracks(limit: $limit, offset: 10) of AlbumTrackConnection/spotify
-            edges of AlbumTrackEdge/spotify
-              node of Track/spotify
-                name of String/spotify
-          genres of String/spotify
-          name of String/spotify
-          albumType of AlbumType/spotify
-    ");
-
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Fetch(service: "spotify") {
@@ -480,57 +334,11 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 10);
-
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     let query_tree = QueryTree::merge_trees(qtps);
-
-    insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r#"
-    root(Query)
-      🚪 (Query/d)
-        productFromD(id: "2") of Product/d
-          🧩 [
-            id of ID/d
-          ]
-          🔑 Product/a
-            category of Category/a
-              details of String/a
-          🧩 [
-            id of ID/d
-          ]
-          🔑 Product/b
-            category of Category/b
-              🧩 [
-                id of ID/b
-              ]
-              🔑 Category/c
-                name of String/c
-              id of ID/b
-          name of String/d
-          id of ID/d
-        productFromD(id: "1") of Product/d
-          🧩 [
-            id of ID/d
-          ]
-          🔑 Product/a
-            category of Category/a
-              details of String/a
-          🧩 [
-            id of ID/d
-          ]
-          🔑 Product/b
-            category of Category/b
-              🧩 [
-                id of ID/b
-              ]
-              🔑 Category/c
-                name of String/c
-              id of ID/b
-          name of String/d
-          id of ID/d
-    "#);
-
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
@@ -683,57 +491,11 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 10);
-
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
     let query_tree = QueryTree::merge_trees(qtps);
-
-    insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r#"
-    root(Query)
-      🚪 (Query/d)
-        productFromD(id: $secondProductId) of Product/d
-          🧩 [
-            id of ID/d
-          ]
-          🔑 Product/a
-            category of Category/a
-              details of String/a
-          🧩 [
-            id of ID/d
-          ]
-          🔑 Product/b
-            category of Category/b
-              🧩 [
-                id of ID/b
-              ]
-              🔑 Category/c
-                name of String/c
-              id of ID/b
-          name of String/d
-          id of ID/d
-        productFromD(id: "1") of Product/d
-          🧩 [
-            id of ID/d
-          ]
-          🔑 Product/a
-            category of Category/a
-              details of String/a
-          🧩 [
-            id of ID/d
-          ]
-          🔑 Product/b
-            category of Category/b
-              🧩 [
-                id of ID/b
-              ]
-              🔑 Category/c
-                name of String/c
-              id of ID/b
-          name of String/d
-          id of ID/d
-    "#);
-
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {

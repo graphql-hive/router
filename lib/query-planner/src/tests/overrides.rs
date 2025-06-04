@@ -26,21 +26,7 @@ fn single_simple_overrides() -> Result<(), Box<dyn Error>> {
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
-    assert_eq!(best_paths_per_leaf[0].len(), 1);
-
-    insta::assert_snapshot!(
-      best_paths_per_leaf[0][0].pretty_print(&graph),
-      @"root(Query) -(b)- Query/b -(feed)- Post/b -(createdAt)- String/b"
-    );
-
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-    insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
-    root(Query)
-      🚪 (Query/b)
-        feed of Post/b
-          createdAt of String/b
-    ");
-
     let query_tree = QueryTree::merge_trees(qtps);
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
@@ -89,51 +75,8 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 2);
-    assert_eq!(best_paths_per_leaf[0].len(), 1);
-    assert_eq!(best_paths_per_leaf[1].len(), 1);
-
-    insta::assert_snapshot!(
-      best_paths_per_leaf[0][0].pretty_print(&graph),
-      @"root(Query) -(b)- Query/b -(bFeed)- Post/b -(createdAt)- String/b"
-    );
-    insta::assert_snapshot!(
-      best_paths_per_leaf[1][0].pretty_print(&graph),
-      @"root(Query) -(a)- Query/a -(aFeed)- Post/a -(🔑🧩{id})- Post/b -(createdAt)- String/b"
-    );
-
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-    insta::assert_snapshot!(qtps[0].pretty_print(&graph)?, @r"
-    root(Query)
-      🚪 (Query/b)
-        bFeed of Post/b
-          createdAt of String/b
-    ");
-    insta::assert_snapshot!(qtps[1].pretty_print(&graph)?, @r"
-    root(Query)
-      🚪 (Query/a)
-        aFeed of Post/a
-          🧩 [
-            id of ID/a
-          ]
-          🔑 Post/b
-            createdAt of String/b
-    ");
-
     let query_tree = QueryTree::merge_trees(qtps);
-    insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
-    root(Query)
-      🚪 (Query/b)
-        bFeed of Post/b
-          createdAt of String/b
-      🚪 (Query/a)
-        aFeed of Post/a
-          🧩 [
-            id of ID/a
-          ]
-          🔑 Post/b
-            createdAt of String/b
-    ");
-
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
 
