@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
+use std::rc::Rc;
 
 use petgraph::visit::{EdgeRef, NodeRef};
 use tracing::{debug, instrument};
@@ -314,21 +315,18 @@ pub fn can_satisfy_edge(
                 graph.pretty_print_edge(edge_ref.id(), false)
             );
 
-            let mut requirements: Vec<MoveRequirement> = vec![];
+            let mut requirements: VecDeque<MoveRequirement> = VecDeque::new();
             let mut paths_to_requirements: Vec<OperationPath> = vec![];
 
             for selection in selections.selection_set.items.iter() {
-                requirements.splice(
-                    0..0,
-                    vec![MoveRequirement {
-                        paths: vec![path.clone()],
-                        selection: selection.clone(),
-                    }],
-                );
+                requirements.push_front(MoveRequirement {
+                    paths: Rc::new(vec![path.clone()]),
+                    selection: selection.clone(),
+                });
             }
 
             // it's important to pop from the end as we want to process the last added requirement first
-            while let Some(requirement) = requirements.pop() {
+            while let Some(requirement) = requirements.pop_back() {
                 match &requirement.selection {
                     SelectionItem::Field(selection_field_requirement) => {
                         let result = validate_field_requirement(
@@ -361,7 +359,9 @@ pub fn can_satisfy_edge(
                                     }
                                 }
 
-                                requirements.splice(0..0, next_requirements);
+                                for req in next_requirements.into_iter().rev() {
+                                    requirements.push_front(req);
+                                }
                             }
                             None => {
                                 return Ok(None);
@@ -385,40 +385,62 @@ pub fn can_satisfy_edge(
 
 #[derive(Debug)]
 pub struct MoveRequirement {
-    pub paths: Vec<OperationPath>,
+    pub paths: Rc<Vec<OperationPath>>,
     pub selection: SelectionItem,
 }
 
 type FieldRequirementsResult = Option<(Vec<OperationPath>, Vec<MoveRequirement>)>;
 
 #[instrument(skip_all, ret())]
+#[instrument(skip_all, ret())]
 fn validate_field_requirement(
     graph: &Graph,
-    move_requirement: &MoveRequirement,
+    move_requirement: &MoveRequirement, // Contains Rc<Vec<OperationPath>>
     field: &FieldSelection,
     excluded: &ExcludedFromLookup,
     use_only_direct_edges: bool,
 ) -> Result<FieldRequirementsResult, WalkOperationError> {
-    let mut next_paths: Vec<OperationPath> = Vec::new();
-
+    // Collect all Vec<OperationPath> results from find_direct_paths
+    let mut direct_path_results: Vec<Vec<OperationPath>> =
+        Vec::with_capacity(move_requirement.paths.len());
     for path in move_requirement.paths.iter() {
-        let direct_paths =
-            find_direct_paths(graph, path, &NavigationTarget::Field(field), excluded)?;
-
-        for direct_path in direct_paths.into_iter() {
-            next_paths.push(direct_path);
-        }
+        direct_path_results.push(find_direct_paths(
+            graph,
+            path,
+            &NavigationTarget::Field(field),
+            excluded,
+        )?);
     }
 
-    if !use_only_direct_edges {
-        for path in move_requirement.paths.iter() {
-            let indirect_paths =
-                find_indirect_paths(graph, path, &NavigationTarget::Field(field), excluded)?;
-
-            for indirect_path in indirect_paths.into_iter() {
-                next_paths.push(indirect_path);
-            }
+    // Collect all Vec<OperationPath> results from find_indirect_paths, if needed
+    let indirect_path_results: Vec<Vec<OperationPath>> = if !use_only_direct_edges {
+        let mut temp_indirect_results = Vec::with_capacity(move_requirement.paths.len());
+        for path_from_rc in move_requirement.paths.iter() {
+            temp_indirect_results.push(find_indirect_paths(
+                graph,
+                path_from_rc,
+                &NavigationTarget::Field(field),
+                excluded,
+            )?);
         }
+        temp_indirect_results
+    } else {
+        Vec::new()
+    };
+
+    // sum of direct and indirect
+    let total_capacity: usize = direct_path_results.iter().map(|v| v.len()).sum::<usize>()
+        + indirect_path_results.iter().map(|v| v.len()).sum::<usize>();
+
+    let mut next_paths: Vec<OperationPath> = Vec::with_capacity(total_capacity);
+
+    // These extend calls should not reallocate `next_paths`.
+    for paths_vec in direct_path_results {
+        next_paths.extend(paths_vec);
+    }
+    // No need to check use_only_direct_edges again, indirect_path_results_vecs will be empty if not used.
+    for paths_vec in indirect_path_results {
+        next_paths.extend(paths_vec);
     }
 
     if next_paths.is_empty() {
@@ -431,17 +453,19 @@ fn validate_field_requirement(
             .selections()
             .is_some_and(|s| s.is_empty())
     {
+        // No sub-selections, next_paths is returned directly.
         return Ok(Some((next_paths, vec![])));
     }
 
+    let shared_next_paths_for_subs = Rc::new(next_paths.clone());
     let next_requirements: Vec<MoveRequirement> = move_requirement
         .selection
         .selections()
-        .unwrap()
+        .unwrap() // Safe due to the check above
         .iter()
-        .map(|selection| MoveRequirement {
-            selection: selection.clone(),
-            paths: next_paths.clone(),
+        .map(|selection_item| MoveRequirement {
+            selection: selection_item.clone(),
+            paths: Rc::clone(&shared_next_paths_for_subs),
         })
         .collect();
 
