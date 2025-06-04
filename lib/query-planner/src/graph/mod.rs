@@ -13,7 +13,9 @@ use std::{
 use crate::{
     federation_spec::FederationRules,
     graph::node::{SubgraphTypeSpecialization, UnionSubsetData},
-    state::supergraph_state::{OperationKind, SupergraphDefinition, SupergraphState},
+    state::supergraph_state::{
+        OperationKind, SupergraphDefinition, SupergraphField, SupergraphState,
+    },
 };
 use error::GraphError;
 use graphql_parser::query::{Selection, SelectionSet, Type};
@@ -80,11 +82,13 @@ impl<'a> UnionDefinitions<'a> {
         Self { registry }
     }
 
+    /// Checks if a type_name exists in the registry of union type definitions.
+    /// Basically a check whether a type is a union.
     pub fn contains(&self, type_name: &'a String) -> bool {
         self.registry.contains_key(type_name)
     }
 
-    pub fn members_in_subgraph(
+    fn members_in_subgraph(
         &self,
         type_name: &String,
         graph: &'a String,
@@ -92,20 +96,64 @@ impl<'a> UnionDefinitions<'a> {
         self.registry.get(type_name).and_then(|r| r.get(graph))
     }
 
-    // pub fn intersection(
-    //     &self,
-    //     union_name: &'a String,
-    //     subgraphs: &'a Vec<&'a String>,
-    // ) -> Option<HashSet<&'a String>> {
-    //     self.registry.get(union_name).map(|in_subgraphs| {
-    //         let sets: Vec<&HashSet<&'a String>> = subgraphs
-    //             .iter()
-    //             .map(|subgraph| in_subgraphs.get(subgraph).expect("Unknown subgraph"))
-    //             .collect();
+    /// Produces a list of names of the object types.
+    pub fn intersections(
+        &self,
+        type_def: &'a SupergraphDefinition<'_>,
+        field_def: &'a SupergraphField<'_>,
+        field_type: &String,
+    ) -> HashSet<&'a std::string::String> {
+        // Collect subgraphs the field was defined in.
+        // First, look for join__field(graph:),
+        // If not defined, look at type's join__type(graph:).
 
-    //         intersections(sets)
-    //     })
-    // }
+        let mut members_per_subgraph: HashMap<&String, HashSet<&String>> = HashMap::new();
+
+        if field_def.join_field.is_empty() {
+            for join_type in type_def.join_types() {
+                let mut members_in_subgraph: HashSet<&String> = HashSet::new();
+                for union_member in self
+                    .members_in_subgraph(field_type, &join_type.graph_id)
+                    .unwrap()
+                    .iter()
+                {
+                    members_in_subgraph.insert(union_member);
+                }
+
+                members_per_subgraph.insert(&join_type.graph_id, members_in_subgraph);
+            }
+        }
+
+        for join_field in field_def.join_field.iter() {
+            if let Some(graph_id) = join_field.graph_id.as_ref() {
+                let mut members_in_subgraph: HashSet<&String> = HashSet::new();
+
+                if let Some(type_in_graph) = join_field.type_in_graph.as_ref() {
+                    // TODO: remove [] and ! modifier from `type_in_graph` - it may not represent type's name
+                    // look for join__field(type:) - it could point to `Object` or `Union`
+                    if type_in_graph != field_type {
+                        // the field_type is a union, as we previously checked,
+                        // so if the type_in_graph is different,
+                        // it means it's an object type (one of the members).
+                        members_in_subgraph.insert(type_in_graph);
+                        members_per_subgraph.insert(graph_id, members_in_subgraph);
+                        continue;
+                    }
+                }
+
+                for union_member in self
+                    .members_in_subgraph(field_type, graph_id)
+                    .unwrap()
+                    .iter()
+                {
+                    members_in_subgraph.insert(union_member);
+                }
+                members_per_subgraph.insert(graph_id, members_in_subgraph);
+            }
+        }
+
+        intersections(members_per_subgraph.values().collect())
+    }
 }
 
 #[derive(Debug, Default)]
@@ -523,61 +571,11 @@ impl Graph {
                             state.resolve_graph_id(graph_id)?,
                         ));
 
-                        // Collect subgraphs the field was defined in.
-                        // First, look for join__field(graph:),
-                        // If not defined, look at type's join__type(graph:).
-
-                        // look for join__field(type:) - it could point to `Object` or `Union`
-                        let mut members_per_subgraph: HashMap<&String, HashSet<&String>> =
-                            HashMap::new();
-
-                        if field_definition.join_field.is_empty() {
-                            for join_type in definition.join_types() {
-                                let mut members_in_subgraph: HashSet<&String> = HashSet::new();
-                                for union_member in unions
-                                    .members_in_subgraph(
-                                        &target_type.to_string(),
-                                        &join_type.graph_id,
-                                    )
-                                    .unwrap()
-                                    .iter()
-                                {
-                                    members_in_subgraph.insert(union_member);
-                                }
-
-                                members_per_subgraph
-                                    .insert(&join_type.graph_id, members_in_subgraph);
-                            }
-                        }
-
-                        for join_field in field_definition.join_field.iter() {
-                            if let Some(graph_id) = join_field.graph_id.as_ref() {
-                                let mut members_in_subgraph: HashSet<&String> = HashSet::new();
-
-                                if let Some(type_in_graph) = join_field.type_in_graph.as_ref() {
-                                    // TODO: remove [] and ! modifier from `type_in_graph` - it may not represent type's name
-                                    if type_in_graph != target_type {
-                                        // the target_type is a union, as we previously checked,
-                                        // so if the type_in_graph is different,
-                                        // it means it's an object type (one of the members).
-                                        members_in_subgraph.insert(type_in_graph);
-                                        members_per_subgraph.insert(graph_id, members_in_subgraph);
-                                        continue;
-                                    }
-                                }
-
-                                for union_member in unions
-                                    .members_in_subgraph(&target_type.to_string(), graph_id)
-                                    .unwrap()
-                                    .iter()
-                                {
-                                    members_in_subgraph.insert(union_member);
-                                }
-                                members_per_subgraph.insert(graph_id, members_in_subgraph);
-                            }
-                        }
-
-                        let member_types = intersections(members_per_subgraph.values().collect());
+                        let member_types = unions.intersections(
+                            definition,
+                            field_definition,
+                            &target_type.to_string(),
+                        );
 
                         for member in member_types {
                             let tail = self.upsert_node(Node::new_specialized_node(
