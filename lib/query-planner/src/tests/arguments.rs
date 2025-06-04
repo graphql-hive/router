@@ -11,7 +11,6 @@ use crate::{
 use std::error::Error;
 
 #[test]
-#[ignore] // blocked by https://github.com/graphql-hive/gateway-rs/pull/64
 fn requires_with_arguments() -> Result<(), Box<dyn Error>> {
     init_logger();
     let graph = read_supergraph("fixture/tests/arguments-requires.supergraph.graphql");
@@ -52,10 +51,85 @@ fn requires_with_arguments() -> Result<(), Box<dyn Error>> {
     ");
 
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    insta::assert_snapshot!(format!("{}", fetch_graph), @r"");
+    insta::assert_snapshot!(format!("{}", fetch_graph), @r"
+    Nodes:
+    [1] Query/a {} → {feed{__typename id}} at $.
+    [3] Post/b {__typename comments{somethingElse} id} → {author{id}} at $.feed.@
+    [4] Post/b {__typename id} → {comments{__typename id}} at $.feed.@
+    [5] Comment/a {__typename id} → {somethingElse} at $.feed.@.comments.@
+
+    Tree:
+    [1]
+      [4]
+        [5]
+          [3]
+    ");
 
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
-    insta::assert_snapshot!(format!("{}", query_plan), @r#""#);
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            feed {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "feed.@") {
+          Fetch(service: "b") {
+              ... on Post {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Post {
+                comments {
+                  __typename
+                  id
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "feed.@.comments.@") {
+          Fetch(service: "a") {
+              ... on Comment {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Comment {
+                somethingElse
+              }
+            }
+          },
+        },
+        Flatten(path: "feed.@") {
+          Fetch(service: "b") {
+              ... on Post {
+                __typename
+                comments {
+                  somethingElse
+                }
+                id
+              }
+            } =>
+            {
+              ... on Post {
+                author {
+                  id
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
 
     Ok(())
 }
