@@ -566,6 +566,19 @@ impl Graph {
                     //
                     let target_type_is_union = unions.contains(&target_type.to_string());
                     if target_type_is_union {
+                        let is_external = maybe_join_field.is_some_and(|join_field| {
+                            join_field.external && join_field.requires.is_none()
+                        });
+
+                        if is_external {
+                            info!(
+                                "[ ] Field '{}.{}/{}' is external, skipping edge creation",
+                                def_name, field_name, graph_id
+                            );
+
+                            continue;
+                        }
+
                         let head = self.upsert_node(Node::new_node(
                             def_name,
                             state.resolve_graph_id(graph_id)?,
@@ -576,6 +589,25 @@ impl Graph {
                             field_definition,
                             &target_type.to_string(),
                         );
+
+                        info!(
+                            "Handling a field {}.{}/{} resolving a union type {}",
+                            def_name, field_name, graph_id, target_type
+                        );
+
+                        let requirements = match maybe_join_field.and_then(|join_field| {
+                            join_field.requires.as_ref().and_then(|requires_str| {
+                                Some((requires_str, join_field.graph_id.as_ref().expect("join__field(graph:) should exist when join__field(requires:) exists")))
+                            })
+                        }) {
+                            Some((requires_str, graph_id)) => {
+                                let selection_resolver = state
+                                    .selection_resolvers_for_subgraph(graph_id)?;
+
+                                Some(selection_resolver.resolve(def_name, requires_str)?)
+                            }
+                            None => None,
+                        };
 
                         for member in member_types {
                             let tail = self.upsert_node(Node::new_specialized_node(
@@ -598,10 +630,9 @@ impl Graph {
                             ));
 
                             info!(
-                                "[x] Creating owned field move edge '{}.__typename/{}' (type: String)",
+                                "  [x] Creating field move edge '{}.__typename/{}' (type: String)",
                                 def_name, graph_id
                             );
-
                             self.upsert_edge(
                                 tail,
                                 typename_tail,
@@ -616,12 +647,9 @@ impl Graph {
                             );
 
                             info!(
-                                "[x] Creating field move edge for '{}.{}/{}' (type: {})",
-                                def_name, field_name, graph_id, target_type
+                                "  [x] Creating field move edge '{}.{}/{}' (type: String)",
+                                def_name, field_name, graph_id
                             );
-
-                            // TODO: handle requirements and external
-
                             self.upsert_edge(
                                 head,
                                 tail,
@@ -629,18 +657,16 @@ impl Graph {
                                     field_name.clone(),
                                     def_name.clone(),
                                     state.is_scalar_type(target_type),
-                                    field_definition.source.field_type.is_list_like_type(),
+                                    false,
                                     None,
-                                    None,
+                                    requirements.clone(),
                                 ),
                             );
 
-                            // todo: uncomment and do a proper message
-                            // info!(
-                            //     "[x] Creating abstract move edge for '{}.{}/{}' (type: {})",
-                            //     def_name, field_name, graph_id, target_type
-                            // );
-
+                            info!(
+                                "  [x] Creating abstract move edge for '{}.{}/{}' (union member: {})",
+                                def_name, field_name, graph_id, member
+                            );
                             self.upsert_edge(
                                 tail,
                                 abstract_tail,
