@@ -47,22 +47,23 @@ impl TypeHelpers for Type<'static, String> {
     }
 }
 
+type UnionRegistyHashMap<'a> = HashMap<&'a str, HashMap<&'a str, HashSet<&'a str>>>;
+
 #[derive(Debug, Default)]
 struct UnionDefinitions<'a> {
-    registry: HashMap<&'a String, HashMap<&'a String, HashSet<&'a String>>>,
+    registry: UnionRegistyHashMap<'a>,
 }
 
 impl<'a> UnionDefinitions<'a> {
     pub fn new(state: &'a SupergraphState<'a>) -> Self {
-        let mut registry: HashMap<&'a String, HashMap<&'a String, HashSet<&'a String>>> =
-            HashMap::new();
+        let mut registry: UnionRegistyHashMap<'a> = UnionRegistyHashMap::new();
 
         for (def_name, definition) in state
             .definitions
             .iter()
             .filter(|(_, d)| matches!(d, SupergraphDefinition::Union(_)))
         {
-            let mut in_subgraphs: HashMap<&'a String, HashSet<&'a String>> = HashMap::new();
+            let mut in_subgraphs: HashMap<&'a str, HashSet<&'a str>> = HashMap::new();
 
             for join_member in definition.join_union_members() {
                 in_subgraphs
@@ -71,7 +72,7 @@ impl<'a> UnionDefinitions<'a> {
                         e.insert(&join_member.member);
                     })
                     .or_insert_with(|| {
-                        let mut set: HashSet<&'a String> = HashSet::new();
+                        let mut set: HashSet<&'a str> = HashSet::new();
                         set.insert(&join_member.member);
                         set
                     });
@@ -85,15 +86,11 @@ impl<'a> UnionDefinitions<'a> {
 
     /// Checks if a type_name exists in the registry of union type definitions.
     /// Basically a check whether a type is a union.
-    pub fn contains(&self, type_name: &'a String) -> bool {
+    pub fn contains(&self, type_name: &'a str) -> bool {
         self.registry.contains_key(type_name)
     }
 
-    fn members_in_subgraph(
-        &self,
-        type_name: &String,
-        graph: &'a String,
-    ) -> Option<&HashSet<&'a String>> {
+    fn members_in_subgraph(&self, type_name: &str, graph: &'a str) -> Option<&HashSet<&'a str>> {
         self.registry.get(type_name).and_then(|r| r.get(graph))
     }
 
@@ -102,13 +99,13 @@ impl<'a> UnionDefinitions<'a> {
         &self,
         type_def: &'a SupergraphDefinition<'_>,
         field_def: &'a SupergraphField<'_>,
-        field_type: &String,
+        field_type: &str,
     ) -> HashSet<String> {
         // Collect subgraphs the field was defined in.
         // First, look for join__field(graph:),
         // If not defined, look at type's join__type(graph:).
 
-        let mut members_per_subgraph: HashMap<&String, HashSet<String>> = HashMap::new();
+        let mut members_per_subgraph: HashMap<&str, HashSet<String>> = HashMap::new();
 
         if field_def.join_field.is_empty() {
             for join_type in type_def.join_types() {
