@@ -1,20 +1,14 @@
 query someData {
-    allPandas {
-        name
-        favoriteFood
+  allPandas {
+    name
+    favoriteFood
+  }
+  allProducts {
+    id
+    name
+    createdBy {
+      email
+      name
     }
-    allProducts {
-        id
-        name
-        reviewsCount
-        reviewsScore
-        createdBy {
-            email
-            name
-        }
-        reviews {
-            id
-            body
-        }
-    }
+  }
 }
