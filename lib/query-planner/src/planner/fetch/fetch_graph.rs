@@ -1234,8 +1234,6 @@ fn process_abstract_edge(
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let parent_fetch_step_index = parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?;
 
-    // TODO: handle requirments (I guess?)
-
     let head_index = graph.get_edge_head(edge_index)?;
     let head = graph.node(head_index)?;
     let head_type_name = match head {
