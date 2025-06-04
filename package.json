@@ -10,7 +10,7 @@
     "ci:test:graphql-over-http": "start-server-and-test start:test-gateway http://localhost:4000 test-junit:graphql-over-http"
   },
   "devDependencies": {
-    "graphql-federation-gateway-audit": "the-guild-org/graphql-federation-gateway-audit#72963a8edc2c183c2d1252d05e8b08d094c96f1f",
+    "graphql-federation-gateway-audit": "the-guild-org/graphql-federation-gateway-audit#6848cc3c43f6eb26fd777a2ee5f2ec9dfff0a5e6",
     "graphql-http": "^1.22.4",
     "typescript": "^5.8.3",
     "start-server-and-test": "^2.0.12"
