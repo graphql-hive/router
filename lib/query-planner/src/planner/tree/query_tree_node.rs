@@ -1,5 +1,6 @@
 use petgraph::graph::{EdgeIndex, NodeIndex};
 use std::fmt::Write;
+use std::sync::Arc;
 use tracing::{debug, instrument};
 
 use crate::{
@@ -87,17 +88,9 @@ impl QueryTreeNode {
         QueryTreeNode::new(node_index, None, None)
     }
 
-    pub fn merge_nodes(&mut self, other: &Self) -> Self {
+    pub fn merge_nodes(&mut self, other: &Self) {
         merge_query_tree_node_list(&mut self.children, &other.children);
         merge_query_tree_node_list(&mut self.requirements, &other.requirements);
-
-        QueryTreeNode {
-            node_index: self.node_index,
-            edge_from_parent: self.edge_from_parent,
-            requirements: self.requirements.clone(),
-            children: self.children.clone(),
-            selection_attributes: self.selection_attributes.clone(),
-        }
     }
 
     pub fn from_paths(graph: &Graph, paths: &[OperationPath]) -> Result<Option<Self>, GraphError> {
@@ -124,14 +117,14 @@ impl QueryTreeNode {
     ))]
     fn from_path_segment_sequences(
         graph: &Graph,
-        segments: &[&PathSegment],
+        segments: &[Arc<PathSegment>],
         current_index: usize,
     ) -> Result<Option<Self>, GraphError> {
         if current_index >= segments.len() {
             return Ok(None);
         }
 
-        let segment_at_index = &segments[current_index];
+        let segment_at_index: &Arc<PathSegment> = &segments[current_index];
         let edge_at_index = &segment_at_index.edge_index;
         let requirements_tree_at_index = &segment_at_index.requirement_tree;
         let selection_attributes_at_index = &segment_at_index.selection_attributes;
@@ -149,8 +142,12 @@ impl QueryTreeNode {
             (*selection_attributes_at_index).as_ref(),
         );
 
-        if let Some(requirements_tree) = requirements_tree_at_index {
-            tree_node.requirements.push(requirements_tree.clone());
+        if let Some(requirements_tree_arc) = requirements_tree_at_index {
+            // requirements_tree_arc is &Arc<QueryTreeNode>
+            // tree_node.requirements is Vec<QueryTreeNode>, so we need to clone the underlying QueryTreeNode
+            tree_node
+                .requirements
+                .push((**requirements_tree_arc).clone());
         }
 
         let subsequent_query_tree_node =
@@ -176,7 +173,7 @@ impl QueryTreeNode {
     pub fn create_root_for_path_sequences(
         graph: &Graph,
         root_node_index: &NodeIndex,
-        segments: &Vec<&PathSegment>,
+        segments: &Vec<Arc<PathSegment>>,
     ) -> Result<QueryTreeNode, GraphError> {
         debug!(
             "Building root query tree node: {}",
@@ -188,7 +185,8 @@ impl QueryTreeNode {
         if segments.is_empty() {
             debug!("Path has no edges beyond the root.");
         } else {
-            let subsequent_node = QueryTreeNode::from_path_segment_sequences(graph, segments, 0)?;
+            let subsequent_node =
+                QueryTreeNode::from_path_segment_sequences(graph, segments.as_slice(), 0)?;
 
             if let Some(subsequent_node) = subsequent_node {
                 root_tree_node.children.push(subsequent_node);
