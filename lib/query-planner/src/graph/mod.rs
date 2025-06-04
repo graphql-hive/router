@@ -543,8 +543,8 @@ impl Graph {
                     }
 
                     let requirements = match maybe_join_field.and_then(|join_field| {
-                        join_field.requires.as_ref().and_then(|requires_str| {
-                            Some((requires_str, join_field.graph_id.as_ref().expect("join__field(graph:) should exist when join__field(requires:) exists")))
+                        join_field.requires.as_ref().map(|requires_str| {
+                          (requires_str, join_field.graph_id.as_ref().expect("join__field(graph:) should exist when join__field(requires:) exists"))
                         })
                     }) {
                         Some((requires_str, graph_id)) => {
@@ -702,19 +702,17 @@ impl Graph {
                             def_name.clone(),
                             state.is_scalar_type(target_type),
                             field_definition.source.field_type.is_list_like_type(),
-                            maybe_join_field.and_then(|join_field| {
-                                Some(match join_field.provides {
-                                    Some(_) => {
-                                        // This is done in order to "reset" the provided field info, we can probably
-                                        // do this in a better way, and extract info from the JoinFieldDirective into the edges, instead of depending on
-                                        // the raw directive info.
-                                        // TODO: @dotan, can you explain it?
-                                        let mut new = join_field.clone();
-                                        new.provides = None;
-                                        new
-                                    }
-                                    None => join_field.clone(),
-                                })
+                            maybe_join_field.map(|join_field| match join_field.provides {
+                                Some(_) => {
+                                    // This is done in order to "reset" the provided field info, we can probably
+                                    // do this in a better way, and extract info from the JoinFieldDirective into the edges, instead of depending on
+                                    // the raw directive info.
+                                    // TODO: @dotan, can you explain it?
+                                    let mut new = join_field.clone();
+                                    new.provides = None;
+                                    new
+                                }
+                                None => join_field.clone(),
                             }),
                             requirements,
                         ),
