@@ -55,7 +55,7 @@ impl PathSegment {
 pub struct OperationPath {
     pub root_node: NodeIndex,
     pub last_segment: Option<Arc<PathSegment>>,
-    pub visited_edge_indices: HashSet<EdgeIndex>,
+    pub visited_edge_indices: Arc<HashSet<EdgeIndex>>,
     pub cost: u64,
 }
 
@@ -85,7 +85,7 @@ impl OperationPath {
     pub fn new(
         root_node_index: NodeIndex,
         last_segment: Option<Arc<PathSegment>>,
-        visited_edge_indices: HashSet<EdgeIndex>,
+        visited_edge_indices: Arc<HashSet<EdgeIndex>>,
     ) -> Self {
         Self {
             root_node: root_node_index,
@@ -101,7 +101,7 @@ impl OperationPath {
         // The first "segment" conceptually starts after the first edge from root
         let path_segment = PathSegment::new_root(edge);
         let arc_path_segment = Arc::new(path_segment);
-        let visited_set: HashSet<EdgeIndex> = [edge.id()].into_iter().collect();
+        let visited_set: Arc<HashSet<EdgeIndex>> = Arc::new([edge.id()].into_iter().collect());
 
         OperationPath::new(edge.source(), Some(arc_path_segment), visited_set)
     }
@@ -116,7 +116,7 @@ impl OperationPath {
         let edge_cost = edge_ref.weight().cost();
         let new_cost = prev_cost + edge_cost;
         let mut new_visited = self.visited_edge_indices.clone();
-        new_visited.insert(edge_ref.id());
+        Arc::make_mut(&mut new_visited).insert(edge_ref.id());
 
         let new_segment_data = PathSegment {
             prev: self.last_segment.clone(),
