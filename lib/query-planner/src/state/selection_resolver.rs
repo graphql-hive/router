@@ -33,7 +33,7 @@ impl SelectionResolver {
     pub fn resolve(
         &self,
         type_name: &str,
-        key_fields: &str,
+        requiresments_str: &str,
     ) -> Result<TypeAwareSelection, SelectionResolverError> {
         let subgraph_type_def = self
             .subgraph_state
@@ -41,9 +41,10 @@ impl SelectionResolver {
             .get(type_name)
             .ok_or_else(|| SelectionResolverError::DefinitionNotFound(type_name.to_string()))?;
 
-        let selection_set = parse_selection_set(&format!("{{ {} }}", key_fields));
+        let selection_set = parse_selection_set(&format!("{{ {} }}", requiresments_str));
         let selection_nodes =
             self.resolve_selection_set(subgraph_type_def.name(), &selection_set)?;
+
         let selection =
             TypeAwareSelection::new(subgraph_type_def.name().to_string(), selection_nodes);
 
@@ -85,7 +86,11 @@ impl SelectionResolver {
             name: field_in_type_def.name.clone(),
             selections: selections.unwrap_or_default(),
             alias: None,
-            arguments: None,
+            arguments: if selection_field.arguments.is_empty() {
+                None
+            } else {
+                Some((&selection_field.arguments).into())
+            },
         }))
     }
 
