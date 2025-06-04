@@ -128,10 +128,10 @@ impl<'a> UnionDefinitions<'a> {
                 if let Some(type_in_graph) = join_field
                     .type_in_graph
                     .as_ref()
-                    .map(strip_modifiers_from_type_string)
+                    .map(|t| strip_modifiers_from_type_string(t))
                 {
                     // look for join__field(type:) - it could point to `Object` or `Union`
-                    if &type_in_graph != field_type {
+                    if type_in_graph != field_type {
                         // the field_type is a union, as we previously checked,
                         // so if the type_in_graph is different,
                         // it means it's an object type (one of the members).
@@ -587,18 +587,15 @@ impl Graph {
                     // We do it by creating a new Node for each edge's tail,
                     // and from the tail we create abstract-move edges to the object types.
                     //
-                    let target_type_is_union = unions.contains(&target_type.to_string());
+                    let target_type_is_union = unions.contains(target_type);
                     if target_type_is_union {
                         let head = self.upsert_node(Node::new_node(
                             def_name,
                             state.resolve_graph_id(graph_id)?,
                         ));
 
-                        let member_types = unions.intersections(
-                            definition,
-                            field_definition,
-                            &target_type.to_string(),
-                        );
+                        let member_types =
+                            unions.intersections(definition, field_definition, target_type);
 
                         info!(
                             "Handling a field {}.{}/{} resolving a union type {}",

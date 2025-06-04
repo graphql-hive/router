@@ -1,5 +1,5 @@
 /// [[String!]]! -> String
-pub fn strip_modifiers_from_type_string(type_ref: &String) -> String {
+pub fn strip_modifiers_from_type_string(type_ref: &str) -> String {
     type_ref
         .trim_start_matches('[')
         .trim_end_matches([']', '!'])
@@ -12,25 +12,10 @@ mod tests {
 
     #[test]
     fn strip_modifiers() {
-        assert_eq!(
-            strip_modifiers_from_type_string(&String::from("String")),
-            "String"
-        );
-        assert_eq!(
-            strip_modifiers_from_type_string(&String::from("String")),
-            "String"
-        );
-        assert_eq!(
-            strip_modifiers_from_type_string(&String::from("[String]")),
-            "String"
-        );
-        assert_eq!(
-            strip_modifiers_from_type_string(&String::from("[[String]]")),
-            "String"
-        );
-        assert_eq!(
-            strip_modifiers_from_type_string(&String::from("[[String!]]!")),
-            "String"
-        );
+        assert_eq!(strip_modifiers_from_type_string("String"), "String");
+        assert_eq!(strip_modifiers_from_type_string("String!"), "String");
+        assert_eq!(strip_modifiers_from_type_string("[String]"), "String");
+        assert_eq!(strip_modifiers_from_type_string("[[String]]"), "String");
+        assert_eq!(strip_modifiers_from_type_string("[[String!]]!"), "String");
     }
 }
