@@ -163,7 +163,7 @@ fn create_input_selection_set(input_selections: &TypeAwareSelection) -> Selectio
 }
 
 fn create_output_operation(type_aware_selection: &TypeAwareSelection) -> SubgraphFetchOperation {
-    SubgraphFetchOperation(OperationDefinition {
+    let operation_def = OperationDefinition {
         name: None,
         operation_kind: Some(OperationKind::Query),
         variable_definitions: Some(vec![VariableDefinition {
@@ -194,27 +194,39 @@ fn create_output_operation(type_aware_selection: &TypeAwareSelection) -> Subgrap
                 include_if: None,
             })],
         },
-    })
+    };
+    let operation_str = operation_def.to_string();
+    SubgraphFetchOperation {
+        operation_def,
+        operation_str,
+    }
 }
 
 impl From<&FetchStepData> for FetchNode {
     fn from(step: &FetchStepData) -> Self {
         match step.input.selection_set.is_empty() {
-            true => FetchNode {
-                service_name: step.service_name.0.clone(),
-                variable_usages: step.output.selection_set.variable_usages(),
-                operation_kind: Some(OperationKind::Query),
-                operation_name: None,
-                operation: SubgraphFetchOperation(OperationDefinition {
+            true => {
+                let operation_def = OperationDefinition {
                     name: None,
                     operation_kind: None,
                     selection_set: step.output.selection_set.clone(),
                     variable_definitions: None,
-                }),
-                requires: None,
-                input_rewrites: None,
-                output_rewrites: None,
-            },
+                };
+                let operation_str = operation_def.to_string();
+                FetchNode {
+                    service_name: step.service_name.0.clone(),
+                    variable_usages: step.output.selection_set.variable_usages(),
+                    operation_kind: Some(OperationKind::Query),
+                    operation_name: None,
+                    operation: SubgraphFetchOperation {
+                        operation_def,
+                        operation_str,
+                    },
+                    requires: None,
+                    input_rewrites: None,
+                    output_rewrites: None,
+                }
+            }
             false => FetchNode {
                 service_name: step.service_name.0.clone(),
                 variable_usages: step.output.selection_set.variable_usages(),

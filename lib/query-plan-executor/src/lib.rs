@@ -12,7 +12,7 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashMap, vec};
+use std::collections::HashMap;
 
 use crate::schema_metadata::SchemaMetadata;
 pub mod introspection;
@@ -123,7 +123,7 @@ impl ExecutableFetchNode for FetchNode {
             .execute(
                 &self.service_name,
                 ExecutionRequest {
-                    query: self.operation.0.to_string(),
+                    query: self.operation.operation_str.clone(),
                     operation_name: self.operation_name.clone(),
                     variables,
                     extensions: None,
@@ -210,7 +210,7 @@ impl ExecutableFetchNode for FetchNode {
             .execute(
                 &self.service_name,
                 ExecutionRequest {
-                    query: self.operation.0.to_string(),
+                    query: self.operation.operation_str.clone(),
                     operation_name: self.operation_name.clone(),
                     variables: Some(variables),
                     extensions: None,

@@ -37,19 +37,22 @@ impl OperationDefinition {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct SubgraphFetchOperation(pub OperationDefinition);
+pub struct SubgraphFetchOperation {
+    pub operation_def: OperationDefinition,
+    pub operation_str: String,
+}
 
 impl SubgraphFetchOperation {
     pub fn get_inner_selection_set(&self) -> &SelectionSet {
-        if let SelectionItem::Field(field) = &self.0.selection_set.items[0] {
+        if let SelectionItem::Field(field) = &self.operation_def.selection_set.items[0] {
             if field.name == "_entities" {
                 return &field.selections;
             } else {
-                return &self.0.selection_set;
+                return &self.operation_def.selection_set;
             }
         }
 
-        &self.0.selection_set
+        &self.operation_def.selection_set
     }
 }
 
@@ -58,7 +61,7 @@ impl Serialize for SubgraphFetchOperation {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.0.to_string())
+        serializer.serialize_str(&self.operation_def.to_string())
     }
 }
 
