@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Display,
+    hash::Hash,
     mem,
 };
 
@@ -18,6 +19,22 @@ pub enum Value {
     Enum(String),
     List(Vec<Value>),
     Object(BTreeMap<String, Value>),
+}
+
+impl Hash for Value {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Value::Variable(name) => name.hash(state),
+            Value::Int(i) => i.hash(state),
+            Value::Float(f) => f.to_bits().hash(state),
+            Value::String(s) => s.hash(state),
+            Value::Boolean(b) => b.hash(state),
+            Value::Null => 0_u8.hash(state),
+            Value::Enum(e) => e.hash(state),
+            Value::List(l) => l.hash(state),
+            Value::Object(o) => o.hash(state),
+        }
+    }
 }
 
 impl Value {

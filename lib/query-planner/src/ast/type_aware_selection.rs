@@ -77,7 +77,7 @@ impl TypeAwareSelection {
     pub fn has_typename_at_path(&self, lookup_path: &MergePath) -> bool {
         find_selection_set_by_path(
             &self.selection_set,
-            &lookup_path.push(Segment::Field("__typename".to_string())),
+            &lookup_path.push(Segment::Field("__typename".to_string(), 0)),
         )
         .is_some()
     }
@@ -203,14 +203,16 @@ fn find_selection_set_by_path<'a>(
                     }
                 }
             }
-            Segment::Field(field_name) => {
+            Segment::Field(field_name, args_hash) => {
                 let next_selection_set_option =
                     current_selection_set
                         .items
                         .iter()
                         .find_map(|item| match item {
                             SelectionItem::Field(field) => {
-                                if field.alias.as_ref().unwrap_or(&field.name).eq(field_name) {
+                                if field.selection_identifier() == field_name
+                                    && field.arguments_hash() == *args_hash
+                                {
                                     Some(&field.selections)
                                 } else {
                                     None
@@ -270,14 +272,16 @@ fn find_selection_set_by_path_mut(
                     }
                 }
             }
-            Segment::Field(field_name) => {
+            Segment::Field(field_name, args_hash) => {
                 let next_selection_set_option =
                     current_selection_set
                         .items
                         .iter_mut()
                         .find_map(|item| match item {
                             SelectionItem::Field(field) => {
-                                if field.alias.as_ref().unwrap_or(&field.name).eq(field_name) {
+                                if field.selection_identifier() == field_name
+                                    && field.arguments_hash() == *args_hash
+                                {
                                     Some(&mut field.selections)
                                 } else {
                                     None

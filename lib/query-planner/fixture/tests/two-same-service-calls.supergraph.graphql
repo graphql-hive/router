@@ -68,10 +68,13 @@ type Product
   @join__type(graph: INVENTORY, key: "upc")
   @join__type(graph: PRODUCTS, key: "upc") {
   upc: String!
-  price: Int
+  price(withDiscount: boolean): Int
     @join__field(graph: INVENTORY, external: true)
     @join__field(graph: PRODUCTS)
-  isExpensive: Boolean @join__field(graph: INVENTORY, requires: "price")
+  isExpensive: Boolean
+    @join__field(graph: INVENTORY, requires: "price(withDiscount: true)")
+  reducedPrice: Boolean
+    @join__field(graph: INVENTORY, requires: "price(withDiscount: false)")
 }
 
 type Query @join__type(graph: INVENTORY) @join__type(graph: PRODUCTS) {

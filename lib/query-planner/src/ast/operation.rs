@@ -111,7 +111,12 @@ pub struct VariableDefinition {
 
 impl Display for VariableDefinition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "${}:{}", self.name, self.variable_type)
+        match &self.default_value {
+            Some(default_value) => {
+                write!(f, "${}:{}={}", self.name, self.variable_type, default_value)
+            }
+            None => write!(f, "${}:{}", self.name, self.variable_type),
+        }
     }
 }
 

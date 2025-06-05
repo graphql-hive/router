@@ -145,7 +145,7 @@ impl SelectionItem {
             SelectionItem::Field(field_selection) => SelectionItem::Field(FieldSelection {
                 name: field_selection.name.clone(),
                 selections: field_selection.selections.strip_for_plan_input(),
-                alias: None,
+                alias: field_selection.alias.clone(),
                 arguments: None,
                 include_if: None,
                 skip_if: None,

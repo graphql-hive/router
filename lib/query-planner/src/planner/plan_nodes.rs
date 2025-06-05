@@ -24,6 +24,7 @@ pub struct QueryPlan {
     pub node: Option<PlanNode>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "kind")]
 pub enum PlanNode {
@@ -40,8 +41,8 @@ pub enum PlanNode {
 #[serde(rename_all = "camelCase")]
 pub struct FetchNode {
     pub service_name: String,
-    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
-    pub variable_usages: BTreeSet<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variable_usages: Option<BTreeSet<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_kind: Option<OperationKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -160,17 +161,24 @@ fn create_input_selection_set(input_selections: &TypeAwareSelection) -> Selectio
     }
 }
 
-fn create_output_operation(type_aware_selection: &TypeAwareSelection) -> SubgraphFetchOperation {
+fn create_output_operation(step: &FetchStepData) -> SubgraphFetchOperation {
+    let type_aware_selection = &step.output;
+    let mut variables = vec![VariableDefinition {
+        name: "representations".to_string(),
+        variable_type: TypeNode::NonNull(Box::new(TypeNode::List(Box::new(TypeNode::NonNull(
+            Box::new(TypeNode::Named("_Any".to_string())),
+        ))))),
+        default_value: None,
+    }];
+
+    if let Some(additional_vars) = &step.variable_definitions {
+        variables.extend(additional_vars.clone());
+    }
+
     let operation_def = OperationDefinition {
         name: None,
         operation_kind: Some(OperationKind::Query),
-        variable_definitions: Some(vec![VariableDefinition {
-            name: "representations".to_string(),
-            variable_type: TypeNode::NonNull(Box::new(TypeNode::List(Box::new(
-                TypeNode::NonNull(Box::new(TypeNode::Named("_Any".to_string()))),
-            )))),
-            default_value: None,
-        }]),
+        variable_definitions: Some(variables),
         selection_set: SelectionSet {
             items: vec![SelectionItem::Field(FieldSelection {
                 name: "_entities".to_string(),
@@ -208,12 +216,13 @@ impl From<&FetchStepData> for FetchNode {
                     name: None,
                     operation_kind: None,
                     selection_set: step.output.selection_set.clone(),
-                    variable_definitions: None,
+                    variable_definitions: step.variable_definitions.clone(),
                 };
+
                 let operation_str = operation_def.to_string();
                 FetchNode {
                     service_name: step.service_name.0.clone(),
-                    variable_usages: step.output.selection_set.variable_usages(),
+                    variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(OperationKind::Query),
                     operation_name: None,
                     operation: SubgraphFetchOperation {
@@ -227,11 +236,10 @@ impl From<&FetchStepData> for FetchNode {
             }
             false => FetchNode {
                 service_name: step.service_name.0.clone(),
-                variable_usages: step.output.selection_set.variable_usages(),
+                variable_usages: step.variable_usages.clone(),
                 operation_kind: Some(OperationKind::Query),
                 operation_name: None,
-                operation: create_output_operation(&step.output),
-                // TODO: make sure it's correct
+                operation: create_output_operation(step),
                 requires: Some(create_input_selection_set(&step.input)),
                 input_rewrites: None,
                 output_rewrites: None,

@@ -73,6 +73,10 @@ type Test @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
   name: String! @join__field(graph: A)
   fieldWithRequiresAndArgs: String!
     @join__field(graph: A, requires: "otherField(arg: 2)")
+  fieldWithSameRequiresAndArgs: String!
+    @join__field(graph: A, requires: "otherField(arg: 2)")
+  anotherWithRequiresAndArgs: String!
+    @join__field(graph: A, requires: "otherField(arg: 3)")
   otherField(arg: Int!): String!
     @join__field(graph: A, external: true)
     @join__field(graph: B)
