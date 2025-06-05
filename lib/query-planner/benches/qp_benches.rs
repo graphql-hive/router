@@ -53,4 +53,3 @@ fn all_benchmarks(c: &mut Criterion) {
 
 criterion_group!(benches, all_benchmarks);
 criterion_main!(benches);
-
