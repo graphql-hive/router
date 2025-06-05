@@ -1,5 +1,6 @@
 pub mod document;
 pub mod hash;
+pub mod normalization;
 pub mod operation;
 pub mod selection_item;
 pub mod selection_set;

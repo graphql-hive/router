@@ -1,0 +1,15 @@
+mod drop_duplicated_fields;
+mod drop_unused_operations;
+mod flatten_fragments;
+mod inline_fragment_spreads;
+mod merge_fields;
+mod merge_inline_fragments;
+mod normalize_fields;
+
+pub use self::drop_duplicated_fields::*;
+pub use self::drop_unused_operations::*;
+pub use self::flatten_fragments::*;
+pub use self::inline_fragment_spreads::*;
+pub use self::merge_fields::*;
+pub use self::merge_inline_fragments::*;
+pub use self::normalize_fields::*;

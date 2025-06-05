@@ -1,4 +1,5 @@
 use crate::{
+    ast::normalization::normalize_operation,
     planner::{
         fetch::fetch_graph::build_fetch_graph_from_query_tree,
         query_plan::build_query_plan_from_fetch_graph,
@@ -6,14 +7,14 @@ use crate::{
         walker::walk_operation,
     },
     tests::testkit::{init_logger, read_supergraph},
-    utils::{operation_utils::prepare_document, parsing::parse_operation},
+    utils::parsing::parse_operation,
 };
 use std::error::Error;
 
 #[test]
 fn simple_inline_fragment() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let graph = read_supergraph("fixture/tests/testing.supergraph.graphql");
+    let (graph, consumer_schema) = read_supergraph("fixture/tests/testing.supergraph.graphql");
     let document = parse_operation(
         r#"
             query {
@@ -28,8 +29,8 @@ fn simple_inline_fragment() -> Result<(), Box<dyn Error>> {
               }
             }"#,
     );
-    let document = prepare_document(&document, None);
-    let operation = document.executable_operation().unwrap();
+    let document = normalize_operation(&consumer_schema, &document, None);
+    let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 3);
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
@@ -90,7 +91,7 @@ fn simple_inline_fragment() -> Result<(), Box<dyn Error>> {
 #[test]
 fn fragment_spread() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let graph = read_supergraph("fixture/tests/testing.supergraph.graphql");
+    let (graph, consumer_schema) = read_supergraph("fixture/tests/testing.supergraph.graphql");
     let document = parse_operation(
         r#"
         fragment ProductInfo on Product {
@@ -107,8 +108,8 @@ fn fragment_spread() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(&document, None);
-    let operation = document.executable_operation().unwrap();
+    let document = normalize_operation(&consumer_schema, &document, None);
+    let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 3);
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
