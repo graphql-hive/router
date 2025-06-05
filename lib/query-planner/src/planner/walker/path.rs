@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::{cmp, collections::HashSet, fmt::Debug, mem, sync::Arc};
+use std::{cmp, collections::HashSet, fmt::Debug, sync::Arc};
 
 use petgraph::{
     graph::{EdgeIndex, NodeIndex},
@@ -251,7 +251,7 @@ impl OperationPath {
             let new_cumulative_cost = original_segment.cumulative_cost - cost_offset.unwrap_or(0);
 
             let new_segment_data = PathSegment {
-                prev: mem::take(&mut previous_new_segment),
+                prev: previous_new_segment.take(),
                 cumulative_cost: new_cumulative_cost,
                 edge_index: original_segment.edge_index,
                 requirement_tree: original_segment.requirement_tree.clone(),
