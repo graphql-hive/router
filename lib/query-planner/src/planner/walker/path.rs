@@ -1,4 +1,5 @@
-use std::{cmp, collections::HashSet, fmt::Debug, mem};
+use std::collections::VecDeque;
+use std::{cmp, collections::HashSet, fmt::Debug, sync::Arc};
 
 use petgraph::{
     graph::{EdgeIndex, NodeIndex},
@@ -29,11 +30,11 @@ impl PartialEq for SelectionAttributes {
 #[derive(Debug, Clone)]
 pub struct PathSegment {
     // Link to the previous step, null for the first segment originating from rootNode
-    prev: Option<Box<PathSegment>>,
+    prev: Option<Arc<PathSegment>>,
     pub edge_index: EdgeIndex,
     tail_node: NodeIndex,
     cumulative_cost: u64,
-    pub requirement_tree: Option<QueryTreeNode>,
+    pub requirement_tree: Option<Arc<QueryTreeNode>>,
     pub selection_attributes: Option<SelectionAttributes>,
 }
 
@@ -53,8 +54,8 @@ impl PathSegment {
 #[derive(Clone)]
 pub struct OperationPath {
     pub root_node: NodeIndex,
-    pub last_segment: Option<PathSegment>,
-    pub visited_edge_indices: HashSet<EdgeIndex>,
+    pub last_segment: Option<Arc<PathSegment>>,
+    pub visited_edge_indices: Arc<HashSet<EdgeIndex>>,
     pub cost: u64,
 }
 
@@ -83,8 +84,8 @@ impl Debug for OperationPath {
 impl OperationPath {
     pub fn new(
         root_node_index: NodeIndex,
-        last_segment: Option<PathSegment>,
-        visited_edge_indices: HashSet<EdgeIndex>,
+        last_segment: Option<Arc<PathSegment>>,
+        visited_edge_indices: Arc<HashSet<EdgeIndex>>,
     ) -> Self {
         Self {
             root_node: root_node_index,
@@ -99,25 +100,26 @@ impl OperationPath {
     pub fn new_entrypoint(edge: &EdgeReference<'_>) -> Self {
         // The first "segment" conceptually starts after the first edge from root
         let path_segment = PathSegment::new_root(edge);
-        let visited_set: HashSet<EdgeIndex> = [edge.id()].into_iter().collect();
+        let arc_path_segment = Arc::new(path_segment);
+        let visited_set: Arc<HashSet<EdgeIndex>> = Arc::new([edge.id()].into_iter().collect());
 
-        OperationPath::new(edge.source(), Some(path_segment), visited_set)
+        OperationPath::new(edge.source(), Some(arc_path_segment), visited_set)
     }
 
     pub fn advance(
         &self,
         edge_ref: &EdgeReference<'_>,
-        requirement: Option<QueryTreeNode>,
+        requirement: Option<Arc<QueryTreeNode>>,
         field: Option<&FieldSelection>,
     ) -> OperationPath {
         let prev_cost = self.cost;
         let edge_cost = edge_ref.weight().cost();
         let new_cost = prev_cost + edge_cost;
         let mut new_visited = self.visited_edge_indices.clone();
-        new_visited.insert(edge_ref.id());
+        Arc::make_mut(&mut new_visited).insert(edge_ref.id());
 
-        let new_segment = PathSegment {
-            prev: self.last_segment.as_ref().map(|r| Box::new(r.clone())),
+        let new_segment_data = PathSegment {
+            prev: self.last_segment.clone(),
             tail_node: edge_ref.target(),
             edge_index: edge_ref.id(),
             cumulative_cost: new_cost,
@@ -127,6 +129,7 @@ impl OperationPath {
                 arguments: f.arguments.clone(),
             }),
         };
+        let new_segment = Arc::new(new_segment_data);
 
         OperationPath::new(self.root_node, Some(new_segment), new_visited)
     }
@@ -141,46 +144,40 @@ impl OperationPath {
         self.visited_edge_indices.contains(edge_index)
     }
 
-    pub fn get_segments(&self) -> Vec<&PathSegment> {
-        // TODO: Consider VecDeque so we can just do push_front
-        let mut segments: Vec<&PathSegment> = vec![];
+    pub fn get_segments(&self) -> Vec<Arc<PathSegment>> {
+        let mut segments: VecDeque<Arc<PathSegment>> = VecDeque::new();
+        let mut current: Option<Arc<PathSegment>> = self.last_segment.clone();
 
-        let mut current = self.last_segment.as_ref();
         while let Some(segment) = current {
-            segments.push(segment);
-            current = segment.prev.as_deref();
+            segments.push_front(segment.clone());
+            current = segment.prev.clone();
         }
 
-        segments.reverse();
-        segments
+        segments.into_iter().collect()
     }
 
     pub fn get_edges(&self) -> Vec<EdgeIndex> {
-        // TODO: Consider VecDeque so we can just do push_front
-        let mut edges: Vec<EdgeIndex> = vec![];
+        let mut edges: VecDeque<EdgeIndex> = VecDeque::new();
+        let mut current: Option<Arc<PathSegment>> = self.last_segment.clone();
 
-        let mut current = self.last_segment.as_ref();
         while let Some(segment) = current {
-            edges.push(segment.edge_index);
-            current = segment.prev.as_deref();
+            edges.push_front(segment.edge_index);
+            current = segment.prev.clone();
         }
 
-        edges.reverse();
-        edges
+        edges.into_iter().collect()
     }
 
-    pub fn get_requirement_tree(&self) -> Vec<Option<&QueryTreeNode>> {
-        // TODO: Consider VecDeque so we can just do push_front
-        let mut requirement_tree: Vec<Option<&QueryTreeNode>> = vec![];
+    pub fn get_requirement_tree(&self) -> Vec<Option<Arc<QueryTreeNode>>> {
+        let mut requirement_tree_vec: VecDeque<Option<Arc<QueryTreeNode>>> = VecDeque::new();
+        let mut current: Option<Arc<PathSegment>> = self.last_segment.clone();
 
-        let mut current = self.last_segment.as_ref();
         while let Some(segment) = current {
-            requirement_tree.push(segment.requirement_tree.as_ref());
-            current = segment.prev.as_deref();
+            requirement_tree_vec.push_front(segment.requirement_tree.clone());
+            current = segment.prev.clone();
         }
 
-        requirement_tree.reverse();
-        requirement_tree
+        requirement_tree_vec.into_iter().collect()
     }
 
     pub fn pretty_print(&self, graph: &Graph) -> String {
@@ -209,8 +206,8 @@ impl OperationPath {
      * other: The path found that satisfies (part of) the requirement.
      */
     pub fn build_requirement_continuation_path(&self, other: &Self) -> Self {
-        let source_segments = self.get_segments();
-        let target_segments = other.get_segments();
+        let source_segments: Vec<Arc<PathSegment>> = self.get_segments();
+        let target_segments: Vec<Arc<PathSegment>> = other.get_segments();
 
         // Index of the last common segment in the sequence
         let mut common_index: Option<usize> = None;
@@ -236,15 +233,15 @@ impl OperationPath {
             }
             // The new path starts after the last common segment.
             // Its root is the tail node of that common segment.
-            Some(common_index) => {
-                let last_common_segment = target_segments[common_index];
+            Some(common_idx) => {
+                let last_common_segment = &target_segments[common_idx];
                 new_root_node = Some(last_common_segment.tail_node);
                 cost_offset = Some(last_common_segment.cumulative_cost);
             }
         }
 
         // Rebuild the suffix segments list from the target path
-        let mut previous_new_segment: Option<Box<PathSegment>> = None;
+        let mut previous_new_segment: Option<Arc<PathSegment>> = None;
 
         for original_segment in target_segments
             .iter()
@@ -253,9 +250,8 @@ impl OperationPath {
             // Cost relative to the new root node
             let new_cumulative_cost = original_segment.cumulative_cost - cost_offset.unwrap_or(0);
 
-            let new_segment = PathSegment {
-                // TODO: Apologize
-                prev: mem::take(&mut previous_new_segment),
+            let new_segment_data = PathSegment {
+                prev: previous_new_segment.take(),
                 cumulative_cost: new_cumulative_cost,
                 edge_index: original_segment.edge_index,
                 requirement_tree: original_segment.requirement_tree.clone(),
@@ -263,12 +259,12 @@ impl OperationPath {
                 selection_attributes: original_segment.selection_attributes.clone(),
             };
 
-            previous_new_segment = Some(Box::new(new_segment));
+            previous_new_segment = Some(Arc::new(new_segment_data));
         }
 
         OperationPath::new(
             new_root_node.unwrap(),
-            previous_new_segment.map(|b| *b), // unbox
+            previous_new_segment,
             self.visited_edge_indices.clone(),
         )
     }

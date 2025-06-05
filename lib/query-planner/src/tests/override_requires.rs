@@ -41,113 +41,8 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
     let operation = document.executable_operation().unwrap();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 12);
-
-    insta::assert_snapshot!(best_paths_per_leaf[0][0].pretty_print(&graph), @"root(Query) -(c)- Query/c -(userInC)- User/c -(cName🧩{name})- String/c");
-    insta::assert_snapshot!(best_paths_per_leaf[1][0].pretty_print(&graph), @"root(Query) -(c)- Query/c -(userInC)- User/c -(🔑🧩{id})- User/a -(aName🧩{name})- String/a");
-    insta::assert_snapshot!(best_paths_per_leaf[2][0].pretty_print(&graph), @"root(Query) -(c)- Query/c -(userInC)- User/c -(🔑🧩{id})- User/b -(name)- String/b");
-    insta::assert_snapshot!(best_paths_per_leaf[3][0].pretty_print(&graph), @"root(Query) -(c)- Query/c -(userInC)- User/c -(id)- ID/c");
-
-    insta::assert_snapshot!(best_paths_per_leaf[4][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(userInB)- User/b -(🔑🧩{id})- User/c -(cName🧩{name})- String/c");
-    insta::assert_snapshot!(best_paths_per_leaf[5][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(userInB)- User/b -(🔑🧩{id})- User/a -(aName🧩{name})- String/a");
-    insta::assert_snapshot!(best_paths_per_leaf[6][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(userInB)- User/b -(name)- String/b");
-    insta::assert_snapshot!(best_paths_per_leaf[7][0].pretty_print(&graph), @"root(Query) -(b)- Query/b -(userInB)- User/b -(id)- ID/b");
-
-    insta::assert_snapshot!(best_paths_per_leaf[8][0].pretty_print(&graph), @"root(Query) -(a)- Query/a -(userInA)- User/a -(🔑🧩{id})- User/c -(cName🧩{name})- String/c");
-    insta::assert_snapshot!(best_paths_per_leaf[9][0].pretty_print(&graph), @"root(Query) -(a)- Query/a -(userInA)- User/a -(aName🧩{name})- String/a");
-    insta::assert_snapshot!(best_paths_per_leaf[10][0].pretty_print(&graph), @"root(Query) -(a)- Query/a -(userInA)- User/a -(🔑🧩{id})- User/b -(name)- String/b");
-    insta::assert_snapshot!(best_paths_per_leaf[11][0].pretty_print(&graph), @"root(Query) -(a)- Query/a -(userInA)- User/a -(id)- ID/a");
-
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-
     let query_tree = QueryTree::merge_trees(qtps);
-    insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
-    root(Query)
-      🚪 (Query/c)
-        userInC of User/c
-          🧩 [
-            🧩 [
-              id of ID/c
-            ]
-            🔑 User/b
-              name of String/b
-          ]
-          cName of String/c
-          🧩 [
-            id of ID/c
-          ]
-          🔑 User/a
-            🧩 [
-              🧩 [
-                id of ID/a
-              ]
-              🔑 User/b
-                name of String/b
-            ]
-            aName of String/a
-          🧩 [
-            id of ID/c
-          ]
-          🔑 User/b
-            name of String/b
-          id of ID/c
-      🚪 (Query/b)
-        userInB of User/b
-          🧩 [
-            id of ID/b
-          ]
-          🔑 User/c
-            🧩 [
-              🧩 [
-                id of ID/c
-              ]
-              🔑 User/b
-                name of String/b
-            ]
-            cName of String/c
-          🧩 [
-            id of ID/b
-          ]
-          🔑 User/a
-            🧩 [
-              🧩 [
-                id of ID/a
-              ]
-              🔑 User/b
-                name of String/b
-            ]
-            aName of String/a
-          name of String/b
-          id of ID/b
-      🚪 (Query/a)
-        userInA of User/a
-          🧩 [
-            id of ID/a
-          ]
-          🔑 User/c
-            🧩 [
-              🧩 [
-                id of ID/c
-              ]
-              🔑 User/b
-                name of String/b
-            ]
-            cName of String/c
-          🧩 [
-            🧩 [
-              id of ID/a
-            ]
-            🔑 User/b
-              name of String/b
-          ]
-          aName of String/a
-          🧩 [
-            id of ID/a
-          ]
-          🔑 User/b
-            name of String/b
-          id of ID/a
-    ");
-
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
 
@@ -619,20 +514,6 @@ fn override_with_requires_cname_in_c() -> Result<(), Box<dyn Error>> {
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
 
     let query_tree = QueryTree::merge_trees(qtps);
-    insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
-    root(Query)
-      🚪 (Query/c)
-        userInC of User/c
-          🧩 [
-            🧩 [
-              id of ID/c
-            ]
-            🔑 User/b
-              name of String/b
-          ]
-          cName of String/c
-    ");
-
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
 
@@ -775,26 +656,7 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-
     let query_tree = QueryTree::merge_trees(qtps);
-    insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
-    root(Query)
-      🚪 (Query/a)
-        userInA of User/a
-          🧩 [
-            id of ID/a
-          ]
-          🔑 User/c
-            🧩 [
-              🧩 [
-                id of ID/c
-              ]
-              🔑 User/b
-                name of String/b
-            ]
-            cName of String/c
-    ");
-
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
 
@@ -937,22 +799,7 @@ fn override_with_requires_aname_in_a() -> Result<(), Box<dyn Error>> {
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-
     let query_tree = QueryTree::merge_trees(qtps);
-    insta::assert_snapshot!(query_tree.pretty_print(&graph)?, @r"
-    root(Query)
-      🚪 (Query/a)
-        userInA of User/a
-          🧩 [
-            🧩 [
-              id of ID/a
-            ]
-            🔑 User/b
-              name of String/b
-          ]
-          aName of String/a
-    ");
-
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
     let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
 

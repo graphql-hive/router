@@ -6,4 +6,4 @@ node_modules/
 logs
 federation-audit-results.txt
 *.junit.xml
-supergraph.graphql
+.DS_Store
