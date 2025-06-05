@@ -1,19 +1,25 @@
 use async_trait::async_trait;
 use futures::future::join_all;
-use graphql_parser::query::{
-    Definition, Directive, Document, FragmentDefinition, OperationDefinition, Selection,
-    SelectionSet, TypeCondition,
-};
 use query_planner::{
-    ast::selection_item::SelectionItem,
+    ast::{
+        operation::OperationDefinition, selection_item::SelectionItem, selection_set::SelectionSet,
+    },
     planner::plan_nodes::{
         ConditionNode, FetchNode, FlattenNode, InputRewrite, KeyRenamer, OutputRewrite,
         ParallelNode, PlanNode, QueryPlan, SequenceNode, ValueSetter,
     },
+    state::supergraph_state::OperationKind,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
-use std::{collections::HashMap, vec};
+use serde_json::Value;
+use std::collections::HashMap;
+
+use crate::schema_metadata::SchemaMetadata;
+pub mod introspection;
+pub mod schema_metadata;
+pub mod validation;
+mod value_from_ast;
+pub mod variables;
 
 #[async_trait]
 trait ExecutablePlanNode {
@@ -117,7 +123,7 @@ impl ExecutableFetchNode for FetchNode {
             .execute(
                 &self.service_name,
                 ExecutionRequest {
-                    query: self.operation.0.to_string(),
+                    query: self.operation.operation_str.clone(),
                     operation_name: self.operation_name.clone(),
                     variables,
                     extensions: None,
@@ -204,7 +210,7 @@ impl ExecutableFetchNode for FetchNode {
             .execute(
                 &self.service_name,
                 ExecutionRequest {
-                    query: self.operation.0.to_string(),
+                    query: self.operation.operation_str.clone(),
                     operation_name: self.operation_name.clone(),
                     variables: Some(variables),
                     extensions: None,
@@ -230,19 +236,10 @@ impl ExecutableFetchNode for FetchNode {
             // Process _entities array
             match entities_option {
                 Some(Value::Array(entities)) => {
-                    for (i, entity) in entities.into_iter().enumerate() {
-                        let representation_index = filtered_repr_indexes.get(i);
-                        match representation_index {
-                            Some(&representation_index) => {
-                                final_representations[representation_index] = entity;
-                            }
-                            None => {
-                                println!(
-                        "Warning: Entity index {} out of bounds for representations. Skipping merge.",
-                        i
-                    );
-                            }
-                        }
+                    for (entity, representation_index) in
+                        entities.into_iter().zip(filtered_repr_indexes.iter_mut())
+                    {
+                        final_representations[*representation_index] = entity;
                     }
                 }
                 _ => {
@@ -335,15 +332,24 @@ impl ApplyOutputRewrite for KeyRenamer {
                 let type_condition = current_segment.strip_prefix("... on ");
                 match type_condition {
                     Some(type_condition) => {
-                        if entity_satisfies_type_condition(possible_types, obj, type_condition) {
+                        let type_name = match obj.get("__typename") {
+                            Some(Value::String(type_name)) => type_name,
+                            _ => type_condition, // Default to type_condition if not found
+                        };
+                        if entity_satisfies_type_condition(
+                            possible_types,
+                            type_name,
+                            type_condition,
+                        ) {
                             self.apply_path(possible_types, value, remaining_path)
                         }
                     }
                     _ => {
                         if remaining_path.is_empty() {
-                            if let Some(val) = obj.get(current_segment) {
-                                // Rename the key
-                                obj.insert(self.rename_key_to.to_string(), val.clone());
+                            if *current_segment != self.rename_key_to {
+                                if let Some(val) = obj.remove(current_segment) {
+                                    obj.insert(self.rename_key_to.to_string(), val);
+                                }
                             }
                         } else if let Some(next_value) = obj.get_mut(current_segment) {
                             self.apply_path(possible_types, next_value, remaining_path)
@@ -403,7 +409,11 @@ impl ApplyInputRewrite for ValueSetter {
                 let remaining_path = &path[1..];
 
                 if let Some(type_condition) = current_key.strip_prefix("... on ") {
-                    if entity_satisfies_type_condition(possible_types, &map, type_condition) {
+                    let type_name = match map.get("__typename") {
+                        Some(Value::String(type_name)) => type_name,
+                        _ => type_condition, // Default to type_condition if not found
+                    };
+                    if entity_satisfies_type_condition(possible_types, type_name, type_condition) {
                         let data = Value::Object(map);
                         return self.apply_path(possible_types, data, remaining_path);
                     }
@@ -454,17 +464,11 @@ impl ExecutablePlanNode for SequenceNode {
             if is_data_merge {
                 deep_merge(&mut data, result_data);
             } else {
-                for (i, result_representation) in result_representations.into_iter().enumerate() {
-                    let current_representation = representations.get_mut(i);
-                    if let Some(current_repr) = current_representation {
-                        // Merge the result into the current representation
-                        deep_merge(current_repr, result_representation);
-                    } else {
-                        println!(
-                            "Warning: Entity index {} out of bounds for representations. Skipping merge.",
-                            i,
-                        );
-                    }
+                for (result_representation, current_repr) in result_representations
+                    .into_iter()
+                    .zip(representations.iter_mut())
+                {
+                    deep_merge(current_repr, result_representation);
                 }
             }
 
@@ -499,17 +503,12 @@ impl ExecutablePlanNode for ParallelNode {
             if is_data_merge {
                 deep_merge(&mut data, result_data);
             } else {
-                for (i, result) in result_representations.into_iter().enumerate() {
-                    let current_representation = representations.get_mut(i);
-                    if let Some(current_repr) = current_representation {
-                        // Merge the result into the current representation
-                        deep_merge(current_repr, result);
-                    } else {
-                        println!(
-                            "Warning: Entity index {} out of bounds for representations. Skipping merge.",
-                            i,
-                        );
-                    }
+                for (current_repr, result_repr) in representations
+                    .iter_mut()
+                    .zip(result_representations.into_iter())
+                {
+                    // Merge the result representation into the current representation
+                    deep_merge(current_repr, result_repr);
                 }
             }
             errors.extend(result_errors);
@@ -530,7 +529,7 @@ impl ExecutablePlanNode for FlattenNode {
         let errors: Vec<GraphQLError>;
 
         // Use the recursive traversal function on the temporarily owned data
-        let mut collected_representations = traverse_and_collect(
+        let collected_representations = traverse_and_collect(
             &mut data, // Operate on the separated data
             self.path
                 .iter()
@@ -556,19 +555,12 @@ impl ExecutablePlanNode for FlattenNode {
                 .await;
             errors = result_errors;
             // Merge the results back into the data
-            for (i, result_representation) in result_representations.into_iter().enumerate() {
-                match collected_representations.get_mut(i) {
-                    Some(current_repr) => {
-                        // Merge the entity into the current representation
-                        deep_merge(current_repr, result_representation);
-                    }
-                    None => {
-                        println!(
-                            "Warning: Entity index {} out of bounds for collected representations. Skipping merge.",
-                            i,
-                        );
-                    }
-                }
+            for (result_representation, current_repr) in result_representations
+                .into_iter()
+                .zip(collected_representations)
+            {
+                // Merge the entity into the current representation
+                deep_merge(current_repr, result_representation);
             }
             // Borrows held by collected_representations end here
         } else {
@@ -701,7 +693,7 @@ impl ExecutionResult {
             data: None,
             errors: Some(vec![GraphQLError {
                 message,
-                location: None,
+                locations: None,
                 path: None,
                 extensions: None,
             }]),
@@ -714,7 +706,7 @@ impl ExecutionResult {
 pub struct GraphQLError {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub location: Option<Vec<GraphQLErrorLocation>>,
+    pub locations: Option<Vec<GraphQLErrorLocation>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<Vec<Value>>, // Path can be string or number
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -723,8 +715,8 @@ pub struct GraphQLError {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GraphQLErrorLocation {
-    pub line: u32,
-    pub column: u32,
+    pub line: usize,
+    pub column: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -802,9 +794,13 @@ impl QueryPlanExecutionContext<'_> {
                             }
                         }
                         SelectionItem::InlineFragment(requires_selection) => {
+                            let type_name = match entity_obj.get("__typename") {
+                                Some(Value::String(type_name)) => type_name,
+                                _ => requires_selection.type_condition.as_str(),
+                            };
                             if entity_satisfies_type_condition(
                                 &self.schema_metadata.possible_types,
-                                entity_obj,
+                                type_name,
                                 &requires_selection.type_condition,
                             ) {
                                 let projected = self
@@ -830,27 +826,22 @@ impl QueryPlanExecutionContext<'_> {
 
 fn entity_satisfies_type_condition(
     possible_types: &HashMap<String, Vec<String>>,
-    entity_map: &serde_json::Map<String, Value>,
+    type_name: &str,
     type_condition: &str,
 ) -> bool {
-    match entity_map.get("__typename") {
-        Some(Value::String(entity_type_name)) => {
-            if entity_type_name == type_condition {
-                true
-            } else {
-                let possible_types_for_type_condition = possible_types.get(type_condition);
-                match possible_types_for_type_condition {
-                    Some(possible_types_for_type_condition) => {
-                        possible_types_for_type_condition.contains(&entity_type_name.to_string())
-                    }
-                    None => {
-                        // If no possible types are found, return false
-                        false
-                    }
-                }
+    if type_name == type_condition {
+        true
+    } else {
+        let possible_types_for_type_condition = possible_types.get(type_condition);
+        match possible_types_for_type_condition {
+            Some(possible_types_for_type_condition) => {
+                possible_types_for_type_condition.contains(&type_name.to_string())
+            }
+            None => {
+                // If no possible types are found, return false
+                false
             }
         }
-        _ => false,
     }
 }
 
@@ -960,125 +951,14 @@ impl HTTPSubgraphExecutor<'_> {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct SchemaMetadata {
-    pub possible_types: HashMap<String, Vec<String>>,
-    pub enum_values: HashMap<String, Vec<String>>,
-    pub type_fields: HashMap<String, HashMap<String, String>>,
-    pub introspection_schema_root_json: Value,
-}
-
-fn should_skip_per_variables(
-    directives: &Vec<Directive<'static, String>>,
-    variable_values: &Option<HashMap<String, Value>>,
-) -> bool {
-    for directive in directives {
-        if directive.name == "skip" {
-            for (arg_name, arg_value) in &directive.arguments {
-                if *arg_name == "if" {
-                    let mut if_value = None;
-                    if let Some(variable_values) = variable_values {
-                        let arg_value = arg_value.to_string();
-                        let arg_value_without_dollar = arg_value.strip_prefix("$");
-                        match arg_value_without_dollar {
-                            Some(arg_value) => {
-                                // Check if the variable exists in the variable values
-                                // and get its value
-                                // Note: The original code used `arg_value.to_string()`, which is incorrect
-                                // because it includes the '$' sign. We need to strip it first.
-                                if let Some(value) = variable_values.get(arg_value) {
-                                    if_value = Some(value);
-                                }
-                            }
-                            None => {
-                                println!(
-                                    "Warning: Skip directive found with invalid variable name: {}",
-                                    arg_value
-                                );
-                            }
-                        }
-                    }
-                    match if_value {
-                        Some(Value::Bool(if_value)) => {
-                            return *if_value; // Skip if the condition is true
-                        }
-                        Some(_) => {
-                            println!(
-                                "Warning: Skip directive found with non-boolean if argument: {}",
-                                arg_value
-                            );
-                            return true; // Skip if not boolean
-                        }
-                        None => {
-                            println!(
-                                "Warning: Skip directive found with unknown variable: {}",
-                                arg_value
-                            );
-                            return false;
-                        }
-                    }
-                }
-            }
-        } else if directive.name == "include" {
-            for (arg_name, arg_value) in &directive.arguments {
-                if *arg_name == "if" {
-                    let mut if_value = None;
-                    if let Some(variable_values) = variable_values {
-                        let arg_value = arg_value.to_string();
-                        let arg_value_without_dollar = arg_value.strip_prefix("$");
-                        match arg_value_without_dollar {
-                            Some(arg_value) => {
-                                // Check if the variable exists in the variable values
-                                // and get its value
-                                // Note: The original code used `arg_value.to_string()`, which is incorrect
-                                // because it includes the '$' sign. We need to strip it first.
-                                if let Some(value) = variable_values.get(arg_value) {
-                                    if_value = Some(value);
-                                }
-                            }
-                            None => {
-                                println!(
-                                    "Warning: Skip directive found with invalid variable name: {}",
-                                    arg_value
-                                );
-                            }
-                        }
-                    }
-                    match if_value {
-                        Some(Value::Bool(if_value)) => {
-                            return !*if_value; // Skip if the condition is false
-                        }
-                        Some(_) => {
-                            println!(
-                                "Warning: Include directive found with non-boolean if argument: {}",
-                                arg_value
-                            );
-                            return false; // Skip if not boolean
-                        }
-                        None => {
-                            println!(
-                                "Warning: Include directive found with unknown variable: {} on {:#?}",
-                                arg_value, variable_values
-                            );
-                            return true; // Skip if not found
-                        }
-                    }
-                }
-            }
-        }
-    }
-    false // Default to false if no skip directive found
-}
-
 fn project_selection_set(
     data: &Value,
-    selection_set: &SelectionSet<'static, String>,
+    selection_set: &SelectionSet,
     type_name: &str,
     schema_metadata: &SchemaMetadata,
-    fragments: &HashMap<String, &FragmentDefinition<'static, String>>,
     variable_values: &Option<HashMap<String, Value>>,
-) -> Value {
+) -> (Value, Vec<GraphQLError>) {
+    let mut errors: Vec<GraphQLError> = Vec::new();
     // If selection_set is empty, return the original data
     let type_name = match data.get("__typename") {
         Some(Value::String(type_name)) => type_name,
@@ -1097,17 +977,30 @@ fn project_selection_set(
             // Type is not found in the schema
             if field_map.is_none() {
                 if selection_set.items.is_empty() {
-                    return data.clone(); // No fields to project, return original data
+                    return (data.clone(), errors); // No fields to project, return original data
                 }
-                return Value::Null; // No fields found for the type
+                return (Value::Null, errors); // No fields found for the type
             }
             let field_map = field_map.unwrap();
             let mut result = Value::Object(serde_json::Map::new());
             for selection in &selection_set.items {
                 match selection {
-                    Selection::Field(field) => {
-                        if should_skip_per_variables(&field.directives, variable_values) {
-                            continue;
+                    SelectionItem::Field(field) => {
+                        if let Some(ref skip_variable) = field.skip_if {
+                            let variable_value = variable_values
+                                .as_ref()
+                                .and_then(|vars| vars.get(skip_variable));
+                            if variable_value == Some(&Value::Bool(true)) {
+                                continue; // Skip this field if the variable is true
+                            }
+                        }
+                        if let Some(ref include_variable) = field.include_if {
+                            let variable_value = variable_values
+                                .as_ref()
+                                .and_then(|vars| vars.get(include_variable));
+                            if variable_value != Some(&Value::Bool(true)) {
+                                continue; // Skip this field if the variable is not true
+                            }
                         }
                         let response_key = field.alias.as_ref().unwrap_or(&field.name).to_string();
                         let result_map = result.as_object_mut().unwrap();
@@ -1124,14 +1017,14 @@ fn project_selection_set(
                         };
                         match (field_type, field_val) {
                             (Some(field_type), Some(field_val)) => {
-                                let projected = project_selection_set(
+                                let (projected, projected_errs) = project_selection_set(
                                     field_val,
-                                    &field.selection_set,
+                                    &field.selections,
                                     field_type,
                                     schema_metadata,
-                                    fragments,
                                     variable_values,
                                 );
+                                errors.extend(projected_errs);
                                 result_map.insert(response_key, projected);
                             }
                             (Some(_field_type), None) => {
@@ -1146,173 +1039,91 @@ fn project_selection_set(
                             }
                         }
                     }
-                    Selection::InlineFragment(inline_fragment) => {
-                        if should_skip_per_variables(&inline_fragment.directives, variable_values) {
-                            continue;
-                        }
-                        match &inline_fragment.type_condition {
-                            Some(TypeCondition::On(type_condition)) => {
-                                if entity_satisfies_type_condition(
-                                    &schema_metadata.possible_types,
-                                    obj,
-                                    type_condition,
-                                ) {
-                                    let type_name = obj.get("__typename");
-                                    match type_name {
-                                        Some(Value::String(type_name)) => {
-                                            let projected = project_selection_set(
-                                                data,
-                                                &inline_fragment.selection_set,
-                                                type_name,
-                                                schema_metadata,
-                                                fragments,
-                                                variable_values,
-                                            );
-                                            deep_merge(&mut result, projected);
-                                        }
-                                        _ => {
-                                            // Handle case where type_name is not a string
-                                            println!(
-                                                "Warning: Type name is not a string: {:?}",
-                                                type_name
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                            None => {}
-                        }
-                    }
-                    Selection::FragmentSpread(fragment_spread) => {
-                        if should_skip_per_variables(&fragment_spread.directives, variable_values) {
-                            continue;
-                        }
-                        match fragments.get(&fragment_spread.fragment_name) {
-                            Some(fragment) => {
-                                match &fragment.type_condition {
-                                    TypeCondition::On(type_condition) => {
-                                        if entity_satisfies_type_condition(
-                                            &schema_metadata.possible_types,
-                                            obj,
-                                            type_condition,
-                                        ) {
-                                            let type_name = obj.get("__typename");
-                                            match type_name {
-                                                Some(Value::String(type_name)) => {
-                                                    let projected = project_selection_set(
-                                                        data,
-                                                        &fragment.selection_set,
-                                                        type_name,
-                                                        schema_metadata,
-                                                        fragments,
-                                                        variable_values,
-                                                    );
-                                                    deep_merge(&mut result, projected);
-                                                }
-                                                _ => {
-                                                    // Handle case where type_name is not a string
-                                                    println!(
-                                                        "Warning: Type name is not a string: {:?}",
-                                                        type_name
-                                                    );
-                                                }
-                                            }
-                                        } else if type_condition == type_name {
-                                            // If the type condition matches the current type name,
-                                            // project the fragment without checking the entity
-                                            let projected = project_selection_set(
-                                                data,
-                                                &fragment.selection_set,
-                                                type_name,
-                                                schema_metadata,
-                                                fragments,
-                                                variable_values,
-                                            );
-                                            deep_merge(&mut result, projected);
-                                        }
-                                    }
-                                }
-                            }
-                            _ => {
-                                // Handle case where fragment is not found
-                                println!(
-                                    "Warning: Fragment {} not found in fragments map",
-                                    fragment_spread.fragment_name
-                                );
-                            }
+                    SelectionItem::InlineFragment(inline_fragment) => {
+                        if entity_satisfies_type_condition(
+                            &schema_metadata.possible_types,
+                            type_name,
+                            &inline_fragment.type_condition,
+                        ) {
+                            let type_name = obj
+                                .get("__typename")
+                                .map(|v| v.to_string())
+                                .unwrap_or(inline_fragment.type_condition.to_string());
+
+                            let (projected, projected_errs) = project_selection_set(
+                                data,
+                                &inline_fragment.selections,
+                                &type_name,
+                                schema_metadata,
+                                variable_values,
+                            );
+                            errors.extend(projected_errs);
+                            deep_merge(&mut result, projected);
                         }
                     }
                 }
             }
-            result
+            (result, errors)
         }
         // In case of an array
-        (_, _, Value::Array(arr)) => Value::Array(
-            arr.iter()
-                .map(|item| {
-                    project_selection_set(
-                        item,
-                        selection_set,
-                        type_name,
-                        schema_metadata,
-                        fragments,
-                        variable_values,
-                    )
-                })
-                .collect(),
-        ),
+        (_, _, Value::Array(arr)) => {
+            let data = Value::Array(
+                arr.iter()
+                    .map(|item| {
+                        let (item_projected, item_errors) = project_selection_set(
+                            item,
+                            selection_set,
+                            type_name,
+                            schema_metadata,
+                            variable_values,
+                        );
+                        errors.extend(item_errors);
+                        item_projected
+                    })
+                    .collect(),
+            );
+            (data, errors)
+        }
         // In case of enum type with a string
         (_, Some(enum_values), Value::String(value)) => {
             // Check if the value is in the enum values
-            if enum_values.contains(&value.to_string()) {
-                Value::String(value.to_string())
+            if enum_values.contains(value) {
+                (Value::String(value.to_string()), errors) // Return the value as is
             } else {
-                Value::Null // If not found, return Null
+                errors.push(GraphQLError {
+                    message: format!(
+                        "Value '{}' is not a valid enum value for type '{}'",
+                        value, type_name
+                    ),
+                    locations: None,
+                    path: None,
+                    extensions: None,
+                });
+                (Value::Null, errors) // If not found, return Null
             }
         }
-        (_, _, value) => value.clone(), // No fields found for the type
+        (_, _, value) => (value.clone(), errors), // No fields found for the type
     }
 }
 
 fn project_data_by_operation(
-    data: Value,
-    document: &graphql_parser::query::Document<'static, String>,
+    data: &Value,
+    operation: &OperationDefinition,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
-) -> Value {
-    let mut root_type_name = "Query"; // Default to Query
-    let mut selection_set: Option<&SelectionSet<'static, String>> = None;
-    let mut fragments: HashMap<String, &FragmentDefinition<'static, String>> = HashMap::new();
-    for def in &document.definitions {
-        match def {
-            Definition::Operation(OperationDefinition::Query(query)) => {
-                root_type_name = "Query";
-                selection_set = Some(&query.selection_set);
-            }
-            Definition::Operation(OperationDefinition::Mutation(mutation)) => {
-                root_type_name = "Mutation";
-                selection_set = Some(&mutation.selection_set);
-            }
-            Definition::Operation(OperationDefinition::Subscription(subscription)) => {
-                root_type_name = "Subscription";
-                selection_set = Some(&subscription.selection_set);
-            }
-            Definition::Operation(OperationDefinition::SelectionSet(query_selection_set)) => {
-                root_type_name = "Query";
-                selection_set = Some(query_selection_set);
-            }
-            Definition::Fragment(fragment_def) => {
-                fragments.insert(fragment_def.name.to_string(), fragment_def);
-            }
-        }
-    }
+) -> (Value, Vec<GraphQLError>) {
+    let root_type_name = match operation.operation_kind {
+        Some(OperationKind::Query) => "Query",
+        Some(OperationKind::Mutation) => "Mutation",
+        Some(OperationKind::Subscription) => "Subscription",
+        None => "Query",
+    };
     // Project the data based on the selection set
     project_selection_set(
-        &data,
-        selection_set.unwrap(),
+        data,
+        &operation.selection_set,
         root_type_name,
         schema_metadata,
-        &fragments,
         variable_values,
     )
 }
@@ -1322,7 +1133,7 @@ pub async fn execute_query_plan(
     subgraph_endpoint_map: &HashMap<String, String>,
     variable_values: &Option<HashMap<String, Value>>,
     schema_metadata: &SchemaMetadata,
-    document: &Document<'static, String>,
+    operation: &OperationDefinition,
     has_introspection: bool,
     http_client: &reqwest::Client,
 ) -> ExecutionResult {
@@ -1337,18 +1148,32 @@ pub async fn execute_query_plan(
     };
     let mut result = query_plan.execute(execution_context).await;
     if result.data.as_ref().is_some() || has_introspection {
-        result.data = Some(project_data_by_operation(
-            result.data.unwrap_or(Value::Object(Map::new())),
-            document,
+        let (data, errors) = project_data_by_operation(
+            &result.data.unwrap_or(Value::Object(serde_json::Map::new())),
+            operation,
             schema_metadata,
             variable_values,
-        ));
+        );
+        result.data = Some(data);
+        result.errors = match result.errors {
+            Some(mut existing_errors) => {
+                existing_errors.extend(errors);
+                Some(existing_errors)
+            }
+            None => {
+                if errors.is_empty() {
+                    None
+                } else {
+                    Some(errors)
+                }
+            }
+        }
     }
 
     #[cfg(debug_assertions)] // Only log in debug builds
     {
         let mut extensions = HashMap::new();
-        extensions.insert("queryPlan".to_string(), json!(query_plan));
+        extensions.insert("queryPlan".to_string(), serde_json::json!(query_plan));
         result.extensions = Some(extensions);
     }
     result

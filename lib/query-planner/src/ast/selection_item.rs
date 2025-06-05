@@ -143,6 +143,8 @@ impl SelectionItem {
                 selections: field_selection.selections.strip_for_plan_input(),
                 alias: None,
                 arguments: None,
+                include_if: None,
+                skip_if: None,
             }),
             SelectionItem::InlineFragment(fragment_selection) => {
                 SelectionItem::InlineFragment(InlineFragmentSelection {

@@ -18,3 +18,4 @@ tracing-tree = "0.4.0"
 actix-web = "4"
 serde_json = { version = "1.0.140", features = ["preserve_order"] }
 reqwest = { version = "0.12", features = ["json"] }
+moka = { version = "0.12", features = ["future"] }

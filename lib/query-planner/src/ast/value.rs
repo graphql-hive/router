@@ -55,6 +55,30 @@ impl From<&ParserValue<'_, String>> for Value {
     }
 }
 
+impl From<&Value> for serde_json::Value {
+    fn from(value: &Value) -> Self {
+        match value {
+            Value::Null => serde_json::Value::Null,
+            Value::Int(n) => serde_json::Value::Number((*n).into()),
+            Value::Boolean(b) => serde_json::Value::Bool(*b),
+            Value::Enum(s) => serde_json::Value::String(s.to_string()),
+            Value::Float(n) => {
+                let number = serde_json::Number::from_f64(*n);
+                match number {
+                    Some(num) => serde_json::Value::Number(num),
+                    None => serde_json::Value::Null, // Handle case where float conversion fails
+                }
+            }
+            Value::List(l) => serde_json::Value::Array(l.iter().map(|v| v.into()).collect()),
+            Value::Object(o) => serde_json::Value::Object(
+                o.iter().map(|(k, v)| (k.to_string(), v.into())).collect(),
+            ),
+            Value::String(s) => serde_json::Value::String(s.to_string()),
+            Value::Variable(_var_name) => serde_json::Value::Null,
+        }
+    }
+}
+
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

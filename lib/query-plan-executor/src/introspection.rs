@@ -13,7 +13,7 @@ use query_planner::ast::{
     selection_set::InlineFragmentSelection,
 };
 
-use crate::{builtin_types, value_from_ast::value_from_ast};
+use crate::value_from_ast::value_from_ast;
 
 fn introspection_output_type_ref_from_ast(
     ast: &graphql_parser::schema::Type<'static, String>,
@@ -124,20 +124,6 @@ pub fn introspection_query_from_ast(
     // Add known scalar types to the type AST map
     let mut type_ast_map: HashMap<String, graphql_parser::schema::Definition<'static, String>> =
         HashMap::new();
-    let specified_scalars = builtin_types::get_specified_scalars();
-    for (name, scalar_type) in specified_scalars {
-        type_ast_map.insert(
-            name.clone(),
-            graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Scalar(scalar_type)),
-        );
-    }
-    let specified_directives = builtin_types::get_specified_directives();
-    for (name, directive) in specified_directives {
-        type_ast_map.insert(
-            name.clone(),
-            graphql_parser::schema::Definition::DirectiveDefinition(directive),
-        );
-    }
     let mut schema_definition: Option<&graphql_parser::schema::SchemaDefinition<'static, String>> =
         None;
     for definition in &ast.definitions {
@@ -192,57 +178,71 @@ pub fn introspection_query_from_ast(
             graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Object(
                 object_type,
             )) => {
-                types.push(IntrospectionType::OBJECT(IntrospectionObjectType {
-                    name: object_type.name.to_string(),
-                    description: object_type.description.clone(),
-                    fields: object_type
-                        .fields
-                        .iter()
-                        .map(|field| {
-                            let builtin_props =
-                                get_builtin_props_from_directives(&field.directives);
-                            IntrospectionField {
-                                name: field.name.to_string(),
-                                description: field.description.clone(),
-                                is_deprecated: builtin_props.is_deprecated,
-                                deprecation_reason: builtin_props.deprecation_reason,
-                                args: field
-                                    .arguments
-                                    .iter()
-                                    .map(|arg| {
-                                        let builtin_props =
-                                            get_builtin_props_from_directives(&arg.directives);
-                                        IntrospectionInputValue {
-                                            name: arg.name.to_string(),
-                                            description: arg.description.clone(),
-                                            type_ref: Some(introspection_input_type_ref_from_ast(
-                                                &arg.value_type,
-                                                &type_ast_map,
-                                            )),
-                                            default_value: arg
-                                                .default_value
-                                                .as_ref()
-                                                .map(|v| serde_json::Value::String(v.to_string())),
-                                            is_deprecated: builtin_props.is_deprecated,
-                                            deprecation_reason: builtin_props.deprecation_reason,
-                                        }
+                if !object_type.name.starts_with("__") {
+                    // Skip introspection types like __Schema, __Type, etc.
+                    types.push(IntrospectionType::OBJECT(IntrospectionObjectType {
+                        name: object_type.name.to_string(),
+                        description: object_type.description.clone(),
+                        fields: object_type
+                            .fields
+                            .iter()
+                            .filter_map(|field| {
+                                if field.name.starts_with("__") {
+                                    // Skip introspection fields
+                                    None
+                                } else {
+                                    let builtin_props =
+                                        get_builtin_props_from_directives(&field.directives);
+                                    Some(IntrospectionField {
+                                        name: field.name.to_string(),
+                                        description: field.description.clone(),
+                                        is_deprecated: builtin_props.is_deprecated,
+                                        deprecation_reason: builtin_props.deprecation_reason,
+                                        args: field
+                                            .arguments
+                                            .iter()
+                                            .map(|arg| {
+                                                let builtin_props =
+                                                    get_builtin_props_from_directives(
+                                                        &arg.directives,
+                                                    );
+                                                IntrospectionInputValue {
+                                                    name: arg.name.to_string(),
+                                                    description: arg.description.clone(),
+                                                    type_ref: Some(
+                                                        introspection_input_type_ref_from_ast(
+                                                            &arg.value_type,
+                                                            &type_ast_map,
+                                                        ),
+                                                    ),
+                                                    default_value: arg.default_value.as_ref().map(
+                                                        |v| {
+                                                            serde_json::Value::String(v.to_string())
+                                                        },
+                                                    ),
+                                                    is_deprecated: builtin_props.is_deprecated,
+                                                    deprecation_reason: builtin_props
+                                                        .deprecation_reason,
+                                                }
+                                            })
+                                            .collect(),
+                                        type_ref: introspection_output_type_ref_from_ast(
+                                            &field.field_type,
+                                            &type_ast_map,
+                                        ),
                                     })
-                                    .collect(),
-                                type_ref: introspection_output_type_ref_from_ast(
-                                    &field.field_type,
-                                    &type_ast_map,
-                                ),
-                            }
-                        })
-                        .collect(),
-                    interfaces: object_type
-                        .implements_interfaces
-                        .iter()
-                        .map(|i| IntrospectionNamedTypeRef {
-                            name: i.to_string(),
-                        })
-                        .collect(),
-                }));
+                                }
+                            })
+                            .collect(),
+                        interfaces: object_type
+                            .implements_interfaces
+                            .iter()
+                            .map(|i| IntrospectionNamedTypeRef {
+                                name: i.to_string(),
+                            })
+                            .collect(),
+                    }));
+                }
             }
             graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Interface(
                 interface_type,
@@ -563,130 +563,4 @@ pub fn filter_introspection_fields_in_operation(
             variable_definitions: operation.variable_definitions.clone(),
         },
     )
-}
-
-pub struct IntrospectionMetadata {
-    pub type_fields: HashMap<String, HashMap<String, String>>,
-    pub enum_values: HashMap<String, Vec<String>>,
-}
-
-pub fn get_introspection_metadata() -> IntrospectionMetadata {
-    let mut type_fields: HashMap<String, HashMap<String, String>> = HashMap::new();
-    type_fields.insert(
-        "Query".to_string(),
-        HashMap::from([("__schema".to_string(), "__Schema".to_string())]),
-    );
-    type_fields.insert(
-        "__Schema".to_string(),
-        HashMap::from([
-            ("description".to_string(), "String".to_string()),
-            ("types".to_string(), "__Type".to_string()),
-            ("queryType".to_string(), "__Type".to_string()),
-            ("mutationType".to_string(), "__Type".to_string()),
-            ("subscriptionType".to_string(), "__Type".to_string()),
-            ("directives".to_string(), "__Directive".to_string()),
-        ]),
-    );
-    type_fields.insert(
-        "__Directive".to_string(),
-        HashMap::from([
-            ("name".to_string(), "String".to_string()),
-            ("description".to_string(), "String".to_string()),
-            ("isRepeatable".to_string(), "Boolean".to_string()),
-            ("locations".to_string(), "__DirectiveLocation".to_string()),
-            ("args".to_string(), "__InputValue".to_string()),
-        ]),
-    );
-    type_fields.insert(
-        "__Type".to_string(),
-        HashMap::from([
-            ("kind".to_string(), "__TypeKind".to_string()),
-            ("name".to_string(), "String".to_string()),
-            ("description".to_string(), "String".to_string()),
-            ("specifiedByURL".to_string(), "String".to_string()),
-            ("fields".to_string(), "__Field".to_string()),
-            ("interfaces".to_string(), "__Type".to_string()),
-            ("possibleTypes".to_string(), "__Type".to_string()),
-            ("enumValues".to_string(), "__EnumValue".to_string()),
-            ("inputFields".to_string(), "__InputValue".to_string()),
-            ("ofType".to_string(), "__Type".to_string()),
-            ("isOneOf".to_string(), "Boolean".to_string()),
-        ]),
-    );
-    type_fields.insert(
-        "__Field".to_string(),
-        HashMap::from([
-            ("name".to_string(), "String".to_string()),
-            ("description".to_string(), "String".to_string()),
-            ("args".to_string(), "__InputValue".to_string()),
-            ("type".to_string(), "__Type".to_string()),
-            ("isDeprecated".to_string(), "Boolean".to_string()),
-            ("deprecationReason".to_string(), "String".to_string()),
-        ]),
-    );
-    type_fields.insert(
-        "__InputValue".to_string(),
-        HashMap::from([
-            ("name".to_string(), "String".to_string()),
-            ("description".to_string(), "String".to_string()),
-            ("type".to_string(), "__Type".to_string()),
-            ("defaultValue".to_string(), "String".to_string()),
-            ("isDeprecated".to_string(), "Boolean".to_string()),
-            ("deprecationReason".to_string(), "String".to_string()),
-        ]),
-    );
-    type_fields.insert(
-        "__EnumValue".to_string(),
-        HashMap::from([
-            ("name".to_string(), "String".to_string()),
-            ("description".to_string(), "String".to_string()),
-            ("isDeprecated".to_string(), "Boolean".to_string()),
-            ("deprecationReason".to_string(), "String".to_string()),
-        ]),
-    );
-
-    let enum_values: HashMap<String, Vec<String>> = HashMap::from([
-        (
-            "__DirectiveLocation".to_string(),
-            vec![
-                "QUERY".to_string(),
-                "MUTATION".to_string(),
-                "SUBSCRIPTION".to_string(),
-                "FIELD".to_string(),
-                "FRAGMENT_DEFINITION".to_string(),
-                "FRAGMENT_SPREAD".to_string(),
-                "INLINE_FRAGMENT".to_string(),
-                "VARIABLE_DEFINITION".to_string(),
-                "SCHEMA".to_string(),
-                "SCALAR".to_string(),
-                "OBJECT".to_string(),
-                "FIELD_DEFINITION".to_string(),
-                "ARGUMENT_DEFINITION".to_string(),
-                "INTERFACE".to_string(),
-                "UNION".to_string(),
-                "ENUM".to_string(),
-                "ENUM_VALUE".to_string(),
-                "INPUT_OBJECT".to_string(),
-                "INPUT_FIELD_DEFINITION".to_string(),
-            ],
-        ),
-        (
-            "__TypeKind".to_string(),
-            vec![
-                "SCALAR".to_string(),
-                "OBJECT".to_string(),
-                "INTERFACE".to_string(),
-                "UNION".to_string(),
-                "ENUM".to_string(),
-                "INPUT_OBJECT".to_string(),
-                "LIST".to_string(),
-                "NON_NULL".to_string(),
-            ],
-        ),
-    ]);
-
-    IntrospectionMetadata {
-        type_fields,
-        enum_values,
-    }
 }

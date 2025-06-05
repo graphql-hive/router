@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+use crate::ast::hash::ast_hash;
 use graphql_parser::query as parser;
 use serde::{Deserialize, Serialize};
 
@@ -30,22 +31,28 @@ impl OperationDefinition {
             &self.selection_set,
         )
     }
+    pub fn hash(&self) -> u64 {
+        ast_hash(self)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct SubgraphFetchOperation(pub OperationDefinition);
+pub struct SubgraphFetchOperation {
+    pub operation_def: OperationDefinition,
+    pub operation_str: String,
+}
 
 impl SubgraphFetchOperation {
     pub fn get_inner_selection_set(&self) -> &SelectionSet {
-        if let SelectionItem::Field(field) = &self.0.selection_set.items[0] {
+        if let SelectionItem::Field(field) = &self.operation_def.selection_set.items[0] {
             if field.name == "_entities" {
                 return &field.selections;
             } else {
-                return &self.0.selection_set;
+                return &self.operation_def.selection_set;
             }
         }
 
-        &self.0.selection_set
+        &self.operation_def.selection_set
     }
 }
 
@@ -54,7 +61,7 @@ impl Serialize for SubgraphFetchOperation {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.0.to_string())
+        serializer.serialize_str(&self.operation_def.to_string())
     }
 }
 
@@ -116,6 +123,17 @@ impl Display for TypeNode {
 pub struct VariableDefinition {
     pub name: String,
     pub variable_type: TypeNode,
+    pub default_value: Option<crate::ast::value::Value>,
+}
+
+impl TypeNode {
+    pub fn is_non_null(&self) -> bool {
+        matches!(self, TypeNode::NonNull(_))
+    }
+
+    pub fn is_list(&self) -> bool {
+        matches!(self, TypeNode::List(_))
+    }
 }
 
 impl Display for VariableDefinition {
@@ -139,6 +157,7 @@ impl From<&parser::VariableDefinition<'_, String>> for VariableDefinition {
         VariableDefinition {
             name: value.name.clone(),
             variable_type: (&value.var_type).into(),
+            default_value: value.default_value.as_ref().map(|v| v.into()),
         }
     }
 }

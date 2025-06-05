@@ -23,7 +23,7 @@ pub mod walker;
 
 pub struct Planner {
     graph: Graph,
-    consumer_schema: ConsumerSchema,
+    pub consumer_schema: ConsumerSchema,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -86,10 +86,10 @@ impl Planner {
 
     pub fn plan(
         &self,
-        operation_document: &query::Document<'static, String>,
+        operation_document: query::Document<'static, String>,
         operation_name: Option<&str>,
     ) -> Result<QueryPlan, PlannerError> {
-        let document = prepare_document(operation_document, operation_name);
+        let document = prepare_document(&operation_document, operation_name);
         let operation = document
             .executable_operation()
             .ok_or(PlannerError::MissingOperationToExecute)?;
@@ -107,9 +107,5 @@ impl Planner {
         let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
 
         Ok(query_plan)
-    }
-
-    pub fn consumer_schema(&self) -> &ConsumerSchema {
-        &self.consumer_schema
     }
 }

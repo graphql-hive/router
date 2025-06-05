@@ -7,7 +7,7 @@ pub mod selection_set;
 pub(crate) mod arguments;
 pub(crate) mod merge_path;
 pub(crate) mod type_aware_selection;
-pub(crate) mod value;
+pub mod value;
 
 use graphql_parser::{
     parse_query,
