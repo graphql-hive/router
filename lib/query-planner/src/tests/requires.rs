@@ -24,7 +24,7 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
@@ -170,7 +170,7 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
@@ -275,7 +275,7 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 2);
@@ -380,7 +380,7 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
@@ -492,7 +492,7 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 2);
@@ -605,7 +605,7 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
@@ -721,7 +721,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 4);
@@ -896,7 +896,7 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);

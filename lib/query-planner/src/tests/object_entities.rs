@@ -27,7 +27,7 @@ fn testing() -> Result<(), Box<dyn Error>> {
               }
             }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 3);
@@ -174,7 +174,7 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
@@ -287,7 +287,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 5);
@@ -487,7 +487,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;

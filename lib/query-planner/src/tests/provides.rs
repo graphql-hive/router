@@ -28,7 +28,7 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
@@ -135,7 +135,7 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
         }"#,
     );
 
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 3);

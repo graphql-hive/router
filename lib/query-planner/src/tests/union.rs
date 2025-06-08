@@ -30,7 +30,7 @@ fn union_member_resolvable() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
@@ -74,7 +74,7 @@ fn union_member_unresolvable() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
@@ -116,7 +116,7 @@ fn union_member_mix() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
@@ -163,7 +163,7 @@ fn union_member_entity_call() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
@@ -239,7 +239,7 @@ fn union_member_entity_call_many_local() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
@@ -353,7 +353,7 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None);
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;

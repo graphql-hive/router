@@ -77,11 +77,11 @@ impl PrettyDisplay for SubgraphFetchOperation {
 impl Display for OperationDefinition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(operation_kind) = &self.operation_kind {
-            write!(f, "{} ", operation_kind)?;
+            write!(f, "{}", operation_kind)?;
         }
 
         if let Some(name) = &self.name {
-            write!(f, "{} ", name)?;
+            write!(f, " {} ", name)?;
         }
 
         if let Some(variable_definitions) = &self.variable_definitions {
