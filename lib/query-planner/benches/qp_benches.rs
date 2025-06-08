@@ -23,7 +23,9 @@ fn get_executable_operation(
     consumer_schema: &ConsumerSchema,
     operation_name: Option<&str>,
 ) -> OperationDefinition {
-    normalize_operation(consumer_schema, parsed_document, operation_name).operation
+    normalize_operation(consumer_schema, parsed_document, operation_name)
+        .unwrap()
+        .operation
 }
 
 fn get_supergraph(path: &str) -> (Graph, ConsumerSchema) {
