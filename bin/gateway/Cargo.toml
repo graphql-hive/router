@@ -8,15 +8,31 @@ name = "gateway"
 path = "src/main.rs"
 
 [dependencies]
-serde = { version = "1.0.219", features = ["derive"] }
 query-planner = { path = "../../lib/query-planner" }
 query-plan-executor = { path = "../../lib/query-plan-executor" }
-graphql-parser = "0.4.1"
-graphql-tools = "0.4.0"
-actix-web = "4"
-serde_json = { version = "1.0.140", features = ["preserve_order"] }
-reqwest = { version = "0.12", features = ["json"] }
-moka = { version = "0.12", features = ["future"] }
-tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+
+# Tokio runtime
+tokio = { version = "1.38.0", features = ["full"] }
+
+# GraphQL
+graphql-parser = "0.4.1" # Using version from original file
+graphql-tools = "0.4.0"  # Using version from original file
+
+# Serialization
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = { version = "1.0.120", features = ["preserve_order"] }
+
+# HTTP client and caching
+reqwest = { version = "0.12.5", features = ["json"] }
+moka = { version = "0.12.8", features = ["future"] }
+
+# Tracing
 tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing-tree = "0.4.0"
+
+# HTTP
+axum = "0.8.4"
+http = "1.1.0"
+hyper = { version = "1.4.1", features = ["server", "http1"] }
+tower-http = { version = "0.6.6", features = ["fs", "trace", "cors"] }
