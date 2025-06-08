@@ -209,10 +209,13 @@ fn handle_selection_set(
                                 _ => &vec_to_hashset(&[type_def.name().to_string()]),
                             };
 
-                            let object_types_intersection = object_types_of_type_cond
-                                .intersection(object_types_of_current_type);
+                            let mut sorted_object_types: Vec<String> = object_types_of_type_cond
+                                .intersection(object_types_of_current_type)
+                                .cloned()
+                                .collect();
+                            sorted_object_types.sort();
 
-                            for object_type_name_str in object_types_intersection {
+                            for object_type_name_str in sorted_object_types {
                                 let mut new_fragment = current_fragment.clone();
                                 new_fragment.type_condition =
                                     Some(TypeCondition::On(object_type_name_str.clone()));
@@ -220,11 +223,11 @@ fn handle_selection_set(
                                 handle_selection_set(
                                     schema,
                                     possible_types,
-                                    schema.type_by_name(object_type_name_str).ok_or_else(|| {
-                                        NormalizationError::SchemaTypeNotFound {
+                                    schema.type_by_name(&object_type_name_str).ok_or_else(
+                                        || NormalizationError::SchemaTypeNotFound {
                                             type_name: object_type_name_str.to_string(),
-                                        }
-                                    })?,
+                                        },
+                                    )?,
                                     &mut new_fragment.selection_set,
                                 )?;
                                 new_items.push(Selection::InlineFragment(new_fragment));

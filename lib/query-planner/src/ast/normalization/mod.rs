@@ -481,11 +481,11 @@ mod tests {
             @r"
         query {
           products {
-            ... on Toaster {
+            ... on Oven {
               id
               warranty
             }
-            ... on Oven {
+            ... on Toaster {
               id
               warranty
             }
