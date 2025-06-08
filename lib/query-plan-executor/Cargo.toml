@@ -14,3 +14,4 @@ reqwest = { version = "0.12", features = ["json"] }
 query-planner = { path = "../query-planner" }
 graphql-parser = "0.4.1"
 graphql-tools = "0.4.0"
+tracing = "0.1.41"

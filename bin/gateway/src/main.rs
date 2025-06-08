@@ -14,26 +14,27 @@ use query_planner::utils::parsing::parse_schema;
 use query_planner::utils::parsing::safe_parse_operation;
 use serde_json::json;
 use serde_json::Value::{self};
+use tracing::{debug, info};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
 #[actix_web::main]
 async fn main() {
-    let logger_enabled = env::var("DEBUG").is_ok();
+    let tree_layer = tracing_tree::HierarchicalLayer::new(2)
+        .with_bracketed_fields(true)
+        .with_deferred_spans(false)
+        .with_wraparound(25)
+        .with_indent_lines(true)
+        .with_timer(tracing_tree::time::Uptime::default())
+        .with_thread_names(false)
+        .with_thread_ids(false)
+        .with_targets(false);
 
-    if logger_enabled {
-        let tree_layer = tracing_tree::HierarchicalLayer::new(2)
-            .with_bracketed_fields(true)
-            .with_deferred_spans(false)
-            .with_wraparound(25)
-            .with_indent_lines(true)
-            .with_timer(tracing_tree::time::Uptime::default())
-            .with_thread_names(false)
-            .with_thread_ids(false)
-            .with_targets(false);
-
-        tracing_subscriber::registry().with(tree_layer).init();
-    }
+    tracing_subscriber::registry()
+        .with(tree_layer)
+        .with(EnvFilter::from_default_env())
+        .init();
 
     let args: Vec<String> = env::args().collect();
 
@@ -56,7 +57,7 @@ async fn main() {
         validate_cache: moka::future::Cache::new(1000),
     };
     let serve_data_arc = Arc::new(serve_data);
-    println!("Starting server on http://localhost:4000");
+    info!("Starting server on http://localhost:4000");
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(serve_data_arc.clone()))
@@ -181,10 +182,15 @@ async fn handle_execution_request(
             );
         }
     };
+
+    debug!("original document: {}", original_document);
+
     let normalized_document = query_planner::utils::operation_utils::prepare_document(
         &original_document,
         execution_request.operation_name.as_deref(),
     );
+
+    debug!("normalized document: {}", normalized_document);
 
     let operation = match normalized_document.executable_operation() {
         Some(operation) => operation,
@@ -207,6 +213,8 @@ async fn handle_execution_request(
             );
         }
     };
+
+    debug!("executable operation: {}", operation);
 
     if req.method() == Method::GET && operation.operation_kind.is_some() {
         if let Some(OperationKind::Mutation) = operation.operation_kind {
@@ -330,6 +338,7 @@ async fn handle_execution_request(
             );
         }
     };
+
     let result = execute_query_plan(
         &query_plan,
         &serve_data.subgraph_endpoint_map,
@@ -340,6 +349,8 @@ async fn handle_execution_request(
         &serve_data.http_client,
     )
     .await;
+
+    debug!("execution result: {:?}", result);
 
     let content_type: &str = if accept_header
         .as_ref()
