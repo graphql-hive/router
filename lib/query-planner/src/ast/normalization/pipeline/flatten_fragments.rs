@@ -175,6 +175,22 @@ fn handle_selection_set(
 
                     match type_condition_def {
                         TypeDefinition::Interface(_) => {
+                            // When `... on I1 { id }`,
+                            // but the field's output type is not `I1`, but `I2`,
+                            // then we look for possible types of `I2`
+                            // and possible types of `I1`.
+                            // Next, we produce a list of object types
+                            // that are possible for `I1` and `I2` (intersection).
+                            // Finally, we take fragment's selection set,
+                            // and create an inline fragment for every object type.
+                            //
+                            // We do it, because the Query Planner knows only about
+                            // types matching the field's output type (field move edge)
+                            // and (in case of interfaces)
+                            // object types implementing the interface (abstract move edges).
+                            //
+                            // QP won't be able to find fields from `I1` as it knows only about `I2`,
+                            // and object types implementing `I2`.
                             let object_types_of_type_cond = possible_types
                                 .get(type_condition_name.as_str())
                                 .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
