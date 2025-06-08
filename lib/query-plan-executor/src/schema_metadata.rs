@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use graphql_parser::schema::TypeDefinition;
+use graphql_parser::{
+    query::Type,
+    schema::{Definition, TypeDefinition},
+};
 use query_planner::consumer_schema::ConsumerSchema;
 use serde_json::{json, Value};
 
@@ -21,11 +24,10 @@ impl SchemaWithMetadata for ConsumerSchema {
         let mut first_possible_types: HashMap<String, Vec<String>> = HashMap::new();
         let mut type_fields: HashMap<String, HashMap<String, String>> = HashMap::new();
         let mut enum_values: HashMap<String, Vec<String>> = HashMap::new();
+
         for definition in &self.document.definitions {
             match definition {
-                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Enum(
-                    enum_type,
-                )) => {
+                Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => {
                     let name = enum_type.name.to_string();
                     let mut values = vec![];
                     for enum_value in &enum_type.values {
@@ -33,9 +35,7 @@ impl SchemaWithMetadata for ConsumerSchema {
                     }
                     enum_values.insert(name, values);
                 }
-                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Object(
-                    object_type,
-                )) => {
+                Definition::TypeDefinition(TypeDefinition::Object(object_type)) => {
                     let name = object_type.name.to_string();
                     let fields = type_fields.entry(name).or_default();
                     for field in &object_type.fields {
@@ -50,9 +50,7 @@ impl SchemaWithMetadata for ConsumerSchema {
                         possible_types_entry.push(object_type.name.to_string());
                     }
                 }
-                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Interface(
-                    interface_type,
-                )) => {
+                Definition::TypeDefinition(TypeDefinition::Interface(interface_type)) => {
                     let name = interface_type.name.to_string();
                     let mut fields = HashMap::new();
                     for field in &interface_type.fields {
@@ -67,9 +65,7 @@ impl SchemaWithMetadata for ConsumerSchema {
                         possible_types_entry.push(interface_type.name.to_string());
                     }
                 }
-                graphql_parser::schema::Definition::TypeDefinition(TypeDefinition::Union(
-                    union_type,
-                )) => {
+                Definition::TypeDefinition(TypeDefinition::Union(union_type)) => {
                     let name = union_type.name.to_string();
                     let mut types = vec![];
                     for member in &union_type.types {
@@ -80,6 +76,7 @@ impl SchemaWithMetadata for ConsumerSchema {
                 _ => {}
             }
         }
+
         let mut final_possible_types: HashMap<String, Vec<String>> = HashMap::new();
         // Re-iterate over the possible_types
         for (definition_name_of_x, first_possible_types_of_x) in &first_possible_types {
@@ -95,9 +92,11 @@ impl SchemaWithMetadata for ConsumerSchema {
             }
             final_possible_types.insert(definition_name_of_x.to_string(), possible_types_of_x);
         }
+
         let introspection_query =
             crate::introspection::introspection_query_from_ast(&self.document);
         let introspection_schema_root_json = json!(introspection_query.__schema);
+
         SchemaMetadata {
             possible_types: final_possible_types,
             enum_values,
@@ -110,7 +109,8 @@ impl SchemaWithMetadata for ConsumerSchema {
 trait TypeName {
     fn type_name(&self) -> String;
 }
-impl TypeName for graphql_parser::schema::Type<'_, String> {
+
+impl TypeName for Type<'_, String> {
     fn type_name(&self) -> String {
         match self {
             graphql_parser::schema::Type::NamedType(named_type) => named_type.to_string(),

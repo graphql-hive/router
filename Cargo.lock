@@ -1159,6 +1159,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tracing",
  "tracing-subscriber",
  "tracing-tree",
 ]
@@ -2292,6 +2293,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]

@@ -13,6 +13,7 @@ use query_planner::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use tracing::{instrument, warn};
 
 use crate::schema_metadata::SchemaMetadata;
 pub mod introspection;
@@ -29,6 +30,10 @@ trait ExecutablePlanNode {
         data: Value,
         representations: Vec<Value>,
     ) -> (Value, Vec<Value>, Vec<GraphQLError>);
+}
+
+trait ExecutableQueryPlan {
+    async fn execute(&self, execution_context: QueryPlanExecutionContext) -> ExecutionResult;
 }
 
 #[async_trait]
@@ -54,8 +59,8 @@ impl ExecutablePlanNode for PlanNode {
             PlanNode::Subscription(node) => {
                 // Subscriptions typically use a different protocol.
                 // Execute the primary node for now.
-                println!(
-            "Warning: Executing SubscriptionNode's primary as a normal node. Real subscription handling requires a different mechanism."
+                warn!(
+            "Executing SubscriptionNode's primary as a normal node. Real subscription handling requires a different mechanism."
         );
                 node.primary
                     .execute(execution_context, data, representations)
@@ -63,7 +68,7 @@ impl ExecutablePlanNode for PlanNode {
             }
             PlanNode::Defer(_) => {
                 // Defer/Deferred execution is complex.
-                println!("Warning: DeferNode execution is not fully implemented.");
+                warn!("DeferNode execution is not fully implemented.");
                 (data, representations, Vec::new()) // Return empty for now
             }
         }
@@ -93,6 +98,7 @@ trait ExecutableFetchNode {
 
 #[async_trait]
 impl ExecutablePlanNode for FetchNode {
+    #[instrument(skip(self, execution_context), name = "FetchNode::execute")]
     async fn execute(
         &self,
         execution_context: &QueryPlanExecutionContext,
@@ -244,8 +250,8 @@ impl ExecutableFetchNode for FetchNode {
                 }
                 _ => {
                     // Called with reps, but no _entities array found. Merge entire response as fallback.
-                    println!(
-            "Warning: Fetch called with representations, but no '_entities' array found in response. Merging entire response data."
+                    warn!(
+            "Fetch called with representations, but no '_entities' array found in response. Merging entire response data."
         );
                 }
             }
@@ -430,8 +436,8 @@ impl ApplyInputRewrite for ValueSetter {
                 Value::Object(map)
             }
             _ => {
-                println!(
-                    "Warning: Trying to apply ValueSetter path {:?} to non-object/array type: {:?}",
+                warn!(
+                    "Trying to apply ValueSetter path {:?} to non-object/array type: {:?}",
                     path, data
                 );
                 data
@@ -442,6 +448,7 @@ impl ApplyInputRewrite for ValueSetter {
 
 #[async_trait]
 impl ExecutablePlanNode for SequenceNode {
+    #[instrument(skip(self, execution_context), name = "SequenceNode::execute")]
     async fn execute(
         &self,
         execution_context: &QueryPlanExecutionContext,
@@ -480,6 +487,7 @@ impl ExecutablePlanNode for SequenceNode {
 
 #[async_trait]
 impl ExecutablePlanNode for ParallelNode {
+    #[instrument(skip(self, execution_context), name = "ParallelNode::execute")]
     async fn execute(
         &self,
         execution_context: &QueryPlanExecutionContext,
@@ -520,6 +528,7 @@ impl ExecutablePlanNode for ParallelNode {
 
 #[async_trait]
 impl ExecutablePlanNode for FlattenNode {
+    #[instrument(skip(self, execution_context), name = "FlattenNode::execute")]
     async fn execute(
         &self,
         execution_context: &QueryPlanExecutionContext,
@@ -565,8 +574,8 @@ impl ExecutablePlanNode for FlattenNode {
             // Borrows held by collected_representations end here
         } else {
             // Log if no representations were found for the path.
-            println!(
-                "Info: Flatten node produced no representations for path {:?}. Skipping child node execution.",
+            warn!(
+                "Flatten node produced no representations for path {:?}. Skipping child node execution.",
                 self.path
             );
             errors = Vec::new();
@@ -578,6 +587,7 @@ impl ExecutablePlanNode for FlattenNode {
 
 #[async_trait]
 impl ExecutablePlanNode for ConditionNode {
+    #[instrument(skip(self, execution_context), name = "ConditionNode::execute")]
     async fn execute(
         &self,
         execution_context: &QueryPlanExecutionContext,
@@ -636,11 +646,8 @@ impl ExecutablePlanNode for ConditionNode {
     }
 }
 
-trait ExecutableQueryPlan {
-    async fn execute(&self, execution_context: QueryPlanExecutionContext) -> ExecutionResult;
-}
-
 impl ExecutableQueryPlan for QueryPlan {
+    #[instrument(skip(self, execution_context))]
     async fn execute(&self, execution_context: QueryPlanExecutionContext<'_>) -> ExecutionResult {
         match &self.node {
             Some(root_node) => {
@@ -756,6 +763,7 @@ pub struct QueryPlanExecutionContext<'a> {
 }
 
 impl QueryPlanExecutionContext<'_> {
+    #[instrument(skip(self, execution_request))]
     async fn execute(
         &self,
         subgraph_name: &str,
@@ -766,6 +774,7 @@ impl QueryPlanExecutionContext<'_> {
             .await
     }
 
+    #[instrument(skip(self))]
     fn project_requires(&self, requires_selections: &Vec<SelectionItem>, entity: &Value) -> Value {
         if requires_selections.is_empty() {
             return entity.clone();
@@ -824,6 +833,7 @@ impl QueryPlanExecutionContext<'_> {
     }
 }
 
+#[instrument]
 fn entity_satisfies_type_condition(
     possible_types: &HashMap<String, Vec<String>>,
     type_name: &str,
@@ -935,6 +945,8 @@ impl HTTPSubgraphExecutor<'_> {
             ))),
         }
     }
+
+    #[instrument(skip(self, execution_request))]
     async fn execute(
         &self,
         subgraph_name: &str,
@@ -1032,8 +1044,8 @@ fn project_selection_set(
                                 result_map.insert(response_key, Value::Null);
                             }
                             (None, _) => {
-                                println!(
-                                    "Warning: Field {} not found in type {}. Skipping projection.",
+                                warn!(
+                                    "Field {} not found in type {}. Skipping projection.",
                                     field.name, type_name
                                 );
                             }
