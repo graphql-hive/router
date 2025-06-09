@@ -50,11 +50,17 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
                     handle_selection_set(
                         ctx.schema,
                         &possible_types,
-                        ctx.schema.type_by_name("Query").ok_or_else(|| {
-                            NormalizationError::SchemaTypeNotFound {
+                        ctx.schema
+                            .type_by_name(
+                                ctx.schema
+                                    .schema_definition()
+                                    .query
+                                    .as_ref()
+                                    .unwrap_or(&"Query".to_string()),
+                            )
+                            .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                                 type_name: "Query".to_string(),
-                            }
-                        })?,
+                            })?,
                         selection_set,
                     )?;
                 }
@@ -62,11 +68,17 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
                     handle_selection_set(
                         ctx.schema,
                         &possible_types,
-                        ctx.schema.type_by_name("Query").ok_or_else(|| {
-                            NormalizationError::SchemaTypeNotFound {
+                        ctx.schema
+                            .type_by_name(
+                                ctx.schema
+                                    .schema_definition()
+                                    .query
+                                    .as_ref()
+                                    .unwrap_or(&"Query".to_string()),
+                            )
+                            .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                                 type_name: "Query".to_string(),
-                            }
-                        })?,
+                            })?,
                         selection_set,
                     )?;
                 }
@@ -74,11 +86,17 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
                     handle_selection_set(
                         ctx.schema,
                         &possible_types,
-                        ctx.schema.type_by_name("Mutation").ok_or_else(|| {
-                            NormalizationError::SchemaTypeNotFound {
+                        ctx.schema
+                            .type_by_name(
+                                ctx.schema
+                                    .schema_definition()
+                                    .mutation
+                                    .as_ref()
+                                    .unwrap_or(&"Mutation".to_string()),
+                            )
+                            .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                                 type_name: "Mutation".to_string(),
-                            }
-                        })?,
+                            })?,
                         selection_set,
                     )?;
                 }
@@ -86,11 +104,17 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
                     handle_selection_set(
                         ctx.schema,
                         &possible_types,
-                        ctx.schema.type_by_name("Subscription").ok_or_else(|| {
-                            NormalizationError::SchemaTypeNotFound {
+                        ctx.schema
+                            .type_by_name(
+                                ctx.schema
+                                    .schema_definition()
+                                    .subscription
+                                    .as_ref()
+                                    .unwrap_or(&"Subscription".to_string()),
+                            )
+                            .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                                 type_name: "Subscription".to_string(),
-                            }
-                        })?,
+                            })?,
                         selection_set,
                     )?;
                 }
