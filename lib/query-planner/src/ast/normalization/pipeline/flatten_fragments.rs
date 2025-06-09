@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    hash::Hash,
-};
+use std::collections::{HashMap, HashSet};
 
 use graphql_parser::{
     query::{
@@ -15,22 +12,13 @@ use graphql_tools::ast::{
     TypeDefinitionExtension, TypeExtension,
 };
 
-use crate::ast::normalization::{context::NormalizationContext, error::NormalizationError};
+use crate::ast::normalization::{
+    context::NormalizationContext,
+    error::NormalizationError,
+    utils::{extract_type_condition, vec_to_hashset},
+};
 
 type PossibleTypesMap<'a> = HashMap<&'a str, HashSet<String>>;
-
-fn vec_to_hashset<T>(values: &[T]) -> HashSet<T>
-where
-    T: Hash + std::cmp::Eq + Clone,
-{
-    let mut hset: HashSet<T> = HashSet::new();
-
-    for value in values {
-        hset.insert(value.clone());
-    }
-
-    hset
-}
 
 pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     let mut possible_types = PossibleTypesMap::new();
@@ -259,10 +247,4 @@ fn handle_selection_set(
     selection_set.items = new_items;
 
     Ok(())
-}
-
-fn extract_type_condition(type_condition: &TypeCondition<'static, String>) -> String {
-    match type_condition {
-        TypeCondition::On(v) => v.to_string(),
-    }
 }

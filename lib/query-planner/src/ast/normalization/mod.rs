@@ -3,6 +3,7 @@ use graphql_parser::query::{self as query_ast, Definition};
 mod context;
 mod error;
 mod pipeline;
+mod utils;
 
 use crate::ast::normalization::context::NormalizationContext;
 use crate::ast::normalization::pipeline::drop_duplicated_fields;
@@ -12,6 +13,7 @@ use crate::ast::normalization::pipeline::inline_fragment_spreads;
 use crate::ast::normalization::pipeline::merge_fields;
 use crate::ast::normalization::pipeline::merge_inline_fragments;
 use crate::ast::normalization::pipeline::normalize_fields;
+use crate::ast::normalization::utils::extract_type_condition;
 use crate::ast::operation::{OperationDefinition, VariableDefinition};
 use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
@@ -170,14 +172,6 @@ fn transform_selection_set<'a, 'd>(
     }
 
     transformed_selection_set
-}
-
-fn extract_type_condition<'a, 'd>(
-    type_condition: &'a query_ast::TypeCondition<'d, String>,
-) -> String {
-    match type_condition {
-        query_ast::TypeCondition::On(v) => v.to_string(),
-    }
 }
 
 fn transform_variables<'a, 'd>(
