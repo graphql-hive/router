@@ -69,7 +69,7 @@ pub fn create_normalized_document<'a, 'd>(
             query_ast::OperationDefinition::Query(query) => OperationDefinition {
                 name: mem::take(&mut query.name),
                 operation_kind: Some(OperationKind::Query),
-                variable_definitions: transform_variables(&mut query.variable_definitions),
+                variable_definitions: transform_variables(&query.variable_definitions),
                 selection_set: transform_selection_set(&mut query.selection_set),
             },
             query_ast::OperationDefinition::SelectionSet(s) => OperationDefinition {
@@ -81,13 +81,13 @@ pub fn create_normalized_document<'a, 'd>(
             query_ast::OperationDefinition::Mutation(mutation) => OperationDefinition {
                 name: mem::take(&mut mutation.name),
                 operation_kind: Some(OperationKind::Mutation),
-                variable_definitions: transform_variables(&mut mutation.variable_definitions),
+                variable_definitions: transform_variables(&mutation.variable_definitions),
                 selection_set: transform_selection_set(&mut mutation.selection_set),
             },
             query_ast::OperationDefinition::Subscription(subscription) => OperationDefinition {
                 name: mem::take(&mut subscription.name),
                 operation_kind: Some(OperationKind::Subscription),
-                variable_definitions: transform_variables(&mut subscription.variable_definitions),
+                variable_definitions: transform_variables(&subscription.variable_definitions),
                 selection_set: transform_selection_set(&mut subscription.selection_set),
             },
         },
