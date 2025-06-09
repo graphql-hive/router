@@ -10,6 +10,7 @@ pub struct UnionSubsetData {
     pub field_name: String,
     /// Represents a union member
     pub object_type_name: String,
+    pub provides: Option<u64>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -57,7 +58,7 @@ impl Node {
                         // we rely on display_name when it comes to deduplicating nodes (upsert_node),
                         // that's why the string produced here should "mimic" hashing
                         format!(
-                            "{}/{}/{}.{}/{}",
+                            "{}/{} for {}.{}:{}",
                             st.name, st.subgraph.0, u.type_name, u.field_name, u.object_type_name
                         )
                     }

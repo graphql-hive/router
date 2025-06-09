@@ -1,12 +1,5 @@
 use crate::{
-    ast::normalization::normalize_operation,
-    planner::{
-        fetch::fetch_graph::build_fetch_graph_from_query_tree,
-        query_plan::build_query_plan_from_fetch_graph,
-        tree::{paths_to_trees, query_tree::QueryTree},
-        walker::walk_operation,
-    },
-    tests::testkit::{init_logger, read_supergraph},
+    tests::testkit::{build_query_plan, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -14,8 +7,6 @@ use std::error::Error;
 #[test]
 fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let (graph, consumer_schema) =
-        read_supergraph("fixture/tests/two-same-service-calls.supergraph.graphql");
     let document = parse_operation(
         r#"
         query {
@@ -24,14 +15,10 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
-    let operation = document.executable_operation();
-    let best_paths_per_leaf = walk_operation(&graph, operation)?;
-    assert_eq!(best_paths_per_leaf.len(), 1);
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-    let query_tree = QueryTree::merge_trees(qtps);
-    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+    let query_plan = build_query_plan(
+        "fixture/tests/two-same-service-calls.supergraph.graphql",
+        document,
+    )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -160,8 +147,6 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
 #[test]
 fn simplest_requires() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let (graph, consumer_schema) =
-        read_supergraph("fixture/tests/simplest-requires.supergraph.graphql");
     let document = parse_operation(
         r#"
         query {
@@ -170,14 +155,10 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
-    let operation = document.executable_operation();
-    let best_paths_per_leaf = walk_operation(&graph, operation)?;
-    assert_eq!(best_paths_per_leaf.len(), 1);
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-    let query_tree = QueryTree::merge_trees(qtps);
-    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+    let query_plan = build_query_plan(
+        "fixture/tests/simplest-requires.supergraph.graphql",
+        document,
+    )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -264,8 +245,6 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
 #[test]
 fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let (graph, consumer_schema) =
-        read_supergraph("fixture/tests/requires-local-sibling.supergraph.graphql");
     let document = parse_operation(
         r#"
         query {
@@ -275,14 +254,10 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
-    let operation = document.executable_operation();
-    let best_paths_per_leaf = walk_operation(&graph, operation)?;
-    assert_eq!(best_paths_per_leaf.len(), 2);
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-    let query_tree = QueryTree::merge_trees(qtps);
-    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+    let query_plan = build_query_plan(
+        "fixture/tests/requires-local-sibling.supergraph.graphql",
+        document,
+    )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -370,8 +345,6 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
 #[test]
 fn simple_requires() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let (graph, consumer_schema) =
-        read_supergraph("fixture/tests/simple-requires.supergraph.graphql");
     let document = parse_operation(
         r#"
         query {
@@ -380,14 +353,8 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
-    let operation = document.executable_operation();
-    let best_paths_per_leaf = walk_operation(&graph, operation)?;
-    assert_eq!(best_paths_per_leaf.len(), 1);
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-    let query_tree = QueryTree::merge_trees(qtps);
-    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+    let query_plan =
+        build_query_plan("fixture/tests/simple-requires.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -480,9 +447,6 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
 #[test]
 fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let (graph, consumer_schema) = read_supergraph(
-        "fixture/tests/two_fields_same_subgraph_same_requirement.supergraph.graphql",
-    );
     let document = parse_operation(
         r#"
         query {
@@ -492,14 +456,10 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
-    let operation = document.executable_operation();
-    let best_paths_per_leaf = walk_operation(&graph, operation)?;
-    assert_eq!(best_paths_per_leaf.len(), 2);
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-    let query_tree = QueryTree::merge_trees(qtps);
-    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+    let query_plan = build_query_plan(
+        "fixture/tests/two_fields_same_subgraph_same_requirement.supergraph.graphql",
+        document,
+    )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -593,8 +553,6 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
 #[test]
 fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let (graph, consumer_schema) =
-        read_supergraph("fixture/tests/simple_requires_with_child.supergraph.graphql");
     let document = parse_operation(
         r#"
         query {
@@ -605,14 +563,10 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
-    let operation = document.executable_operation();
-    let best_paths_per_leaf = walk_operation(&graph, operation)?;
-    assert_eq!(best_paths_per_leaf.len(), 1);
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-    let query_tree = QueryTree::merge_trees(qtps);
-    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+    let query_plan = build_query_plan(
+        "fixture/tests/simple_requires_with_child.supergraph.graphql",
+        document,
+    )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -707,7 +661,6 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
 #[test]
 fn keys_mashup() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let (graph, consumer_schema) = read_supergraph("fixture/tests/keys-mashup.supergraph.graphql");
     let document = parse_operation(
         r#"
         query {
@@ -721,14 +674,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
-    let operation = document.executable_operation();
-    let best_paths_per_leaf = walk_operation(&graph, operation)?;
-    assert_eq!(best_paths_per_leaf.len(), 4);
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-    let query_tree = QueryTree::merge_trees(qtps);
-    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+    let query_plan = build_query_plan("fixture/tests/keys-mashup.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -884,8 +830,6 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
 #[test]
 fn deep_requires() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let (graph, consumer_schema) =
-        read_supergraph("fixture/tests/deep-requires.supergraph.graphql");
     let document = parse_operation(
         r#"
         query {
@@ -896,16 +840,9 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
-    let operation = document.executable_operation();
-    let best_paths_per_leaf = walk_operation(&graph, operation)?;
-    assert_eq!(best_paths_per_leaf.len(), 1);
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-    let query_tree = QueryTree::merge_trees(qtps);
-    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    let plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+    let query_plan = build_query_plan("fixture/tests/deep-requires.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", plan), @r#"
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
         Fetch(service: "a") {

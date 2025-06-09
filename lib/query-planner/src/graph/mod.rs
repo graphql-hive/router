@@ -10,6 +10,7 @@ use std::{
     hash::Hash,
 };
 
+use super::ast::normalization::utils::extract_type_condition;
 use crate::{
     federation_spec::FederationRules,
     graph::node::{SubgraphTypeSpecialization, UnionSubsetData},
@@ -585,6 +586,7 @@ impl Graph {
                                     type_name: def_name.clone(),
                                     field_name: field_name.clone(),
                                     object_type_name: member.clone(),
+                                    provides: None,
                                 }),
                             ));
                             let abstract_tail = self.upsert_node(Node::new_node(
@@ -763,7 +765,45 @@ impl Graph {
                         )?;
                     }
                 }
-                _ => unimplemented!("fragments are not supported in provides yet"),
+                Selection::InlineFragment(fragment) => {
+                    let type_name_from_cond = extract_type_condition(
+                        fragment.type_condition.as_ref().unwrap_or_else(|| {
+                            // Inline fragments without type condition should have been normalized and converted into selection set
+                            panic!("Inline fragment without type condition detected");
+                        }),
+                    );
+                    let type_def_from_cond =
+                        state.definitions.get(&type_name_from_cond).ok_or_else(|| {
+                            GraphError::DefinitionNotFound(type_name_from_cond.to_string())
+                        })?;
+
+                    // head is either an interface or a union
+                    // tail is a type from a type condition (it's an object type - after normalization)
+                    let tail = self.upsert_node(Node::new_specialized_node(
+                        &type_name_from_cond,
+                        state.resolve_graph_id(graph_id)?,
+                        SubgraphTypeSpecialization::Provides(view_id),
+                    ));
+
+                    // because it's abstract -> object move, add an abstract move edge
+                    self.upsert_edge(head, tail, Edge::AbstractMove(type_name_from_cond.clone()));
+
+                    // use object type (tail) when handling selection sets
+                    self.handle_viewed_selection_set(
+                        state,
+                        &fragment.selection_set,
+                        graph_id,
+                        type_def_from_cond,
+                        tail,
+                        view_id,
+                    )?;
+                }
+                Selection::FragmentSpread(_) => {
+                    // Fragment spreads should have been normalized (converted into inline fragments) at this point
+                    panic!(
+                        "Fragment spread detected. Expected either a Field or an Inline Fragment"
+                    )
+                }
             };
         }
 
@@ -784,8 +824,12 @@ impl Graph {
                             .is_some_and(|v| v == &join_type.graph_id)
                             && join_field.provides.is_some()
                         {
-                            if let Some(selection_set) = FederationRules::parse_provides(join_field)
-                            {
+                            if let Some(selection_set) = FederationRules::parse_provides(
+                                state,
+                                join_field,
+                                &join_type.graph_id,
+                                field_definition.field_type.inner_type(),
+                            ) {
                                 view_id += 1;
 
                                 let head = self.upsert_node(Node::new_node(

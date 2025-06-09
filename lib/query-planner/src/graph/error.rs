@@ -17,19 +17,19 @@ pub enum GraphError {
     #[error("Field named '{0}' was not found in definition name '{1}'")]
     FieldDefinitionNotFound(String, String),
     #[error("Supergraph state error: {0}")]
-    SupergraphStateError(SupergraphStateError),
+    SupergraphStateError(Box<SupergraphStateError>),
     #[error("Selection resolver error: {0}")]
-    SelectionResolverError(SelectionResolverError),
+    SelectionResolverError(Box<SelectionResolverError>),
 }
 
 impl From<SupergraphStateError> for GraphError {
     fn from(err: SupergraphStateError) -> Self {
-        GraphError::SupergraphStateError(err)
+        GraphError::SupergraphStateError(Box::new(err))
     }
 }
 
 impl From<SelectionResolverError> for GraphError {
     fn from(err: SelectionResolverError) -> Self {
-        GraphError::SelectionResolverError(err)
+        GraphError::SelectionResolverError(Box::new(err))
     }
 }

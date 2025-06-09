@@ -1,12 +1,5 @@
 use crate::{
-    ast::normalization::normalize_operation,
-    planner::{
-        fetch::fetch_graph::build_fetch_graph_from_query_tree,
-        query_plan::build_query_plan_from_fetch_graph,
-        tree::{paths_to_trees, query_tree::QueryTree},
-        walker::walk_operation,
-    },
-    tests::testkit::{init_logger, read_supergraph},
+    tests::testkit::{build_query_plan, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -14,8 +7,6 @@ use std::error::Error;
 #[test]
 fn simple_provides() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let (graph, consumer_schema) =
-        read_supergraph("fixture/tests/simple-provides.supergraph.graphql");
     let document = parse_operation(
         r#"
         query {
@@ -28,14 +19,8 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
-    let operation = document.executable_operation();
-    let best_paths_per_leaf = walk_operation(&graph, operation)?;
-    assert_eq!(best_paths_per_leaf.len(), 1);
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-    let query_tree = QueryTree::merge_trees(qtps);
-    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+    let query_plan =
+        build_query_plan("fixture/tests/simple-provides.supergraph.graphql", document)?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
@@ -120,8 +105,6 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
 #[test]
 fn nested_provides() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let (graph, consumer_schema) =
-        read_supergraph("fixture/tests/nested-provides.supergraph.graphql");
     let document = parse_operation(
         r#"
         query {
@@ -134,15 +117,9 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
+    let query_plan =
+        build_query_plan("fixture/tests/nested-provides.supergraph.graphql", document)?;
 
-    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
-    let operation = document.executable_operation();
-    let best_paths_per_leaf = walk_operation(&graph, operation)?;
-    assert_eq!(best_paths_per_leaf.len(), 3);
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-    let query_tree = QueryTree::merge_trees(qtps);
-    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
-    let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Fetch(service: "category") {
@@ -166,6 +143,88 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
         "serviceName": "category",
         "operationKind": "query",
         "operation": "{products{categories{name id} id}}"
+      }
+    }
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn provides_on_union() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          media {
+            ... on Book {
+              id
+              title
+            }
+            ... on Movie {
+              id
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/provides-on-union.supergraph.graphql",
+        document,
+    )?;
+
+    // TODO: once we figure out evaluation of plans based on best paths
+    //       it should be a single call.
+    //       Right now we take the best for `Book.title` (b) and best for `Movie/Book { id }` (a)
+    //       even though (b) has the same cost (but we take first by A-Z orded).
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Parallel {
+        Fetch(service: "b") {
+          {
+            media {
+              __typename
+              ... on Book {
+                title
+              }
+            }
+          }
+        },
+        Fetch(service: "a") {
+          {
+            media {
+              __typename
+              ... on Movie {
+                id
+              }
+              ... on Book {
+                id
+              }
+            }
+          }
+        },
+      },
+    },
+    "#);
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Parallel",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "b",
+            "operationKind": "query",
+            "operation": "{media{__typename ...on Book{title}}}"
+          },
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "operationKind": "query",
+            "operation": "{media{__typename ...on Movie{id} ...on Book{id}}}"
+          }
+        ]
       }
     }
     "#);

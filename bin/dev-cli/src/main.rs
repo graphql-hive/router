@@ -43,7 +43,12 @@ fn main() {
     match args[1].as_str() {
         "consumer_schema" => process_consumer_schema(&args[2]),
         "graph" => {
-            let (graph, _consumer_schema) = process_graph(&args[2]);
+            let supergraph_sdl =
+                std::fs::read_to_string(&args[2]).expect("Unable to read input file");
+            let parsed_schema = parse_schema(&supergraph_sdl);
+            let supergraph = SupergraphState::new(&parsed_schema);
+            let graph =
+                Graph::graph_from_supergraph_state(&supergraph).expect("failed to create graph");
             println!("{}", graph);
         }
         "paths" => {
@@ -83,11 +88,11 @@ fn main() {
             let supergraph_sdl =
                 std::fs::read_to_string(&args[2]).expect("Unable to read input file");
             let parsed_schema = parse_schema(&supergraph_sdl);
-            let consumer_schema = ConsumerSchema::new_from_supergraph(&parsed_schema);
+            let supergraph = SupergraphState::new(&parsed_schema);
             let document_text =
                 std::fs::read_to_string(&args[3]).expect("Unable to read input file");
             let parsed_document = parse_operation(&document_text);
-            let document = normalize_operation(&consumer_schema, &parsed_document, None).unwrap();
+            let document = normalize_operation(&supergraph, &parsed_document, None).unwrap();
             let operation = document.executable_operation();
 
             println!("{}", operation);
@@ -105,17 +110,6 @@ fn process_consumer_schema(path: &str) {
     let consumer_schema = ConsumerSchema::new_from_supergraph(&parsed_schema);
 
     println!("{}", consumer_schema.document);
-}
-
-fn process_graph(path: &str) -> (Graph, ConsumerSchema) {
-    let supergraph_sdl = std::fs::read_to_string(path).expect("Unable to read input file");
-    let parsed_schema = parse_schema(&supergraph_sdl);
-    let supergraph_state = SupergraphState::new(&parsed_schema);
-
-    (
-        Graph::graph_from_supergraph_state(&supergraph_state).expect("failed to create graph"),
-        ConsumerSchema::new_from_supergraph(&parsed_schema),
-    )
 }
 
 fn process_fetch_graph(supergraph_path: &str, operation_path: &str) -> FetchGraph {
@@ -145,10 +139,10 @@ fn process_merged_tree(supergraph_path: &str, operation_path: &str) -> (Graph, Q
     (graph, query_tree)
 }
 
-fn get_operation(operation_path: &str, consumer_schema: &ConsumerSchema) -> OperationDefinition {
+fn get_operation(operation_path: &str, supergraph: &SupergraphState) -> OperationDefinition {
     let document_text = std::fs::read_to_string(operation_path).expect("Unable to read input file");
     let parsed_document = parse_operation(&document_text);
-    let document = normalize_operation(consumer_schema, &parsed_document, None).unwrap();
+    let document = normalize_operation(supergraph, &parsed_document, None).unwrap();
     let operation = document.executable_operation();
 
     operation.clone()
@@ -158,8 +152,12 @@ fn process_paths(
     supergraph_path: &str,
     operation_path: &str,
 ) -> (Graph, BestPathsPerLeaf, OperationDefinition) {
-    let (graph, consumer_schema) = process_graph(supergraph_path);
-    let operation = get_operation(operation_path, &consumer_schema);
+    let supergraph_sdl =
+        std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
+    let parsed_schema = parse_schema(&supergraph_sdl);
+    let supergraph = SupergraphState::new(&parsed_schema);
+    let graph = Graph::graph_from_supergraph_state(&supergraph).expect("failed to create graph");
+    let operation = get_operation(operation_path, &supergraph);
     let best_paths_per_leaf = walk_operation(&graph, &operation).unwrap();
 
     (graph, best_paths_per_leaf, operation)

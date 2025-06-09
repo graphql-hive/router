@@ -4,7 +4,10 @@ use graphql_parser::{
     query::{Definition, OperationDefinition, SelectionSet},
 };
 
-use crate::state::supergraph_state::{SupergraphDefinition, SupergraphField};
+use crate::{
+    ast::normalization::normalize_provides_mut,
+    state::supergraph_state::{SupergraphDefinition, SupergraphField, SupergraphState},
+};
 
 pub(crate) mod definitions;
 pub(crate) mod directives;
@@ -22,26 +25,30 @@ pub struct FederationRules;
 
 impl FederationRules {
     pub fn parse_provides(
+        supergraph: &SupergraphState,
         join_field: &JoinFieldDirective,
+        subgraph_name: &String,
+        type_name: &str,
     ) -> Option<SelectionSet<'static, String>> {
         if let Some(provides) = &join_field.provides {
             let selection_set_str = format!("{{{provides}}}");
             // TODO: Far from ideal, but we can use the graphql_parser here to get it parsed for us
-            let parsed_doc = parse_query(&selection_set_str).unwrap().into_static();
+            let mut parsed_doc = parse_query(&selection_set_str).unwrap().into_static();
+            normalize_provides_mut(supergraph, &mut parsed_doc, type_name, subgraph_name)
+                .unwrap_or_else(|err| panic!("Normalization error: {err}"));
+
             let parsed_definition = parsed_doc
                 .definitions
                 .first()
                 .expect("failed to parse selection set for provides")
                 .clone();
 
-            let maybe_selection_set = match parsed_definition {
+            match parsed_definition {
                 Definition::Operation(OperationDefinition::SelectionSet(selection_set)) => {
-                    Some(selection_set)
+                    return Some(selection_set);
                 }
                 _ => return None,
-            };
-
-            return maybe_selection_set;
+            }
         }
 
         None

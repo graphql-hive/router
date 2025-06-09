@@ -22,44 +22,45 @@ pub mod walker;
 
 pub struct Planner {
     graph: Graph,
+    pub supergraph: SupergraphState,
     pub consumer_schema: ConsumerSchema,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum PlannerError {
     #[error("failed to initalize relations graph: {0}")]
-    GraphInitError(GraphError),
+    GraphInitError(Box<GraphError>),
     #[error("failed to locate operation to execute")]
     MissingOperationToExecute,
     #[error("walker failed to locate path: {0}")]
-    PathLocatorError(WalkOperationError),
+    PathLocatorError(Box<WalkOperationError>),
     #[error("failed to build fetch graph: {0}")]
-    FailedToConstructFetchGraph(FetchGraphError),
+    FailedToConstructFetchGraph(Box<FetchGraphError>),
     #[error("failed to build plan: {0}")]
-    QueryPlanBuildFailed(QueryPlanError),
+    QueryPlanBuildFailed(Box<QueryPlanError>),
 }
 
 impl From<GraphError> for PlannerError {
     fn from(value: GraphError) -> Self {
-        PlannerError::GraphInitError(value)
+        PlannerError::GraphInitError(Box::new(value))
     }
 }
 
 impl From<WalkOperationError> for PlannerError {
     fn from(value: WalkOperationError) -> Self {
-        PlannerError::PathLocatorError(value)
+        PlannerError::PathLocatorError(Box::new(value))
     }
 }
 
 impl From<FetchGraphError> for PlannerError {
     fn from(value: FetchGraphError) -> Self {
-        PlannerError::FailedToConstructFetchGraph(value)
+        PlannerError::FailedToConstructFetchGraph(Box::new(value))
     }
 }
 
 impl From<QueryPlanError> for PlannerError {
     fn from(value: QueryPlanError) -> Self {
-        PlannerError::QueryPlanBuildFailed(value)
+        PlannerError::QueryPlanBuildFailed(Box::new(value))
     }
 }
 
@@ -68,19 +69,20 @@ impl Planner {
         parsed_supergraph: &schema::Document<'static, String>,
     ) -> Result<Self, PlannerError> {
         let supergraph_state = SupergraphState::new(parsed_supergraph);
-        Self::new_from_supergraph_state(&supergraph_state, parsed_supergraph)
+        Self::new_from_supergraph_state(supergraph_state, parsed_supergraph)
     }
 
     pub fn new_from_supergraph_state(
-        supergraph_state: &SupergraphState,
+        supergraph_state: SupergraphState,
         parsed_supergraph: &schema::Document<'static, String>,
     ) -> Result<Self, PlannerError> {
-        let graph = Graph::graph_from_supergraph_state(supergraph_state)?;
+        let graph = Graph::graph_from_supergraph_state(&supergraph_state)?;
         let consumer_schema = ConsumerSchema::new_from_supergraph(parsed_supergraph);
 
         Ok(Planner {
             graph,
             consumer_schema,
+            supergraph: supergraph_state,
         })
     }
 

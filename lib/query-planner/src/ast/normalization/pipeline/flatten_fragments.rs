@@ -1,38 +1,72 @@
 use std::collections::{HashMap, HashSet};
 
-use graphql_parser::{
-    query::{
-        Definition, Mutation, OperationDefinition, Query, Selection, SelectionSet, Subscription,
-        TypeCondition,
-    },
-    schema::TypeDefinition,
-};
-use graphql_tools::ast::{
-    AbstractTypeDefinitionExtension, FieldByNameExtension, SchemaDocumentExtension,
-    TypeDefinitionExtension, TypeExtension,
+use graphql_parser::query::{
+    Definition, Mutation, OperationDefinition, Query, Selection, SelectionSet, Subscription,
+    TypeCondition,
 };
 
-use crate::ast::normalization::{
-    context::NormalizationContext,
-    error::NormalizationError,
-    utils::{extract_type_condition, vec_to_hashset},
+use crate::{
+    ast::normalization::{
+        context::NormalizationContext,
+        error::NormalizationError,
+        utils::{extract_type_condition, vec_to_hashset},
+    },
+    state::supergraph_state::{SupergraphDefinition, SupergraphState},
 };
 
 type PossibleTypesMap<'a> = HashMap<&'a str, HashSet<String>>;
 
 pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     let mut possible_types = PossibleTypesMap::new();
+    let maybe_subgraph_name = ctx.subgraph_name.as_ref();
 
-    for (type_name, type_def) in ctx.schema.type_map() {
+    for (type_name, type_def) in ctx.supergraph.definitions.iter().filter(|(_, def)| {
+        if let Some(subgraph_name) = maybe_subgraph_name {
+            def.is_defined_in_subgraph(subgraph_name.as_str())
+        } else {
+            true
+        }
+    }) {
         match type_def {
-            TypeDefinition::Union(union_type) => {
-                possible_types.insert(type_name, vec_to_hashset(&union_type.types));
+            SupergraphDefinition::Union(union_type) => {
+                possible_types.insert(
+                    type_name,
+                    vec_to_hashset(
+                        &union_type
+                            .union_members
+                            .iter()
+                            .filter_map(|m| {
+                                if let Some(subgraph_name) = maybe_subgraph_name {
+                                    if &m.graph == *subgraph_name {
+                                        return None;
+                                    }
+                                }
+                                Some(m.member.clone())
+                            })
+                            .collect::<Vec<String>>(),
+                    ),
+                );
             }
-            TypeDefinition::Interface(interface_type) => {
+            SupergraphDefinition::Interface(_) => {
                 let mut object_types: HashSet<String> = HashSet::new();
-                for (obj_type_name, obj_type_def) in ctx.schema.type_map() {
-                    if let TypeDefinition::Object(object_type) = obj_type_def {
-                        if interface_type.is_implemented_by(object_type) {
+                for (obj_type_name, obj_type_def) in
+                    ctx.supergraph.definitions.iter().filter(|(_, def)| {
+                        if let Some(subgraph_name) = maybe_subgraph_name {
+                            def.is_defined_in_subgraph(subgraph_name.as_str())
+                        } else {
+                            true
+                        }
+                    })
+                {
+                    if let SupergraphDefinition::Object(object_type) = obj_type_def {
+                        if object_type.join_implements.iter().any(|j| {
+                            let belongs = match maybe_subgraph_name {
+                                Some(subgraph_name) => &j.graph_id == *subgraph_name,
+                                None => true,
+                            };
+
+                            belongs && &j.interface == type_name
+                        }) {
                             object_types.insert(obj_type_name.to_string());
                         }
                     }
@@ -43,21 +77,20 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
         }
     }
 
+    let query_type_name = ctx.query_type_name();
+    let mutation_type_name = ctx.mutation_type_name();
+    let subscription_type_name = ctx.subscription_type_name();
+
     for definition in &mut ctx.document.definitions {
         match definition {
             Definition::Operation(op_def) => match op_def {
                 OperationDefinition::SelectionSet(selection_set) => {
                     handle_selection_set(
-                        ctx.schema,
+                        ctx.supergraph,
                         &possible_types,
-                        ctx.schema
-                            .type_by_name(
-                                ctx.schema
-                                    .schema_definition()
-                                    .query
-                                    .as_ref()
-                                    .unwrap_or(&"Query".to_string()),
-                            )
+                        ctx.supergraph
+                            .definitions
+                            .get(query_type_name)
                             .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                                 type_name: "Query".to_string(),
                             })?,
@@ -66,16 +99,11 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
                 }
                 OperationDefinition::Query(Query { selection_set, .. }) => {
                     handle_selection_set(
-                        ctx.schema,
+                        ctx.supergraph,
                         &possible_types,
-                        ctx.schema
-                            .type_by_name(
-                                ctx.schema
-                                    .schema_definition()
-                                    .query
-                                    .as_ref()
-                                    .unwrap_or(&"Query".to_string()),
-                            )
+                        ctx.supergraph
+                            .definitions
+                            .get(query_type_name)
                             .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                                 type_name: "Query".to_string(),
                             })?,
@@ -84,16 +112,11 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
                 }
                 OperationDefinition::Mutation(Mutation { selection_set, .. }) => {
                     handle_selection_set(
-                        ctx.schema,
+                        ctx.supergraph,
                         &possible_types,
-                        ctx.schema
-                            .type_by_name(
-                                ctx.schema
-                                    .schema_definition()
-                                    .mutation
-                                    .as_ref()
-                                    .unwrap_or(&"Mutation".to_string()),
-                            )
+                        ctx.supergraph
+                            .definitions
+                            .get(mutation_type_name)
                             .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                                 type_name: "Mutation".to_string(),
                             })?,
@@ -102,16 +125,11 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
                 }
                 OperationDefinition::Subscription(Subscription { selection_set, .. }) => {
                     handle_selection_set(
-                        ctx.schema,
+                        ctx.supergraph,
                         &possible_types,
-                        ctx.schema
-                            .type_by_name(
-                                ctx.schema
-                                    .schema_definition()
-                                    .subscription
-                                    .as_ref()
-                                    .unwrap_or(&"Subscription".to_string()),
-                            )
+                        ctx.supergraph
+                            .definitions
+                            .get(subscription_type_name)
                             .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                                 type_name: "Subscription".to_string(),
                             })?,
@@ -129,9 +147,9 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
 }
 
 fn handle_selection_set(
-    schema: &graphql_parser::schema::Document<'static, String>,
+    state: &SupergraphState,
     possible_types: &PossibleTypesMap,
-    type_def: &graphql_parser::schema::TypeDefinition<'static, String>,
+    type_def: &SupergraphDefinition,
     selection_set: &mut SelectionSet<'static, String>,
 ) -> Result<(), NormalizationError> {
     let old_items = std::mem::take(&mut selection_set.items);
@@ -140,21 +158,25 @@ fn handle_selection_set(
     for selection in old_items {
         match selection {
             Selection::Field(mut field) => {
+                if field.name.starts_with("__") {
+                    new_items.push(Selection::Field(field));
+                    continue;
+                }
+
                 let has_selection_set = !field.selection_set.items.is_empty();
 
                 if has_selection_set {
-                    let field_definition =
-                        type_def.field_by_name(&field.name).ok_or_else(|| {
-                            NormalizationError::FieldNotFoundInType {
-                                field_name: field.name.clone(),
-                                type_name: type_def.name().to_string(),
-                            }
-                        })?;
+                    let field_definition = type_def.fields().get(&field.name).ok_or_else(|| {
+                        NormalizationError::FieldNotFoundInType {
+                            field_name: field.name.clone(),
+                            type_name: type_def.name().to_string(),
+                        }
+                    })?;
                     let inner_type_name = field_definition.field_type.inner_type();
                     handle_selection_set(
-                        schema,
+                        state,
                         possible_types,
-                        schema.type_by_name(inner_type_name).ok_or_else(|| {
+                        state.definitions.get(inner_type_name).ok_or_else(|| {
                             NormalizationError::SchemaTypeNotFound {
                                 type_name: inner_type_name.to_string(),
                             }
@@ -178,15 +200,15 @@ fn handle_selection_set(
                         .map(extract_type_condition)
                         .expect("type condition should exist");
 
-                    let type_condition_def =
-                        schema.type_by_name(&type_condition_name).ok_or_else(|| {
-                            NormalizationError::SchemaTypeNotFound {
-                                type_name: type_condition_name.clone(),
-                            }
+                    let type_condition_def = state
+                        .definitions
+                        .get(&type_condition_name)
+                        .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
+                            type_name: type_condition_name.clone(),
                         })?;
 
                     match type_condition_def {
-                        TypeDefinition::Interface(_) => {
+                        SupergraphDefinition::Interface(_) => {
                             // When `... on I1 { id }`,
                             // but the field's output type is not `I1`, but `I2`,
                             // then we look for possible types of `I2`
@@ -210,13 +232,12 @@ fn handle_selection_set(
                                 })?;
 
                             let object_types_of_current_type = match type_def {
-                                TypeDefinition::Union(_) | TypeDefinition::Interface(_) => {
-                                    possible_types.get(type_def.name()).ok_or_else(|| {
-                                        NormalizationError::PossibleTypesNotFound {
-                                            type_name: type_def.name().to_string(),
-                                        }
-                                    })?
-                                }
+                                SupergraphDefinition::Union(_)
+                                | SupergraphDefinition::Interface(_) => possible_types
+                                    .get(type_def.name())
+                                    .ok_or_else(|| NormalizationError::PossibleTypesNotFound {
+                                        type_name: type_def.name().to_string(),
+                                    })?,
                                 // For object types, the only possible type is itself
                                 _ => &vec_to_hashset(&[type_def.name().to_string()]),
                             };
@@ -233,9 +254,9 @@ fn handle_selection_set(
                                     Some(TypeCondition::On(object_type_name_str.clone()));
 
                                 handle_selection_set(
-                                    schema,
+                                    state,
                                     possible_types,
-                                    schema.type_by_name(&object_type_name_str).ok_or_else(
+                                    state.definitions.get(&object_type_name_str).ok_or_else(
                                         || NormalizationError::SchemaTypeNotFound {
                                             type_name: object_type_name_str.to_string(),
                                         },
@@ -247,7 +268,7 @@ fn handle_selection_set(
                         }
                         _ => {
                             handle_selection_set(
-                                schema,
+                                state,
                                 possible_types,
                                 type_condition_def,
                                 &mut current_fragment.selection_set,
@@ -257,7 +278,7 @@ fn handle_selection_set(
                     }
                 } else {
                     handle_selection_set(
-                        schema,
+                        state,
                         possible_types,
                         type_def,
                         &mut current_fragment.selection_set,

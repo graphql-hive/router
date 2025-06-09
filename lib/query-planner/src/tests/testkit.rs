@@ -1,12 +1,21 @@
 use std::env;
+use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Once;
 
 use lazy_static::lazy_static;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::consumer_schema::ConsumerSchema;
+use graphql_parser::query as query_ast;
+
+use crate::ast::normalization::normalize_operation;
 use crate::graph::Graph;
+use crate::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
+use crate::planner::plan_nodes::QueryPlan;
+use crate::planner::query_plan::build_query_plan_from_fetch_graph;
+use crate::planner::tree::paths_to_trees;
+use crate::planner::tree::query_tree::QueryTree;
+use crate::planner::walker::walk_operation;
 use crate::state::supergraph_state::SupergraphState;
 use crate::utils::parsing::parse_schema;
 
@@ -37,15 +46,28 @@ pub fn init_logger() {
     });
 }
 
-pub fn read_supergraph(fixture_path: &str) -> (Graph, ConsumerSchema) {
+pub fn read_supergraph(fixture_path: &str) -> String {
     let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(fixture_path);
     let supergraph_sdl =
         std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
-    let schema = parse_schema(&supergraph_sdl);
-    let supergraph_state = SupergraphState::new(&schema);
 
-    (
-        Graph::graph_from_supergraph_state(&supergraph_state).expect("failed to create graph"),
-        ConsumerSchema::new_from_supergraph(&schema),
-    )
+    supergraph_sdl
+}
+
+pub fn build_query_plan(
+    fixture_path: &str,
+    query: query_ast::Document<'static, String>,
+) -> Result<QueryPlan, Box<dyn Error>> {
+    let schema = parse_schema(&read_supergraph(fixture_path));
+    let supergraph_state = SupergraphState::new(&schema);
+    let graph =
+        Graph::graph_from_supergraph_state(&supergraph_state).expect("failed to create graph");
+    let document = normalize_operation(&supergraph_state, &query, None).unwrap();
+    let operation = document.executable_operation();
+    let best_paths_per_leaf = walk_operation(&graph, operation)?;
+    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
+    let query_tree = QueryTree::merge_trees(qtps);
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
+
+    Ok(build_query_plan_from_fetch_graph(fetch_graph)?)
 }
