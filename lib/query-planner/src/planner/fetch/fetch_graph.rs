@@ -597,24 +597,15 @@ impl FetchStepData {
             return false;
         }
 
-        // we should prevent merging steps with more than 1 parent
-        // we should merge only if the parent of both is identical
-
-        let self_path = self
-            .response_path
-            .insert_front(Segment::Field("*".to_string()));
-        let other_path = other
-            .response_path
-            .insert_front(Segment::Field("*".to_string()));
         // If both are entities, their response_paths should match,
         // as we can't merge entity calls resolving different entities
         if matches!(self.kind, FetchStepKind::Entity) && self.kind == other.kind {
-            if !self_path.eq(&other_path) {
+            if !self.response_path.eq(&other.response_path) {
                 return false;
             }
         } else {
             // otherwise we can merge
-            if !other_path.starts_with(&self_path) {
+            if !other.response_path.starts_with(&self.response_path) {
                 return false;
             }
         }
