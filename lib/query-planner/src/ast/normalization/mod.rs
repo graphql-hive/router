@@ -1,3 +1,6 @@
+use std::mem;
+
+use graphql_parser::query::Value;
 use graphql_parser::query::{self as query_ast, Definition};
 
 mod context;
@@ -5,6 +8,7 @@ mod error;
 mod pipeline;
 mod utils;
 
+use crate::ast::arguments::ArgumentsMap;
 use crate::ast::normalization::context::NormalizationContext;
 use crate::ast::normalization::pipeline::drop_duplicated_fields;
 use crate::ast::normalization::pipeline::drop_unused_operations;
@@ -42,10 +46,14 @@ pub fn normalize_operation(
     drop_duplicated_fields(&mut ctx)?;
 
     // drops fragment definitions
-    let operation = ctx.document.definitions.iter().find_map(|def| match def {
-        Definition::Operation(op) => Some(op),
-        _ => None,
-    });
+    let operation = ctx
+        .document
+        .definitions
+        .iter_mut()
+        .find_map(|def| match def {
+            Definition::Operation(op) => Some(op),
+            _ => None,
+        });
 
     let op_def = operation.ok_or(NormalizationError::ExpectedTransformedOperationNotFound)?;
 
@@ -53,16 +61,16 @@ pub fn normalize_operation(
 }
 
 pub fn create_normalized_document<'a, 'd>(
-    operation_ast: &'a query_ast::OperationDefinition<'d, String>,
+    operation_ast: &'a mut query_ast::OperationDefinition<'d, String>,
     operation_name: Option<&'a str>,
 ) -> NormalizedDocument {
     NormalizedDocument {
         operation: match operation_ast {
             query_ast::OperationDefinition::Query(query) => OperationDefinition {
-                name: query.name.clone(),
+                name: mem::take(&mut query.name),
                 operation_kind: Some(OperationKind::Query),
-                variable_definitions: transform_variables(&query.variable_definitions),
-                selection_set: transform_selection_set(&query.selection_set),
+                variable_definitions: transform_variables(&mut query.variable_definitions),
+                selection_set: transform_selection_set(&mut query.selection_set),
             },
             query_ast::OperationDefinition::SelectionSet(s) => OperationDefinition {
                 name: None,
@@ -71,16 +79,16 @@ pub fn create_normalized_document<'a, 'd>(
                 selection_set: transform_selection_set(s),
             },
             query_ast::OperationDefinition::Mutation(mutation) => OperationDefinition {
-                name: mutation.name.clone(),
+                name: mem::take(&mut mutation.name),
                 operation_kind: Some(OperationKind::Mutation),
-                variable_definitions: transform_variables(&mutation.variable_definitions),
-                selection_set: transform_selection_set(&mutation.selection_set),
+                variable_definitions: transform_variables(&mut mutation.variable_definitions),
+                selection_set: transform_selection_set(&mut mutation.selection_set),
             },
             query_ast::OperationDefinition::Subscription(subscription) => OperationDefinition {
-                name: subscription.name.clone(),
+                name: mem::take(&mut subscription.name),
                 operation_kind: Some(OperationKind::Subscription),
-                variable_definitions: transform_variables(&subscription.variable_definitions),
-                selection_set: transform_selection_set(&subscription.selection_set),
+                variable_definitions: transform_variables(&mut subscription.variable_definitions),
+                selection_set: transform_selection_set(&mut subscription.selection_set),
             },
         },
         operation_name: operation_name.map(|n| n.to_string()),
@@ -88,13 +96,13 @@ pub fn create_normalized_document<'a, 'd>(
 }
 
 fn transform_selection_set<'a, 'd>(
-    selection_set: &'a query_ast::SelectionSet<'d, String>,
+    selection_set: &'a mut query_ast::SelectionSet<'d, String>,
 ) -> SelectionSet {
     let mut transformed_selection_set = SelectionSet {
         items: Vec::with_capacity(selection_set.items.len()),
     };
 
-    for selection in &selection_set.items {
+    for selection in &mut selection_set.items {
         match selection {
             query_ast::Selection::Field(field) => {
                 let mut skip_if: Option<String> = None;
@@ -139,14 +147,10 @@ fn transform_selection_set<'a, 'd>(
                 transformed_selection_set
                     .items
                     .push(SelectionItem::Field(FieldSelection {
-                        name: field.name.clone(),
-                        alias: field.alias.clone(),
-                        arguments: if field.arguments.is_empty() {
-                            None
-                        } else {
-                            Some((&field.arguments).into())
-                        },
-                        selections: transform_selection_set(&field.selection_set),
+                        name: mem::take(&mut field.name),
+                        alias: mem::take(&mut field.alias),
+                        arguments: transform_arguments(&mut field.arguments),
+                        selections: transform_selection_set(&mut field.selection_set),
                         skip_if,
                         include_if,
                     }));
@@ -162,7 +166,7 @@ fn transform_selection_set<'a, 'd>(
                             .expect(
                                 "Inline fragment in normalized query must have a type condition",
                             ),
-                        selections: transform_selection_set(&inline_fragment.selection_set),
+                        selections: transform_selection_set(&mut inline_fragment.selection_set),
                     }));
             }
             query_ast::Selection::FragmentSpread(_) => {
@@ -187,6 +191,16 @@ fn transform_variables<'a, 'd>(
 
             Some(variables)
         }
+    }
+}
+
+fn transform_arguments<'a, 'd>(
+    arguments: &'a mut Vec<(String, Value<'d, String>)>,
+) -> Option<ArgumentsMap> {
+    if arguments.is_empty() {
+        None
+    } else {
+        Some((arguments).into())
     }
 }
 
