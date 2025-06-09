@@ -2,10 +2,6 @@ use graphql_parser::query::{Definition, OperationDefinition};
 
 use crate::ast::normalization::{context::NormalizationContext, error::NormalizationError};
 
-fn equal_names(name: &Option<String>, expected_name: Option<&str>) -> bool {
-    name.as_deref() == expected_name
-}
-
 pub fn drop_unused_operations(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     let mut found_already = false;
     let mut error_inside_retain: Option<NormalizationError> = None;
@@ -42,7 +38,7 @@ pub fn drop_unused_operations(ctx: &mut NormalizationContext) -> Result<(), Norm
                 let is_candidate = if is_anonymous {
                     ctx.operation_name.is_none()
                 } else if let Some(name_opt_ref) = current_op_name_in_ast {
-                    equal_names(name_opt_ref, ctx.operation_name)
+                    name_opt_ref.as_deref() == ctx.operation_name
                 } else {
                     false
                 };
