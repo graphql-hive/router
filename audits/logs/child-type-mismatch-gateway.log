@@ -1,0 +1,86 @@
+generating supergraph file for test...
+running gateway...
+    Blocking waiting for file lock on build directory
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.32s
+     Running `target/debug/gateway audits/fed-audit-supergraph.graphql`
+┐new_supergraph_state{}
+└─┐build_map{}
+  └─┐build_object_type{name="Book"}
+    └─┐build_fields{fields_count=3}
+    ┌─┘
+  ┌─┘
+  └─┐build_scalar_type{name="join__FieldSet"}
+  ┌─┘
+  └─┐build_enum_type{name="join__Graph"}
+  ┌─┘
+  └─┐build_scalar_type{name="link__Import"}
+  ┌─┘
+  └─┐build_enum_type{name="link__Purpose"}
+  ┌─┘
+  └─┐build_interface_type{name="Product"}
+    └─┐build_fields{fields_count=1}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Query"}
+    └─┐build_fields{fields_count=1}
+    ┌─┘
+  ┌─┘
+┌─┘
+└─┐decompose_from_supergraph{graph_id="A"}
+┌─┘
+└─┐decompose_from_supergraph{graph_id="B"}
+┌─┘
+┘
+┐graph_from_supergraph_state{}
+└─┐build_graph{}
+  ├─   0.005939s   0ms DEBUG Building graph for supergraph with 15 definitions
+  └─┐build_root_nodes{}
+    ├─   0.005973s   0ms DEBUG added root type for queries: Query
+  ┌─┘
+  └─┐link_root_edges{}
+  ┌─┘
+  └─┐build_field_edges{}
+    ├─   0.006022s   0ms INFO [x] Creating owned field move edge 'Query.__typename/A' (type: String)
+    ├─   0.006034s   0ms INFO [x] Creating field move edge 'Query.product/A' (type: Product)
+    ├─   0.006042s   0ms INFO [x] Creating field move edge 'Query.product/A' (type: Product)
+    ├─   0.006049s   0ms INFO [x] Creating owned field move edge 'Query.__typename/B' (type: String)
+    ├─   0.006082s   0ms INFO [ ] Field 'Query.product/B' does is not available in the subgraph, skipping edge creation (type: Product)
+    ├─   0.006089s   0ms INFO [x] Creating owned field move edge 'Book.__typename/A' (type: String)
+    ├─   0.006097s   0ms INFO [ ] Field 'Book.price/A' is external, skipping edge creation
+    ├─   0.006103s   0ms INFO [x] Creating field move edge 'Book.id/A' (type: ID)
+    ├─   0.006111s   0ms INFO [x] Creating field move edge 'Book.id/A' (type: ID)
+    ├─   0.006117s   0ms INFO [x] Creating field move edge 'Book.samePriceProduct/A' (type: Book)
+    ├─   0.006123s   0ms INFO [x] Creating field move edge 'Book.samePriceProduct/A' (type: Book)
+    ├─   0.006129s   0ms INFO [x] Creating owned field move edge 'Book.__typename/B' (type: String)
+    ├─   0.006136s   0ms INFO [x] Creating field move edge 'Book.price/B' (type: Float)
+    ├─   0.006141s   0ms INFO [x] Creating field move edge 'Book.price/B' (type: Float)
+    ├─   0.006147s   0ms INFO [x] Creating field move edge 'Book.id/B' (type: ID)
+    ├─   0.006153s   0ms INFO [x] Creating field move edge 'Book.id/B' (type: ID)
+    ├─   0.006158s   0ms INFO [ ] Field 'Book.samePriceProduct/B' does is not available in the subgraph, skipping edge creation (type: Book)
+    ├─   0.006164s   0ms INFO [x] Creating owned field move edge 'Product.__typename/A' (type: String)
+    ├─   0.006170s   0ms INFO [x] Creating field move edge 'Product.samePriceProduct/A' (type: Product)
+    ├─   0.006176s   0ms INFO [x] Creating field move edge 'Product.samePriceProduct/A' (type: Product)
+  ┌─┘
+  └─┐build_interface_implementation_edges{}
+    ├─   0.006202s   0ms INFO Building interface implementation edge from 'Book/A' to 'Product/A'
+  ┌─┘
+  └─┐build_entity_reference_edges{}
+    ├─   0.006299s   0ms INFO Creating self-referencing entity move edge in 'Book/A' via key 'id'
+    ├─   0.006340s   0ms INFO Creating entity move edge from 'Book/A' to 'Book/B' via key 'id'
+    ├─   0.006387s   0ms INFO Creating entity move edge from 'Book/B' to 'Book/A' via key 'id'
+    ├─   0.006418s   0ms INFO Creating self-referencing entity move edge in 'Book/B' via key 'id'
+  ┌─┘
+  └─┐build_viewed_field_edges{}
+    ├─   0.006487s   0ms INFO Creating viewed (#1) link for provided field 'Book.samePriceProduct/"A"' (type: Book)
+    └─┐handle_viewed_selection_set{graph_id="A", view_id=1, parent_type_name="Book"}
+      ├─   0.006513s   0ms INFO Upserting graph viewed node for 'Float.A'
+      ├─   0.006520s   0ms INFO Creating viewed (#1) field edge for 'Book.price' (type: Float)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.065618s INFO Starting server on http://localhost:4000
+
+thread 'main' panicked at bin/gateway/src/main.rs:70:6:
+Failed to bind server: Os { code: 98, kind: AddrInUse, message: "Address already in use" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

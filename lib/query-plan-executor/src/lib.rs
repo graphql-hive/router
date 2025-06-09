@@ -5,8 +5,8 @@ use query_planner::{
         operation::OperationDefinition, selection_item::SelectionItem, selection_set::SelectionSet,
     },
     planner::plan_nodes::{
-        ConditionNode, FetchNode, FlattenNode, InputRewrite, KeyRenamer, OutputRewrite,
-        ParallelNode, PlanNode, QueryPlan, SequenceNode, ValueSetter,
+        ConditionNode, FetchNode, FetchRewrite, FlattenNode, KeyRenamer, ParallelNode, PlanNode,
+        QueryPlan, SequenceNode, ValueSetter,
     },
     state::supergraph_state::OperationKind,
 };
@@ -192,15 +192,18 @@ impl ExecutableFetchNode for FetchNode {
         if filtered_representations.is_empty() {
             return (final_representations, Vec::new());
         }
-        let processed_representations: Vec<Value> = filtered_representations
-            .into_iter()
-            .map(|repr| match &self.input_rewrites {
-                Some(input_rewrites) => input_rewrites.iter().fold(repr, |repr, input_rewrite| {
-                    input_rewrite.apply(&execution_context.schema_metadata.possible_types, repr)
-                }),
-                None => repr,
-            })
-            .collect();
+
+        if let Some(input_rewrites) = &self.input_rewrites {
+            for representation in &mut filtered_representations {
+                for input_rewrite in input_rewrites {
+                    // Apply input rewrites to each representation
+                    input_rewrite.apply(
+                        &execution_context.schema_metadata.possible_types,
+                        representation,
+                    );
+                }
+            }
+        }
 
         // 2. Prepare variables for fetch
         let mut variables = self
@@ -209,7 +212,7 @@ impl ExecutableFetchNode for FetchNode {
 
         variables.insert(
             "representations".to_string(),
-            Value::Array(processed_representations),
+            Value::Array(filtered_representations),
         );
 
         let fetch_result = execution_context
@@ -295,7 +298,7 @@ impl ExecutableFetchNode for FetchNode {
     }
 }
 
-trait ApplyOutputRewrite {
+trait ApplyFetchRewrite {
     fn apply(&self, possible_types: &HashMap<String, Vec<String>>, value: &mut Value);
     fn apply_path(
         &self,
@@ -306,15 +309,16 @@ trait ApplyOutputRewrite {
     }
 }
 
-impl ApplyOutputRewrite for OutputRewrite {
+impl ApplyFetchRewrite for FetchRewrite {
     fn apply(&self, possible_types: &HashMap<String, Vec<String>>, value: &mut Value) {
         match self {
-            OutputRewrite::KeyRenamer(renamer) => renamer.apply(possible_types, value),
+            FetchRewrite::KeyRenamer(renamer) => renamer.apply(possible_types, value),
+            FetchRewrite::ValueSetter(renamer) => renamer.apply(possible_types, value),
         }
     }
 }
 
-impl ApplyOutputRewrite for KeyRenamer {
+impl ApplyFetchRewrite for KeyRenamer {
     fn apply(&self, possible_types: &HashMap<String, Vec<String>>, value: &mut Value) {
         self.apply_path(possible_types, value, &self.path)
     }
@@ -368,49 +372,32 @@ impl ApplyOutputRewrite for KeyRenamer {
     }
 }
 
-trait ApplyInputRewrite {
-    fn apply(&self, possible_types: &HashMap<String, Vec<String>>, data: Value) -> Value;
-    fn apply_path(
-        &self,
-        _possible_types: &HashMap<String, Vec<String>>,
-        _data: Value,
-        _path: &[String],
-    ) -> Value {
-        Value::Null
-    }
-}
-
-impl ApplyInputRewrite for InputRewrite {
-    fn apply(&self, possible_types: &HashMap<String, Vec<String>>, data: Value) -> Value {
-        match self {
-            InputRewrite::ValueSetter(setter) => setter.apply(possible_types, data),
-        }
-    }
-}
-impl ApplyInputRewrite for ValueSetter {
-    fn apply(&self, possible_types: &HashMap<String, Vec<String>>, data: Value) -> Value {
+impl ApplyFetchRewrite for ValueSetter {
+    fn apply(&self, possible_types: &HashMap<String, Vec<String>>, data: &mut Value) {
         self.apply_path(possible_types, data, &self.path)
     }
     // Applies value setting on a Value (returns a new Value)
     fn apply_path(
         &self,
         possible_types: &HashMap<String, Vec<String>>,
-        data: Value,
+        data: &mut Value,
         path: &[String],
-    ) -> Value {
+    ) {
         if path.is_empty() {
-            return self.set_value_to.clone();
+            return;
         }
 
         match data {
             Value::Array(arr) => {
-                let new_arr = arr
-                    .into_iter()
-                    .map(|item| self.apply_path(possible_types, item, path))
-                    .collect();
-                Value::Array(new_arr)
+                for item in arr.iter_mut() {
+                    // Apply the path to each item in the array
+                    *item = {
+                        self.apply_path(possible_types, item, path);
+                        ().into()
+                    };
+                }
             }
-            Value::Object(mut map) => {
+            Value::Object(map) => {
                 let current_key = &path[0];
                 let remaining_path = &path[1..];
 
@@ -420,27 +407,18 @@ impl ApplyInputRewrite for ValueSetter {
                         _ => type_condition, // Default to type_condition if not found
                     };
                     if entity_satisfies_type_condition(possible_types, type_name, type_condition) {
-                        let data = Value::Object(map);
-                        return self.apply_path(possible_types, data, remaining_path);
+                        self.apply_path(possible_types, data, remaining_path)
                     }
-                }
-
-                if remaining_path.is_empty() {
-                    map.insert(current_key.to_string(), self.set_value_to.clone());
-                } else {
+                } else if !remaining_path.is_empty() {
                     let entry_value = map.entry(current_key.to_string()).or_insert(Value::Null);
-                    let current_val = entry_value.clone();
-                    let new_val = self.apply_path(possible_types, current_val, remaining_path);
-                    *entry_value = new_val;
+                    self.apply_path(possible_types, entry_value, remaining_path)
                 }
-                Value::Object(map)
             }
             _ => {
                 warn!(
                     "Trying to apply ValueSetter path {:?} to non-object/array type: {:?}",
                     path, data
                 );
-                data
             }
         }
     }

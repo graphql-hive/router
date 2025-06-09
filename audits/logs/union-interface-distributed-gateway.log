@@ -1,0 +1,1483 @@
+generating supergraph file for test...
+running gateway...
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running `target/debug/gateway audits/fed-audit-supergraph.graphql`
+┐new_supergraph_state{}
+└─┐build_map{}
+  └─┐build_scalar_type{name="join__FieldSet"}
+  ┌─┘
+  └─┐build_enum_type{name="join__Graph"}
+  ┌─┘
+  └─┐build_scalar_type{name="link__Import"}
+  ┌─┘
+  └─┐build_enum_type{name="link__Purpose"}
+  ┌─┘
+  └─┐build_interface_type{name="Node"}
+    └─┐build_fields{fields_count=1}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Oven"}
+    └─┐build_fields{fields_count=2}
+    ┌─┘
+  ┌─┘
+  └─┐build_union_type{name="Product"}
+  ┌─┘
+  └─┐build_object_type{name="Query"}
+    └─┐build_fields{fields_count=4}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Toaster"}
+    └─┐build_fields{fields_count=2}
+    ┌─┘
+  ┌─┘
+┌─┘
+└─┐decompose_from_supergraph{graph_id="B"}
+┌─┘
+└─┐decompose_from_supergraph{graph_id="A"}
+┌─┘
+┘
+┐graph_from_supergraph_state{}
+└─┐build_graph{}
+  ├─   0.006651s   0ms DEBUG Building graph for supergraph with 17 definitions
+  └─┐build_root_nodes{}
+    ├─   0.006709s   0ms DEBUG added root type for queries: Query
+  ┌─┘
+  └─┐link_root_edges{}
+  ┌─┘
+  └─┐build_field_edges{}
+    ├─   0.006778s   0ms INFO [x] Creating owned field move edge 'Oven.__typename/A' (type: String)
+    ├─   0.006792s   0ms INFO [ ] Field 'Oven.warranty/A' does is not available in the subgraph, skipping edge creation (type: Int)
+    ├─   0.006800s   0ms INFO [x] Creating field move edge 'Oven.id/A' (type: ID)
+    ├─   0.006808s   0ms INFO [x] Creating field move edge 'Oven.id/A' (type: ID)
+    ├─   0.006814s   0ms INFO [x] Creating owned field move edge 'Oven.__typename/B' (type: String)
+    ├─   0.006822s   0ms INFO [x] Creating field move edge 'Oven.warranty/B' (type: Int)
+    ├─   0.006830s   0ms INFO [x] Creating field move edge 'Oven.warranty/B' (type: Int)
+    ├─   0.006837s   0ms INFO [x] Creating field move edge 'Oven.id/B' (type: ID)
+    ├─   0.006843s   0ms INFO [x] Creating field move edge 'Oven.id/B' (type: ID)
+    ├─   0.006849s   0ms INFO [x] Creating owned field move edge 'Toaster.__typename/A' (type: String)
+    ├─   0.006856s   0ms INFO [x] Creating field move edge 'Toaster.id/A' (type: ID)
+    ├─   0.006862s   0ms INFO [x] Creating field move edge 'Toaster.id/A' (type: ID)
+    ├─   0.006868s   0ms INFO [x] Creating field move edge 'Toaster.warranty/A' (type: Int)
+    ├─   0.006874s   0ms INFO [x] Creating field move edge 'Toaster.warranty/A' (type: Int)
+    ├─   0.006880s   0ms INFO [x] Creating owned field move edge 'Node.__typename/A' (type: String)
+    ├─   0.006887s   0ms INFO [x] Creating field move edge 'Node.id/A' (type: ID)
+    ├─   0.006893s   0ms INFO [x] Creating field move edge 'Node.id/A' (type: ID)
+    ├─   0.006898s   0ms INFO [x] Creating owned field move edge 'Node.__typename/B' (type: String)
+    ├─   0.006905s   0ms INFO [x] Creating field move edge 'Node.id/B' (type: ID)
+    ├─   0.006911s   0ms INFO [x] Creating field move edge 'Node.id/B' (type: ID)
+    ├─   0.006917s   0ms INFO [x] Creating owned field move edge 'Product.__typename/A' (type: String)
+    ├─   0.006925s   0ms INFO [x] Creating owned field move edge 'Query.__typename/A' (type: String)
+    ├─   0.006932s   0ms INFO [x] Creating field move edge 'Query.toasters/A' (type: Toaster)
+    ├─   0.006938s   0ms INFO [x] Creating field move edge 'Query.toasters/A' (type: Toaster)
+    ├─   0.006944s   0ms INFO [x] Creating field move edge 'Query.nodes/A' (type: Node)
+    ├─   0.006950s   0ms INFO [x] Creating field move edge 'Query.nodes/A' (type: Node)
+    ├─   0.006974s   0ms INFO [x] Creating field move edge 'Query.node/A' (type: Node)
+    ├─   0.006985s   0ms INFO [x] Creating field move edge 'Query.node/A' (type: Node)
+    ├─   0.007009s   0ms INFO Handling a field Query.products/A resolving a union type Product
+    ├─   0.007023s   0ms INFO   [x] Creating field move edge 'Query.__typename/A' (type: String)
+    ├─   0.007041s   0ms INFO   [x] Creating field move edge 'Query.products/A' (type: String)
+    ├─   0.007051s   0ms INFO   [x] Creating abstract move edge for 'Query.products/A' (union member: Oven)
+    ├─   0.007060s   0ms INFO   [x] Creating field move edge 'Query.__typename/A' (type: String)
+    ├─   0.007065s   0ms INFO   [x] Creating field move edge 'Query.products/A' (type: String)
+    ├─   0.007071s   0ms INFO   [x] Creating abstract move edge for 'Query.products/A' (union member: Toaster)
+    ├─   0.007077s   0ms INFO [x] Creating owned field move edge 'Query.__typename/B' (type: String)
+    ├─   0.007086s   0ms INFO [ ] Field 'Query.toasters/B' does is not available in the subgraph, skipping edge creation (type: Toaster)
+    ├─   0.007091s   0ms INFO [ ] Field 'Query.nodes/B' does is not available in the subgraph, skipping edge creation (type: Node)
+    ├─   0.007096s   0ms INFO [ ] Field 'Query.node/B' does is not available in the subgraph, skipping edge creation (type: Node)
+    ├─   0.007101s   0ms INFO [ ] Field 'Query.products/B' does is not available in the subgraph, skipping edge creation (type: Product)
+  ┌─┘
+  └─┐build_interface_implementation_edges{}
+    ├─   0.007137s   0ms INFO Building interface implementation edge from 'Oven/B' to 'Node/B'
+    ├─   0.007145s   0ms INFO Building interface implementation edge from 'Toaster/A' to 'Node/A'
+  ┌─┘
+  └─┐build_entity_reference_edges{}
+    ├─   0.007254s   0ms INFO Creating self-referencing entity move edge in 'Oven/A' via key 'id'
+    ├─   0.007298s   0ms INFO Creating entity move edge from 'Oven/A' to 'Oven/B' via key 'id'
+    ├─   0.007333s   0ms INFO Creating entity move edge from 'Oven/B' to 'Oven/A' via key 'id'
+    ├─   0.007403s   0ms INFO Creating self-referencing entity move edge in 'Oven/B' via key 'id'
+    ├─   0.007452s   0ms INFO Creating self-referencing entity move edge in 'Toaster/A' via key 'id'
+  ┌─┘
+  └─┐build_viewed_field_edges{}
+  ┌─┘
+┌─┘
+┘
+   0.066669s INFO Starting server on http://localhost:4000
+   0.067731s INFO starting 16 workers
+   0.067771s INFO Actix runtime found; starting in Actix runtime
+   0.067779s INFO starting service: "actix-web-service-0.0.0.0:4000", workers: 16, listening on: 0.0.0.0:4000
+   0.221544s DEBUG original document: query ping {
+  __typename
+}
+
+   0.221673s DEBUG normalized document: query ping {__typename}
+
+   0.221692s DEBUG executable operation: query ping {__typename}
+┐execute{}
+┘
+   0.222077s DEBUG execution result: ExecutionResult { data: Some(Object {"__typename": String("Query")}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan")}}) }
+   0.297599s DEBUG original document: query {
+  products {
+    ... on Node {
+      id
+    }
+  }
+}
+
+   0.297772s DEBUG normalized document: query{products{...on Oven{id} ...on Toaster{id}}}
+
+   0.297800s DEBUG executable operation: query{products{...on Oven{id} ...on Toaster{id}}}
+┐walk_operation{}
+├─   0.298240s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="products", leaf=false}
+  ├─   0.298306s   0ms DEBUG Trying to advance to: products{...on Oven{id} ...on Toaster{id}} through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "products", selections: SelectionSet { items: [SelectionItem::Fragment { type_name: "Oven", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] } }, SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.298382s   0ms DEBUG checking edge Query/a -(products)- Product/a/Query.products/Toaster
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="products"}
+        ├─   0.298407s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.298436s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(products)- Product/a/Query.products/Toaster
+      ├─   0.298457s   0ms DEBUG checking edge Query/a -(products)- Product/a/Query.products/Oven
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="products"}
+        ├─   0.298474s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.298494s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(products)- Product/a/Query.products/Oven
+      ├─   0.298504s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(22)" },  { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(19)" }])
+    ┌─┘
+    ├─   0.298524s   0ms DEBUG Direct paths found: 2
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "products", selections: SelectionSet { items: [SelectionItem::Fragment { type_name: "Oven", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] } }, SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.298586s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.298598s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.298616s   0ms DEBUG Indirect paths found: 0
+    ├─   0.298628s   0ms DEBUG advanced: root(Query) -(a)- Query/a
+  ┌─┘
+  ├─   0.298645s   0ms DEBUG Found 2 paths
+┌─┘
+└─┐process_inline_fragment{type_condition="Toaster"}
+  ├─   0.298673s   0ms DEBUG Processing inline fragment '{id}' on type 'Toaster' through 2 possible paths
+  ├─   0.298681s   0ms DEBUG Trying to advance to: ... on Toaster, through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Toaster"}
+    └─┐find_direct_paths{target=ConcreteType("Toaster"), path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Toaster", current_cost=1001}
+      ├─   0.298714s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Toaster with edge Product/a/Query.products/Toaster -(🔮)- Toaster/a
+      ├─   0.298724s   0ms INFO return=Ok([ { cost: 2001, egdes: "EdgeIndex(0) --> EdgeIndex(22) --> EdgeIndex(23)" }])
+    ┌─┘
+    ├─   0.298741s   0ms DEBUG Direct paths found: 1
+    ├─   0.298750s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Toaster
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven"}
+    └─┐find_direct_paths{target=ConcreteType("Toaster"), path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven", current_cost=1001}
+      ├─   0.298813s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.298829s   0ms DEBUG Direct paths found: 0
+    ├─   0.298836s   0ms WARN Object type 'Toaster' is not resolvable by 'Product', resolve only the __typename
+  ┌─┘
+  └─┐process_selection_set{}
+    └─┐process_field{field_name="id", leaf=true}
+      ├─   0.298891s   0ms DEBUG Trying to advance to: id through 1 possible paths
+      └─┐explore_path{path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Toaster -(🔮)- Toaster/a"}
+        └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Toaster -(🔮)- Toaster/a", current_cost=2001}
+          ├─   0.298935s   0ms DEBUG checking edge Toaster/a -(id)- ID/a
+          └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Toaster -(🔮)- Toaster/a", edge="id"}
+            ├─   0.298992s   0ms INFO return=Ok(Some([]))
+          ┌─┘
+          ├─   0.299016s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Toaster -(🔮)- Toaster/a with edge Toaster/a -(id)- ID/a
+          ├─   0.299029s   0ms INFO return=Ok([ { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(22) --> EdgeIndex(23) --> EdgeIndex(7)" }])
+        ┌─┘
+        ├─   0.299048s   0ms DEBUG Direct paths found: 1
+        └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Toaster -(🔮)- Toaster/a", current_cost=2001}
+          ├─   0.299077s   0ms DEBUG Exploring edge Toaster/a -(🔑🧩{id})- Toaster/a
+          ├─   0.299085s   0ms DEBUG Ignoring. We would go back to the same graph
+          ├─   0.299094s   0ms DEBUG Finished finding indirect paths, found total of 0
+          ├─   0.299100s   0ms INFO return=Ok([])
+        ┌─┘
+        ├─   0.299115s   0ms DEBUG Indirect paths found: 0
+        ├─   0.299124s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Toaster -(🔮)- Toaster/a
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+└─┐process_inline_fragment{type_condition="Oven"}
+  ├─   0.299170s   0ms DEBUG Processing inline fragment '{id}' on type 'Oven' through 2 possible paths
+  ├─   0.299177s   0ms DEBUG Trying to advance to: ... on Oven, through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Toaster"}
+    └─┐find_direct_paths{target=ConcreteType("Oven"), path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Toaster", current_cost=1001}
+      ├─   0.299204s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.299218s   0ms DEBUG Direct paths found: 0
+    ├─   0.299223s   0ms WARN Object type 'Oven' is not resolvable by 'Product', resolve only the __typename
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven"}
+    └─┐find_direct_paths{target=ConcreteType("Oven"), path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven", current_cost=1001}
+      ├─   0.299257s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven with edge Product/a/Query.products/Oven -(🔮)- Oven/a
+      ├─   0.299266s   0ms INFO return=Ok([ { cost: 2001, egdes: "EdgeIndex(0) --> EdgeIndex(19) --> EdgeIndex(20)" }])
+    ┌─┘
+    ├─   0.299281s   0ms DEBUG Direct paths found: 1
+    ├─   0.299289s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven
+  ┌─┘
+  └─┐process_selection_set{}
+    └─┐process_field{field_name="id", leaf=true}
+      ├─   0.299316s   0ms DEBUG Trying to advance to: id through 1 possible paths
+      └─┐explore_path{path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven -(🔮)- Oven/a"}
+        └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven -(🔮)- Oven/a", current_cost=2001}
+          ├─   0.299347s   0ms DEBUG checking edge Oven/a -(id)- ID/a
+          └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven -(🔮)- Oven/a", edge="id"}
+            ├─   0.299371s   0ms INFO return=Ok(Some([]))
+          ┌─┘
+          ├─   0.299389s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven -(🔮)- Oven/a with edge Oven/a -(id)- ID/a
+          ├─   0.299399s   0ms INFO return=Ok([ { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(19) --> EdgeIndex(20) --> EdgeIndex(2)" }])
+        ┌─┘
+        ├─   0.299416s   0ms DEBUG Direct paths found: 1
+        └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven -(🔮)- Oven/a", current_cost=2001}
+          ├─   0.299440s   0ms DEBUG Exploring edge Oven/a -(🔑🧩{id})- Oven/b
+          └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven -(🔮)- Oven/a", edge="id"}
+            ├─   0.299463s   0ms DEBUG checking requirements {id} for edge 'Oven/a -(🔑🧩{id})- Oven/b'
+            └─┐validate_field_requirement{}
+              └─┐validate_field_requirement{}
+                └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven -(🔮)- Oven/a", current_cost=2001}
+                  ├─   0.299509s   0ms DEBUG checking edge Oven/a -(id)- ID/a
+                  └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven -(🔮)- Oven/a", edge="id"}
+                    ├─   0.299534s   0ms INFO return=Ok(Some([]))
+                  ┌─┘
+                  ├─   0.299556s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven -(🔮)- Oven/a with edge Oven/a -(id)- ID/a
+                  ├─   0.299566s   0ms INFO return=Ok([ { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(19) --> EdgeIndex(20) --> EdgeIndex(2)" }])
+                ┌─┘
+                └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven -(🔮)- Oven/a", current_cost=2001}
+                  ├─   0.299603s   0ms DEBUG Exploring edge Oven/a -(🔑🧩{id})- Oven/b
+                  ├─   0.299612s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+                  ├─   0.299620s   0ms DEBUG Exploring edge Oven/a -(🔑🧩{id})- Oven/a
+                  ├─   0.299628s   0ms DEBUG Ignoring. We would go back to the same graph
+                  ├─   0.299635s   0ms DEBUG Finished finding indirect paths, found total of 0
+                  ├─   0.299642s   0ms INFO return=Ok([])
+                ┌─┘
+                ├─   0.299662s   0ms INFO return=Ok(Some(([ { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(19) --> EdgeIndex(20) --> EdgeIndex(2)" }], [])))
+              ┌─┘
+              ├─   0.299697s   0ms INFO return=Ok(Some(([ { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(19) --> EdgeIndex(20) --> EdgeIndex(2)" }], [])))
+            ┌─┘
+            ├─   0.299716s   0ms DEBUG Paths for id
+            ├─   0.299728s   0ms DEBUG   Path root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven -(🔮)- Oven/a -(id)- ID/a is valid
+            ├─   0.299735s   0ms DEBUG Found 1 best paths for this leaf requirement
+            ├─   0.299750s   0ms DEBUG path Oven/a -(id)- ID/a is valid
+            ├─   0.299757s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(2)" }]))
+          ┌─┘
+          ├─   0.299772s   0ms DEBUG Advancing path to Oven/a -(🔑🧩{id})- Oven/b
+          └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(2)" }, root_node="Oven/a"}
+            └─┐create_root_for_path_sequences{root_node="Oven/a", segments_count=1}
+              ├─   0.299801s   0ms DEBUG Building root query tree node: Oven/a
+              └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+                ├─   0.299817s   0ms DEBUG Processing edge: Oven/a -(id)- ID/a
+                └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+                ┌─┘
+                ├─   0.299838s   0ms DEBUG No subsequent steps (leaf or end of path)
+              ┌─┘
+            ┌─┘
+          ┌─┘
+          └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven -(🔮)- Oven/a -(🔑🧩{id})- Oven/b", current_cost=3003}
+            ├─   0.299884s   0ms DEBUG checking edge Oven/b -(id)- ID/b
+            └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven -(🔮)- Oven/a -(🔑🧩{id})- Oven/b", edge="id"}
+              ├─   0.299904s   0ms INFO return=Ok(Some([]))
+            ┌─┘
+            ├─   0.299920s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven -(🔮)- Oven/a -(🔑🧩{id})- Oven/b with edge Oven/b -(id)- ID/b
+            ├─   0.299928s   0ms INFO return=Ok([ { cost: 3004, egdes: "EdgeIndex(0) --> EdgeIndex(19) --> EdgeIndex(20) --> EdgeIndex(28) --> EdgeIndex(5)" }])
+          ┌─┘
+          ├─   0.299944s   0ms DEBUG Found 1 direct paths to Oven/a -(🔑🧩{id})- Oven/b
+          ├─   0.299953s   0ms DEBUG Exploring edge Oven/a -(🔑🧩{id})- Oven/a
+          ├─   0.299958s   0ms DEBUG Ignoring. We would go back to the same graph
+          ├─   0.299966s   0ms DEBUG Finished finding indirect paths, found total of 1
+          ├─   0.299971s   0ms INFO return=Ok([ { cost: 3004, egdes: "EdgeIndex(0) --> EdgeIndex(19) --> EdgeIndex(20) --> EdgeIndex(28) --> EdgeIndex(5)" }])
+        ┌─┘
+        ├─   0.299985s   0ms DEBUG Indirect paths found: 1
+        ├─   0.299994s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(products)- Product/a/Query.products/Oven -(🔮)- Oven/a
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(22) --> EdgeIndex(23) --> EdgeIndex(7)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.300044s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.300056s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.300067s   0ms DEBUG Processing edge: Query/a -(products)- Product/a/Query.products/Toaster
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.300078s   0ms DEBUG Processing edge: Product/a/Query.products/Toaster -(🔮)- Toaster/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.300090s   0ms DEBUG Processing edge: Toaster/a -(id)- ID/a
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.300107s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.300119s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.300129s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.300139s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(19) --> EdgeIndex(20) --> EdgeIndex(2)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.300170s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.300180s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.300191s   0ms DEBUG Processing edge: Query/a -(products)- Product/a/Query.products/Oven
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.300202s   0ms DEBUG Processing edge: Product/a/Query.products/Oven -(🔮)- Oven/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.300213s   0ms DEBUG Processing edge: Oven/a -(id)- ID/a
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.300230s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.300241s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.300251s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.300260s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=2}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="a", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=2, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="products", leaf=false, list=false, response_path="", fetch_path=""}
+          ├─   0.300378s   0ms DEBUG adding output field 'products' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+            └─┐process_abstract_edge{parent_fetch_step_index=1, type_name="Toaster", response_path="products", fetch_path="products"}
+              ├─   0.300407s   0ms DEBUG adding output field '__typename' and starting an inline fragment for type '1' to fetch step [Toaster]
+              └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+                └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Toaster", field="id", leaf=true, list=false, response_path="products", fetch_path="products"}
+                  ├─   0.300431s   0ms DEBUG adding output field 'id' to fetch step [1]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="products", leaf=false, list=false, response_path="", fetch_path=""}
+          ├─   0.300495s   0ms DEBUG adding output field 'products' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+            └─┐process_abstract_edge{parent_fetch_step_index=1, type_name="Oven", response_path="products", fetch_path="products"}
+              ├─   0.300516s   0ms DEBUG adding output field '__typename' and starting an inline fragment for type '1' to fetch step [Oven]
+              └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+                └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Oven", field="id", leaf=true, list=false, response_path="products", fetch_path="products"}
+                  ├─   0.300539s   0ms DEBUG adding output field 'id' to fetch step [1]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.300611s   0ms DEBUG Done
+├─   0.300619s   0ms DEBUG found roots
+├─   0.300627s   0ms DEBUG print graph
+├─   0.300632s   0ms DEBUG Nodes:
+│ [1] Query/a {} → {products{__typename ...on Toaster{id} ...on Oven{id}}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="a"}
+    └─┐execute{subgraph_name="a"}
+      ├─   0.301023s   0ms DEBUG starting new connection: http://localhost:4200/
+      ├─   0.301403s   0ms DEBUG connecting to 127.0.0.1:4200
+      ├─   0.301774s   0ms DEBUG connected to 127.0.0.1:4200
+      ├─   0.306405s   5ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "Node": ["Oven", "Toaster"]}, type_name="Oven", type_condition="Oven"}
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "Node": ["Oven", "Toaster"]}, type_name="Oven", type_condition="Toaster"}
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "Node": ["Oven", "Toaster"]}, type_name="Oven", type_condition="Oven"}
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "Node": ["Oven", "Toaster"]}, type_name="Oven", type_condition="Toaster"}
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "Node": ["Oven", "Toaster"]}, type_name="Toaster", type_condition="Oven"}
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "Node": ["Oven", "Toaster"]}, type_name="Toaster", type_condition="Toaster"}
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "Node": ["Oven", "Toaster"]}, type_name="Toaster", type_condition="Oven"}
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "Node": ["Oven", "Toaster"]}, type_name="Toaster", type_condition="Toaster"}
+┘
+   0.306742s DEBUG execution result: ExecutionResult { data: Some(Object {"products": Array [Object {"id": String("oven1")}, Object {"id": String("oven2")}, Object {"id": String("toaster1")}, Object {"id": String("toaster2")}]}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("a"), "operationKind": String("query"), "operation": String("{products{__typename ...on Toaster{id} ...on Oven{id}}}")}}}) }
+   0.312330s DEBUG original document: query {
+  nodes {
+    ... on Toaster {
+      warranty
+    }
+    ... on Oven {
+      id
+    }
+  }
+}
+
+   0.312430s DEBUG normalized document: query{nodes{...on Toaster{warranty} ...on Oven{id}}}
+
+   0.312441s DEBUG executable operation: query{nodes{...on Toaster{warranty} ...on Oven{id}}}
+┐walk_operation{}
+├─   0.312719s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="nodes", leaf=false}
+  ├─   0.312755s   0ms DEBUG Trying to advance to: nodes{...on Toaster{warranty} ...on Oven{id}} through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "nodes", selections: SelectionSet { items: [SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "warranty", selections: SelectionSet { items: [] } }] } }, SelectionItem::Fragment { type_name: "Oven", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.312797s   0ms DEBUG checking edge Query/a -(nodes)- Node/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="nodes"}
+        ├─   0.312815s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.312833s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(nodes)- Node/a
+      ├─   0.312843s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(16)" }])
+    ┌─┘
+    ├─   0.312857s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "nodes", selections: SelectionSet { items: [SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "warranty", selections: SelectionSet { items: [] } }] } }, SelectionItem::Fragment { type_name: "Oven", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.312883s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.312889s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.312900s   0ms DEBUG Indirect paths found: 0
+    ├─   0.312906s   0ms DEBUG advanced: root(Query) -(a)- Query/a
+  ┌─┘
+  ├─   0.312918s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_inline_fragment{type_condition="Oven"}
+  ├─   0.312936s   0ms DEBUG Processing inline fragment '{id}' on type 'Oven' through 1 possible paths
+  ├─   0.312942s   0ms DEBUG Trying to advance to: ... on Oven, through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(nodes)- Node/a"}
+    └─┐find_direct_paths{target=ConcreteType("Oven"), path="root(Query) -(a)- Query/a -(nodes)- Node/a", current_cost=1001}
+      ├─   0.312964s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.312975s   0ms DEBUG Direct paths found: 0
+    ├─   0.312980s   0ms WARN Object type 'Oven' is not resolvable by 'Node', resolve only the __typename
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(nodes)- Node/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(nodes)- Node/a", current_cost=1001}
+      ├─   0.313008s   0ms DEBUG checking edge Node/a -(__typename)- String/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(nodes)- Node/a", edge="__typename"}
+        ├─   0.313023s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.313036s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(nodes)- Node/a with edge Node/a -(__typename)- String/a
+      ├─   0.313043s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(16) --> EdgeIndex(9)" }])
+    ┌─┘
+    ├─   0.313057s   0ms DEBUG Direct paths found: 1
+  ┌─┘
+┌─┘
+└─┐process_inline_fragment{type_condition="Toaster"}
+  ├─   0.313083s   0ms DEBUG Processing inline fragment '{warranty}' on type 'Toaster' through 1 possible paths
+  ├─   0.313089s   0ms DEBUG Trying to advance to: ... on Toaster, through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(nodes)- Node/a"}
+    └─┐find_direct_paths{target=ConcreteType("Toaster"), path="root(Query) -(a)- Query/a -(nodes)- Node/a", current_cost=1001}
+      ├─   0.313112s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(nodes)- Node/a with edge Node/a -(🔮)- Toaster/a
+      ├─   0.313118s   0ms INFO return=Ok([ { cost: 2001, egdes: "EdgeIndex(0) --> EdgeIndex(16) --> EdgeIndex(26)" }])
+    ┌─┘
+    ├─   0.313131s   0ms DEBUG Direct paths found: 1
+    ├─   0.313138s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(nodes)- Node/a
+  ┌─┘
+  └─┐process_selection_set{}
+    └─┐process_field{field_name="warranty", leaf=true}
+      ├─   0.313161s   0ms DEBUG Trying to advance to: warranty through 1 possible paths
+      └─┐explore_path{path="root(Query) -(a)- Query/a -(nodes)- Node/a -(🔮)- Toaster/a"}
+        └─┐find_direct_paths{target=Field(FieldSelection { name: "warranty", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(nodes)- Node/a -(🔮)- Toaster/a", current_cost=2001}
+          ├─   0.313187s   0ms DEBUG checking edge Toaster/a -(warranty)- Int/a
+          └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(nodes)- Node/a -(🔮)- Toaster/a", edge="warranty"}
+            ├─   0.313204s   0ms INFO return=Ok(Some([]))
+          ┌─┘
+          ├─   0.313219s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(nodes)- Node/a -(🔮)- Toaster/a with edge Toaster/a -(warranty)- Int/a
+          ├─   0.313228s   0ms INFO return=Ok([ { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(16) --> EdgeIndex(26) --> EdgeIndex(8)" }])
+        ┌─┘
+        ├─   0.313241s   0ms DEBUG Direct paths found: 1
+        └─┐find_indirect_paths{target=Field(FieldSelection { name: "warranty", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(nodes)- Node/a -(🔮)- Toaster/a", current_cost=2001}
+          ├─   0.313263s   0ms DEBUG Exploring edge Toaster/a -(🔑🧩{id})- Toaster/a
+          ├─   0.313270s   0ms DEBUG Ignoring. We would go back to the same graph
+          ├─   0.313276s   0ms DEBUG Finished finding indirect paths, found total of 0
+          ├─   0.313281s   0ms INFO return=Ok([])
+        ┌─┘
+        ├─   0.313293s   0ms DEBUG Indirect paths found: 0
+        ├─   0.313300s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(nodes)- Node/a -(🔮)- Toaster/a
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(16) --> EdgeIndex(9)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.313351s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.313364s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.313375s   0ms DEBUG Processing edge: Query/a -(nodes)- Node/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.313386s   0ms DEBUG Processing edge: Node/a -(__typename)- String/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.313403s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.313413s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.313423s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(16) --> EdgeIndex(26) --> EdgeIndex(8)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.313454s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.313464s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.313474s   0ms DEBUG Processing edge: Query/a -(nodes)- Node/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.313485s   0ms DEBUG Processing edge: Node/a -(🔮)- Toaster/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.313496s   0ms DEBUG Processing edge: Toaster/a -(warranty)- Int/a
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.313513s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.313524s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.313534s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.313543s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=2}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="a", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="nodes", leaf=false, list=true, response_path="", fetch_path=""}
+          ├─   0.313648s   0ms DEBUG adding output field 'nodes' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=2, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Node", field="__typename", leaf=true, list=false, response_path="nodes.@", fetch_path="nodes.@"}
+              ├─   0.313677s   0ms DEBUG adding output field '__typename' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+            └─┐process_abstract_edge{parent_fetch_step_index=1, type_name="Toaster", response_path="nodes.@", fetch_path="nodes.@"}
+              ├─   0.313718s   0ms DEBUG adding output field '__typename' and starting an inline fragment for type '1' to fetch step [Toaster]
+              └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+                └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Toaster", field="warranty", leaf=true, list=false, response_path="nodes.@", fetch_path="nodes.@"}
+                  ├─   0.313744s   0ms DEBUG adding output field 'warranty' to fetch step [1]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.313817s   0ms DEBUG Done
+├─   0.313823s   0ms DEBUG found roots
+├─   0.313827s   0ms DEBUG print graph
+├─   0.313831s   0ms DEBUG Nodes:
+│ [1] Query/a {} → {nodes{__typename ...on Toaster{warranty}}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="a"}
+    └─┐execute{subgraph_name="a"}
+      ├─   0.314157s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+      ├─   0.315847s   1ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "Node": ["Oven", "Toaster"]}, type_name="Toaster", type_condition="Toaster"}
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "Node": ["Oven", "Toaster"]}, type_name="Toaster", type_condition="Oven"}
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "Node": ["Oven", "Toaster"]}, type_name="Toaster", type_condition="Toaster"}
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "Node": ["Oven", "Toaster"]}, type_name="Toaster", type_condition="Oven"}
+┘
+   0.316071s DEBUG execution result: ExecutionResult { data: Some(Object {"nodes": Array [Object {"warranty": Number(3)}, Object {"warranty": Number(4)}]}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("a"), "operationKind": String("query"), "operation": String("{nodes{__typename ...on Toaster{warranty}}}")}}}) }
+   0.318445s DEBUG original document: query {
+  nodes {
+    id
+  }
+}
+
+   0.318516s DEBUG normalized document: query{nodes{id}}
+
+   0.318523s DEBUG executable operation: query{nodes{id}}
+┐walk_operation{}
+├─   0.318727s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="nodes", leaf=false}
+  ├─   0.318779s   0ms DEBUG Trying to advance to: nodes{id} through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "nodes", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.318872s   0ms DEBUG checking edge Query/a -(nodes)- Node/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="nodes"}
+        ├─   0.318901s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.318939s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(nodes)- Node/a
+      ├─   0.318953s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(16)" }])
+    ┌─┘
+    ├─   0.318970s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "nodes", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.319033s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.319043s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.319061s   0ms DEBUG Indirect paths found: 0
+    ├─   0.319072s   0ms DEBUG advanced: root(Query) -(a)- Query/a
+  ┌─┘
+  ├─   0.319103s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="id", leaf=true}
+  ├─   0.319144s   0ms DEBUG Trying to advance to: id through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(nodes)- Node/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(nodes)- Node/a", current_cost=1001}
+      ├─   0.319184s   0ms DEBUG checking edge Node/a -(id)- ID/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(nodes)- Node/a", edge="id"}
+        ├─   0.319204s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.319223s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(nodes)- Node/a with edge Node/a -(id)- ID/a
+      ├─   0.319233s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(16) --> EdgeIndex(10)" }])
+    ┌─┘
+    ├─   0.319249s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(nodes)- Node/a", current_cost=1001}
+      ├─   0.319272s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.319278s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.319291s   0ms DEBUG Indirect paths found: 0
+    ├─   0.319299s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(nodes)- Node/a
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(16) --> EdgeIndex(10)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.319349s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.319363s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.319377s   0ms DEBUG Processing edge: Query/a -(nodes)- Node/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.319391s   0ms DEBUG Processing edge: Node/a -(id)- ID/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.319412s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.319425s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.319438s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=1}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="a", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="nodes", leaf=false, list=true, response_path="", fetch_path=""}
+          ├─   0.319555s   0ms DEBUG adding output field 'nodes' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Node", field="id", leaf=true, list=false, response_path="nodes.@", fetch_path="nodes.@"}
+              ├─   0.319588s   0ms DEBUG adding output field 'id' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.319662s   0ms DEBUG Done
+├─   0.319670s   0ms DEBUG found roots
+├─   0.319675s   0ms DEBUG print graph
+├─   0.319681s   0ms DEBUG Nodes:
+│ [1] Query/a {} → {nodes{id}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="a"}
+    └─┐execute{subgraph_name="a"}
+      ├─   0.319982s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+      ├─   0.321696s   1ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.321894s DEBUG execution result: ExecutionResult { data: Some(Object {"nodes": Array [Object {"id": String("toaster1")}, Object {"id": String("toaster2")}]}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("a"), "operationKind": String("query"), "operation": String("{nodes{id}}")}}}) }
+   0.324088s DEBUG original document: {
+  toasters {
+    ...ToasterFragment
+    ...NodeFragment
+  }
+}
+
+fragment ToasterFragment on Toaster {
+  id
+}
+
+fragment NodeFragment on Node {
+  id
+  __typename
+}
+
+   0.324216s DEBUG normalized document: query{toasters{id ...on Toaster{id __typename}}}
+
+   0.324225s DEBUG executable operation: query{toasters{id ...on Toaster{id __typename}}}
+┐walk_operation{}
+├─   0.324592s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="toasters", leaf=false}
+  ├─   0.324637s   0ms DEBUG Trying to advance to: toasters{id ...on Toaster{id __typename}} through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "toasters", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.324689s   0ms DEBUG checking edge Query/a -(toasters)- Toaster/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="toasters"}
+        ├─   0.324708s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.324731s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(toasters)- Toaster/a
+      ├─   0.324741s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(15)" }])
+    ┌─┘
+    ├─   0.324767s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "toasters", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.324799s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.324805s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.324816s   0ms DEBUG Indirect paths found: 0
+    ├─   0.324823s   0ms DEBUG advanced: root(Query) -(a)- Query/a
+  ┌─┘
+  ├─   0.324837s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_inline_fragment{type_condition="Toaster"}
+  ├─   0.324859s   0ms DEBUG Processing inline fragment '{id __typename}' on type 'Toaster' through 1 possible paths
+  └─┐process_selection_set{}
+    └─┐process_field{field_name="id", leaf=true}
+      ├─   0.324878s   0ms DEBUG Trying to advance to: id through 1 possible paths
+      └─┐explore_path{path="root(Query) -(a)- Query/a -(toasters)- Toaster/a"}
+        └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(toasters)- Toaster/a", current_cost=1001}
+          ├─   0.324905s   0ms DEBUG checking edge Toaster/a -(id)- ID/a
+          └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(toasters)- Toaster/a", edge="id"}
+            ├─   0.324922s   0ms INFO return=Ok(Some([]))
+          ┌─┘
+          ├─   0.324937s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(toasters)- Toaster/a with edge Toaster/a -(id)- ID/a
+          ├─   0.324945s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(15) --> EdgeIndex(7)" }])
+        ┌─┘
+        ├─   0.324959s   0ms DEBUG Direct paths found: 1
+        └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(toasters)- Toaster/a", current_cost=1001}
+          ├─   0.324979s   0ms DEBUG Exploring edge Toaster/a -(🔑🧩{id})- Toaster/a
+          ├─   0.324986s   0ms DEBUG Ignoring. We would go back to the same graph
+          ├─   0.324992s   0ms DEBUG Finished finding indirect paths, found total of 0
+          ├─   0.324997s   0ms INFO return=Ok([])
+        ┌─┘
+        ├─   0.325008s   0ms DEBUG Indirect paths found: 0
+        ├─   0.325015s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(toasters)- Toaster/a
+      ┌─┘
+    ┌─┘
+    └─┐process_field{field_name="__typename", leaf=true}
+      ├─   0.325041s   0ms DEBUG Trying to advance to: __typename through 1 possible paths
+      └─┐explore_path{path="root(Query) -(a)- Query/a -(toasters)- Toaster/a"}
+        └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(toasters)- Toaster/a", current_cost=1001}
+          ├─   0.325065s   0ms DEBUG checking edge Toaster/a -(__typename)- String/a
+          └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(toasters)- Toaster/a", edge="__typename"}
+            ├─   0.325106s   0ms INFO return=Ok(Some([]))
+          ┌─┘
+          ├─   0.325126s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(toasters)- Toaster/a with edge Toaster/a -(__typename)- String/a
+          ├─   0.325135s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(15) --> EdgeIndex(6)" }])
+        ┌─┘
+        ├─   0.325155s   0ms DEBUG Direct paths found: 1
+        └─┐find_indirect_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(toasters)- Toaster/a", current_cost=1001}
+          ├─   0.325175s   0ms DEBUG Exploring edge Toaster/a -(🔑🧩{id})- Toaster/a
+          ├─   0.325181s   0ms DEBUG Ignoring. We would go back to the same graph
+          ├─   0.325187s   0ms DEBUG Finished finding indirect paths, found total of 0
+          ├─   0.325193s   0ms INFO return=Ok([])
+        ┌─┘
+        ├─   0.325204s   0ms DEBUG Indirect paths found: 0
+        ├─   0.325212s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(toasters)- Toaster/a
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="id", leaf=true}
+  ├─   0.325247s   0ms DEBUG Trying to advance to: id through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(toasters)- Toaster/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(toasters)- Toaster/a", current_cost=1001}
+      ├─   0.325270s   0ms DEBUG checking edge Toaster/a -(id)- ID/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(toasters)- Toaster/a", edge="id"}
+        ├─   0.325285s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.325299s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(toasters)- Toaster/a with edge Toaster/a -(id)- ID/a
+      ├─   0.325305s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(15) --> EdgeIndex(7)" }])
+    ┌─┘
+    ├─   0.325319s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(toasters)- Toaster/a", current_cost=1001}
+      ├─   0.325335s   0ms DEBUG Exploring edge Toaster/a -(🔑🧩{id})- Toaster/a
+      ├─   0.325341s   0ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.325346s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.325351s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.325361s   0ms DEBUG Indirect paths found: 0
+    ├─   0.325368s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(toasters)- Toaster/a
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(15) --> EdgeIndex(7)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.325429s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.325444s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.325456s   0ms DEBUG Processing edge: Query/a -(toasters)- Toaster/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.325467s   0ms DEBUG Processing edge: Toaster/a -(id)- ID/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.325487s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.325498s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.325508s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(15) --> EdgeIndex(6)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.325544s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.325559s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.325571s   0ms DEBUG Processing edge: Query/a -(toasters)- Toaster/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.325583s   0ms DEBUG Processing edge: Toaster/a -(__typename)- String/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.325631s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.325645s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.325656s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(15) --> EdgeIndex(7)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.325695s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.325707s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.325719s   0ms DEBUG Processing edge: Query/a -(toasters)- Toaster/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.325731s   0ms DEBUG Processing edge: Toaster/a -(id)- ID/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.325750s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.325761s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.325771s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=3}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="a", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="toasters", leaf=false, list=true, response_path="", fetch_path=""}
+          ├─   0.325910s   0ms DEBUG adding output field 'toasters' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=2, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Toaster", field="id", leaf=true, list=false, response_path="toasters.@", fetch_path="toasters.@"}
+              ├─   0.325944s   0ms DEBUG adding output field 'id' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Toaster", field="__typename", leaf=true, list=false, response_path="toasters.@", fetch_path="toasters.@"}
+              ├─   0.325985s   0ms DEBUG adding output field '__typename' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.326048s   0ms DEBUG Done
+├─   0.326056s   0ms DEBUG found roots
+├─   0.326061s   0ms DEBUG print graph
+├─   0.326066s   0ms DEBUG Nodes:
+│ [1] Query/a {} → {toasters{id __typename}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="a"}
+    └─┐execute{subgraph_name="a"}
+      ├─   0.326456s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+      ├─   0.328614s   2ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "Node": ["Oven", "Toaster"]}, type_name="Toaster", type_condition="Toaster"}
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "Node": ["Oven", "Toaster"]}, type_name="Toaster", type_condition="Toaster"}
+┘
+   0.328971s DEBUG execution result: ExecutionResult { data: Some(Object {"toasters": Array [Object {"id": String("toaster1"), "__typename": String("Toaster")}, Object {"id": String("toaster2"), "__typename": String("Toaster")}]}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("a"), "operationKind": String("query"), "operation": String("{toasters{id __typename}}")}}}) }
+   0.331912s DEBUG original document: query {
+  node(id: "oven1") {
+    ... on Oven {
+      warranty
+    }
+  }
+}
+
+   0.332079s DEBUG normalized document: query{node(id: "oven1"){...on Oven{warranty}}}
+
+   0.332118s DEBUG executable operation: query{node(id: "oven1"){...on Oven{warranty}}}
+┐walk_operation{}
+├─   0.332497s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="node", leaf=false}
+  ├─   0.332560s   0ms DEBUG Trying to advance to: node(id: "oven1"){...on Oven{warranty}} through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "node", selections: SelectionSet { items: [SelectionItem::Fragment { type_name: "Oven", selections: SelectionSet { items: [SelectionItem::Field { name: "warranty", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: Some(ArgumentsMap { arguments_map: {"id": String("oven1")} }), skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.332625s   0ms DEBUG checking edge Query/a -(node)- Node/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="node"}
+        ├─   0.332648s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.332674s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(node)- Node/a
+      ├─   0.332704s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(17)" }])
+    ┌─┘
+    ├─   0.332729s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "node", selections: SelectionSet { items: [SelectionItem::Fragment { type_name: "Oven", selections: SelectionSet { items: [SelectionItem::Field { name: "warranty", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: Some(ArgumentsMap { arguments_map: {"id": String("oven1")} }), skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.332765s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.332772s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.332784s   0ms DEBUG Indirect paths found: 0
+    ├─   0.332791s   0ms DEBUG advanced: root(Query) -(a)- Query/a
+  ┌─┘
+  ├─   0.332806s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_inline_fragment{type_condition="Oven"}
+  ├─   0.332829s   0ms DEBUG Processing inline fragment '{warranty}' on type 'Oven' through 1 possible paths
+  ├─   0.332836s   0ms DEBUG Trying to advance to: ... on Oven, through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(node)- Node/a"}
+    └─┐find_direct_paths{target=ConcreteType("Oven"), path="root(Query) -(a)- Query/a -(node)- Node/a", current_cost=1001}
+      ├─   0.332885s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.332901s   0ms DEBUG Direct paths found: 0
+    ├─   0.332907s   0ms WARN Object type 'Oven' is not resolvable by 'Node', resolve only the __typename
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(node)- Node/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(node)- Node/a", current_cost=1001}
+      ├─   0.332939s   0ms DEBUG checking edge Node/a -(__typename)- String/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(node)- Node/a", edge="__typename"}
+        ├─   0.332957s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.332972s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(node)- Node/a with edge Node/a -(__typename)- String/a
+      ├─   0.332981s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(9)" }])
+    ┌─┘
+    ├─   0.332996s   0ms DEBUG Direct paths found: 1
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(9)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.333046s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.333060s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.333072s   0ms DEBUG Processing edge: Query/a -(node)- Node/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.333085s   0ms DEBUG Processing edge: Node/a -(__typename)- String/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.333104s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.333116s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.333169s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=1}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="a", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="node", arguments="id: \"oven1\"", leaf=false, list=false, response_path="", fetch_path=""}
+          ├─   0.333316s   0ms DEBUG adding output field 'node' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Node", field="__typename", leaf=true, list=false, response_path="node", fetch_path="node"}
+              ├─   0.333354s   0ms DEBUG adding output field '__typename' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.333446s   0ms DEBUG Done
+├─   0.333462s   0ms DEBUG found roots
+├─   0.333467s   0ms DEBUG print graph
+├─   0.333472s   0ms DEBUG Nodes:
+│ [1] Query/a {} → {node(id: "oven1"){__typename}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="a"}
+    └─┐execute{subgraph_name="a"}
+      ├─   0.333882s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+      ├─   0.336136s   2ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.336401s DEBUG execution result: ExecutionResult { data: Some(Object {"node": Null}), errors: Some([GraphQLError { message: "Runtime Object type \"Oven\" is not a possible type for \"Node\".", locations: Some([GraphQLErrorLocation { line: 1, column: 2 }]), path: Some([String("node")]), extensions: None }]), extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("a"), "operationKind": String("query"), "operation": String("{node(id: \"oven1\"){__typename}}")}}}) }
+   0.338918s DEBUG original document: query {
+  node(id: "oven1") {
+    ... on Toaster {
+      warranty
+    }
+  }
+}
+
+   0.339039s DEBUG normalized document: query{node(id: "oven1"){...on Toaster{warranty}}}
+
+   0.339071s DEBUG executable operation: query{node(id: "oven1"){...on Toaster{warranty}}}
+┐walk_operation{}
+├─   0.339450s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="node", leaf=false}
+  ├─   0.339495s   0ms DEBUG Trying to advance to: node(id: "oven1"){...on Toaster{warranty}} through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "node", selections: SelectionSet { items: [SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "warranty", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: Some(ArgumentsMap { arguments_map: {"id": String("oven1")} }), skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.339548s   0ms DEBUG checking edge Query/a -(node)- Node/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="node"}
+        ├─   0.339568s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.339592s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(node)- Node/a
+      ├─   0.339604s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(17)" }])
+    ┌─┘
+    ├─   0.339620s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "node", selections: SelectionSet { items: [SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "warranty", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: Some(ArgumentsMap { arguments_map: {"id": String("oven1")} }), skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.339649s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.339662s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.339674s   0ms DEBUG Indirect paths found: 0
+    ├─   0.339682s   0ms DEBUG advanced: root(Query) -(a)- Query/a
+  ┌─┘
+  ├─   0.339696s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_inline_fragment{type_condition="Toaster"}
+  ├─   0.339743s   0ms DEBUG Processing inline fragment '{warranty}' on type 'Toaster' through 1 possible paths
+  ├─   0.339753s   0ms DEBUG Trying to advance to: ... on Toaster, through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(node)- Node/a"}
+    └─┐find_direct_paths{target=ConcreteType("Toaster"), path="root(Query) -(a)- Query/a -(node)- Node/a", current_cost=1001}
+      ├─   0.339785s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(node)- Node/a with edge Node/a -(🔮)- Toaster/a
+      ├─   0.339806s   0ms INFO return=Ok([ { cost: 2001, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(26)" }])
+    ┌─┘
+    ├─   0.339829s   0ms DEBUG Direct paths found: 1
+    ├─   0.339838s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(node)- Node/a
+  ┌─┘
+  └─┐process_selection_set{}
+    └─┐process_field{field_name="warranty", leaf=true}
+      ├─   0.339867s   0ms DEBUG Trying to advance to: warranty through 1 possible paths
+      └─┐explore_path{path="root(Query) -(a)- Query/a -(node)- Node/a -(🔮)- Toaster/a"}
+        └─┐find_direct_paths{target=Field(FieldSelection { name: "warranty", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(node)- Node/a -(🔮)- Toaster/a", current_cost=2001}
+          ├─   0.339919s   0ms DEBUG checking edge Toaster/a -(warranty)- Int/a
+          └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(node)- Node/a -(🔮)- Toaster/a", edge="warranty"}
+            ├─   0.339953s   0ms INFO return=Ok(Some([]))
+          ┌─┘
+          ├─   0.339979s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(node)- Node/a -(🔮)- Toaster/a with edge Toaster/a -(warranty)- Int/a
+          ├─   0.339991s   0ms INFO return=Ok([ { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(26) --> EdgeIndex(8)" }])
+        ┌─┘
+        ├─   0.340023s   0ms DEBUG Direct paths found: 1
+        └─┐find_indirect_paths{target=Field(FieldSelection { name: "warranty", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(node)- Node/a -(🔮)- Toaster/a", current_cost=2001}
+          ├─   0.340055s   0ms DEBUG Exploring edge Toaster/a -(🔑🧩{id})- Toaster/a
+          ├─   0.340063s   0ms DEBUG Ignoring. We would go back to the same graph
+          ├─   0.340070s   0ms DEBUG Finished finding indirect paths, found total of 0
+          ├─   0.340076s   0ms INFO return=Ok([])
+        ┌─┘
+        ├─   0.340092s   0ms DEBUG Indirect paths found: 0
+        ├─   0.340115s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(node)- Node/a -(🔮)- Toaster/a
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(26) --> EdgeIndex(8)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.340193s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.340208s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.340220s   0ms DEBUG Processing edge: Query/a -(node)- Node/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.340235s   0ms DEBUG Processing edge: Node/a -(🔮)- Toaster/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.340248s   0ms DEBUG Processing edge: Toaster/a -(warranty)- Int/a
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.340267s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.340280s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.340291s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.340302s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=1}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="a", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="node", arguments="id: \"oven1\"", leaf=false, list=false, response_path="", fetch_path=""}
+          ├─   0.340477s   0ms DEBUG adding output field 'node' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+            └─┐process_abstract_edge{parent_fetch_step_index=1, type_name="Toaster", response_path="node", fetch_path="node"}
+              ├─   0.340531s   0ms DEBUG adding output field '__typename' and starting an inline fragment for type '1' to fetch step [Toaster]
+              └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+                └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Toaster", field="warranty", leaf=true, list=false, response_path="node", fetch_path="node"}
+                  ├─   0.340569s   0ms DEBUG adding output field 'warranty' to fetch step [1]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.340656s   0ms DEBUG Done
+├─   0.340664s   0ms DEBUG found roots
+├─   0.340670s   0ms DEBUG print graph
+├─   0.340675s   0ms DEBUG Nodes:
+│ [1] Query/a {} → {node(id: "oven1"){__typename ...on Toaster{warranty}}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="a"}
+    └─┐execute{subgraph_name="a"}
+      ├─   0.341073s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+      ├─   0.343428s   2ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.343710s DEBUG execution result: ExecutionResult { data: Some(Object {"node": Null}), errors: Some([GraphQLError { message: "Runtime Object type \"Oven\" is not a possible type for \"Node\".", locations: Some([GraphQLErrorLocation { line: 1, column: 2 }]), path: Some([String("node")]), extensions: None }]), extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("a"), "operationKind": String("query"), "operation": String("{node(id: \"oven1\"){__typename ...on Toaster{warranty}}}")}}}) }
+   0.346351s DEBUG original document: query {
+  node(id: "toaster1") {
+    ... on Toaster {
+      warranty
+    }
+  }
+}
+
+   0.346479s DEBUG normalized document: query{node(id: "toaster1"){...on Toaster{warranty}}}
+
+   0.346494s DEBUG executable operation: query{node(id: "toaster1"){...on Toaster{warranty}}}
+┐walk_operation{}
+├─   0.346859s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="node", leaf=false}
+  ├─   0.346919s   0ms DEBUG Trying to advance to: node(id: "toaster1"){...on Toaster{warranty}} through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "node", selections: SelectionSet { items: [SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "warranty", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: Some(ArgumentsMap { arguments_map: {"id": String("toaster1")} }), skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.346981s   0ms DEBUG checking edge Query/a -(node)- Node/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="node"}
+        ├─   0.347016s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.347047s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(node)- Node/a
+      ├─   0.347068s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(17)" }])
+    ┌─┘
+    ├─   0.347085s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "node", selections: SelectionSet { items: [SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "warranty", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: Some(ArgumentsMap { arguments_map: {"id": String("toaster1")} }), skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.347118s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.347125s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.347137s   0ms DEBUG Indirect paths found: 0
+    ├─   0.347145s   0ms DEBUG advanced: root(Query) -(a)- Query/a
+  ┌─┘
+  ├─   0.347158s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_inline_fragment{type_condition="Toaster"}
+  ├─   0.347181s   0ms DEBUG Processing inline fragment '{warranty}' on type 'Toaster' through 1 possible paths
+  ├─   0.347188s   0ms DEBUG Trying to advance to: ... on Toaster, through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(node)- Node/a"}
+    └─┐find_direct_paths{target=ConcreteType("Toaster"), path="root(Query) -(a)- Query/a -(node)- Node/a", current_cost=1001}
+      ├─   0.347218s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(node)- Node/a with edge Node/a -(🔮)- Toaster/a
+      ├─   0.347229s   0ms INFO return=Ok([ { cost: 2001, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(26)" }])
+    ┌─┘
+    ├─   0.347271s   0ms DEBUG Direct paths found: 1
+    ├─   0.347285s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(node)- Node/a
+  ┌─┘
+  └─┐process_selection_set{}
+    └─┐process_field{field_name="warranty", leaf=true}
+      ├─   0.347315s   0ms DEBUG Trying to advance to: warranty through 1 possible paths
+      └─┐explore_path{path="root(Query) -(a)- Query/a -(node)- Node/a -(🔮)- Toaster/a"}
+        └─┐find_direct_paths{target=Field(FieldSelection { name: "warranty", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(node)- Node/a -(🔮)- Toaster/a", current_cost=2001}
+          ├─   0.347348s   0ms DEBUG checking edge Toaster/a -(warranty)- Int/a
+          └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(node)- Node/a -(🔮)- Toaster/a", edge="warranty"}
+            ├─   0.347369s   0ms INFO return=Ok(Some([]))
+          ┌─┘
+          ├─   0.347386s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(node)- Node/a -(🔮)- Toaster/a with edge Toaster/a -(warranty)- Int/a
+          ├─   0.347397s   0ms INFO return=Ok([ { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(26) --> EdgeIndex(8)" }])
+        ┌─┘
+        ├─   0.347413s   0ms DEBUG Direct paths found: 1
+        └─┐find_indirect_paths{target=Field(FieldSelection { name: "warranty", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(node)- Node/a -(🔮)- Toaster/a", current_cost=2001}
+          ├─   0.347436s   0ms DEBUG Exploring edge Toaster/a -(🔑🧩{id})- Toaster/a
+          ├─   0.347444s   0ms DEBUG Ignoring. We would go back to the same graph
+          ├─   0.347451s   0ms DEBUG Finished finding indirect paths, found total of 0
+          ├─   0.347458s   0ms INFO return=Ok([])
+        ┌─┘
+        ├─   0.347470s   0ms DEBUG Indirect paths found: 0
+        ├─   0.347478s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(node)- Node/a -(🔮)- Toaster/a
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(26) --> EdgeIndex(8)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.347539s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.347553s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.347565s   0ms DEBUG Processing edge: Query/a -(node)- Node/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.347578s   0ms DEBUG Processing edge: Node/a -(🔮)- Toaster/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.347590s   0ms DEBUG Processing edge: Toaster/a -(warranty)- Int/a
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.347611s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.347623s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.347634s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.347645s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=1}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="a", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="node", arguments="id: \"toaster1\"", leaf=false, list=false, response_path="", fetch_path=""}
+          ├─   0.347761s   0ms DEBUG adding output field 'node' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+            └─┐process_abstract_edge{parent_fetch_step_index=1, type_name="Toaster", response_path="node", fetch_path="node"}
+              ├─   0.347813s   0ms DEBUG adding output field '__typename' and starting an inline fragment for type '1' to fetch step [Toaster]
+              └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+                └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Toaster", field="warranty", leaf=true, list=false, response_path="node", fetch_path="node"}
+                  ├─   0.347860s   0ms DEBUG adding output field 'warranty' to fetch step [1]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.347947s   0ms DEBUG Done
+├─   0.347954s   0ms DEBUG found roots
+├─   0.347960s   0ms DEBUG print graph
+├─   0.347965s   0ms DEBUG Nodes:
+│ [1] Query/a {} → {node(id: "toaster1"){__typename ...on Toaster{warranty}}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="a"}
+    └─┐execute{subgraph_name="a"}
+      ├─   0.348351s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+      ├─   0.350424s   2ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "Node": ["Oven", "Toaster"]}, type_name="Toaster", type_condition="Toaster"}
+┘
+   0.350774s DEBUG execution result: ExecutionResult { data: Some(Object {"node": Object {"warranty": Number(3)}}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("a"), "operationKind": String("query"), "operation": String("{node(id: \"toaster1\"){__typename ...on Toaster{warranty}}}")}}}) }

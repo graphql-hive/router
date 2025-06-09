@@ -1,0 +1,43 @@
+TAP version 13
+# Using gateway at     http://localhost:4000/graphql
+# Fetching tests from  http://localhost:4200/override-with-requires/tests
+# Subtest: override-with-requires
+    # Subtest: override-with-requires_0
+    ok 1 - override-with-requires_0
+      ---
+      duration_ms: 88.478976
+      type: 'test'
+      ...
+    # Subtest: override-with-requires_1
+    ok 2 - override-with-requires_1
+      ---
+      duration_ms: 18.79207
+      type: 'test'
+      ...
+    # Subtest: override-with-requires_2
+    ok 3 - override-with-requires_2
+      ---
+      duration_ms: 16.035036
+      type: 'test'
+      ...
+    # Subtest: override-with-requires_3
+    ok 4 - override-with-requires_3
+      ---
+      duration_ms: 16.072545
+      type: 'test'
+      ...
+    1..4
+ok 1 - override-with-requires
+  ---
+  duration_ms: 140.184315
+  type: 'suite'
+  ...
+1..1
+# tests 4
+# suites 1
+# pass 4
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 223.282695

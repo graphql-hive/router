@@ -1,0 +1,91 @@
+TAP version 13
+# Using gateway at     http://localhost:4000/graphql
+# Fetching tests from  http://localhost:4200/simple-requires-provides/tests
+# Subtest: simple-requires-provides
+    # Subtest: simple-requires-provides_0
+    ok 1 - simple-requires-provides_0
+      ---
+      duration_ms: 18.159841
+      type: 'test'
+      ...
+    # Subtest: simple-requires-provides_1
+    ok 2 - simple-requires-provides_1
+      ---
+      duration_ms: 15.17058
+      type: 'test'
+      ...
+    # Subtest: simple-requires-provides_2
+    ok 3 - simple-requires-provides_2
+      ---
+      duration_ms: 22.337387
+      type: 'test'
+      ...
+    # Subtest: simple-requires-provides_3
+    ok 4 - simple-requires-provides_3
+      ---
+      duration_ms: 11.330985
+      type: 'test'
+      ...
+    # Subtest: simple-requires-provides_4
+    ok 5 - simple-requires-provides_4
+      ---
+      duration_ms: 9.094921
+      type: 'test'
+      ...
+    # Subtest: simple-requires-provides_5
+    ok 6 - simple-requires-provides_5
+      ---
+      duration_ms: 18.509731
+      type: 'test'
+      ...
+    # Subtest: simple-requires-provides_6
+    ok 7 - simple-requires-provides_6
+      ---
+      duration_ms: 24.886786
+      type: 'test'
+      ...
+    # Subtest: simple-requires-provides_7
+    ok 8 - simple-requires-provides_7
+      ---
+      duration_ms: 32.62765
+      type: 'test'
+      ...
+    # Subtest: simple-requires-provides_8
+    ok 9 - simple-requires-provides_8
+      ---
+      duration_ms: 12.559827
+      type: 'test'
+      ...
+    # Subtest: simple-requires-provides_9
+    ok 10 - simple-requires-provides_9
+      ---
+      duration_ms: 14.195332
+      type: 'test'
+      ...
+    # Subtest: simple-requires-provides_10
+    ok 11 - simple-requires-provides_10
+      ---
+      duration_ms: 23.123194
+      type: 'test'
+      ...
+    # Subtest: simple-requires-provides_11
+    ok 12 - simple-requires-provides_11
+      ---
+      duration_ms: 31.655498
+      type: 'test'
+      ...
+    1..12
+ok 1 - simple-requires-provides
+  ---
+  duration_ms: 234.913654
+  type: 'suite'
+  ...
+1..1
+# tests 12
+# suites 1
+# pass 12
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 323.679191

@@ -1,0 +1,87 @@
+generating supergraph file for test...
+running gateway...
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running `target/debug/gateway audits/fed-audit-supergraph.graphql`
+┐new_supergraph_state{}
+└─┐build_map{}
+  └─┐build_interface_type{name="Bar"}
+    └─┐build_fields{fields_count=2}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Baz"}
+    └─┐build_fields{fields_count=3}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Entity"}
+    └─┐build_fields{fields_count=4}
+    ┌─┘
+  ┌─┘
+  └─┐build_interface_type{name="Foo"}
+    └─┐build_fields{fields_count=1}
+    ┌─┘
+  ┌─┘
+  └─┐build_scalar_type{name="join__FieldSet"}
+  ┌─┘
+  └─┐build_enum_type{name="join__Graph"}
+  ┌─┘
+  └─┐build_scalar_type{name="link__Import"}
+  ┌─┘
+  └─┐build_enum_type{name="link__Purpose"}
+  ┌─┘
+  └─┐build_object_type{name="Query"}
+    └─┐build_fields{fields_count=3}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Qux"}
+    └─┐build_fields{fields_count=3}
+    ┌─┘
+  ┌─┘
+┌─┘
+└─┐decompose_from_supergraph{graph_id="B"}
+┌─┘
+└─┐decompose_from_supergraph{graph_id="A"}
+┌─┘
+┘
+┐graph_from_supergraph_state{}
+└─┐build_graph{}
+  ├─   0.006724s   0ms DEBUG Building graph for supergraph with 19 definitions
+  └─┐build_root_nodes{}
+    ├─   0.006760s   0ms DEBUG added root type for queries: Query
+  ┌─┘
+  └─┐link_root_edges{}
+  ┌─┘
+  └─┐build_field_edges{}
+    ├─   0.006837s   0ms INFO [x] Creating owned field move edge 'Foo.__typename/A' (type: String)
+    ├─   0.006855s   0ms INFO [x] Creating field move edge 'Foo.foo/A' (type: String)
+    ├─   0.006865s   0ms INFO [x] Creating field move edge 'Foo.foo/A' (type: String)
+    ├─   0.006872s   0ms INFO [x] Creating owned field move edge 'Foo.__typename/B' (type: String)
+    ├─   0.006879s   0ms INFO [x] Creating field move edge 'Foo.foo/B' (type: String)
+    ├─   0.006885s   0ms INFO [x] Creating field move edge 'Foo.foo/B' (type: String)
+    ├─   0.006891s   0ms INFO [x] Creating owned field move edge 'Bar.__typename/A' (type: String)
+    ├─   0.006900s   0ms INFO [x] Creating field move edge 'Bar.foo/A' (type: String)
+    ├─   0.006905s   0ms INFO [x] Creating field move edge 'Bar.foo/A' (type: String)
+    ├─   0.006911s   0ms INFO [x] Creating field move edge 'Bar.bar/A' (type: String)
+    ├─   0.006916s   0ms INFO [x] Creating field move edge 'Bar.bar/A' (type: String)
+    ├─   0.006921s   0ms INFO [x] Creating owned field move edge 'Bar.__typename/B' (type: String)
+    ├─   0.006928s   0ms INFO [x] Creating field move edge 'Bar.foo/B' (type: String)
+    ├─   0.006934s   0ms INFO [x] Creating field move edge 'Bar.foo/B' (type: String)
+    ├─   0.006939s   0ms INFO [x] Creating field move edge 'Bar.bar/B' (type: String)
+    ├─   0.006945s   0ms INFO [x] Creating field move edge 'Bar.bar/B' (type: String)
+    ├─   0.006951s   0ms INFO [x] Creating owned field move edge 'Entity.__typename/A' (type: String)
+    ├─   0.006958s   0ms INFO [x] Creating field move edge 'Entity.data/A' (type: Foo)
+    ├─   0.006963s   0ms INFO [x] Creating field move edge 'Entity.data/A' (type: Foo)
+    ├─   0.006969s   0ms INFO [x] Creating field move edge 'Entity.id/A' (type: ID)
+    ├─   0.006975s   0ms INFO [x] Creating field move edge 'Entity.id/A' (type: ID)
+    ├─   0.006982s   0ms INFO [ ] Field 'Entity.requirer/A' does is not available in the subgraph, skipping edge creation (type: String)
+    ├─   0.006988s   0ms INFO [ ] Field 'Entity.requirer2/A' does is not available in the subgraph, skipping edge creation (type: String)
+    ├─   0.006993s   0ms INFO [x] Creating owned field move edge 'Entity.__typename/B' (type: String)
+    ├─   0.007001s   0ms INFO [ ] Field 'Entity.data/B' is external, skipping edge creation
+    ├─   0.007006s   0ms INFO [x] Creating field move edge 'Entity.id/B' (type: ID)
+    ├─   0.007012s   0ms INFO [x] Creating field move edge 'Entity.id/B' (type: ID)
+
+thread 'main' panicked at lib/query-planner/src/state/selection_resolver.rs:113:21:
+not implemented: not supported yet: unexpected selection in selection-resolver
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+  ┌─┘
+┌─┘
+┘

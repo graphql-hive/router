@@ -1,0 +1,721 @@
+generating supergraph file for test...
+running gateway...
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s
+     Running `target/debug/gateway audits/fed-audit-supergraph.graphql`
+┐new_supergraph_state{}
+└─┐build_map{}
+  └─┐build_scalar_type{name="join__FieldSet"}
+  ┌─┘
+  └─┐build_enum_type{name="join__Graph"}
+  ┌─┘
+  └─┐build_scalar_type{name="link__Import"}
+  ┌─┘
+  └─┐build_enum_type{name="link__Purpose"}
+  ┌─┘
+  └─┐build_object_type{name="Post"}
+    └─┐build_fields{fields_count=2}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Query"}
+    └─┐build_fields{fields_count=3}
+    ┌─┘
+  ┌─┘
+┌─┘
+└─┐decompose_from_supergraph{graph_id="A"}
+┌─┘
+└─┐decompose_from_supergraph{graph_id="B"}
+┌─┘
+┘
+┐graph_from_supergraph_state{}
+└─┐build_graph{}
+  ├─   0.006805s   0ms DEBUG Building graph for supergraph with 14 definitions
+  └─┐build_root_nodes{}
+    ├─   0.006863s   0ms DEBUG added root type for queries: Query
+  ┌─┘
+  └─┐link_root_edges{}
+  ┌─┘
+  └─┐build_field_edges{}
+    ├─   0.006932s   0ms INFO [x] Creating owned field move edge 'Post.__typename/A' (type: String)
+    ├─   0.006948s   0ms INFO [x] Creating field move edge 'Post.id/A' (type: ID)
+    ├─   0.006957s   0ms INFO [x] Creating field move edge 'Post.id/A' (type: ID)
+    ├─   0.006964s   0ms INFO [x] Creating field move edge 'Post.createdAt/A' (type: String)
+    ├─   0.006970s   0ms INFO [x] Creating field move edge 'Post.createdAt/A' (type: String)
+    ├─   0.006977s   0ms INFO [x] Creating owned field move edge 'Post.__typename/B' (type: String)
+    ├─   0.006986s   0ms INFO [x] Creating field move edge 'Post.id/B' (type: ID)
+    ├─   0.006993s   0ms INFO [x] Creating field move edge 'Post.id/B' (type: ID)
+    ├─   0.006998s   0ms INFO [x] Creating field move edge 'Post.createdAt/B' (type: String)
+    ├─   0.007004s   0ms INFO [x] Creating field move edge 'Post.createdAt/B' (type: String)
+    ├─   0.007011s   0ms INFO [x] Creating owned field move edge 'Query.__typename/A' (type: String)
+    ├─   0.007019s   0ms INFO [ ] Field 'Query.bFeed/A' does is not available in the subgraph, skipping edge creation (type: Post)
+    ├─   0.007024s   0ms INFO [x] Creating field move edge 'Query.feed/A' (type: Post)
+    ├─   0.007030s   0ms INFO [x] Creating field move edge 'Query.feed/A' (type: Post)
+    ├─   0.007036s   0ms INFO [x] Creating field move edge 'Query.aFeed/A' (type: Post)
+    ├─   0.007042s   0ms INFO [x] Creating field move edge 'Query.aFeed/A' (type: Post)
+    ├─   0.007048s   0ms INFO [x] Creating owned field move edge 'Query.__typename/B' (type: String)
+    ├─   0.007055s   0ms INFO [x] Creating field move edge 'Query.bFeed/B' (type: Post)
+    ├─   0.007061s   0ms INFO [x] Creating field move edge 'Query.bFeed/B' (type: Post)
+    ├─   0.007067s   0ms INFO [x] Creating field move edge 'Query.feed/B' (type: Post)
+    ├─   0.007073s   0ms INFO [x] Creating field move edge 'Query.feed/B' (type: Post)
+    ├─   0.007078s   0ms INFO [ ] Field 'Query.aFeed/B' does is not available in the subgraph, skipping edge creation (type: Post)
+  ┌─┘
+  └─┐build_interface_implementation_edges{}
+  ┌─┘
+  └─┐build_entity_reference_edges{}
+    ├─   0.007209s   0ms INFO Creating self-referencing entity move edge in 'Post/A' via key 'id'
+    ├─   0.007374s   0ms INFO Creating entity move edge from 'Post/A' to 'Post/B' via key 'id'
+    ├─   0.007465s   0ms INFO Creating entity move edge from 'Post/B' to 'Post/A' via key 'id'
+    ├─   0.007509s   0ms INFO Creating self-referencing entity move edge in 'Post/B' via key 'id'
+  ┌─┘
+  └─┐build_viewed_field_edges{}
+  ┌─┘
+┌─┘
+┘
+   0.068708s INFO Starting server on http://localhost:4000
+   0.069730s INFO starting 16 workers
+   0.069777s INFO Actix runtime found; starting in Actix runtime
+   0.069785s INFO starting service: "actix-web-service-0.0.0.0:4000", workers: 16, listening on: 0.0.0.0:4000
+   0.246824s DEBUG original document: query ping {
+  __typename
+}
+
+   0.246942s DEBUG normalized document: query ping {__typename}
+
+   0.246971s DEBUG executable operation: query ping {__typename}
+┐execute{}
+┘
+   0.247406s DEBUG execution result: ExecutionResult { data: Some(Object {"__typename": String("Query")}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan")}}) }
+   0.334801s DEBUG original document: query {
+  feed {
+    createdAt
+  }
+}
+
+   0.334924s DEBUG normalized document: query{feed{createdAt}}
+
+   0.334939s DEBUG executable operation: query{feed{createdAt}}
+┐walk_operation{}
+├─   0.335323s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="feed", leaf=false}
+  ├─   0.335393s   0ms DEBUG Trying to advance to: feed{createdAt} through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "feed", selections: SelectionSet { items: [SelectionItem::Field { name: "createdAt", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.335496s   0ms DEBUG checking edge Query/a -(feed)- Post/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="feed"}
+        ├─   0.335528s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.335555s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(feed)- Post/a
+      ├─   0.335568s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(9)" }])
+    ┌─┘
+    ├─   0.335587s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "feed", selections: SelectionSet { items: [SelectionItem::Field { name: "createdAt", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.335625s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.335632s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.335644s   0ms DEBUG Indirect paths found: 0
+    ├─   0.335653s   0ms DEBUG advanced: root(Query) -(a)- Query/a
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(b)- Query/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "feed", selections: SelectionSet { items: [SelectionItem::Field { name: "createdAt", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.335684s   0ms DEBUG checking edge Query/b -(feed)- Post/b
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b", edge="feed"}
+        ├─   0.335699s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.335713s   0ms DEBUG Advancing path root(Query) -(b)- Query/b with edge Query/b -(feed)- Post/b
+      ├─   0.335721s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(1) --> EdgeIndex(13)" }])
+    ┌─┘
+    ├─   0.335734s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "feed", selections: SelectionSet { items: [SelectionItem::Field { name: "createdAt", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.335778s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.335788s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.335803s   0ms DEBUG Indirect paths found: 0
+    ├─   0.335813s   0ms DEBUG advanced: root(Query) -(b)- Query/b
+  ┌─┘
+  ├─   0.335829s   0ms DEBUG Found 2 paths
+┌─┘
+└─┐process_field{field_name="createdAt", leaf=true}
+  ├─   0.335854s   0ms DEBUG Trying to advance to: createdAt through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(feed)- Post/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "createdAt", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(feed)- Post/a", current_cost=1001}
+      ├─   0.335886s   0ms DEBUG checking edge Post/a -(createdAt)- String/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(feed)- Post/a", edge="createdAt"}
+        ├─   0.335918s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.335942s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(feed)- Post/a with edge Post/a -(createdAt)- String/a
+      ├─   0.335952s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(4)" }])
+    ┌─┘
+    ├─   0.335967s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "createdAt", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(feed)- Post/a", current_cost=1001}
+      ├─   0.335992s   0ms DEBUG Exploring edge Post/a -(🔑🧩{id})- Post/b
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(feed)- Post/a", edge="id"}
+        ├─   0.336032s   0ms DEBUG checking requirements {id} for edge 'Post/a -(🔑🧩{id})- Post/b'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(feed)- Post/a", current_cost=1001}
+              ├─   0.336080s   0ms DEBUG checking edge Post/a -(id)- ID/a
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(feed)- Post/a", edge="id"}
+                ├─   0.336100s   0ms INFO return=Ok(Some([]))
+              ┌─┘
+              ├─   0.336120s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(feed)- Post/a with edge Post/a -(id)- ID/a
+              ├─   0.336130s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(3)" }])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(feed)- Post/a", current_cost=1001}
+              ├─   0.336168s   0ms DEBUG Exploring edge Post/a -(🔑🧩{id})- Post/b
+              ├─   0.336192s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+              ├─   0.336205s   0ms DEBUG Exploring edge Post/a -(🔑🧩{id})- Post/a
+              ├─   0.336212s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.336221s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.336227s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.336249s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(3)" }], [])))
+          ┌─┘
+          ├─   0.336269s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(3)" }], [])))
+        ┌─┘
+        ├─   0.336286s   0ms DEBUG Paths for id
+        ├─   0.336295s   0ms DEBUG   Path root(Query) -(a)- Query/a -(feed)- Post/a -(id)- ID/a is valid
+        ├─   0.336302s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.336319s   0ms DEBUG path Post/a -(id)- ID/a is valid
+        ├─   0.336326s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(3)" }]))
+      ┌─┘
+      ├─   0.336341s   0ms DEBUG Advancing path to Post/a -(🔑🧩{id})- Post/b
+      └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(3)" }, root_node="Post/a"}
+        └─┐create_root_for_path_sequences{root_node="Post/a", segments_count=1}
+          ├─   0.336379s   0ms DEBUG Building root query tree node: Post/a
+          └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+            ├─   0.336396s   0ms DEBUG Processing edge: Post/a -(id)- ID/a
+            └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+            ┌─┘
+            ├─   0.336417s   0ms DEBUG No subsequent steps (leaf or end of path)
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "createdAt", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(feed)- Post/a -(🔑🧩{id})- Post/b", current_cost=2003}
+        ├─   0.336491s   0ms DEBUG checking edge Post/b -(createdAt)- String/b
+        └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(feed)- Post/a -(🔑🧩{id})- Post/b", edge="createdAt"}
+          ├─   0.336540s   0ms INFO return=Ok(Some([]))
+        ┌─┘
+        ├─   0.336562s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(feed)- Post/a -(🔑🧩{id})- Post/b with edge Post/b -(createdAt)- String/b
+        ├─   0.336572s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(15) --> EdgeIndex(7)" }])
+      ┌─┘
+      ├─   0.336598s   0ms DEBUG Found 1 direct paths to Post/a -(🔑🧩{id})- Post/b
+      ├─   0.336607s   0ms DEBUG Exploring edge Post/a -(🔑🧩{id})- Post/a
+      ├─   0.336613s   0ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.336621s   0ms DEBUG Finished finding indirect paths, found total of 1
+      ├─   0.336627s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(15) --> EdgeIndex(7)" }])
+    ┌─┘
+    ├─   0.336641s   0ms DEBUG Indirect paths found: 1
+    ├─   0.336650s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(feed)- Post/a
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(b)- Query/b -(feed)- Post/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "createdAt", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(feed)- Post/b", current_cost=1001}
+      ├─   0.336682s   0ms DEBUG checking edge Post/b -(createdAt)- String/b
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(feed)- Post/b", edge="createdAt"}
+        ├─   0.336699s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.336713s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(feed)- Post/b with edge Post/b -(createdAt)- String/b
+      ├─   0.336720s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(13) --> EdgeIndex(7)" }])
+    ┌─┘
+    ├─   0.336734s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "createdAt", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(feed)- Post/b", current_cost=1001}
+      ├─   0.336755s   0ms DEBUG Exploring edge Post/b -(🔑🧩{id})- Post/b
+      ├─   0.336760s   0ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.336766s   0ms DEBUG Exploring edge Post/b -(🔑🧩{id})- Post/a
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(feed)- Post/b", edge="id"}
+        ├─   0.336783s   0ms DEBUG checking requirements {id} for edge 'Post/b -(🔑🧩{id})- Post/a'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(feed)- Post/b", current_cost=1001}
+              ├─   0.336815s   0ms DEBUG checking edge Post/b -(id)- ID/b
+              └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(feed)- Post/b", edge="id"}
+                ├─   0.336833s   0ms INFO return=Ok(Some([]))
+              ┌─┘
+              ├─   0.336871s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(feed)- Post/b with edge Post/b -(id)- ID/b
+              ├─   0.336884s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(13) --> EdgeIndex(6)" }])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(feed)- Post/b", current_cost=1001}
+              ├─   0.336922s   0ms DEBUG Exploring edge Post/b -(🔑🧩{id})- Post/b
+              ├─   0.336930s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.336937s   0ms DEBUG Exploring edge Post/b -(🔑🧩{id})- Post/a
+              ├─   0.336943s   0ms DEBUG Ignoring, graph is excluded and already visited (current: a, visited: {"a"})
+              ├─   0.336956s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.336963s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.336978s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(13) --> EdgeIndex(6)" }], [])))
+          ┌─┘
+          ├─   0.336994s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(13) --> EdgeIndex(6)" }], [])))
+        ┌─┘
+        ├─   0.337008s   0ms DEBUG Paths for id
+        ├─   0.337016s   0ms DEBUG   Path root(Query) -(b)- Query/b -(feed)- Post/b -(id)- ID/b is valid
+        ├─   0.337023s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.337034s   0ms DEBUG path Post/b -(id)- ID/b is valid
+        ├─   0.337040s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(6)" }]))
+      ┌─┘
+      ├─   0.337055s   0ms DEBUG Advancing path to Post/b -(🔑🧩{id})- Post/a
+      └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(6)" }, root_node="Post/b"}
+        └─┐create_root_for_path_sequences{root_node="Post/b", segments_count=1}
+          ├─   0.337080s   0ms DEBUG Building root query tree node: Post/b
+          └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+            ├─   0.337094s   0ms DEBUG Processing edge: Post/b -(id)- ID/b
+            └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+            ┌─┘
+            ├─   0.337115s   0ms DEBUG No subsequent steps (leaf or end of path)
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "createdAt", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(feed)- Post/b -(🔑🧩{id})- Post/a", current_cost=2003}
+        ├─   0.337177s   0ms DEBUG checking edge Post/a -(createdAt)- String/a
+        └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(feed)- Post/b -(🔑🧩{id})- Post/a", edge="createdAt"}
+          ├─   0.337205s   0ms INFO return=Ok(Some([]))
+        ┌─┘
+        ├─   0.337224s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(feed)- Post/b -(🔑🧩{id})- Post/a with edge Post/a -(createdAt)- String/a
+        ├─   0.337263s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(1) --> EdgeIndex(13) --> EdgeIndex(16) --> EdgeIndex(4)" }])
+      ┌─┘
+      ├─   0.337289s   0ms DEBUG Found 1 direct paths to Post/b -(🔑🧩{id})- Post/a
+      ├─   0.337300s   0ms DEBUG Finished finding indirect paths, found total of 1
+      ├─   0.337306s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(1) --> EdgeIndex(13) --> EdgeIndex(16) --> EdgeIndex(4)" }])
+    ┌─┘
+    ├─   0.337320s   0ms DEBUG Indirect paths found: 1
+    ├─   0.337330s   0ms DEBUG advanced: root(Query) -(b)- Query/b -(feed)- Post/b
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(4)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.337396s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.337411s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.337423s   0ms DEBUG Processing edge: Query/a -(feed)- Post/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.337435s   0ms DEBUG Processing edge: Post/a -(createdAt)- String/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.337458s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.337472s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.337482s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=1}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="a", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="feed", leaf=false, list=true, response_path="", fetch_path=""}
+          ├─   0.337620s   0ms DEBUG adding output field 'feed' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Post", field="createdAt", leaf=true, list=false, response_path="feed.@", fetch_path="feed.@"}
+              ├─   0.337657s   0ms DEBUG adding output field 'createdAt' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.337744s   0ms DEBUG Done
+├─   0.337766s   0ms DEBUG found roots
+├─   0.337771s   0ms DEBUG print graph
+├─   0.337777s   0ms DEBUG Nodes:
+│ [1] Query/a {} → {feed{createdAt}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="a"}
+    └─┐execute{subgraph_name="a"}
+      ├─   0.338341s   0ms DEBUG starting new connection: http://localhost:4200/
+      ├─   0.338841s   0ms DEBUG connecting to 127.0.0.1:4200
+      ├─   0.339250s   1ms DEBUG connected to 127.0.0.1:4200
+      ├─   0.344844s   6ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.345217s DEBUG execution result: ExecutionResult { data: Some(Object {"feed": Array [Object {"createdAt": String("p1-createdAt")}, Object {"createdAt": String("p2-createdAt")}]}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("a"), "operationKind": String("query"), "operation": String("{feed{createdAt}}")}}}) }
+   0.354635s DEBUG original document: query {
+  aFeed {
+    createdAt
+  }
+  bFeed {
+    createdAt
+  }
+}
+
+   0.354749s DEBUG normalized document: query{aFeed{createdAt} bFeed{createdAt}}
+
+   0.354762s DEBUG executable operation: query{aFeed{createdAt} bFeed{createdAt}}
+┐walk_operation{}
+├─   0.355193s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="bFeed", leaf=false}
+  ├─   0.355246s   0ms DEBUG Trying to advance to: bFeed{createdAt} through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "bFeed", selections: SelectionSet { items: [SelectionItem::Field { name: "createdAt", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.355324s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.355347s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "bFeed", selections: SelectionSet { items: [SelectionItem::Field { name: "createdAt", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.355376s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.355382s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.355395s   0ms DEBUG Indirect paths found: 0
+    ├─   0.355406s   0ms WARN failed to advance: root(Query) -(a)- Query/a
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(b)- Query/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "bFeed", selections: SelectionSet { items: [SelectionItem::Field { name: "createdAt", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.355446s   0ms DEBUG checking edge Query/b -(bFeed)- Post/b
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b", edge="bFeed"}
+        ├─   0.355467s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.355483s   0ms DEBUG Advancing path root(Query) -(b)- Query/b with edge Query/b -(bFeed)- Post/b
+      ├─   0.355493s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(1) --> EdgeIndex(12)" }])
+    ┌─┘
+    ├─   0.355510s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "bFeed", selections: SelectionSet { items: [SelectionItem::Field { name: "createdAt", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.355532s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.355537s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.355549s   0ms DEBUG Indirect paths found: 0
+    ├─   0.355557s   0ms DEBUG advanced: root(Query) -(b)- Query/b
+  ┌─┘
+  ├─   0.355571s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="createdAt", leaf=true}
+  ├─   0.355594s   0ms DEBUG Trying to advance to: createdAt through 1 possible paths
+  └─┐explore_path{path="root(Query) -(b)- Query/b -(bFeed)- Post/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "createdAt", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(bFeed)- Post/b", current_cost=1001}
+      ├─   0.355620s   0ms DEBUG checking edge Post/b -(createdAt)- String/b
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(bFeed)- Post/b", edge="createdAt"}
+        ├─   0.355656s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.355680s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(bFeed)- Post/b with edge Post/b -(createdAt)- String/b
+      ├─   0.355690s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(7)" }])
+    ┌─┘
+    ├─   0.355705s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "createdAt", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(bFeed)- Post/b", current_cost=1001}
+      ├─   0.355728s   0ms DEBUG Exploring edge Post/b -(🔑🧩{id})- Post/b
+      ├─   0.355735s   0ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.355742s   0ms DEBUG Exploring edge Post/b -(🔑🧩{id})- Post/a
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(bFeed)- Post/b", edge="id"}
+        ├─   0.355765s   0ms DEBUG checking requirements {id} for edge 'Post/b -(🔑🧩{id})- Post/a'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(bFeed)- Post/b", current_cost=1001}
+              ├─   0.355820s   0ms DEBUG checking edge Post/b -(id)- ID/b
+              └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(bFeed)- Post/b", edge="id"}
+                ├─   0.355848s   0ms INFO return=Ok(Some([]))
+              ┌─┘
+              ├─   0.355868s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(bFeed)- Post/b with edge Post/b -(id)- ID/b
+              ├─   0.355878s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(6)" }])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(bFeed)- Post/b", current_cost=1001}
+              ├─   0.355933s   0ms DEBUG Exploring edge Post/b -(🔑🧩{id})- Post/b
+              ├─   0.355953s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.355960s   0ms DEBUG Exploring edge Post/b -(🔑🧩{id})- Post/a
+              ├─   0.355978s   0ms DEBUG Ignoring, graph is excluded and already visited (current: a, visited: {"a"})
+              ├─   0.355991s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.355998s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.356018s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(6)" }], [])))
+          ┌─┘
+          ├─   0.356043s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(6)" }], [])))
+        ┌─┘
+        ├─   0.356057s   0ms DEBUG Paths for id
+        ├─   0.356067s   0ms DEBUG   Path root(Query) -(b)- Query/b -(bFeed)- Post/b -(id)- ID/b is valid
+        ├─   0.356074s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.356090s   0ms DEBUG path Post/b -(id)- ID/b is valid
+        ├─   0.356097s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(6)" }]))
+      ┌─┘
+      ├─   0.356112s   0ms DEBUG Advancing path to Post/b -(🔑🧩{id})- Post/a
+      └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(6)" }, root_node="Post/b"}
+        └─┐create_root_for_path_sequences{root_node="Post/b", segments_count=1}
+          ├─   0.356144s   0ms DEBUG Building root query tree node: Post/b
+          └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+            ├─   0.356160s   0ms DEBUG Processing edge: Post/b -(id)- ID/b
+            └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+            ┌─┘
+            ├─   0.356181s   0ms DEBUG No subsequent steps (leaf or end of path)
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "createdAt", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(bFeed)- Post/b -(🔑🧩{id})- Post/a", current_cost=2003}
+        ├─   0.356232s   0ms DEBUG checking edge Post/a -(createdAt)- String/a
+        └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(bFeed)- Post/b -(🔑🧩{id})- Post/a", edge="createdAt"}
+          ├─   0.356269s   0ms INFO return=Ok(Some([]))
+        ┌─┘
+        ├─   0.356295s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(bFeed)- Post/b -(🔑🧩{id})- Post/a with edge Post/a -(createdAt)- String/a
+        ├─   0.356306s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(16) --> EdgeIndex(4)" }])
+      ┌─┘
+      ├─   0.356323s   0ms DEBUG Found 1 direct paths to Post/b -(🔑🧩{id})- Post/a
+      ├─   0.356334s   0ms DEBUG Finished finding indirect paths, found total of 1
+      ├─   0.356340s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(16) --> EdgeIndex(4)" }])
+    ┌─┘
+    ├─   0.356353s   0ms DEBUG Indirect paths found: 1
+    ├─   0.356364s   0ms DEBUG advanced: root(Query) -(b)- Query/b -(bFeed)- Post/b
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="aFeed", leaf=false}
+  ├─   0.356397s   0ms DEBUG Trying to advance to: aFeed{createdAt} through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "aFeed", selections: SelectionSet { items: [SelectionItem::Field { name: "createdAt", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.356425s   0ms DEBUG checking edge Query/a -(aFeed)- Post/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="aFeed"}
+        ├─   0.356441s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.356456s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(aFeed)- Post/a
+      ├─   0.356464s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(10)" }])
+    ┌─┘
+    ├─   0.356478s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "aFeed", selections: SelectionSet { items: [SelectionItem::Field { name: "createdAt", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.356496s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.356502s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.356514s   0ms DEBUG Indirect paths found: 0
+    ├─   0.356520s   0ms DEBUG advanced: root(Query) -(a)- Query/a
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(b)- Query/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "aFeed", selections: SelectionSet { items: [SelectionItem::Field { name: "createdAt", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.356549s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.356560s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "aFeed", selections: SelectionSet { items: [SelectionItem::Field { name: "createdAt", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.356575s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.356580s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.356591s   0ms DEBUG Indirect paths found: 0
+    ├─   0.356598s   0ms WARN failed to advance: root(Query) -(b)- Query/b
+  ┌─┘
+  ├─   0.356610s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="createdAt", leaf=true}
+  ├─   0.356644s   0ms DEBUG Trying to advance to: createdAt through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(aFeed)- Post/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "createdAt", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(aFeed)- Post/a", current_cost=1001}
+      ├─   0.356667s   0ms DEBUG checking edge Post/a -(createdAt)- String/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(aFeed)- Post/a", edge="createdAt"}
+        ├─   0.356683s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.356697s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(aFeed)- Post/a with edge Post/a -(createdAt)- String/a
+      ├─   0.356705s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(4)" }])
+    ┌─┘
+    ├─   0.356719s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "createdAt", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(aFeed)- Post/a", current_cost=1001}
+      ├─   0.356738s   0ms DEBUG Exploring edge Post/a -(🔑🧩{id})- Post/b
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(aFeed)- Post/a", edge="id"}
+        ├─   0.356773s   0ms DEBUG checking requirements {id} for edge 'Post/a -(🔑🧩{id})- Post/b'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(aFeed)- Post/a", current_cost=1001}
+              ├─   0.356815s   0ms DEBUG checking edge Post/a -(id)- ID/a
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(aFeed)- Post/a", edge="id"}
+                ├─   0.356836s   0ms INFO return=Ok(Some([]))
+              ┌─┘
+              ├─   0.356920s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(aFeed)- Post/a with edge Post/a -(id)- ID/a
+              ├─   0.356945s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(3)" }])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(aFeed)- Post/a", current_cost=1001}
+              ├─   0.356991s   0ms DEBUG Exploring edge Post/a -(🔑🧩{id})- Post/b
+              ├─   0.356999s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+              ├─   0.357008s   0ms DEBUG Exploring edge Post/a -(🔑🧩{id})- Post/a
+              ├─   0.357015s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.357023s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.357029s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.357045s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(3)" }], [])))
+          ┌─┘
+          ├─   0.357061s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(3)" }], [])))
+        ┌─┘
+        ├─   0.357075s   0ms DEBUG Paths for id
+        ├─   0.357083s   0ms DEBUG   Path root(Query) -(a)- Query/a -(aFeed)- Post/a -(id)- ID/a is valid
+        ├─   0.357089s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.357101s   0ms DEBUG path Post/a -(id)- ID/a is valid
+        ├─   0.357107s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(3)" }]))
+      ┌─┘
+      ├─   0.357121s   0ms DEBUG Advancing path to Post/a -(🔑🧩{id})- Post/b
+      └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(3)" }, root_node="Post/a"}
+        └─┐create_root_for_path_sequences{root_node="Post/a", segments_count=1}
+          ├─   0.357146s   0ms DEBUG Building root query tree node: Post/a
+          └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+            ├─   0.357161s   0ms DEBUG Processing edge: Post/a -(id)- ID/a
+            └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+            ┌─┘
+            ├─   0.357182s   0ms DEBUG No subsequent steps (leaf or end of path)
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "createdAt", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(aFeed)- Post/a -(🔑🧩{id})- Post/b", current_cost=2003}
+        ├─   0.357227s   0ms DEBUG checking edge Post/b -(createdAt)- String/b
+        └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(aFeed)- Post/a -(🔑🧩{id})- Post/b", edge="createdAt"}
+          ├─   0.357245s   0ms INFO return=Ok(Some([]))
+        ┌─┘
+        ├─   0.357261s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(aFeed)- Post/a -(🔑🧩{id})- Post/b with edge Post/b -(createdAt)- String/b
+        ├─   0.357270s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(15) --> EdgeIndex(7)" }])
+      ┌─┘
+      ├─   0.357285s   0ms DEBUG Found 1 direct paths to Post/a -(🔑🧩{id})- Post/b
+      ├─   0.357293s   0ms DEBUG Exploring edge Post/a -(🔑🧩{id})- Post/a
+      ├─   0.357299s   0ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.357306s   0ms DEBUG Finished finding indirect paths, found total of 1
+      ├─   0.357311s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(15) --> EdgeIndex(7)" }])
+    ┌─┘
+    ├─   0.357325s   0ms DEBUG Indirect paths found: 1
+    ├─   0.357334s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(aFeed)- Post/a
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(7)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.357376s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.357388s   0ms DEBUG Processing edge: root(Query) -(b)- Query/b
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.357400s   0ms DEBUG Processing edge: Query/b -(bFeed)- Post/b
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.357412s   0ms DEBUG Processing edge: Post/b -(createdAt)- String/b
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.357431s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.357442s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.357453s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(4)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.357486s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.357498s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.357512s   0ms DEBUG Processing edge: Query/a -(aFeed)- Post/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.357524s   0ms DEBUG Processing edge: Post/a -(createdAt)- String/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.357543s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.357554s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.357564s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=2}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=2}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=2, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="b", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="bFeed", leaf=false, list=true, response_path="", fetch_path=""}
+          ├─   0.357706s   0ms DEBUG adding output field 'bFeed' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Post", field="createdAt", leaf=true, list=false, response_path="bFeed.@", fetch_path="bFeed.@"}
+              ├─   0.357756s   0ms DEBUG adding output field 'createdAt' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+    └─┐process_subgraph_entrypoint_edge{subgraph="a", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=2}
+      ┌─┘
+      └─┐connect{parent=0, child=2}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=2}
+        └─┐process_plain_field_edge{parent_fetch_step_index=2, type_name="Query", field="aFeed", leaf=false, list=true, response_path="", fetch_path=""}
+          ├─   0.357863s   0ms DEBUG adding output field 'aFeed' to fetch step [2]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=2}
+            └─┐process_plain_field_edge{parent_fetch_step_index=2, type_name="Post", field="createdAt", leaf=true, list=false, response_path="aFeed.@", fetch_path="aFeed.@"}
+              ├─   0.357887s   0ms DEBUG adding output field 'createdAt' to fetch step [2]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=2}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.357966s   0ms DEBUG Done
+├─   0.357973s   0ms DEBUG found roots
+├─   0.357978s   0ms DEBUG print graph
+├─   0.357983s   0ms DEBUG Nodes:
+│ [1] Query/b {} → {bFeed{createdAt}} at $.
+│ [2] Query/a {} → {aFeed{createdAt}} at $.
+│ 
+│ Tree:
+│ [2]
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐ParallelNode::execute{data=Null, representations=[]}
+  └─┐FetchNode::execute{data=Null, representations=[]}
+    └─┐execute{subgraph_name="a"}
+      └─┐execute{subgraph_name="a"}
+        ├─   0.358453s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+  └─┐FetchNode::execute{data=Null, representations=[]}
+    └─┐execute{subgraph_name="b"}
+      └─┐execute{subgraph_name="b"}
+        ├─   0.358652s   0ms DEBUG starting new connection: http://localhost:4200/
+        ├─   0.359021s   0ms DEBUG connecting to 127.0.0.1:4200
+        ├─   0.359330s   0ms DEBUG connected to 127.0.0.1:4200
+        ├─   0.360761s   2ms DEBUG pooling idle connection for ("http", localhost:4200)
+      ┌─┘
+    ┌─┘
+  ┌─┘
+        ├─   0.364307s   5ms DEBUG pooling idle connection for ("http", localhost:4200)
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.364553s DEBUG execution result: ExecutionResult { data: Some(Object {"aFeed": Array [Object {"createdAt": String("p2-createdAt")}], "bFeed": Array [Object {"createdAt": String("p1-createdAt")}]}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Parallel"), "nodes": Array [Object {"kind": String("Fetch"), "serviceName": String("a"), "operationKind": String("query"), "operation": String("{aFeed{createdAt}}")}, Object {"kind": String("Fetch"), "serviceName": String("b"), "operationKind": String("query"), "operation": String("{bFeed{createdAt}}")}]}}}) }

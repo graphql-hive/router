@@ -1,0 +1,125 @@
+generating supergraph file for test...
+running gateway...
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running `target/debug/gateway audits/fed-audit-supergraph.graphql`
+┐new_supergraph_state{}
+└─┐build_map{}
+  └─┐build_object_type{name="Book"}
+    └─┐build_fields{fields_count=2}
+    ┌─┘
+  ┌─┘
+  └─┐build_scalar_type{name="join__FieldSet"}
+  ┌─┘
+  └─┐build_enum_type{name="join__Graph"}
+  ┌─┘
+  └─┐build_scalar_type{name="link__Import"}
+  ┌─┘
+  └─┐build_enum_type{name="link__Purpose"}
+  ┌─┘
+  └─┐build_union_type{name="Media"}
+  ┌─┘
+  └─┐build_object_type{name="Movie"}
+    └─┐build_fields{fields_count=2}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Query"}
+    └─┐build_fields{fields_count=1}
+    ┌─┘
+  ┌─┘
+┌─┘
+└─┐decompose_from_supergraph{graph_id="C"}
+┌─┘
+└─┐decompose_from_supergraph{graph_id="A"}
+┌─┘
+└─┐decompose_from_supergraph{graph_id="B"}
+┌─┘
+┘
+┐graph_from_supergraph_state{}
+└─┐build_graph{}
+  ├─   0.006614s   0ms DEBUG Building graph for supergraph with 16 definitions
+  └─┐build_root_nodes{}
+    ├─   0.006679s   0ms DEBUG added root type for queries: Query
+  ┌─┘
+  └─┐link_root_edges{}
+  ┌─┘
+  └─┐build_field_edges{}
+    ├─   0.006742s   0ms INFO [x] Creating owned field move edge 'Book.__typename/A' (type: String)
+    ├─   0.006756s   0ms INFO [ ] Field 'Book.title/A' does is not available in the subgraph, skipping edge creation (type: String)
+    ├─   0.006764s   0ms INFO [x] Creating field move edge 'Book.id/A' (type: ID)
+    ├─   0.006772s   0ms INFO [x] Creating field move edge 'Book.id/A' (type: ID)
+    ├─   0.006779s   0ms INFO [x] Creating owned field move edge 'Book.__typename/B' (type: String)
+    ├─   0.006789s   0ms INFO [ ] Field 'Book.title/B' is external, skipping edge creation
+    ├─   0.006795s   0ms INFO [x] Creating field move edge 'Book.id/B' (type: ID)
+    ├─   0.006801s   0ms INFO [x] Creating field move edge 'Book.id/B' (type: ID)
+    ├─   0.006807s   0ms INFO [x] Creating owned field move edge 'Book.__typename/C' (type: String)
+    ├─   0.006815s   0ms INFO [x] Creating field move edge 'Book.title/C' (type: String)
+    ├─   0.006821s   0ms INFO [x] Creating field move edge 'Book.title/C' (type: String)
+    ├─   0.006828s   0ms INFO [x] Creating field move edge 'Book.id/C' (type: ID)
+    ├─   0.006834s   0ms INFO [x] Creating field move edge 'Book.id/C' (type: ID)
+    ├─   0.006840s   0ms INFO [x] Creating owned field move edge 'Media.__typename/A' (type: String)
+    ├─   0.006848s   0ms INFO [x] Creating owned field move edge 'Media.__typename/B' (type: String)
+    ├─   0.006856s   0ms INFO [x] Creating owned field move edge 'Movie.__typename/A' (type: String)
+    ├─   0.006866s   0ms INFO [ ] Field 'Movie.title/A' does is not available in the subgraph, skipping edge creation (type: String)
+    ├─   0.006871s   0ms INFO [x] Creating field move edge 'Movie.id/A' (type: ID)
+    ├─   0.006877s   0ms INFO [x] Creating field move edge 'Movie.id/A' (type: ID)
+    ├─   0.006883s   0ms INFO [x] Creating owned field move edge 'Movie.__typename/B' (type: String)
+    ├─   0.006890s   0ms INFO [ ] Field 'Movie.title/B' does is not available in the subgraph, skipping edge creation (type: String)
+    ├─   0.006895s   0ms INFO [x] Creating field move edge 'Movie.id/B' (type: ID)
+    ├─   0.006901s   0ms INFO [x] Creating field move edge 'Movie.id/B' (type: ID)
+    ├─   0.006906s   0ms INFO [x] Creating owned field move edge 'Movie.__typename/C' (type: String)
+    ├─   0.006914s   0ms INFO [x] Creating field move edge 'Movie.title/C' (type: String)
+    ├─   0.006920s   0ms INFO [x] Creating field move edge 'Movie.title/C' (type: String)
+    ├─   0.006926s   0ms INFO [x] Creating field move edge 'Movie.id/C' (type: ID)
+    ├─   0.006932s   0ms INFO [x] Creating field move edge 'Movie.id/C' (type: ID)
+    ├─   0.006938s   0ms INFO [x] Creating owned field move edge 'Query.__typename/A' (type: String)
+    ├─   0.006963s   0ms INFO Handling a field Query.media/A resolving a union type Media
+    ├─   0.006977s   0ms INFO   [x] Creating field move edge 'Query.__typename/A' (type: String)
+    ├─   0.006983s   0ms INFO   [x] Creating field move edge 'Query.media/A' (type: String)
+    ├─   0.006989s   0ms INFO   [x] Creating abstract move edge for 'Query.media/A' (union member: Book)
+    ├─   0.006997s   0ms INFO   [x] Creating field move edge 'Query.__typename/A' (type: String)
+    ├─   0.007002s   0ms INFO   [x] Creating field move edge 'Query.media/A' (type: String)
+    ├─   0.007008s   0ms INFO   [x] Creating abstract move edge for 'Query.media/A' (union member: Movie)
+    ├─   0.007013s   0ms INFO [x] Creating owned field move edge 'Query.__typename/B' (type: String)
+    ├─   0.007027s   0ms INFO Handling a field Query.media/B resolving a union type Media
+    ├─   0.007034s   0ms INFO   [x] Creating field move edge 'Query.__typename/B' (type: String)
+    ├─   0.007039s   0ms INFO   [x] Creating field move edge 'Query.media/B' (type: String)
+    ├─   0.007044s   0ms INFO   [x] Creating abstract move edge for 'Query.media/B' (union member: Book)
+    ├─   0.007051s   0ms INFO   [x] Creating field move edge 'Query.__typename/B' (type: String)
+    ├─   0.007056s   0ms INFO   [x] Creating field move edge 'Query.media/B' (type: String)
+    ├─   0.007061s   0ms INFO   [x] Creating abstract move edge for 'Query.media/B' (union member: Movie)
+    ├─   0.007067s   0ms INFO [x] Creating owned field move edge 'Query.__typename/C' (type: String)
+    ├─   0.007074s   0ms INFO [ ] Field 'Query.media/C' does is not available in the subgraph, skipping edge creation (type: Media)
+  ┌─┘
+  └─┐build_interface_implementation_edges{}
+  ┌─┘
+  └─┐build_entity_reference_edges{}
+    ├─   0.007183s   0ms INFO Creating self-referencing entity move edge in 'Book/A' via key 'id'
+    ├─   0.007261s   0ms INFO Creating entity move edge from 'Book/A' to 'Book/B' via key 'id'
+    ├─   0.007334s   0ms INFO Creating entity move edge from 'Book/A' to 'Book/C' via key 'id'
+    ├─   0.007405s   0ms INFO Creating entity move edge from 'Book/B' to 'Book/A' via key 'id'
+    ├─   0.007474s   0ms INFO Creating self-referencing entity move edge in 'Book/B' via key 'id'
+    ├─   0.007513s   0ms INFO Creating entity move edge from 'Book/B' to 'Book/C' via key 'id'
+    ├─   0.007547s   0ms INFO Creating entity move edge from 'Book/C' to 'Book/A' via key 'id'
+    ├─   0.007613s   0ms INFO Creating entity move edge from 'Book/C' to 'Book/B' via key 'id'
+    ├─   0.007681s   0ms INFO Creating self-referencing entity move edge in 'Book/C' via key 'id'
+    ├─   0.007754s   0ms INFO Creating self-referencing entity move edge in 'Movie/A' via key 'id'
+    ├─   0.007805s   0ms INFO Creating entity move edge from 'Movie/A' to 'Movie/B' via key 'id'
+    ├─   0.007845s   0ms INFO Creating entity move edge from 'Movie/A' to 'Movie/C' via key 'id'
+    ├─   0.007884s   0ms INFO Creating entity move edge from 'Movie/B' to 'Movie/A' via key 'id'
+    ├─   0.007925s   0ms INFO Creating self-referencing entity move edge in 'Movie/B' via key 'id'
+    ├─   0.007960s   0ms INFO Creating entity move edge from 'Movie/B' to 'Movie/C' via key 'id'
+    ├─   0.007997s   0ms INFO Creating entity move edge from 'Movie/C' to 'Movie/A' via key 'id'
+    ├─   0.008029s   0ms INFO Creating entity move edge from 'Movie/C' to 'Movie/B' via key 'id'
+    ├─   0.008063s   0ms INFO Creating self-referencing entity move edge in 'Movie/C' via key 'id'
+  ┌─┘
+  └─┐build_viewed_field_edges{}
+    ├─   0.008152s   0ms INFO Creating viewed (#1) link for provided field 'Query.media/"B"' (type: Media)
+    └─┐handle_viewed_selection_set{graph_id="B", view_id=1, parent_type_name="Media"}
+
+thread 'main' panicked at lib/query-planner/src/graph/mod.rs:791:22:
+not implemented: fragments are not supported in provides yet
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+    ┌─┘
+  ┌─┘
+┌─┘
+┘

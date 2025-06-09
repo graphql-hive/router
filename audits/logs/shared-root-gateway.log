@@ -1,0 +1,1727 @@
+generating supergraph file for test...
+running gateway...
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running `target/debug/gateway audits/fed-audit-supergraph.graphql`
+┐new_supergraph_state{}
+└─┐build_map{}
+  └─┐build_object_type{name="Category"}
+    └─┐build_fields{fields_count=2}
+    ┌─┘
+  ┌─┘
+  └─┐build_scalar_type{name="join__FieldSet"}
+  ┌─┘
+  └─┐build_enum_type{name="join__Graph"}
+  ┌─┘
+  └─┐build_scalar_type{name="link__Import"}
+  ┌─┘
+  └─┐build_enum_type{name="link__Purpose"}
+  ┌─┘
+  └─┐build_object_type{name="Name"}
+    └─┐build_fields{fields_count=3}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Price"}
+    └─┐build_fields{fields_count=3}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Product"}
+    └─┐build_fields{fields_count=4}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Query"}
+    └─┐build_fields{fields_count=2}
+    ┌─┘
+  ┌─┘
+┌─┘
+└─┐decompose_from_supergraph{graph_id="NAME"}
+┌─┘
+└─┐decompose_from_supergraph{graph_id="PRICE"}
+┌─┘
+└─┐decompose_from_supergraph{graph_id="CATEGORY"}
+┌─┘
+┘
+┐graph_from_supergraph_state{}
+└─┐build_graph{}
+  ├─   0.007471s   0ms DEBUG Building graph for supergraph with 17 definitions
+  └─┐build_root_nodes{}
+    ├─   0.007519s   0ms DEBUG added root type for queries: Query
+  ┌─┘
+  └─┐link_root_edges{}
+  ┌─┘
+  └─┐build_field_edges{}
+    ├─   0.007617s   0ms INFO [x] Creating owned field move edge 'Category.__typename/CATEGORY' (type: String)
+    ├─   0.007637s   0ms INFO [x] Creating field move edge 'Category.id/CATEGORY' (type: ID)
+    ├─   0.007647s   0ms INFO [x] Creating field move edge 'Category.id/CATEGORY' (type: ID)
+    ├─   0.007655s   0ms INFO [x] Creating field move edge 'Category.name/CATEGORY' (type: String)
+    ├─   0.007661s   0ms INFO [x] Creating field move edge 'Category.name/CATEGORY' (type: String)
+    ├─   0.007669s   0ms INFO [x] Creating owned field move edge 'Name.__typename/NAME' (type: String)
+    ├─   0.007680s   0ms INFO [x] Creating field move edge 'Name.id/NAME' (type: ID)
+    ├─   0.007686s   0ms INFO [x] Creating field move edge 'Name.id/NAME' (type: ID)
+    ├─   0.007692s   0ms INFO [x] Creating field move edge 'Name.model/NAME' (type: String)
+    ├─   0.007698s   0ms INFO [x] Creating field move edge 'Name.model/NAME' (type: String)
+    ├─   0.007704s   0ms INFO [x] Creating field move edge 'Name.brand/NAME' (type: String)
+    ├─   0.007710s   0ms INFO [x] Creating field move edge 'Name.brand/NAME' (type: String)
+    ├─   0.007717s   0ms INFO [x] Creating owned field move edge 'Query.__typename/CATEGORY' (type: String)
+    ├─   0.007724s   0ms INFO [x] Creating field move edge 'Query.product/CATEGORY' (type: Product)
+    ├─   0.007730s   0ms INFO [x] Creating field move edge 'Query.product/CATEGORY' (type: Product)
+    ├─   0.007736s   0ms INFO [x] Creating field move edge 'Query.products/CATEGORY' (type: Product)
+    ├─   0.007742s   0ms INFO [x] Creating field move edge 'Query.products/CATEGORY' (type: Product)
+    ├─   0.007749s   0ms INFO [x] Creating owned field move edge 'Query.__typename/NAME' (type: String)
+    ├─   0.007756s   0ms INFO [x] Creating field move edge 'Query.product/NAME' (type: Product)
+    ├─   0.007762s   0ms INFO [x] Creating field move edge 'Query.product/NAME' (type: Product)
+    ├─   0.007768s   0ms INFO [x] Creating field move edge 'Query.products/NAME' (type: Product)
+    ├─   0.007774s   0ms INFO [x] Creating field move edge 'Query.products/NAME' (type: Product)
+    ├─   0.007780s   0ms INFO [x] Creating owned field move edge 'Query.__typename/PRICE' (type: String)
+    ├─   0.007788s   0ms INFO [x] Creating field move edge 'Query.product/PRICE' (type: Product)
+    ├─   0.007795s   0ms INFO [x] Creating field move edge 'Query.product/PRICE' (type: Product)
+    ├─   0.007800s   0ms INFO [x] Creating field move edge 'Query.products/PRICE' (type: Product)
+    ├─   0.007806s   0ms INFO [x] Creating field move edge 'Query.products/PRICE' (type: Product)
+    ├─   0.007813s   0ms INFO [x] Creating owned field move edge 'Price.__typename/PRICE' (type: String)
+    ├─   0.007825s   0ms INFO [x] Creating field move edge 'Price.currency/PRICE' (type: String)
+    ├─   0.007834s   0ms INFO [x] Creating field move edge 'Price.currency/PRICE' (type: String)
+    ├─   0.007843s   0ms INFO [x] Creating field move edge 'Price.id/PRICE' (type: ID)
+    ├─   0.007852s   0ms INFO [x] Creating field move edge 'Price.id/PRICE' (type: ID)
+    ├─   0.007860s   0ms INFO [x] Creating field move edge 'Price.amount/PRICE' (type: Int)
+    ├─   0.007869s   0ms INFO [x] Creating field move edge 'Price.amount/PRICE' (type: Int)
+    ├─   0.007877s   0ms INFO [x] Creating owned field move edge 'Product.__typename/CATEGORY' (type: String)
+    ├─   0.007887s   0ms INFO [x] Creating field move edge 'Product.id/CATEGORY' (type: ID)
+    ├─   0.007895s   0ms INFO [x] Creating field move edge 'Product.id/CATEGORY' (type: ID)
+    ├─   0.007904s   0ms INFO [x] Creating field move edge 'Product.category/CATEGORY' (type: Category)
+    ├─   0.007913s   0ms INFO [x] Creating field move edge 'Product.category/CATEGORY' (type: Category)
+    ├─   0.007923s   0ms INFO [ ] Field 'Product.price/CATEGORY' does is not available in the subgraph, skipping edge creation (type: Price)
+    ├─   0.007932s   0ms INFO [ ] Field 'Product.name/CATEGORY' does is not available in the subgraph, skipping edge creation (type: Name)
+    ├─   0.007939s   0ms INFO [x] Creating owned field move edge 'Product.__typename/NAME' (type: String)
+    ├─   0.007949s   0ms INFO [x] Creating field move edge 'Product.id/NAME' (type: ID)
+    ├─   0.007962s   0ms INFO [x] Creating field move edge 'Product.id/NAME' (type: ID)
+    ├─   0.007970s   0ms INFO [ ] Field 'Product.category/NAME' does is not available in the subgraph, skipping edge creation (type: Category)
+    ├─   0.007978s   0ms INFO [ ] Field 'Product.price/NAME' does is not available in the subgraph, skipping edge creation (type: Price)
+    ├─   0.007985s   0ms INFO [x] Creating field move edge 'Product.name/NAME' (type: Name)
+    ├─   0.007994s   0ms INFO [x] Creating field move edge 'Product.name/NAME' (type: Name)
+    ├─   0.008020s   0ms INFO [x] Creating owned field move edge 'Product.__typename/PRICE' (type: String)
+    ├─   0.008034s   0ms INFO [x] Creating field move edge 'Product.id/PRICE' (type: ID)
+    ├─   0.008043s   0ms INFO [x] Creating field move edge 'Product.id/PRICE' (type: ID)
+    ├─   0.008051s   0ms INFO [ ] Field 'Product.category/PRICE' does is not available in the subgraph, skipping edge creation (type: Category)
+    ├─   0.008058s   0ms INFO [x] Creating field move edge 'Product.price/PRICE' (type: Price)
+    ├─   0.008067s   0ms INFO [x] Creating field move edge 'Product.price/PRICE' (type: Price)
+    ├─   0.008075s   0ms INFO [ ] Field 'Product.name/PRICE' does is not available in the subgraph, skipping edge creation (type: Name)
+  ┌─┘
+  └─┐build_interface_implementation_edges{}
+  ┌─┘
+  └─┐build_entity_reference_edges{}
+  ┌─┘
+  └─┐build_viewed_field_edges{}
+  ┌─┘
+┌─┘
+┘
+   0.069651s INFO Starting server on http://localhost:4000
+   0.070895s INFO starting 16 workers
+   0.070943s INFO Actix runtime found; starting in Actix runtime
+   0.070952s INFO starting service: "actix-web-service-0.0.0.0:4000", workers: 16, listening on: 0.0.0.0:4000
+   0.147941s DEBUG original document: query ping {
+  __typename
+}
+
+   0.148074s DEBUG normalized document: query ping {__typename}
+
+   0.148094s DEBUG executable operation: query ping {__typename}
+┐execute{}
+┘
+   0.148604s DEBUG execution result: ExecutionResult { data: Some(Object {"__typename": String("Query")}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan")}}) }
+   0.240374s DEBUG original document: query {
+  product {
+    id
+    name {
+      id
+      brand
+      model
+    }
+    category {
+      id
+      name
+    }
+    price {
+      id
+      amount
+      currency
+    }
+  }
+}
+
+   0.240534s DEBUG normalized document: query{product{id name{id brand model} category{id name} price{id amount currency}}}
+
+   0.240552s DEBUG executable operation: query{product{id name{id brand model} category{id name} price{id amount currency}}}
+┐walk_operation{}
+├─   0.241109s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="product", leaf=false}
+  ├─   0.241187s   0ms DEBUG Trying to advance to: product{id name{id brand model} category{id name} price{id amount currency}} through 3 possible paths
+  └─┐explore_path{path="root(Query) -(category)- Query/category"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "product", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category", current_cost=1000}
+      ├─   0.241268s   0ms DEBUG checking edge Query/category -(product)- Product/category
+      └─┐can_satisfy_edge{path="root(Query) -(category)- Query/category", edge="product"}
+        ├─   0.241294s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.241321s   0ms DEBUG Advancing path root(Query) -(category)- Query/category with edge Query/category -(product)- Product/category
+      ├─   0.241334s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(11)" }])
+    ┌─┘
+    ├─   0.241371s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "product", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category", current_cost=1000}
+      ├─   0.241422s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.241429s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.241442s   0ms DEBUG Indirect paths found: 0
+    ├─   0.241450s   0ms DEBUG advanced: root(Query) -(category)- Query/category
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(name)- Query/name"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "product", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name", current_cost=1000}
+      ├─   0.241484s   0ms DEBUG checking edge Query/name -(product)- Product/name
+      └─┐can_satisfy_edge{path="root(Query) -(name)- Query/name", edge="product"}
+        ├─   0.241500s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.241514s   0ms DEBUG Advancing path root(Query) -(name)- Query/name with edge Query/name -(product)- Product/name
+      ├─   0.241523s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(1) --> EdgeIndex(14)" }])
+    ┌─┘
+    ├─   0.241537s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "product", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name", current_cost=1000}
+      ├─   0.241559s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.241565s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.241576s   0ms DEBUG Indirect paths found: 0
+    ├─   0.241582s   0ms DEBUG advanced: root(Query) -(name)- Query/name
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(price)- Query/price"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "product", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price", current_cost=1000}
+      ├─   0.241662s   0ms DEBUG checking edge Query/price -(product)- Product/price
+      └─┐can_satisfy_edge{path="root(Query) -(price)- Query/price", edge="product"}
+        ├─   0.241683s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.241700s   0ms DEBUG Advancing path root(Query) -(price)- Query/price with edge Query/price -(product)- Product/price
+      ├─   0.241708s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(2) --> EdgeIndex(17)" }])
+    ┌─┘
+    ├─   0.241722s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "product", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price", current_cost=1000}
+      ├─   0.241745s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.241751s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.241762s   0ms DEBUG Indirect paths found: 0
+    ├─   0.241769s   0ms DEBUG advanced: root(Query) -(price)- Query/price
+  ┌─┘
+  ├─   0.241785s   0ms DEBUG Found 3 paths
+┌─┘
+└─┐process_field{field_name="price", leaf=false}
+  ├─   0.241808s   0ms DEBUG Trying to advance to: price{id amount currency} through 3 possible paths
+  └─┐explore_path{path="root(Query) -(category)- Query/category -(product)- Product/category"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(product)- Product/category", current_cost=1001}
+      ├─   0.241838s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.241850s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(product)- Product/category", current_cost=1001}
+      ├─   0.241871s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.241876s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.241887s   0ms DEBUG Indirect paths found: 0
+    ├─   0.241896s   0ms WARN failed to advance: root(Query) -(category)- Query/category -(product)- Product/category
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(name)- Query/name -(product)- Product/name"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(product)- Product/name", current_cost=1001}
+      ├─   0.241933s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.241944s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(product)- Product/name", current_cost=1001}
+      ├─   0.241961s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.241966s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.241977s   0ms DEBUG Indirect paths found: 0
+    ├─   0.241984s   0ms WARN failed to advance: root(Query) -(name)- Query/name -(product)- Product/name
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(price)- Query/price -(product)- Product/price"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(product)- Product/price", current_cost=1001}
+      ├─   0.242015s   0ms DEBUG checking edge Product/price -(price)- Price/price
+      └─┐can_satisfy_edge{path="root(Query) -(price)- Query/price -(product)- Product/price", edge="price"}
+        ├─   0.242031s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.242045s   0ms DEBUG Advancing path root(Query) -(price)- Query/price -(product)- Product/price with edge Product/price -(price)- Price/price
+      ├─   0.242053s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(2) --> EdgeIndex(17) --> EdgeIndex(31)" }])
+    ┌─┘
+    ├─   0.242066s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(product)- Product/price", current_cost=1001}
+      ├─   0.242085s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.242090s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.242101s   0ms DEBUG Indirect paths found: 0
+    ├─   0.242108s   0ms DEBUG advanced: root(Query) -(price)- Query/price -(product)- Product/price
+  ┌─┘
+  ├─   0.242120s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="currency", leaf=true}
+  ├─   0.242142s   0ms DEBUG Trying to advance to: currency through 1 possible paths
+  └─┐explore_path{path="root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "currency", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price", current_cost=1002}
+      ├─   0.242198s   0ms DEBUG checking edge Price/price -(currency)- String/price
+      └─┐can_satisfy_edge{path="root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price", edge="currency"}
+        ├─   0.242218s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.242236s   0ms DEBUG Advancing path root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price with edge Price/price -(currency)- String/price
+      ├─   0.242263s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(2) --> EdgeIndex(17) --> EdgeIndex(31) --> EdgeIndex(20)" }])
+    ┌─┘
+    ├─   0.242285s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "currency", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price", current_cost=1002}
+      ├─   0.242311s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.242317s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.242328s   0ms DEBUG Indirect paths found: 0
+    ├─   0.242338s   0ms DEBUG advanced: root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="amount", leaf=true}
+  ├─   0.242365s   0ms DEBUG Trying to advance to: amount through 1 possible paths
+  └─┐explore_path{path="root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "amount", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price", current_cost=1002}
+      ├─   0.242391s   0ms DEBUG checking edge Price/price -(amount)- Int/price
+      └─┐can_satisfy_edge{path="root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price", edge="amount"}
+        ├─   0.242408s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.242423s   0ms DEBUG Advancing path root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price with edge Price/price -(amount)- Int/price
+      ├─   0.242432s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(2) --> EdgeIndex(17) --> EdgeIndex(31) --> EdgeIndex(22)" }])
+    ┌─┘
+    ├─   0.242446s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "amount", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price", current_cost=1002}
+      ├─   0.242465s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.242471s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.242482s   0ms DEBUG Indirect paths found: 0
+    ├─   0.242489s   0ms DEBUG advanced: root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="id", leaf=true}
+  ├─   0.242514s   0ms DEBUG Trying to advance to: id through 1 possible paths
+  └─┐explore_path{path="root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price", current_cost=1002}
+      ├─   0.242541s   0ms DEBUG checking edge Price/price -(id)- ID/price
+      └─┐can_satisfy_edge{path="root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price", edge="id"}
+        ├─   0.242557s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.242571s   0ms DEBUG Advancing path root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price with edge Price/price -(id)- ID/price
+      ├─   0.242579s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(2) --> EdgeIndex(17) --> EdgeIndex(31) --> EdgeIndex(21)" }])
+    ┌─┘
+    ├─   0.242593s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price", current_cost=1002}
+      ├─   0.242630s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.242639s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.242655s   0ms DEBUG Indirect paths found: 0
+    ├─   0.242666s   0ms DEBUG advanced: root(Query) -(price)- Query/price -(product)- Product/price -(price)- Price/price
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="category", leaf=false}
+  ├─   0.242696s   0ms DEBUG Trying to advance to: category{id name} through 3 possible paths
+  └─┐explore_path{path="root(Query) -(category)- Query/category -(product)- Product/category"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(product)- Product/category", current_cost=1001}
+      ├─   0.242724s   0ms DEBUG checking edge Product/category -(category)- Category/category
+      └─┐can_satisfy_edge{path="root(Query) -(category)- Query/category -(product)- Product/category", edge="category"}
+        ├─   0.242740s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.242756s   0ms DEBUG Advancing path root(Query) -(category)- Query/category -(product)- Product/category with edge Product/category -(category)- Category/category
+      ├─   0.242764s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(11) --> EdgeIndex(25)" }])
+    ┌─┘
+    ├─   0.242778s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(product)- Product/category", current_cost=1001}
+      ├─   0.242797s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.242804s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.242815s   0ms DEBUG Indirect paths found: 0
+    ├─   0.242822s   0ms DEBUG advanced: root(Query) -(category)- Query/category -(product)- Product/category
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(name)- Query/name -(product)- Product/name"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(product)- Product/name", current_cost=1001}
+      ├─   0.242850s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.242861s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(product)- Product/name", current_cost=1001}
+      ├─   0.242877s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.242883s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.242894s   0ms DEBUG Indirect paths found: 0
+    ├─   0.242901s   0ms WARN failed to advance: root(Query) -(name)- Query/name -(product)- Product/name
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(price)- Query/price -(product)- Product/price"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(product)- Product/price", current_cost=1001}
+      ├─   0.242933s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.242945s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(product)- Product/price", current_cost=1001}
+      ├─   0.242962s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.242968s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.242979s   0ms DEBUG Indirect paths found: 0
+    ├─   0.242986s   0ms WARN failed to advance: root(Query) -(price)- Query/price -(product)- Product/price
+  ┌─┘
+  ├─   0.242997s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="name", leaf=true}
+  ├─   0.243016s   0ms DEBUG Trying to advance to: name through 1 possible paths
+  └─┐explore_path{path="root(Query) -(category)- Query/category -(product)- Product/category -(category)- Category/category"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(product)- Product/category -(category)- Category/category", current_cost=1002}
+      ├─   0.243042s   0ms DEBUG checking edge Category/category -(name)- String/category
+      └─┐can_satisfy_edge{path="root(Query) -(category)- Query/category -(product)- Product/category -(category)- Category/category", edge="name"}
+        ├─   0.243059s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.243075s   0ms DEBUG Advancing path root(Query) -(category)- Query/category -(product)- Product/category -(category)- Category/category with edge Category/category -(name)- String/category
+      ├─   0.243083s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(11) --> EdgeIndex(25) --> EdgeIndex(5)" }])
+    ┌─┘
+    ├─   0.243097s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(product)- Product/category -(category)- Category/category", current_cost=1002}
+      ├─   0.243115s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.243121s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.243133s   0ms DEBUG Indirect paths found: 0
+    ├─   0.243140s   0ms DEBUG advanced: root(Query) -(category)- Query/category -(product)- Product/category -(category)- Category/category
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="id", leaf=true}
+  ├─   0.243165s   0ms DEBUG Trying to advance to: id through 1 possible paths
+  └─┐explore_path{path="root(Query) -(category)- Query/category -(product)- Product/category -(category)- Category/category"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(product)- Product/category -(category)- Category/category", current_cost=1002}
+      ├─   0.243190s   0ms DEBUG checking edge Category/category -(id)- ID/category
+      └─┐can_satisfy_edge{path="root(Query) -(category)- Query/category -(product)- Product/category -(category)- Category/category", edge="id"}
+        ├─   0.243208s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.243223s   0ms DEBUG Advancing path root(Query) -(category)- Query/category -(product)- Product/category -(category)- Category/category with edge Category/category -(id)- ID/category
+      ├─   0.243231s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(11) --> EdgeIndex(25) --> EdgeIndex(4)" }])
+    ┌─┘
+    ├─   0.243245s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(product)- Product/category -(category)- Category/category", current_cost=1002}
+      ├─   0.243264s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.243270s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.243281s   0ms DEBUG Indirect paths found: 0
+    ├─   0.243288s   0ms DEBUG advanced: root(Query) -(category)- Query/category -(product)- Product/category -(category)- Category/category
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="name", leaf=false}
+  ├─   0.243313s   0ms DEBUG Trying to advance to: name{id brand model} through 3 possible paths
+  └─┐explore_path{path="root(Query) -(category)- Query/category -(product)- Product/category"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(product)- Product/category", current_cost=1001}
+      ├─   0.243340s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.243351s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(product)- Product/category", current_cost=1001}
+      ├─   0.243373s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.243378s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.243390s   0ms DEBUG Indirect paths found: 0
+    ├─   0.243397s   0ms WARN failed to advance: root(Query) -(category)- Query/category -(product)- Product/category
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(name)- Query/name -(product)- Product/name"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(product)- Product/name", current_cost=1001}
+      ├─   0.243427s   0ms DEBUG checking edge Product/name -(name)- Name/name
+      └─┐can_satisfy_edge{path="root(Query) -(name)- Query/name -(product)- Product/name", edge="name"}
+        ├─   0.243444s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.243458s   0ms DEBUG Advancing path root(Query) -(name)- Query/name -(product)- Product/name with edge Product/name -(name)- Name/name
+      ├─   0.243465s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(14) --> EdgeIndex(28)" }])
+    ┌─┘
+    ├─   0.243479s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(product)- Product/name", current_cost=1001}
+      ├─   0.243499s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.243504s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.243516s   0ms DEBUG Indirect paths found: 0
+    ├─   0.243523s   0ms DEBUG advanced: root(Query) -(name)- Query/name -(product)- Product/name
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(price)- Query/price -(product)- Product/price"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(product)- Product/price", current_cost=1001}
+      ├─   0.243553s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.243566s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(product)- Product/price", current_cost=1001}
+      ├─   0.243583s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.243589s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.243600s   0ms DEBUG Indirect paths found: 0
+    ├─   0.243607s   0ms WARN failed to advance: root(Query) -(price)- Query/price -(product)- Product/price
+  ┌─┘
+  ├─   0.243619s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="model", leaf=true}
+  ├─   0.243638s   0ms DEBUG Trying to advance to: model through 1 possible paths
+  └─┐explore_path{path="root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "model", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name", current_cost=1002}
+      ├─   0.243664s   0ms DEBUG checking edge Name/name -(model)- String/name
+      └─┐can_satisfy_edge{path="root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name", edge="model"}
+        ├─   0.243682s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.243697s   0ms DEBUG Advancing path root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name with edge Name/name -(model)- String/name
+      ├─   0.243706s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(1) --> EdgeIndex(14) --> EdgeIndex(28) --> EdgeIndex(8)" }])
+    ┌─┘
+    ├─   0.243720s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "model", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name", current_cost=1002}
+      ├─   0.243739s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.243745s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.243756s   0ms DEBUG Indirect paths found: 0
+    ├─   0.243778s   0ms DEBUG advanced: root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="brand", leaf=true}
+  ├─   0.243825s   0ms DEBUG Trying to advance to: brand through 1 possible paths
+  └─┐explore_path{path="root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "brand", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name", current_cost=1002}
+      ├─   0.243853s   0ms DEBUG checking edge Name/name -(brand)- String/name
+      └─┐can_satisfy_edge{path="root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name", edge="brand"}
+        ├─   0.243870s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.243885s   0ms DEBUG Advancing path root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name with edge Name/name -(brand)- String/name
+      ├─   0.243894s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(1) --> EdgeIndex(14) --> EdgeIndex(28) --> EdgeIndex(9)" }])
+    ┌─┘
+    ├─   0.243908s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "brand", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name", current_cost=1002}
+      ├─   0.243927s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.243933s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.243944s   0ms DEBUG Indirect paths found: 0
+    ├─   0.243951s   0ms DEBUG advanced: root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="id", leaf=true}
+  ├─   0.243975s   0ms DEBUG Trying to advance to: id through 1 possible paths
+  └─┐explore_path{path="root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name", current_cost=1002}
+      ├─   0.244000s   0ms DEBUG checking edge Name/name -(id)- ID/name
+      └─┐can_satisfy_edge{path="root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name", edge="id"}
+        ├─   0.244016s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.244030s   0ms DEBUG Advancing path root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name with edge Name/name -(id)- ID/name
+      ├─   0.244038s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(1) --> EdgeIndex(14) --> EdgeIndex(28) --> EdgeIndex(7)" }])
+    ┌─┘
+    ├─   0.244052s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name", current_cost=1002}
+      ├─   0.244070s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.244075s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.244086s   0ms DEBUG Indirect paths found: 0
+    ├─   0.244093s   0ms DEBUG advanced: root(Query) -(name)- Query/name -(product)- Product/name -(name)- Name/name
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="id", leaf=true}
+  ├─   0.244118s   0ms DEBUG Trying to advance to: id through 3 possible paths
+  └─┐explore_path{path="root(Query) -(category)- Query/category -(product)- Product/category"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(product)- Product/category", current_cost=1001}
+      ├─   0.244142s   0ms DEBUG checking edge Product/category -(id)- ID/category
+      └─┐can_satisfy_edge{path="root(Query) -(category)- Query/category -(product)- Product/category", edge="id"}
+        ├─   0.244158s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.244172s   0ms DEBUG Advancing path root(Query) -(category)- Query/category -(product)- Product/category with edge Product/category -(id)- ID/category
+      ├─   0.244179s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(11) --> EdgeIndex(24)" }])
+    ┌─┘
+    ├─   0.244193s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(product)- Product/category", current_cost=1001}
+      ├─   0.244212s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.244217s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.244228s   0ms DEBUG Indirect paths found: 0
+    ├─   0.244235s   0ms DEBUG advanced: root(Query) -(category)- Query/category -(product)- Product/category
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(name)- Query/name -(product)- Product/name"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(product)- Product/name", current_cost=1001}
+      ├─   0.244288s   0ms DEBUG checking edge Product/name -(id)- ID/name
+      └─┐can_satisfy_edge{path="root(Query) -(name)- Query/name -(product)- Product/name", edge="id"}
+        ├─   0.244306s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.244325s   0ms DEBUG Advancing path root(Query) -(name)- Query/name -(product)- Product/name with edge Product/name -(id)- ID/name
+      ├─   0.244333s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(14) --> EdgeIndex(27)" }])
+    ┌─┘
+    ├─   0.244347s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(product)- Product/name", current_cost=1001}
+      ├─   0.244367s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.244373s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.244384s   0ms DEBUG Indirect paths found: 0
+    ├─   0.244392s   0ms DEBUG advanced: root(Query) -(name)- Query/name -(product)- Product/name
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(price)- Query/price -(product)- Product/price"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(product)- Product/price", current_cost=1001}
+      ├─   0.244425s   0ms DEBUG checking edge Product/price -(id)- ID/price
+      └─┐can_satisfy_edge{path="root(Query) -(price)- Query/price -(product)- Product/price", edge="id"}
+        ├─   0.244440s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.244454s   0ms DEBUG Advancing path root(Query) -(price)- Query/price -(product)- Product/price with edge Product/price -(id)- ID/price
+      ├─   0.244461s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(2) --> EdgeIndex(17) --> EdgeIndex(30)" }])
+    ┌─┘
+    ├─   0.244477s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(product)- Product/price", current_cost=1001}
+      ├─   0.244507s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.244532s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.244557s   0ms DEBUG Indirect paths found: 0
+    ├─   0.244570s   0ms DEBUG advanced: root(Query) -(price)- Query/price -(product)- Product/price
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(2) --> EdgeIndex(17) --> EdgeIndex(31) --> EdgeIndex(20)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.244652s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.244670s   0ms DEBUG Processing edge: root(Query) -(price)- Query/price
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.244684s   0ms DEBUG Processing edge: Query/price -(product)- Product/price
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.244697s   0ms DEBUG Processing edge: Product/price -(price)- Price/price
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.244711s   0ms DEBUG Processing edge: Price/price -(currency)- String/price
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.244736s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.244749s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.244760s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.244771s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(2) --> EdgeIndex(17) --> EdgeIndex(31) --> EdgeIndex(22)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.244808s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.244820s   0ms DEBUG Processing edge: root(Query) -(price)- Query/price
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.244831s   0ms DEBUG Processing edge: Query/price -(product)- Product/price
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.244843s   0ms DEBUG Processing edge: Product/price -(price)- Price/price
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.244855s   0ms DEBUG Processing edge: Price/price -(amount)- Int/price
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.244874s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.244886s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.244897s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.244907s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(2) --> EdgeIndex(17) --> EdgeIndex(31) --> EdgeIndex(21)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.244940s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.244952s   0ms DEBUG Processing edge: root(Query) -(price)- Query/price
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.244963s   0ms DEBUG Processing edge: Query/price -(product)- Product/price
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.244975s   0ms DEBUG Processing edge: Product/price -(price)- Price/price
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.244987s   0ms DEBUG Processing edge: Price/price -(id)- ID/price
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.245006s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.245017s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.245031s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.245041s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(11) --> EdgeIndex(25) --> EdgeIndex(5)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.245075s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.245086s   0ms DEBUG Processing edge: root(Query) -(category)- Query/category
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.245097s   0ms DEBUG Processing edge: Query/category -(product)- Product/category
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.245109s   0ms DEBUG Processing edge: Product/category -(category)- Category/category
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.245122s   0ms DEBUG Processing edge: Category/category -(name)- String/category
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.245141s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.245152s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.245163s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.245174s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(11) --> EdgeIndex(25) --> EdgeIndex(4)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.245206s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.245217s   0ms DEBUG Processing edge: root(Query) -(category)- Query/category
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.245229s   0ms DEBUG Processing edge: Query/category -(product)- Product/category
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.245240s   0ms DEBUG Processing edge: Product/category -(category)- Category/category
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.245253s   0ms DEBUG Processing edge: Category/category -(id)- ID/category
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.245271s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.245283s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.245294s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.245304s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(1) --> EdgeIndex(14) --> EdgeIndex(28) --> EdgeIndex(8)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.245336s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.245348s   0ms DEBUG Processing edge: root(Query) -(name)- Query/name
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.245360s   0ms DEBUG Processing edge: Query/name -(product)- Product/name
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.245371s   0ms DEBUG Processing edge: Product/name -(name)- Name/name
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.245384s   0ms DEBUG Processing edge: Name/name -(model)- String/name
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.245404s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.245416s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.245426s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.245437s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(1) --> EdgeIndex(14) --> EdgeIndex(28) --> EdgeIndex(9)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.245473s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.245484s   0ms DEBUG Processing edge: root(Query) -(name)- Query/name
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.245495s   0ms DEBUG Processing edge: Query/name -(product)- Product/name
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.245507s   0ms DEBUG Processing edge: Product/name -(name)- Name/name
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.245519s   0ms DEBUG Processing edge: Name/name -(brand)- String/name
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.245539s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.245550s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.245561s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.245571s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(1) --> EdgeIndex(14) --> EdgeIndex(28) --> EdgeIndex(7)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.245604s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.245615s   0ms DEBUG Processing edge: root(Query) -(name)- Query/name
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.245627s   0ms DEBUG Processing edge: Query/name -(product)- Product/name
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.245638s   0ms DEBUG Processing edge: Product/name -(name)- Name/name
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.245651s   0ms DEBUG Processing edge: Name/name -(id)- ID/name
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.245670s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.245681s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.245692s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.245702s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(11) --> EdgeIndex(24)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.245748s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.245766s   0ms DEBUG Processing edge: root(Query) -(category)- Query/category
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.245783s   0ms DEBUG Processing edge: Query/category -(product)- Product/category
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.245803s   0ms DEBUG Processing edge: Product/category -(id)- ID/category
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.245833s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.245849s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.245864s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=9}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=3}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=3, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="price", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="product", leaf=false, list=false, response_path="", fetch_path=""}
+          ├─   0.246072s   0ms DEBUG adding output field 'product' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Product", field="price", leaf=false, list=false, response_path="product", fetch_path="product"}
+              ├─   0.246121s   0ms DEBUG adding output field 'price' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=3, parent_fetch_step_index=1}
+                └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Price", field="currency", leaf=true, list=false, response_path="product.price", fetch_path="product.price"}
+                  ├─   0.246151s   0ms DEBUG adding output field 'currency' to fetch step [1]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+                  ┌─┘
+                ┌─┘
+                └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Price", field="amount", leaf=true, list=false, response_path="product.price", fetch_path="product.price"}
+                  ├─   0.246212s   0ms DEBUG adding output field 'amount' to fetch step [1]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+                  ┌─┘
+                ┌─┘
+                └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Price", field="id", leaf=true, list=false, response_path="product.price", fetch_path="product.price"}
+                  ├─   0.246259s   0ms DEBUG adding output field 'id' to fetch step [1]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+    └─┐process_subgraph_entrypoint_edge{subgraph="category", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=2}
+      ┌─┘
+      └─┐connect{parent=0, child=2}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=2}
+        └─┐process_plain_field_edge{parent_fetch_step_index=2, type_name="Query", field="product", leaf=false, list=false, response_path="", fetch_path=""}
+          ├─   0.246380s   0ms DEBUG adding output field 'product' to fetch step [2]
+          └─┐process_children_for_fetch_steps{count=2, parent_fetch_step_index=2}
+            └─┐process_plain_field_edge{parent_fetch_step_index=2, type_name="Product", field="category", leaf=false, list=false, response_path="product", fetch_path="product"}
+              ├─   0.246405s   0ms DEBUG adding output field 'category' to fetch step [2]
+              └─┐process_children_for_fetch_steps{count=2, parent_fetch_step_index=2}
+                └─┐process_plain_field_edge{parent_fetch_step_index=2, type_name="Category", field="name", leaf=true, list=false, response_path="product.category", fetch_path="product.category"}
+                  ├─   0.246430s   0ms DEBUG adding output field 'name' to fetch step [2]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=2}
+                  ┌─┘
+                ┌─┘
+                └─┐process_plain_field_edge{parent_fetch_step_index=2, type_name="Category", field="id", leaf=true, list=false, response_path="product.category", fetch_path="product.category"}
+                  ├─   0.246472s   0ms DEBUG adding output field 'id' to fetch step [2]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=2}
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+            ┌─┘
+            └─┐process_plain_field_edge{parent_fetch_step_index=2, type_name="Product", field="id", leaf=true, list=false, response_path="product", fetch_path="product"}
+              ├─   0.246528s   0ms DEBUG adding output field 'id' to fetch step [2]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=2}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+    └─┐process_subgraph_entrypoint_edge{subgraph="name", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=3}
+      ┌─┘
+      └─┐connect{parent=0, child=3}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=3}
+        └─┐process_plain_field_edge{parent_fetch_step_index=3, type_name="Query", field="product", leaf=false, list=false, response_path="", fetch_path=""}
+          ├─   0.246667s   0ms DEBUG adding output field 'product' to fetch step [3]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=3}
+            └─┐process_plain_field_edge{parent_fetch_step_index=3, type_name="Product", field="name", leaf=false, list=false, response_path="product", fetch_path="product"}
+              ├─   0.246713s   0ms DEBUG adding output field 'name' to fetch step [3]
+              └─┐process_children_for_fetch_steps{count=3, parent_fetch_step_index=3}
+                └─┐process_plain_field_edge{parent_fetch_step_index=3, type_name="Name", field="model", leaf=true, list=false, response_path="product.name", fetch_path="product.name"}
+                  ├─   0.246744s   0ms DEBUG adding output field 'model' to fetch step [3]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=3}
+                  ┌─┘
+                ┌─┘
+                └─┐process_plain_field_edge{parent_fetch_step_index=3, type_name="Name", field="brand", leaf=true, list=false, response_path="product.name", fetch_path="product.name"}
+                  ├─   0.246790s   0ms DEBUG adding output field 'brand' to fetch step [3]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=3}
+                  ┌─┘
+                ┌─┘
+                └─┐process_plain_field_edge{parent_fetch_step_index=3, type_name="Name", field="id", leaf=true, list=false, response_path="product.name", fetch_path="product.name"}
+                  ├─   0.246835s   0ms DEBUG adding output field 'id' to fetch step [3]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=3}
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.246918s   0ms DEBUG Done
+├─   0.246927s   0ms DEBUG found roots
+├─   0.246932s   0ms DEBUG print graph
+├─   0.246938s   0ms DEBUG Nodes:
+│ [1] Query/price {} → {product{price{currency amount id}}} at $.
+│ [2] Query/category {} → {product{category{name id} id}} at $.
+│ [3] Query/name {} → {product{name{model brand id}}} at $.
+│ 
+│ Tree:
+│ [3]
+│ [2]
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐ParallelNode::execute{data=Null, representations=[]}
+  └─┐FetchNode::execute{data=Null, representations=[]}
+    └─┐execute{subgraph_name="name"}
+      └─┐execute{subgraph_name="name"}
+        ├─   0.247624s   0ms DEBUG starting new connection: http://localhost:4200/
+  └─┐FetchNode::execute{data=Null, representations=[]}
+    └─┐execute{subgraph_name="category"}
+      └─┐execute{subgraph_name="category"}
+        ├─   0.247951s   0ms DEBUG starting new connection: http://localhost:4200/
+  └─┐FetchNode::execute{data=Null, representations=[]}
+    └─┐execute{subgraph_name="price"}
+      └─┐execute{subgraph_name="price"}
+        ├─   0.248164s   0ms DEBUG starting new connection: http://localhost:4200/
+        ├─   0.248324s   1ms DEBUG connecting to 127.0.0.1:4200
+        ├─   0.248457s   0ms DEBUG connecting to 127.0.0.1:4200
+        ├─   0.248504s   0ms DEBUG connecting to 127.0.0.1:4200
+        ├─   0.248784s   1ms DEBUG connected to 127.0.0.1:4200
+        ├─   0.249016s   1ms DEBUG connected to 127.0.0.1:4200
+        ├─   0.249065s   0ms DEBUG connected to 127.0.0.1:4200
+        ├─   0.254254s   6ms DEBUG pooling idle connection for ("http", localhost:4200)
+      ┌─┘
+    ┌─┘
+  ┌─┘
+        ├─   0.257000s   9ms DEBUG pooling idle connection for ("http", localhost:4200)
+      ┌─┘
+    ┌─┘
+  ┌─┘
+        ├─   0.259745s  11ms DEBUG pooling idle connection for ("http", localhost:4200)
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.260044s DEBUG execution result: ExecutionResult { data: Some(Object {"product": Object {"id": String("1"), "name": Object {"id": String("1"), "brand": String("Brand 1"), "model": String("Model 1")}, "category": Object {"id": String("1"), "name": String("Category 1")}, "price": Object {"id": String("1"), "amount": Number(1000), "currency": String("USD")}}}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Parallel"), "nodes": Array [Object {"kind": String("Fetch"), "serviceName": String("name"), "operationKind": String("query"), "operation": String("{product{name{model brand id}}}")}, Object {"kind": String("Fetch"), "serviceName": String("category"), "operationKind": String("query"), "operation": String("{product{category{name id} id}}")}, Object {"kind": String("Fetch"), "serviceName": String("price"), "operationKind": String("query"), "operation": String("{product{price{currency amount id}}}")}]}}}) }
+   0.268208s DEBUG original document: query {
+  products {
+    id
+    name {
+      id
+      brand
+      model
+    }
+    category {
+      id
+      name
+    }
+    price {
+      id
+      amount
+      currency
+    }
+  }
+}
+
+   0.268342s DEBUG normalized document: query{products{id name{id brand model} category{id name} price{id amount currency}}}
+
+   0.268357s DEBUG executable operation: query{products{id name{id brand model} category{id name} price{id amount currency}}}
+┐walk_operation{}
+├─   0.268955s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="products", leaf=false}
+  ├─   0.269058s   0ms DEBUG Trying to advance to: products{id name{id brand model} category{id name} price{id amount currency}} through 3 possible paths
+  └─┐explore_path{path="root(Query) -(category)- Query/category"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "products", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category", current_cost=1000}
+      ├─   0.269140s   0ms DEBUG checking edge Query/category -(products)- Product/category
+      └─┐can_satisfy_edge{path="root(Query) -(category)- Query/category", edge="products"}
+        ├─   0.269167s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.269196s   0ms DEBUG Advancing path root(Query) -(category)- Query/category with edge Query/category -(products)- Product/category
+      ├─   0.269211s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(12)" }])
+    ┌─┘
+    ├─   0.269241s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "products", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category", current_cost=1000}
+      ├─   0.269287s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.269296s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.269311s   0ms DEBUG Indirect paths found: 0
+    ├─   0.269321s   0ms DEBUG advanced: root(Query) -(category)- Query/category
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(name)- Query/name"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "products", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name", current_cost=1000}
+      ├─   0.269391s   0ms DEBUG checking edge Query/name -(products)- Product/name
+      └─┐can_satisfy_edge{path="root(Query) -(name)- Query/name", edge="products"}
+        ├─   0.269422s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.269445s   0ms DEBUG Advancing path root(Query) -(name)- Query/name with edge Query/name -(products)- Product/name
+      ├─   0.269456s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(1) --> EdgeIndex(15)" }])
+    ┌─┘
+    ├─   0.269474s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "products", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name", current_cost=1000}
+      ├─   0.269530s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.269553s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.269577s   0ms DEBUG Indirect paths found: 0
+    ├─   0.269589s   0ms DEBUG advanced: root(Query) -(name)- Query/name
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(price)- Query/price"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "products", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price", current_cost=1000}
+      ├─   0.269640s   0ms DEBUG checking edge Query/price -(products)- Product/price
+      └─┐can_satisfy_edge{path="root(Query) -(price)- Query/price", edge="products"}
+        ├─   0.269661s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.269680s   0ms DEBUG Advancing path root(Query) -(price)- Query/price with edge Query/price -(products)- Product/price
+      ├─   0.269712s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(2) --> EdgeIndex(18)" }])
+    ┌─┘
+    ├─   0.269741s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "products", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] } }, SelectionItem::Field { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price", current_cost=1000}
+      ├─   0.269776s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.269789s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.269803s   0ms DEBUG Indirect paths found: 0
+    ├─   0.269812s   0ms DEBUG advanced: root(Query) -(price)- Query/price
+  ┌─┘
+  ├─   0.269831s   0ms DEBUG Found 3 paths
+┌─┘
+└─┐process_field{field_name="price", leaf=false}
+  ├─   0.269859s   0ms DEBUG Trying to advance to: price{id amount currency} through 3 possible paths
+  └─┐explore_path{path="root(Query) -(category)- Query/category -(products)- Product/category"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(products)- Product/category", current_cost=1001}
+      ├─   0.269905s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.269921s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(products)- Product/category", current_cost=1001}
+      ├─   0.269949s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.269956s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.269970s   0ms DEBUG Indirect paths found: 0
+    ├─   0.269980s   0ms WARN failed to advance: root(Query) -(category)- Query/category -(products)- Product/category
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(name)- Query/name -(products)- Product/name"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(products)- Product/name", current_cost=1001}
+      ├─   0.270062s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.270079s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(products)- Product/name", current_cost=1001}
+      ├─   0.270104s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.270111s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.270127s   0ms DEBUG Indirect paths found: 0
+    ├─   0.270136s   0ms WARN failed to advance: root(Query) -(name)- Query/name -(products)- Product/name
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(price)- Query/price -(products)- Product/price"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(products)- Product/price", current_cost=1001}
+      ├─   0.270178s   0ms DEBUG checking edge Product/price -(price)- Price/price
+      └─┐can_satisfy_edge{path="root(Query) -(price)- Query/price -(products)- Product/price", edge="price"}
+        ├─   0.270205s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.270260s   0ms DEBUG Advancing path root(Query) -(price)- Query/price -(products)- Product/price with edge Product/price -(price)- Price/price
+      ├─   0.270278s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(2) --> EdgeIndex(18) --> EdgeIndex(31)" }])
+    ┌─┘
+    ├─   0.270300s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "price", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "amount", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "currency", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(products)- Product/price", current_cost=1001}
+      ├─   0.270336s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.270343s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.270360s   0ms DEBUG Indirect paths found: 0
+    ├─   0.270398s   0ms DEBUG advanced: root(Query) -(price)- Query/price -(products)- Product/price
+  ┌─┘
+  ├─   0.270425s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="currency", leaf=true}
+  ├─   0.270453s   0ms DEBUG Trying to advance to: currency through 1 possible paths
+  └─┐explore_path{path="root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "currency", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price", current_cost=1002}
+      ├─   0.270500s   0ms DEBUG checking edge Price/price -(currency)- String/price
+      └─┐can_satisfy_edge{path="root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price", edge="currency"}
+        ├─   0.270526s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.270548s   0ms DEBUG Advancing path root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price with edge Price/price -(currency)- String/price
+      ├─   0.270573s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(2) --> EdgeIndex(18) --> EdgeIndex(31) --> EdgeIndex(20)" }])
+    ┌─┘
+    ├─   0.270597s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "currency", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price", current_cost=1002}
+      ├─   0.270624s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.270630s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.270642s   0ms DEBUG Indirect paths found: 0
+    ├─   0.270653s   0ms DEBUG advanced: root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="amount", leaf=true}
+  ├─   0.270689s   0ms DEBUG Trying to advance to: amount through 1 possible paths
+  └─┐explore_path{path="root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "amount", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price", current_cost=1002}
+      ├─   0.270723s   0ms DEBUG checking edge Price/price -(amount)- Int/price
+      └─┐can_satisfy_edge{path="root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price", edge="amount"}
+        ├─   0.270750s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.270772s   0ms DEBUG Advancing path root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price with edge Price/price -(amount)- Int/price
+      ├─   0.270786s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(2) --> EdgeIndex(18) --> EdgeIndex(31) --> EdgeIndex(22)" }])
+    ┌─┘
+    ├─   0.270809s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "amount", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price", current_cost=1002}
+      ├─   0.270843s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.270853s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.270875s   0ms DEBUG Indirect paths found: 0
+    ├─   0.270890s   0ms DEBUG advanced: root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="id", leaf=true}
+  ├─   0.270923s   0ms DEBUG Trying to advance to: id through 1 possible paths
+  └─┐explore_path{path="root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price", current_cost=1002}
+      ├─   0.270972s   0ms DEBUG checking edge Price/price -(id)- ID/price
+      └─┐can_satisfy_edge{path="root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price", edge="id"}
+        ├─   0.270999s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.271018s   0ms DEBUG Advancing path root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price with edge Price/price -(id)- ID/price
+      ├─   0.271028s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(2) --> EdgeIndex(18) --> EdgeIndex(31) --> EdgeIndex(21)" }])
+    ┌─┘
+    ├─   0.271044s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price", current_cost=1002}
+      ├─   0.271084s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.271094s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.271110s   0ms DEBUG Indirect paths found: 0
+    ├─   0.271121s   0ms DEBUG advanced: root(Query) -(price)- Query/price -(products)- Product/price -(price)- Price/price
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="category", leaf=false}
+  ├─   0.271152s   0ms DEBUG Trying to advance to: category{id name} through 3 possible paths
+  └─┐explore_path{path="root(Query) -(category)- Query/category -(products)- Product/category"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(products)- Product/category", current_cost=1001}
+      ├─   0.271182s   0ms DEBUG checking edge Product/category -(category)- Category/category
+      └─┐can_satisfy_edge{path="root(Query) -(category)- Query/category -(products)- Product/category", edge="category"}
+        ├─   0.271199s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.271215s   0ms DEBUG Advancing path root(Query) -(category)- Query/category -(products)- Product/category with edge Product/category -(category)- Category/category
+      ├─   0.271223s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(25)" }])
+    ┌─┘
+    ├─   0.271238s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(products)- Product/category", current_cost=1001}
+      ├─   0.271279s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.271284s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.271296s   0ms DEBUG Indirect paths found: 0
+    ├─   0.271304s   0ms DEBUG advanced: root(Query) -(category)- Query/category -(products)- Product/category
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(name)- Query/name -(products)- Product/name"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(products)- Product/name", current_cost=1001}
+      ├─   0.271334s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.271346s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(products)- Product/name", current_cost=1001}
+      ├─   0.271364s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.271369s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.271380s   0ms DEBUG Indirect paths found: 0
+    ├─   0.271388s   0ms WARN failed to advance: root(Query) -(name)- Query/name -(products)- Product/name
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(price)- Query/price -(products)- Product/price"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(products)- Product/price", current_cost=1001}
+      ├─   0.271471s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.271486s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "category", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(products)- Product/price", current_cost=1001}
+      ├─   0.271512s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.271518s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.271530s   0ms DEBUG Indirect paths found: 0
+    ├─   0.271537s   0ms WARN failed to advance: root(Query) -(price)- Query/price -(products)- Product/price
+  ┌─┘
+  ├─   0.271550s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="name", leaf=true}
+  ├─   0.271569s   0ms DEBUG Trying to advance to: name through 1 possible paths
+  └─┐explore_path{path="root(Query) -(category)- Query/category -(products)- Product/category -(category)- Category/category"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(products)- Product/category -(category)- Category/category", current_cost=1002}
+      ├─   0.271596s   0ms DEBUG checking edge Category/category -(name)- String/category
+      └─┐can_satisfy_edge{path="root(Query) -(category)- Query/category -(products)- Product/category -(category)- Category/category", edge="name"}
+        ├─   0.271614s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.271630s   0ms DEBUG Advancing path root(Query) -(category)- Query/category -(products)- Product/category -(category)- Category/category with edge Category/category -(name)- String/category
+      ├─   0.271639s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(25) --> EdgeIndex(5)" }])
+    ┌─┘
+    ├─   0.271654s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(products)- Product/category -(category)- Category/category", current_cost=1002}
+      ├─   0.271681s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.271687s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.271700s   0ms DEBUG Indirect paths found: 0
+    ├─   0.271708s   0ms DEBUG advanced: root(Query) -(category)- Query/category -(products)- Product/category -(category)- Category/category
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="id", leaf=true}
+  ├─   0.271764s   0ms DEBUG Trying to advance to: id through 1 possible paths
+  └─┐explore_path{path="root(Query) -(category)- Query/category -(products)- Product/category -(category)- Category/category"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(products)- Product/category -(category)- Category/category", current_cost=1002}
+      ├─   0.271795s   0ms DEBUG checking edge Category/category -(id)- ID/category
+      └─┐can_satisfy_edge{path="root(Query) -(category)- Query/category -(products)- Product/category -(category)- Category/category", edge="id"}
+        ├─   0.271814s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.271837s   0ms DEBUG Advancing path root(Query) -(category)- Query/category -(products)- Product/category -(category)- Category/category with edge Category/category -(id)- ID/category
+      ├─   0.271866s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(25) --> EdgeIndex(4)" }])
+    ┌─┘
+    ├─   0.271891s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(products)- Product/category -(category)- Category/category", current_cost=1002}
+      ├─   0.271918s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.271924s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.271936s   0ms DEBUG Indirect paths found: 0
+    ├─   0.271945s   0ms DEBUG advanced: root(Query) -(category)- Query/category -(products)- Product/category -(category)- Category/category
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="name", leaf=false}
+  ├─   0.271973s   0ms DEBUG Trying to advance to: name{id brand model} through 3 possible paths
+  └─┐explore_path{path="root(Query) -(category)- Query/category -(products)- Product/category"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(products)- Product/category", current_cost=1001}
+      ├─   0.272019s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.272043s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(products)- Product/category", current_cost=1001}
+      ├─   0.272074s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.272080s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.272093s   0ms DEBUG Indirect paths found: 0
+    ├─   0.272101s   0ms WARN failed to advance: root(Query) -(category)- Query/category -(products)- Product/category
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(name)- Query/name -(products)- Product/name"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(products)- Product/name", current_cost=1001}
+      ├─   0.272144s   0ms DEBUG checking edge Product/name -(name)- Name/name
+      └─┐can_satisfy_edge{path="root(Query) -(name)- Query/name -(products)- Product/name", edge="name"}
+        ├─   0.272163s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.272179s   0ms DEBUG Advancing path root(Query) -(name)- Query/name -(products)- Product/name with edge Product/name -(name)- Name/name
+      ├─   0.272188s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(15) --> EdgeIndex(28)" }])
+    ┌─┘
+    ├─   0.272203s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(products)- Product/name", current_cost=1001}
+      ├─   0.272224s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.272250s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.272272s   0ms DEBUG Indirect paths found: 0
+    ├─   0.272283s   0ms DEBUG advanced: root(Query) -(name)- Query/name -(products)- Product/name
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(price)- Query/price -(products)- Product/price"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(products)- Product/price", current_cost=1001}
+      ├─   0.272319s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.272331s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "brand", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "model", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(products)- Product/price", current_cost=1001}
+      ├─   0.272350s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.272355s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.272367s   0ms DEBUG Indirect paths found: 0
+    ├─   0.272376s   0ms WARN failed to advance: root(Query) -(price)- Query/price -(products)- Product/price
+  ┌─┘
+  ├─   0.272394s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="model", leaf=true}
+  ├─   0.272433s   0ms DEBUG Trying to advance to: model through 1 possible paths
+  └─┐explore_path{path="root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "model", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name", current_cost=1002}
+      ├─   0.272471s   0ms DEBUG checking edge Name/name -(model)- String/name
+      └─┐can_satisfy_edge{path="root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name", edge="model"}
+        ├─   0.272490s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.272508s   0ms DEBUG Advancing path root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name with edge Name/name -(model)- String/name
+      ├─   0.272521s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(1) --> EdgeIndex(15) --> EdgeIndex(28) --> EdgeIndex(8)" }])
+    ┌─┘
+    ├─   0.272556s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "model", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name", current_cost=1002}
+      ├─   0.272586s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.272592s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.272604s   0ms DEBUG Indirect paths found: 0
+    ├─   0.272612s   0ms DEBUG advanced: root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="brand", leaf=true}
+  ├─   0.272641s   0ms DEBUG Trying to advance to: brand through 1 possible paths
+  └─┐explore_path{path="root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "brand", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name", current_cost=1002}
+      ├─   0.272667s   0ms DEBUG checking edge Name/name -(brand)- String/name
+      └─┐can_satisfy_edge{path="root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name", edge="brand"}
+        ├─   0.272700s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.272731s   0ms DEBUG Advancing path root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name with edge Name/name -(brand)- String/name
+      ├─   0.272742s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(1) --> EdgeIndex(15) --> EdgeIndex(28) --> EdgeIndex(9)" }])
+    ┌─┘
+    ├─   0.272758s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "brand", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name", current_cost=1002}
+      ├─   0.272811s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.272822s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.272844s   0ms DEBUG Indirect paths found: 0
+    ├─   0.272857s   0ms DEBUG advanced: root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="id", leaf=true}
+  ├─   0.272921s   0ms DEBUG Trying to advance to: id through 1 possible paths
+  └─┐explore_path{path="root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name", current_cost=1002}
+      ├─   0.272977s   0ms DEBUG checking edge Name/name -(id)- ID/name
+      └─┐can_satisfy_edge{path="root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name", edge="id"}
+        ├─   0.272997s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.273016s   0ms DEBUG Advancing path root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name with edge Name/name -(id)- ID/name
+      ├─   0.273027s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(1) --> EdgeIndex(15) --> EdgeIndex(28) --> EdgeIndex(7)" }])
+    ┌─┘
+    ├─   0.273042s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name", current_cost=1002}
+      ├─   0.273070s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.273076s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.273087s   0ms DEBUG Indirect paths found: 0
+    ├─   0.273095s   0ms DEBUG advanced: root(Query) -(name)- Query/name -(products)- Product/name -(name)- Name/name
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="id", leaf=true}
+  ├─   0.273150s   0ms DEBUG Trying to advance to: id through 3 possible paths
+  └─┐explore_path{path="root(Query) -(category)- Query/category -(products)- Product/category"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(products)- Product/category", current_cost=1001}
+      ├─   0.273182s   0ms DEBUG checking edge Product/category -(id)- ID/category
+      └─┐can_satisfy_edge{path="root(Query) -(category)- Query/category -(products)- Product/category", edge="id"}
+        ├─   0.273200s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.273219s   0ms DEBUG Advancing path root(Query) -(category)- Query/category -(products)- Product/category with edge Product/category -(id)- ID/category
+      ├─   0.273231s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(24)" }])
+    ┌─┘
+    ├─   0.273248s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(category)- Query/category -(products)- Product/category", current_cost=1001}
+      ├─   0.273270s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.273276s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.273287s   0ms DEBUG Indirect paths found: 0
+    ├─   0.273295s   0ms DEBUG advanced: root(Query) -(category)- Query/category -(products)- Product/category
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(name)- Query/name -(products)- Product/name"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(products)- Product/name", current_cost=1001}
+      ├─   0.273326s   0ms DEBUG checking edge Product/name -(id)- ID/name
+      └─┐can_satisfy_edge{path="root(Query) -(name)- Query/name -(products)- Product/name", edge="id"}
+        ├─   0.273368s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.273395s   0ms DEBUG Advancing path root(Query) -(name)- Query/name -(products)- Product/name with edge Product/name -(id)- ID/name
+      ├─   0.273405s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(15) --> EdgeIndex(27)" }])
+    ┌─┘
+    ├─   0.273420s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(name)- Query/name -(products)- Product/name", current_cost=1001}
+      ├─   0.273445s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.273451s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.273464s   0ms DEBUG Indirect paths found: 0
+    ├─   0.273471s   0ms DEBUG advanced: root(Query) -(name)- Query/name -(products)- Product/name
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(price)- Query/price -(products)- Product/price"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(products)- Product/price", current_cost=1001}
+      ├─   0.273528s   0ms DEBUG checking edge Product/price -(id)- ID/price
+      └─┐can_satisfy_edge{path="root(Query) -(price)- Query/price -(products)- Product/price", edge="id"}
+        ├─   0.273548s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.273566s   0ms DEBUG Advancing path root(Query) -(price)- Query/price -(products)- Product/price with edge Product/price -(id)- ID/price
+      ├─   0.273575s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(2) --> EdgeIndex(18) --> EdgeIndex(30)" }])
+    ┌─┘
+    ├─   0.273590s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(price)- Query/price -(products)- Product/price", current_cost=1001}
+      ├─   0.273611s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.273634s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.273660s   0ms DEBUG Indirect paths found: 0
+    ├─   0.273674s   0ms DEBUG advanced: root(Query) -(price)- Query/price -(products)- Product/price
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(2) --> EdgeIndex(18) --> EdgeIndex(31) --> EdgeIndex(20)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.273740s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.273759s   0ms DEBUG Processing edge: root(Query) -(price)- Query/price
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.273772s   0ms DEBUG Processing edge: Query/price -(products)- Product/price
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.273785s   0ms DEBUG Processing edge: Product/price -(price)- Price/price
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.273799s   0ms DEBUG Processing edge: Price/price -(currency)- String/price
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.273821s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.273833s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.273845s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.273856s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(2) --> EdgeIndex(18) --> EdgeIndex(31) --> EdgeIndex(22)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.273928s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.273944s   0ms DEBUG Processing edge: root(Query) -(price)- Query/price
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.273957s   0ms DEBUG Processing edge: Query/price -(products)- Product/price
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.273969s   0ms DEBUG Processing edge: Product/price -(price)- Price/price
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.273982s   0ms DEBUG Processing edge: Price/price -(amount)- Int/price
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.274004s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.274017s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.274029s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.274061s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(2) --> EdgeIndex(18) --> EdgeIndex(31) --> EdgeIndex(21)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.274105s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.274118s   0ms DEBUG Processing edge: root(Query) -(price)- Query/price
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.274148s   0ms DEBUG Processing edge: Query/price -(products)- Product/price
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.274172s   0ms DEBUG Processing edge: Product/price -(price)- Price/price
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.274205s   0ms DEBUG Processing edge: Price/price -(id)- ID/price
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.274235s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.274251s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.274262s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.274273s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(25) --> EdgeIndex(5)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.274314s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.274326s   0ms DEBUG Processing edge: root(Query) -(category)- Query/category
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.274339s   0ms DEBUG Processing edge: Query/category -(products)- Product/category
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.274351s   0ms DEBUG Processing edge: Product/category -(category)- Category/category
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.274364s   0ms DEBUG Processing edge: Category/category -(name)- String/category
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.274384s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.274399s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.274416s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.274438s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(25) --> EdgeIndex(4)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.274476s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.274488s   0ms DEBUG Processing edge: root(Query) -(category)- Query/category
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.274501s   0ms DEBUG Processing edge: Query/category -(products)- Product/category
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.274513s   0ms DEBUG Processing edge: Product/category -(category)- Category/category
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.274526s   0ms DEBUG Processing edge: Category/category -(id)- ID/category
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.274546s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.274558s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.274569s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.274580s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(1) --> EdgeIndex(15) --> EdgeIndex(28) --> EdgeIndex(8)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.274614s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.274626s   0ms DEBUG Processing edge: root(Query) -(name)- Query/name
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.274638s   0ms DEBUG Processing edge: Query/name -(products)- Product/name
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.274650s   0ms DEBUG Processing edge: Product/name -(name)- Name/name
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.274687s   0ms DEBUG Processing edge: Name/name -(model)- String/name
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.274720s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.274732s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.274744s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.274755s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(1) --> EdgeIndex(15) --> EdgeIndex(28) --> EdgeIndex(9)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.274798s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.274810s   0ms DEBUG Processing edge: root(Query) -(name)- Query/name
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.274822s   0ms DEBUG Processing edge: Query/name -(products)- Product/name
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.274835s   0ms DEBUG Processing edge: Product/name -(name)- Name/name
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.274848s   0ms DEBUG Processing edge: Name/name -(brand)- String/name
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.274868s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.274880s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.274891s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.274902s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(1) --> EdgeIndex(15) --> EdgeIndex(28) --> EdgeIndex(7)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.274948s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.274960s   0ms DEBUG Processing edge: root(Query) -(name)- Query/name
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.274977s   0ms DEBUG Processing edge: Query/name -(products)- Product/name
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.274994s   0ms DEBUG Processing edge: Product/name -(name)- Name/name
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.275010s   0ms DEBUG Processing edge: Name/name -(id)- ID/name
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.275030s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.275043s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.275055s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.275066s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(24)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.275107s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.275126s   0ms DEBUG Processing edge: root(Query) -(category)- Query/category
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.275140s   0ms DEBUG Processing edge: Query/category -(products)- Product/category
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.275153s   0ms DEBUG Processing edge: Product/category -(id)- ID/category
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.275172s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.275184s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.275195s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=9}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=3}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=3, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="price", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="products", leaf=false, list=true, response_path="", fetch_path=""}
+          ├─   0.275320s   0ms DEBUG adding output field 'products' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Product", field="price", leaf=false, list=false, response_path="products.@", fetch_path="products.@"}
+              ├─   0.275354s   0ms DEBUG adding output field 'price' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=3, parent_fetch_step_index=1}
+                └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Price", field="currency", leaf=true, list=false, response_path="products.@.price", fetch_path="products.@.price"}
+                  ├─   0.275383s   0ms DEBUG adding output field 'currency' to fetch step [1]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+                  ┌─┘
+                ┌─┘
+                └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Price", field="amount", leaf=true, list=false, response_path="products.@.price", fetch_path="products.@.price"}
+                  ├─   0.275441s   0ms DEBUG adding output field 'amount' to fetch step [1]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+                  ┌─┘
+                ┌─┘
+                └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Price", field="id", leaf=true, list=false, response_path="products.@.price", fetch_path="products.@.price"}
+                  ├─   0.275491s   0ms DEBUG adding output field 'id' to fetch step [1]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+    └─┐process_subgraph_entrypoint_edge{subgraph="category", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=2}
+      ┌─┘
+      └─┐connect{parent=0, child=2}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=2}
+        └─┐process_plain_field_edge{parent_fetch_step_index=2, type_name="Query", field="products", leaf=false, list=true, response_path="", fetch_path=""}
+          ├─   0.275625s   0ms DEBUG adding output field 'products' to fetch step [2]
+          └─┐process_children_for_fetch_steps{count=2, parent_fetch_step_index=2}
+            └─┐process_plain_field_edge{parent_fetch_step_index=2, type_name="Product", field="category", leaf=false, list=false, response_path="products.@", fetch_path="products.@"}
+              ├─   0.275656s   0ms DEBUG adding output field 'category' to fetch step [2]
+              └─┐process_children_for_fetch_steps{count=2, parent_fetch_step_index=2}
+                └─┐process_plain_field_edge{parent_fetch_step_index=2, type_name="Category", field="name", leaf=true, list=false, response_path="products.@.category", fetch_path="products.@.category"}
+                  ├─   0.275693s   0ms DEBUG adding output field 'name' to fetch step [2]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=2}
+                  ┌─┘
+                ┌─┘
+                └─┐process_plain_field_edge{parent_fetch_step_index=2, type_name="Category", field="id", leaf=true, list=false, response_path="products.@.category", fetch_path="products.@.category"}
+                  ├─   0.275738s   0ms DEBUG adding output field 'id' to fetch step [2]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=2}
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+            ┌─┘
+            └─┐process_plain_field_edge{parent_fetch_step_index=2, type_name="Product", field="id", leaf=true, list=false, response_path="products.@", fetch_path="products.@"}
+              ├─   0.275841s   0ms DEBUG adding output field 'id' to fetch step [2]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=2}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+    └─┐process_subgraph_entrypoint_edge{subgraph="name", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=3}
+      ┌─┘
+      └─┐connect{parent=0, child=3}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=3}
+        └─┐process_plain_field_edge{parent_fetch_step_index=3, type_name="Query", field="products", leaf=false, list=true, response_path="", fetch_path=""}
+          ├─   0.275969s   0ms DEBUG adding output field 'products' to fetch step [3]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=3}
+            └─┐process_plain_field_edge{parent_fetch_step_index=3, type_name="Product", field="name", leaf=false, list=false, response_path="products.@", fetch_path="products.@"}
+              ├─   0.275996s   0ms DEBUG adding output field 'name' to fetch step [3]
+              └─┐process_children_for_fetch_steps{count=3, parent_fetch_step_index=3}
+                └─┐process_plain_field_edge{parent_fetch_step_index=3, type_name="Name", field="model", leaf=true, list=false, response_path="products.@.name", fetch_path="products.@.name"}
+                  ├─   0.276023s   0ms DEBUG adding output field 'model' to fetch step [3]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=3}
+                  ┌─┘
+                ┌─┘
+                └─┐process_plain_field_edge{parent_fetch_step_index=3, type_name="Name", field="brand", leaf=true, list=false, response_path="products.@.name", fetch_path="products.@.name"}
+                  ├─   0.276074s   0ms DEBUG adding output field 'brand' to fetch step [3]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=3}
+                  ┌─┘
+                ┌─┘
+                └─┐process_plain_field_edge{parent_fetch_step_index=3, type_name="Name", field="id", leaf=true, list=false, response_path="products.@.name", fetch_path="products.@.name"}
+                  ├─   0.276116s   0ms DEBUG adding output field 'id' to fetch step [3]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=3}
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.276207s   0ms DEBUG Done
+├─   0.276216s   0ms DEBUG found roots
+├─   0.276221s   0ms DEBUG print graph
+├─   0.276226s   0ms DEBUG Nodes:
+│ [1] Query/price {} → {products{price{currency amount id}}} at $.
+│ [2] Query/category {} → {products{category{name id} id}} at $.
+│ [3] Query/name {} → {products{name{model brand id}}} at $.
+│ 
+│ Tree:
+│ [3]
+│ [2]
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐ParallelNode::execute{data=Null, representations=[]}
+  └─┐FetchNode::execute{data=Null, representations=[]}
+    └─┐execute{subgraph_name="name"}
+      └─┐execute{subgraph_name="name"}
+        ├─   0.276633s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+  └─┐FetchNode::execute{data=Null, representations=[]}
+    └─┐execute{subgraph_name="category"}
+      └─┐execute{subgraph_name="category"}
+        ├─   0.276833s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+  └─┐FetchNode::execute{data=Null, representations=[]}
+    └─┐execute{subgraph_name="price"}
+      └─┐execute{subgraph_name="price"}
+        ├─   0.276990s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+        ├─   0.279311s   2ms DEBUG pooling idle connection for ("http", localhost:4200)
+      ┌─┘
+    ┌─┘
+  ┌─┘
+        ├─   0.280648s   4ms DEBUG pooling idle connection for ("http", localhost:4200)
+      ┌─┘
+    ┌─┘
+  ┌─┘
+        ├─   0.283644s   6ms DEBUG pooling idle connection for ("http", localhost:4200)
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.284082s DEBUG execution result: ExecutionResult { data: Some(Object {"products": Array [Object {"id": String("1"), "name": Object {"id": String("1"), "brand": String("Brand 1"), "model": String("Model 1")}, "category": Object {"id": String("1"), "name": String("Category 1")}, "price": Object {"id": String("1"), "amount": Number(1000), "currency": String("USD")}}]}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Parallel"), "nodes": Array [Object {"kind": String("Fetch"), "serviceName": String("name"), "operationKind": String("query"), "operation": String("{products{name{model brand id}}}")}, Object {"kind": String("Fetch"), "serviceName": String("category"), "operationKind": String("query"), "operation": String("{products{category{name id} id}}")}, Object {"kind": String("Fetch"), "serviceName": String("price"), "operationKind": String("query"), "operation": String("{products{price{currency amount id}}}")}]}}}) }

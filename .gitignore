@@ -2,10 +2,5 @@
 .digraph
 *.pending-snap
 profile.json.gz
-node_modules/
-logs
-federation-audit-results.txt
-*.junit.xml
 .DS_Store
-supergraph.graphql
-audits/fed-audit-supergraph.graphql
+

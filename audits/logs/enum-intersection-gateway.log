@@ -1,0 +1,1188 @@
+generating supergraph file for test...
+running gateway...
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running `target/debug/gateway audits/fed-audit-supergraph.graphql`
+┐new_supergraph_state{}
+└─┐build_map{}
+  └─┐build_scalar_type{name="join__FieldSet"}
+  ┌─┘
+  └─┐build_enum_type{name="join__Graph"}
+  ┌─┘
+  └─┐build_scalar_type{name="link__Import"}
+  ┌─┘
+  └─┐build_enum_type{name="link__Purpose"}
+  ┌─┘
+  └─┐build_object_type{name="Query"}
+    └─┐build_fields{fields_count=3}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="User"}
+    └─┐build_fields{fields_count=2}
+    ┌─┘
+  ┌─┘
+  └─┐build_enum_type{name="UserType"}
+  ┌─┘
+┌─┘
+└─┐decompose_from_supergraph{graph_id="B"}
+┌─┘
+└─┐decompose_from_supergraph{graph_id="A"}
+┌─┘
+┘
+┐graph_from_supergraph_state{}
+└─┐build_graph{}
+  ├─   0.006198s   0ms DEBUG Building graph for supergraph with 16 definitions
+  └─┐build_root_nodes{}
+    ├─   0.006232s   0ms DEBUG added root type for queries: Query
+  ┌─┘
+  └─┐link_root_edges{}
+  ┌─┘
+  └─┐build_field_edges{}
+    ├─   0.006284s   0ms INFO [x] Creating owned field move edge 'User.__typename/A' (type: String)
+    ├─   0.006298s   0ms INFO [x] Creating field move edge 'User.id/A' (type: ID)
+    ├─   0.006306s   0ms INFO [x] Creating field move edge 'User.id/A' (type: ID)
+    ├─   0.006312s   0ms INFO [x] Creating field move edge 'User.type/A' (type: UserType)
+    ├─   0.006319s   0ms INFO [x] Creating field move edge 'User.type/A' (type: UserType)
+    ├─   0.006325s   0ms INFO [x] Creating owned field move edge 'User.__typename/B' (type: String)
+    ├─   0.006334s   0ms INFO [x] Creating field move edge 'User.id/B' (type: ID)
+    ├─   0.006340s   0ms INFO [x] Creating field move edge 'User.id/B' (type: ID)
+    ├─   0.006346s   0ms INFO [x] Creating field move edge 'User.type/B' (type: UserType)
+    ├─   0.006352s   0ms INFO [x] Creating field move edge 'User.type/B' (type: UserType)
+    ├─   0.006358s   0ms INFO [x] Creating owned field move edge 'Query.__typename/A' (type: String)
+    ├─   0.006366s   0ms INFO [ ] Field 'Query.usersByType/A' does is not available in the subgraph, skipping edge creation (type: User)
+    ├─   0.006371s   0ms INFO [ ] Field 'Query.usersB/A' does is not available in the subgraph, skipping edge creation (type: User)
+    ├─   0.006377s   0ms INFO [x] Creating field move edge 'Query.users/A' (type: User)
+    ├─   0.006382s   0ms INFO [x] Creating field move edge 'Query.users/A' (type: User)
+    ├─   0.006388s   0ms INFO [x] Creating owned field move edge 'Query.__typename/B' (type: String)
+    ├─   0.006395s   0ms INFO [x] Creating field move edge 'Query.usersByType/B' (type: User)
+    ├─   0.006401s   0ms INFO [x] Creating field move edge 'Query.usersByType/B' (type: User)
+    ├─   0.006406s   0ms INFO [x] Creating field move edge 'Query.usersB/B' (type: User)
+    ├─   0.006412s   0ms INFO [x] Creating field move edge 'Query.usersB/B' (type: User)
+    ├─   0.006419s   0ms INFO [ ] Field 'Query.users/B' does is not available in the subgraph, skipping edge creation (type: User)
+  ┌─┘
+  └─┐build_interface_implementation_edges{}
+  ┌─┘
+  └─┐build_entity_reference_edges{}
+    ├─   0.006518s   0ms INFO Creating self-referencing entity move edge in 'User/A' via key 'id'
+    ├─   0.006594s   0ms INFO Creating entity move edge from 'User/A' to 'User/B' via key 'id'
+    ├─   0.006666s   0ms INFO Creating entity move edge from 'User/B' to 'User/A' via key 'id'
+    ├─   0.006712s   0ms INFO Creating self-referencing entity move edge in 'User/B' via key 'id'
+  ┌─┘
+  └─┐build_viewed_field_edges{}
+  ┌─┘
+┌─┘
+┘
+   0.064215s INFO Starting server on http://localhost:4000
+   0.065239s INFO starting 16 workers
+   0.065286s INFO Actix runtime found; starting in Actix runtime
+   0.065298s INFO starting service: "actix-web-service-0.0.0.0:4000", workers: 16, listening on: 0.0.0.0:4000
+   0.303749s DEBUG original document: query ping {
+  __typename
+}
+
+   0.303864s DEBUG normalized document: query ping {__typename}
+
+   0.303896s DEBUG executable operation: query ping {__typename}
+┐execute{}
+┘
+   0.304367s DEBUG execution result: ExecutionResult { data: Some(Object {"__typename": String("Query")}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan")}}) }
+   0.380766s DEBUG original document: query {
+  users {
+    id
+  }
+}
+
+   0.380875s DEBUG normalized document: query{users{id}}
+
+   0.380897s DEBUG executable operation: query{users{id}}
+┐walk_operation{}
+├─   0.381287s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="users", leaf=false}
+  ├─   0.381344s   0ms DEBUG Trying to advance to: users{id} through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "users", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.381415s   0ms DEBUG checking edge Query/a -(users)- User/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="users"}
+        ├─   0.381457s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.381503s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(users)- User/a
+      ├─   0.381527s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(9)" }])
+    ┌─┘
+    ├─   0.381559s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "users", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.381616s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.381628s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.381643s   0ms DEBUG Indirect paths found: 0
+    ├─   0.381653s   0ms DEBUG advanced: root(Query) -(a)- Query/a
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(b)- Query/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "users", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.381685s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.381696s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "users", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.381712s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.381718s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.381729s   0ms DEBUG Indirect paths found: 0
+    ├─   0.381736s   0ms WARN failed to advance: root(Query) -(b)- Query/b
+  ┌─┘
+  ├─   0.381754s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="id", leaf=true}
+  ├─   0.381775s   0ms DEBUG Trying to advance to: id through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(users)- User/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(users)- User/a", current_cost=1001}
+      ├─   0.381800s   0ms DEBUG checking edge User/a -(id)- ID/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(users)- User/a", edge="id"}
+        ├─   0.381831s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.381854s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(users)- User/a with edge User/a -(id)- ID/a
+      ├─   0.381873s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(3)" }])
+    ┌─┘
+    ├─   0.381894s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(users)- User/a", current_cost=1001}
+      ├─   0.381924s   0ms DEBUG Exploring edge User/a -(🔑🧩{id})- User/b
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(users)- User/a", edge="id"}
+        ├─   0.381960s   0ms DEBUG checking requirements {id} for edge 'User/a -(🔑🧩{id})- User/b'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(users)- User/a", current_cost=1001}
+              ├─   0.382008s   0ms DEBUG checking edge User/a -(id)- ID/a
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(users)- User/a", edge="id"}
+                ├─   0.382027s   0ms INFO return=Ok(Some([]))
+              ┌─┘
+              ├─   0.382046s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(users)- User/a with edge User/a -(id)- ID/a
+              ├─   0.382066s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(3)" }])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(users)- User/a", current_cost=1001}
+              ├─   0.382096s   0ms DEBUG Exploring edge User/a -(🔑🧩{id})- User/b
+              ├─   0.382105s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+              ├─   0.382116s   0ms DEBUG Exploring edge User/a -(🔑🧩{id})- User/a
+              ├─   0.382123s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.382130s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.382137s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.382153s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(3)" }], [])))
+          ┌─┘
+          ├─   0.382171s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(3)" }], [])))
+        ┌─┘
+        ├─   0.382185s   0ms DEBUG Paths for id
+        ├─   0.382193s   0ms DEBUG   Path root(Query) -(a)- Query/a -(users)- User/a -(id)- ID/a is valid
+        ├─   0.382200s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.382249s   0ms DEBUG path User/a -(id)- ID/a is valid
+        ├─   0.382264s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(3)" }]))
+      ┌─┘
+      ├─   0.382285s   0ms DEBUG Advancing path to User/a -(🔑🧩{id})- User/b
+      └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(3)" }, root_node="User/a"}
+        └─┐create_root_for_path_sequences{root_node="User/a", segments_count=1}
+          ├─   0.382316s   0ms DEBUG Building root query tree node: User/a
+          └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+            ├─   0.382333s   0ms DEBUG Processing edge: User/a -(id)- ID/a
+            └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+            ┌─┘
+            ├─   0.382354s   0ms DEBUG No subsequent steps (leaf or end of path)
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(users)- User/a -(🔑🧩{id})- User/b", current_cost=2003}
+        ├─   0.382405s   0ms DEBUG checking edge User/b -(id)- ID/b
+        └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(users)- User/a -(🔑🧩{id})- User/b", edge="id"}
+          ├─   0.382424s   0ms INFO return=Ok(Some([]))
+        ┌─┘
+        ├─   0.382440s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(users)- User/a -(🔑🧩{id})- User/b with edge User/b -(id)- ID/b
+        ├─   0.382449s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(14) --> EdgeIndex(6)" }])
+      ┌─┘
+      ├─   0.382465s   0ms DEBUG Found 1 direct paths to User/a -(🔑🧩{id})- User/b
+      ├─   0.382477s   0ms DEBUG Exploring edge User/a -(🔑🧩{id})- User/a
+      ├─   0.382483s   0ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.382490s   0ms DEBUG Finished finding indirect paths, found total of 1
+      ├─   0.382496s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(14) --> EdgeIndex(6)" }])
+    ┌─┘
+    ├─   0.382510s   0ms DEBUG Indirect paths found: 1
+    ├─   0.382520s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(users)- User/a
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(3)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.382562s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.382574s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.382586s   0ms DEBUG Processing edge: Query/a -(users)- User/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.382597s   0ms DEBUG Processing edge: User/a -(id)- ID/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.382615s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.382627s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.382639s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=1}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="a", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="users", leaf=false, list=true, response_path="", fetch_path=""}
+          ├─   0.382760s   0ms DEBUG adding output field 'users' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="User", field="id", leaf=true, list=false, response_path="users.@", fetch_path="users.@"}
+              ├─   0.382791s   0ms DEBUG adding output field 'id' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.382871s   0ms DEBUG Done
+├─   0.382893s   0ms DEBUG found roots
+├─   0.382898s   0ms DEBUG print graph
+├─   0.382903s   0ms DEBUG Nodes:
+│ [1] Query/a {} → {users{id}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="a"}
+    └─┐execute{subgraph_name="a"}
+      ├─   0.383313s   0ms DEBUG starting new connection: http://localhost:4200/
+      ├─   0.383653s   0ms DEBUG connecting to 127.0.0.1:4200
+      ├─   0.384017s   0ms DEBUG connected to 127.0.0.1:4200
+      ├─   0.388480s   5ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.388740s DEBUG execution result: ExecutionResult { data: Some(Object {"users": Array [Object {"id": String("u1")}, Object {"id": String("u2")}]}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("a"), "operationKind": String("query"), "operation": String("{users{id}}")}}}) }
+   0.395533s DEBUG original document: query {
+  users {
+    id
+    type
+  }
+}
+
+   0.395626s DEBUG normalized document: query{users{id type}}
+
+   0.395646s DEBUG executable operation: query{users{id type}}
+┐walk_operation{}
+├─   0.395950s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="users", leaf=false}
+  ├─   0.396014s   0ms DEBUG Trying to advance to: users{id type} through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "users", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "type", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.396069s   0ms DEBUG checking edge Query/a -(users)- User/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="users"}
+        ├─   0.396089s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.396111s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(users)- User/a
+      ├─   0.396122s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(9)" }])
+    ┌─┘
+    ├─   0.396138s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "users", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "type", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.396164s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.396170s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.396181s   0ms DEBUG Indirect paths found: 0
+    ├─   0.396188s   0ms DEBUG advanced: root(Query) -(a)- Query/a
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(b)- Query/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "users", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "type", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.396216s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.396227s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "users", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "type", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.396242s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.396248s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.396258s   0ms DEBUG Indirect paths found: 0
+    ├─   0.396281s   0ms WARN failed to advance: root(Query) -(b)- Query/b
+  ┌─┘
+  ├─   0.396302s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="type", leaf=true}
+  ├─   0.396325s   0ms DEBUG Trying to advance to: type through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(users)- User/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "type", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(users)- User/a", current_cost=1001}
+      ├─   0.396351s   0ms DEBUG checking edge User/a -(type)- UserType/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(users)- User/a", edge="type"}
+        ├─   0.396368s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.396382s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(users)- User/a with edge User/a -(type)- UserType/a
+      ├─   0.396391s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(4)" }])
+    ┌─┘
+    ├─   0.396422s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "type", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(users)- User/a", current_cost=1001}
+      ├─   0.396453s   0ms DEBUG Exploring edge User/a -(🔑🧩{id})- User/b
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(users)- User/a", edge="id"}
+        ├─   0.396472s   0ms DEBUG checking requirements {id} for edge 'User/a -(🔑🧩{id})- User/b'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(users)- User/a", current_cost=1001}
+              ├─   0.396509s   0ms DEBUG checking edge User/a -(id)- ID/a
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(users)- User/a", edge="id"}
+                ├─   0.396531s   0ms INFO return=Ok(Some([]))
+              ┌─┘
+              ├─   0.396549s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(users)- User/a with edge User/a -(id)- ID/a
+              ├─   0.396558s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(3)" }])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(users)- User/a", current_cost=1001}
+              ├─   0.396588s   0ms DEBUG Exploring edge User/a -(🔑🧩{id})- User/b
+              ├─   0.396596s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+              ├─   0.396619s   0ms DEBUG Exploring edge User/a -(🔑🧩{id})- User/a
+              ├─   0.396629s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.396637s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.396643s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.396663s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(3)" }], [])))
+          ┌─┘
+          ├─   0.396695s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(3)" }], [])))
+        ┌─┘
+        ├─   0.396713s   0ms DEBUG Paths for id
+        ├─   0.396723s   0ms DEBUG   Path root(Query) -(a)- Query/a -(users)- User/a -(id)- ID/a is valid
+        ├─   0.396730s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.396744s   0ms DEBUG path User/a -(id)- ID/a is valid
+        ├─   0.396750s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(3)" }]))
+      ┌─┘
+      ├─   0.396765s   0ms DEBUG Advancing path to User/a -(🔑🧩{id})- User/b
+      └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(3)" }, root_node="User/a"}
+        └─┐create_root_for_path_sequences{root_node="User/a", segments_count=1}
+          ├─   0.396793s   0ms DEBUG Building root query tree node: User/a
+          └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+            ├─   0.396808s   0ms DEBUG Processing edge: User/a -(id)- ID/a
+            └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+            ┌─┘
+            ├─   0.396831s   0ms DEBUG No subsequent steps (leaf or end of path)
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "type", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(users)- User/a -(🔑🧩{id})- User/b", current_cost=2003}
+        ├─   0.396879s   0ms DEBUG checking edge User/b -(type)- UserType/b
+        └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(users)- User/a -(🔑🧩{id})- User/b", edge="type"}
+          ├─   0.396898s   0ms INFO return=Ok(Some([]))
+        ┌─┘
+        ├─   0.396914s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(users)- User/a -(🔑🧩{id})- User/b with edge User/b -(type)- UserType/b
+        ├─   0.396922s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(14) --> EdgeIndex(7)" }])
+      ┌─┘
+      ├─   0.396938s   0ms DEBUG Found 1 direct paths to User/a -(🔑🧩{id})- User/b
+      ├─   0.396946s   0ms DEBUG Exploring edge User/a -(🔑🧩{id})- User/a
+      ├─   0.396951s   0ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.396959s   0ms DEBUG Finished finding indirect paths, found total of 1
+      ├─   0.396964s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(14) --> EdgeIndex(7)" }])
+    ┌─┘
+    ├─   0.396977s   0ms DEBUG Indirect paths found: 1
+    ├─   0.396986s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(users)- User/a
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="id", leaf=true}
+  ├─   0.397057s   0ms DEBUG Trying to advance to: id through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(users)- User/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(users)- User/a", current_cost=1001}
+      ├─   0.397092s   0ms DEBUG checking edge User/a -(id)- ID/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(users)- User/a", edge="id"}
+        ├─   0.397109s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.397126s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(users)- User/a with edge User/a -(id)- ID/a
+      ├─   0.397134s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(3)" }])
+    ┌─┘
+    ├─   0.397148s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(users)- User/a", current_cost=1001}
+      ├─   0.397167s   0ms DEBUG Exploring edge User/a -(🔑🧩{id})- User/b
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(users)- User/a", edge="id"}
+        ├─   0.397184s   0ms DEBUG checking requirements {id} for edge 'User/a -(🔑🧩{id})- User/b'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(users)- User/a", current_cost=1001}
+              ├─   0.397215s   0ms DEBUG checking edge User/a -(id)- ID/a
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(users)- User/a", edge="id"}
+                ├─   0.397231s   0ms INFO return=Ok(Some([]))
+              ┌─┘
+              ├─   0.397248s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(users)- User/a with edge User/a -(id)- ID/a
+              ├─   0.397256s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(3)" }])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(users)- User/a", current_cost=1001}
+              ├─   0.397284s   0ms DEBUG Exploring edge User/a -(🔑🧩{id})- User/b
+              ├─   0.397291s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+              ├─   0.397298s   0ms DEBUG Exploring edge User/a -(🔑🧩{id})- User/a
+              ├─   0.397304s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.397311s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.397318s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.397332s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(3)" }], [])))
+          ┌─┘
+          ├─   0.397348s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(3)" }], [])))
+        ┌─┘
+        ├─   0.397361s   0ms DEBUG Paths for id
+        ├─   0.397369s   0ms DEBUG   Path root(Query) -(a)- Query/a -(users)- User/a -(id)- ID/a is valid
+        ├─   0.397375s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.397385s   0ms DEBUG path User/a -(id)- ID/a is valid
+        ├─   0.397391s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(3)" }]))
+      ┌─┘
+      ├─   0.397404s   0ms DEBUG Advancing path to User/a -(🔑🧩{id})- User/b
+      └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(3)" }, root_node="User/a"}
+        └─┐create_root_for_path_sequences{root_node="User/a", segments_count=1}
+          ├─   0.397428s   0ms DEBUG Building root query tree node: User/a
+          └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+            ├─   0.397460s   0ms DEBUG Processing edge: User/a -(id)- ID/a
+            └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+            ┌─┘
+            ├─   0.397487s   0ms DEBUG No subsequent steps (leaf or end of path)
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(users)- User/a -(🔑🧩{id})- User/b", current_cost=2003}
+        ├─   0.397558s   0ms DEBUG checking edge User/b -(id)- ID/b
+        └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(users)- User/a -(🔑🧩{id})- User/b", edge="id"}
+          ├─   0.397578s   0ms INFO return=Ok(Some([]))
+        ┌─┘
+        ├─   0.397599s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(users)- User/a -(🔑🧩{id})- User/b with edge User/b -(id)- ID/b
+        ├─   0.397609s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(14) --> EdgeIndex(6)" }])
+      ┌─┘
+      ├─   0.397625s   0ms DEBUG Found 1 direct paths to User/a -(🔑🧩{id})- User/b
+      ├─   0.397633s   0ms DEBUG Exploring edge User/a -(🔑🧩{id})- User/a
+      ├─   0.397639s   0ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.397646s   0ms DEBUG Finished finding indirect paths, found total of 1
+      ├─   0.397652s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(14) --> EdgeIndex(6)" }])
+    ┌─┘
+    ├─   0.397665s   0ms DEBUG Indirect paths found: 1
+    ├─   0.397673s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(users)- User/a
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(4)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.397714s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.397727s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.397759s   0ms DEBUG Processing edge: Query/a -(users)- User/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.397772s   0ms DEBUG Processing edge: User/a -(type)- UserType/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.397792s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.397804s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.397814s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(9) --> EdgeIndex(3)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.397881s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.397895s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.397907s   0ms DEBUG Processing edge: Query/a -(users)- User/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.397933s   0ms DEBUG Processing edge: User/a -(id)- ID/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.397954s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.397966s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.397976s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=2}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="a", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="users", leaf=false, list=true, response_path="", fetch_path=""}
+          ├─   0.398085s   0ms DEBUG adding output field 'users' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=2, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="User", field="type", leaf=false, list=false, response_path="users.@", fetch_path="users.@"}
+              ├─   0.398136s   0ms DEBUG adding output field 'type' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="User", field="id", leaf=true, list=false, response_path="users.@", fetch_path="users.@"}
+              ├─   0.398200s   0ms DEBUG adding output field 'id' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.398267s   0ms DEBUG Done
+├─   0.398275s   0ms DEBUG found roots
+├─   0.398279s   0ms DEBUG print graph
+├─   0.398284s   0ms DEBUG Nodes:
+│ [1] Query/a {} → {users{type id}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="a"}
+    └─┐execute{subgraph_name="a"}
+      ├─   0.398637s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+      ├─   0.401604s   3ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.401884s DEBUG execution result: ExecutionResult { data: Some(Object {"users": Array [Object {"id": String("u1"), "type": String("REGULAR")}, Object {"id": String("u2"), "type": Null}]}), errors: Some([GraphQLError { message: "Unexpected error.", locations: Some([GraphQLErrorLocation { line: 1, column: 8 }]), path: Some([String("users"), Number(1), String("type")]), extensions: Some({"code": String("INTERNAL_SERVER_ERROR")}) }]), extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("a"), "operationKind": String("query"), "operation": String("{users{type id}}")}}}) }
+   0.404832s DEBUG original document: query {
+  usersB {
+    id
+    type
+  }
+}
+
+   0.404912s DEBUG normalized document: query{usersB{id type}}
+
+   0.404921s DEBUG executable operation: query{usersB{id type}}
+┐walk_operation{}
+├─   0.405190s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="usersB", leaf=false}
+  ├─   0.405239s   0ms DEBUG Trying to advance to: usersB{id type} through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "usersB", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "type", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.405289s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.405308s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "usersB", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "type", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.405334s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.405340s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.405352s   0ms DEBUG Indirect paths found: 0
+    ├─   0.405359s   0ms WARN failed to advance: root(Query) -(a)- Query/a
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(b)- Query/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "usersB", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "type", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.405412s   0ms DEBUG checking edge Query/b -(usersB)- User/b
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b", edge="usersB"}
+        ├─   0.405432s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.405448s   0ms DEBUG Advancing path root(Query) -(b)- Query/b with edge Query/b -(usersB)- User/b
+      ├─   0.405465s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(1) --> EdgeIndex(12)" }])
+    ┌─┘
+    ├─   0.405480s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "usersB", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "type", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.405501s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.405507s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.405518s   0ms DEBUG Indirect paths found: 0
+    ├─   0.405525s   0ms DEBUG advanced: root(Query) -(b)- Query/b
+  ┌─┘
+  ├─   0.405538s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="type", leaf=true}
+  ├─   0.405560s   0ms DEBUG Trying to advance to: type through 1 possible paths
+  └─┐explore_path{path="root(Query) -(b)- Query/b -(usersB)- User/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "type", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersB)- User/b", current_cost=1001}
+      ├─   0.405585s   0ms DEBUG checking edge User/b -(type)- UserType/b
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(usersB)- User/b", edge="type"}
+        ├─   0.405605s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.405620s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(usersB)- User/b with edge User/b -(type)- UserType/b
+      ├─   0.405627s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(7)" }])
+    ┌─┘
+    ├─   0.405641s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "type", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersB)- User/b", current_cost=1001}
+      ├─   0.405659s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/b
+      ├─   0.405665s   0ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.405671s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/a
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(usersB)- User/b", edge="id"}
+        ├─   0.405688s   0ms DEBUG checking requirements {id} for edge 'User/b -(🔑🧩{id})- User/a'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersB)- User/b", current_cost=1001}
+              ├─   0.405721s   0ms DEBUG checking edge User/b -(id)- ID/b
+              └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(usersB)- User/b", edge="id"}
+                ├─   0.405738s   0ms INFO return=Ok(Some([]))
+              ┌─┘
+              ├─   0.405754s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(usersB)- User/b with edge User/b -(id)- ID/b
+              ├─   0.405775s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(6)" }])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersB)- User/b", current_cost=1001}
+              ├─   0.405827s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/b
+              ├─   0.405834s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.405841s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/a
+              ├─   0.405848s   0ms DEBUG Ignoring, graph is excluded and already visited (current: a, visited: {"a"})
+              ├─   0.405856s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.405877s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.405900s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(6)" }], [])))
+          ┌─┘
+          ├─   0.405918s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(6)" }], [])))
+        ┌─┘
+        ├─   0.405932s   0ms DEBUG Paths for id
+        ├─   0.405944s   0ms DEBUG   Path root(Query) -(b)- Query/b -(usersB)- User/b -(id)- ID/b is valid
+        ├─   0.405950s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.405965s   0ms DEBUG path User/b -(id)- ID/b is valid
+        ├─   0.405971s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(6)" }]))
+      ┌─┘
+      ├─   0.405986s   0ms DEBUG Advancing path to User/b -(🔑🧩{id})- User/a
+      └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(6)" }, root_node="User/b"}
+        └─┐create_root_for_path_sequences{root_node="User/b", segments_count=1}
+          ├─   0.406017s   0ms DEBUG Building root query tree node: User/b
+          └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+            ├─   0.406032s   0ms DEBUG Processing edge: User/b -(id)- ID/b
+            └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+            ┌─┘
+            ├─   0.406053s   0ms DEBUG No subsequent steps (leaf or end of path)
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "type", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersB)- User/b -(🔑🧩{id})- User/a", current_cost=2003}
+        ├─   0.406098s   0ms DEBUG checking edge User/a -(type)- UserType/a
+        └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(usersB)- User/b -(🔑🧩{id})- User/a", edge="type"}
+          ├─   0.406116s   0ms INFO return=Ok(Some([]))
+        ┌─┘
+        ├─   0.406132s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(usersB)- User/b -(🔑🧩{id})- User/a with edge User/a -(type)- UserType/a
+        ├─   0.406141s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(15) --> EdgeIndex(4)" }])
+      ┌─┘
+      ├─   0.406160s   0ms DEBUG Found 1 direct paths to User/b -(🔑🧩{id})- User/a
+      ├─   0.406170s   0ms DEBUG Finished finding indirect paths, found total of 1
+      ├─   0.406175s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(15) --> EdgeIndex(4)" }])
+    ┌─┘
+    ├─   0.406188s   0ms DEBUG Indirect paths found: 1
+    ├─   0.406198s   0ms DEBUG advanced: root(Query) -(b)- Query/b -(usersB)- User/b
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="id", leaf=true}
+  ├─   0.406226s   0ms DEBUG Trying to advance to: id through 1 possible paths
+  └─┐explore_path{path="root(Query) -(b)- Query/b -(usersB)- User/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersB)- User/b", current_cost=1001}
+      ├─   0.406274s   0ms DEBUG checking edge User/b -(id)- ID/b
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(usersB)- User/b", edge="id"}
+        ├─   0.406292s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.406324s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(usersB)- User/b with edge User/b -(id)- ID/b
+      ├─   0.406335s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(6)" }])
+    ┌─┘
+    ├─   0.406349s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersB)- User/b", current_cost=1001}
+      ├─   0.406371s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/b
+      ├─   0.406389s   0ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.406400s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/a
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(usersB)- User/b", edge="id"}
+        ├─   0.406426s   0ms DEBUG checking requirements {id} for edge 'User/b -(🔑🧩{id})- User/a'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersB)- User/b", current_cost=1001}
+              ├─   0.406459s   0ms DEBUG checking edge User/b -(id)- ID/b
+              └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(usersB)- User/b", edge="id"}
+                ├─   0.406481s   0ms INFO return=Ok(Some([]))
+              ┌─┘
+              ├─   0.406500s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(usersB)- User/b with edge User/b -(id)- ID/b
+              ├─   0.406509s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(6)" }])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersB)- User/b", current_cost=1001}
+              ├─   0.406538s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/b
+              ├─   0.406545s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.406551s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/a
+              ├─   0.406557s   0ms DEBUG Ignoring, graph is excluded and already visited (current: a, visited: {"a"})
+              ├─   0.406565s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.406572s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.406587s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(6)" }], [])))
+          ┌─┘
+          ├─   0.406602s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(6)" }], [])))
+        ┌─┘
+        ├─   0.406615s   0ms DEBUG Paths for id
+        ├─   0.406623s   0ms DEBUG   Path root(Query) -(b)- Query/b -(usersB)- User/b -(id)- ID/b is valid
+        ├─   0.406629s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.406639s   0ms DEBUG path User/b -(id)- ID/b is valid
+        ├─   0.406645s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(6)" }]))
+      ┌─┘
+      ├─   0.406658s   0ms DEBUG Advancing path to User/b -(🔑🧩{id})- User/a
+      └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(6)" }, root_node="User/b"}
+        └─┐create_root_for_path_sequences{root_node="User/b", segments_count=1}
+          ├─   0.406698s   0ms DEBUG Building root query tree node: User/b
+          └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+            ├─   0.406718s   0ms DEBUG Processing edge: User/b -(id)- ID/b
+            └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+            ┌─┘
+            ├─   0.406740s   0ms DEBUG No subsequent steps (leaf or end of path)
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersB)- User/b -(🔑🧩{id})- User/a", current_cost=2003}
+        ├─   0.406786s   0ms DEBUG checking edge User/a -(id)- ID/a
+        └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(usersB)- User/b -(🔑🧩{id})- User/a", edge="id"}
+          ├─   0.406804s   0ms INFO return=Ok(Some([]))
+        ┌─┘
+        ├─   0.406820s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(usersB)- User/b -(🔑🧩{id})- User/a with edge User/a -(id)- ID/a
+        ├─   0.406829s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(15) --> EdgeIndex(3)" }])
+      ┌─┘
+      ├─   0.406849s   0ms DEBUG Found 1 direct paths to User/b -(🔑🧩{id})- User/a
+      ├─   0.406860s   0ms DEBUG Finished finding indirect paths, found total of 1
+      ├─   0.406865s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(15) --> EdgeIndex(3)" }])
+    ┌─┘
+    ├─   0.406878s   0ms DEBUG Indirect paths found: 1
+    ├─   0.406886s   0ms DEBUG advanced: root(Query) -(b)- Query/b -(usersB)- User/b
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(7)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.406927s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.406939s   0ms DEBUG Processing edge: root(Query) -(b)- Query/b
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.406950s   0ms DEBUG Processing edge: Query/b -(usersB)- User/b
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.406962s   0ms DEBUG Processing edge: User/b -(type)- UserType/b
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.406979s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.406990s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.407001s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(12) --> EdgeIndex(6)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.407033s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.407044s   0ms DEBUG Processing edge: root(Query) -(b)- Query/b
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.407055s   0ms DEBUG Processing edge: Query/b -(usersB)- User/b
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.407067s   0ms DEBUG Processing edge: User/b -(id)- ID/b
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.407085s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.407096s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.407125s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=2}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="b", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="usersB", leaf=false, list=true, response_path="", fetch_path=""}
+          ├─   0.407279s   0ms DEBUG adding output field 'usersB' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=2, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="User", field="type", leaf=false, list=false, response_path="usersB.@", fetch_path="usersB.@"}
+              ├─   0.407311s   0ms DEBUG adding output field 'type' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="User", field="id", leaf=true, list=false, response_path="usersB.@", fetch_path="usersB.@"}
+              ├─   0.407352s   0ms DEBUG adding output field 'id' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.407415s   0ms DEBUG Done
+├─   0.407422s   0ms DEBUG found roots
+├─   0.407427s   0ms DEBUG print graph
+├─   0.407432s   0ms DEBUG Nodes:
+│ [1] Query/b {} → {usersB{type id}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="b"}
+    └─┐execute{subgraph_name="b"}
+      ├─   0.407832s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+      ├─   0.413354s   5ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.413736s DEBUG execution result: ExecutionResult { data: Some(Object {"usersB": Array [Object {"id": String("u1"), "type": String("REGULAR")}, Object {"id": String("u2"), "type": Null}]}), errors: Some([GraphQLError { message: "Value 'ANONYMOUS' is not a valid enum value for type 'UserType'", locations: None, path: None, extensions: None }]), extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("b"), "operationKind": String("query"), "operation": String("{usersB{type id}}")}}}) }
+   0.416922s DEBUG original document: query {
+  usersByType(type: REGULAR) {
+    id
+    type
+  }
+}
+
+   0.417067s DEBUG normalized document: query{usersByType(type: REGULAR){id type}}
+
+   0.417109s DEBUG executable operation: query{usersByType(type: REGULAR){id type}}
+┐walk_operation{}
+├─   0.417537s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="usersByType", leaf=false}
+  ├─   0.417616s   0ms DEBUG Trying to advance to: usersByType(type: REGULAR){id type} through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "usersByType", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "type", selections: SelectionSet { items: [] } }] }, alias: None, arguments: Some(ArgumentsMap { arguments_map: {"type": Enum("REGULAR")} }), skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.417678s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.417714s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "usersByType", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "type", selections: SelectionSet { items: [] } }] }, alias: None, arguments: Some(ArgumentsMap { arguments_map: {"type": Enum("REGULAR")} }), skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.417749s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.417755s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.417767s   0ms DEBUG Indirect paths found: 0
+    ├─   0.417775s   0ms WARN failed to advance: root(Query) -(a)- Query/a
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(b)- Query/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "usersByType", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "type", selections: SelectionSet { items: [] } }] }, alias: None, arguments: Some(ArgumentsMap { arguments_map: {"type": Enum("REGULAR")} }), skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.417809s   0ms DEBUG checking edge Query/b -(usersByType)- User/b
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b", edge="usersByType"}
+        ├─   0.417828s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.417843s   0ms DEBUG Advancing path root(Query) -(b)- Query/b with edge Query/b -(usersByType)- User/b
+      ├─   0.417854s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(1) --> EdgeIndex(11)" }])
+    ┌─┘
+    ├─   0.417873s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "usersByType", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "type", selections: SelectionSet { items: [] } }] }, alias: None, arguments: Some(ArgumentsMap { arguments_map: {"type": Enum("REGULAR")} }), skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.417897s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.417903s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.417914s   0ms DEBUG Indirect paths found: 0
+    ├─   0.417921s   0ms DEBUG advanced: root(Query) -(b)- Query/b
+  ┌─┘
+  ├─   0.417990s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="type", leaf=true}
+  ├─   0.418029s   0ms DEBUG Trying to advance to: type through 1 possible paths
+  └─┐explore_path{path="root(Query) -(b)- Query/b -(usersByType)- User/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "type", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersByType)- User/b", current_cost=1001}
+      ├─   0.418077s   0ms DEBUG checking edge User/b -(type)- UserType/b
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(usersByType)- User/b", edge="type"}
+        ├─   0.418111s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.418134s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(usersByType)- User/b with edge User/b -(type)- UserType/b
+      ├─   0.418153s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(11) --> EdgeIndex(7)" }])
+    ┌─┘
+    ├─   0.418167s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "type", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersByType)- User/b", current_cost=1001}
+      ├─   0.418196s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/b
+      ├─   0.418216s   0ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.418226s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/a
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(usersByType)- User/b", edge="id"}
+        ├─   0.418269s   0ms DEBUG checking requirements {id} for edge 'User/b -(🔑🧩{id})- User/a'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersByType)- User/b", current_cost=1001}
+              ├─   0.418316s   0ms DEBUG checking edge User/b -(id)- ID/b
+              └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(usersByType)- User/b", edge="id"}
+                ├─   0.418335s   0ms INFO return=Ok(Some([]))
+              ┌─┘
+              ├─   0.418354s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(usersByType)- User/b with edge User/b -(id)- ID/b
+              ├─   0.418364s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(11) --> EdgeIndex(6)" }])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersByType)- User/b", current_cost=1001}
+              ├─   0.418394s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/b
+              ├─   0.418402s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.418408s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/a
+              ├─   0.418416s   0ms DEBUG Ignoring, graph is excluded and already visited (current: a, visited: {"a"})
+              ├─   0.418425s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.418431s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.418447s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(11) --> EdgeIndex(6)" }], [])))
+          ┌─┘
+          ├─   0.418464s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(11) --> EdgeIndex(6)" }], [])))
+        ┌─┘
+        ├─   0.418479s   0ms DEBUG Paths for id
+        ├─   0.418488s   0ms DEBUG   Path root(Query) -(b)- Query/b -(usersByType)- User/b -(id)- ID/b is valid
+        ├─   0.418494s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.418510s   0ms DEBUG path User/b -(id)- ID/b is valid
+        ├─   0.418516s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(6)" }]))
+      ┌─┘
+      ├─   0.418530s   0ms DEBUG Advancing path to User/b -(🔑🧩{id})- User/a
+      └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(6)" }, root_node="User/b"}
+        └─┐create_root_for_path_sequences{root_node="User/b", segments_count=1}
+          ├─   0.418557s   0ms DEBUG Building root query tree node: User/b
+          └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+            ├─   0.418572s   0ms DEBUG Processing edge: User/b -(id)- ID/b
+            └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+            ┌─┘
+            ├─   0.418593s   0ms DEBUG No subsequent steps (leaf or end of path)
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "type", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersByType)- User/b -(🔑🧩{id})- User/a", current_cost=2003}
+        ├─   0.418650s   0ms DEBUG checking edge User/a -(type)- UserType/a
+        └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(usersByType)- User/b -(🔑🧩{id})- User/a", edge="type"}
+          ├─   0.418668s   0ms INFO return=Ok(Some([]))
+        ┌─┘
+        ├─   0.418683s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(usersByType)- User/b -(🔑🧩{id})- User/a with edge User/a -(type)- UserType/a
+        ├─   0.418692s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(1) --> EdgeIndex(11) --> EdgeIndex(15) --> EdgeIndex(4)" }])
+      ┌─┘
+      ├─   0.418707s   0ms DEBUG Found 1 direct paths to User/b -(🔑🧩{id})- User/a
+      ├─   0.418717s   0ms DEBUG Finished finding indirect paths, found total of 1
+      ├─   0.418722s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(1) --> EdgeIndex(11) --> EdgeIndex(15) --> EdgeIndex(4)" }])
+    ┌─┘
+    ├─   0.418737s   0ms DEBUG Indirect paths found: 1
+    ├─   0.418747s   0ms DEBUG advanced: root(Query) -(b)- Query/b -(usersByType)- User/b
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="id", leaf=true}
+  ├─   0.418773s   0ms DEBUG Trying to advance to: id through 1 possible paths
+  └─┐explore_path{path="root(Query) -(b)- Query/b -(usersByType)- User/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersByType)- User/b", current_cost=1001}
+      ├─   0.418830s   0ms DEBUG checking edge User/b -(id)- ID/b
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(usersByType)- User/b", edge="id"}
+        ├─   0.418848s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.418865s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(usersByType)- User/b with edge User/b -(id)- ID/b
+      ├─   0.418873s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(11) --> EdgeIndex(6)" }])
+    ┌─┘
+    ├─   0.418887s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersByType)- User/b", current_cost=1001}
+      ├─   0.418906s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/b
+      ├─   0.418912s   0ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.418918s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/a
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(usersByType)- User/b", edge="id"}
+        ├─   0.418933s   0ms DEBUG checking requirements {id} for edge 'User/b -(🔑🧩{id})- User/a'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersByType)- User/b", current_cost=1001}
+              ├─   0.418964s   0ms DEBUG checking edge User/b -(id)- ID/b
+              └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(usersByType)- User/b", edge="id"}
+                ├─   0.418981s   0ms INFO return=Ok(Some([]))
+              ┌─┘
+              ├─   0.419016s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(usersByType)- User/b with edge User/b -(id)- ID/b
+              ├─   0.419029s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(11) --> EdgeIndex(6)" }])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersByType)- User/b", current_cost=1001}
+              ├─   0.419074s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/b
+              ├─   0.419083s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.419090s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/a
+              ├─   0.419096s   0ms DEBUG Ignoring, graph is excluded and already visited (current: a, visited: {"a"})
+              ├─   0.419104s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.419110s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.419125s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(11) --> EdgeIndex(6)" }], [])))
+          ┌─┘
+          ├─   0.419140s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(11) --> EdgeIndex(6)" }], [])))
+        ┌─┘
+        ├─   0.419153s   0ms DEBUG Paths for id
+        ├─   0.419161s   0ms DEBUG   Path root(Query) -(b)- Query/b -(usersByType)- User/b -(id)- ID/b is valid
+        ├─   0.419167s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.419178s   0ms DEBUG path User/b -(id)- ID/b is valid
+        ├─   0.419183s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(6)" }]))
+      ┌─┘
+      ├─   0.419197s   0ms DEBUG Advancing path to User/b -(🔑🧩{id})- User/a
+      └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(6)" }, root_node="User/b"}
+        └─┐create_root_for_path_sequences{root_node="User/b", segments_count=1}
+          ├─   0.419227s   0ms DEBUG Building root query tree node: User/b
+          └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+            ├─   0.419241s   0ms DEBUG Processing edge: User/b -(id)- ID/b
+            └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+            ┌─┘
+            ├─   0.419261s   0ms DEBUG No subsequent steps (leaf or end of path)
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(usersByType)- User/b -(🔑🧩{id})- User/a", current_cost=2003}
+        ├─   0.419319s   0ms DEBUG checking edge User/a -(id)- ID/a
+        └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(usersByType)- User/b -(🔑🧩{id})- User/a", edge="id"}
+          ├─   0.419362s   0ms INFO return=Ok(Some([]))
+        ┌─┘
+        ├─   0.419381s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(usersByType)- User/b -(🔑🧩{id})- User/a with edge User/a -(id)- ID/a
+        ├─   0.419399s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(1) --> EdgeIndex(11) --> EdgeIndex(15) --> EdgeIndex(3)" }])
+      ┌─┘
+      ├─   0.419415s   0ms DEBUG Found 1 direct paths to User/b -(🔑🧩{id})- User/a
+      ├─   0.419439s   0ms DEBUG Finished finding indirect paths, found total of 1
+      ├─   0.419448s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(1) --> EdgeIndex(11) --> EdgeIndex(15) --> EdgeIndex(3)" }])
+    ┌─┘
+    ├─   0.419478s   0ms DEBUG Indirect paths found: 1
+    ├─   0.419491s   0ms DEBUG advanced: root(Query) -(b)- Query/b -(usersByType)- User/b
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(11) --> EdgeIndex(7)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.419558s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.419572s   0ms DEBUG Processing edge: root(Query) -(b)- Query/b
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.419584s   0ms DEBUG Processing edge: Query/b -(usersByType)- User/b
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.419596s   0ms DEBUG Processing edge: User/b -(type)- UserType/b
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.419627s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.419643s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.419653s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(11) --> EdgeIndex(6)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.419704s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.419721s   0ms DEBUG Processing edge: root(Query) -(b)- Query/b
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.419733s   0ms DEBUG Processing edge: Query/b -(usersByType)- User/b
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.419745s   0ms DEBUG Processing edge: User/b -(id)- ID/b
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.419765s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.419780s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.419791s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=2}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="b", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="usersByType", arguments="type: REGULAR", leaf=false, list=true, response_path="", fetch_path=""}
+          ├─   0.419955s   0ms DEBUG adding output field 'usersByType' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=2, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="User", field="type", leaf=false, list=false, response_path="usersByType.@", fetch_path="usersByType.@"}
+              ├─   0.419991s   0ms DEBUG adding output field 'type' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="User", field="id", leaf=true, list=false, response_path="usersByType.@", fetch_path="usersByType.@"}
+              ├─   0.420054s   0ms DEBUG adding output field 'id' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.420121s   0ms DEBUG Done
+├─   0.420129s   0ms DEBUG found roots
+├─   0.420134s   0ms DEBUG print graph
+├─   0.420138s   0ms DEBUG Nodes:
+│ [1] Query/b {} → {usersByType(type: REGULAR){type id}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="b"}
+    └─┐execute{subgraph_name="b"}
+      ├─   0.420570s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+      ├─   0.423031s   2ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.423320s DEBUG execution result: ExecutionResult { data: Some(Object {"usersByType": Array [Object {"id": String("u1"), "type": String("REGULAR")}]}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("b"), "operationKind": String("query"), "operation": String("{usersByType(type: REGULAR){type id}}")}}}) }
+   0.426006s DEBUG original document: query {
+  usersByType(type: ANONYMOUS) {
+    id
+    type
+  }
+}
+
+   0.426089s DEBUG normalized document: query{usersByType(type: ANONYMOUS){id type}}
+
+   0.426103s DEBUG executable operation: query{usersByType(type: ANONYMOUS){id type}}

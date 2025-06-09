@@ -1,0 +1,1159 @@
+generating supergraph file for test...
+running gateway...
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running `target/debug/gateway audits/fed-audit-supergraph.graphql`
+┐new_supergraph_state{}
+└─┐build_map{}
+  └─┐build_object_type{name="Author"}
+    └─┐build_fields{fields_count=2}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Book"}
+    └─┐build_fields{fields_count=3}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="BookContainer"}
+    └─┐build_fields{fields_count=1}
+    ┌─┘
+  ┌─┘
+  └─┐build_scalar_type{name="join__FieldSet"}
+  ┌─┘
+  └─┐build_enum_type{name="join__Graph"}
+  ┌─┘
+  └─┐build_scalar_type{name="link__Import"}
+  ┌─┘
+  └─┐build_enum_type{name="link__Purpose"}
+  ┌─┘
+  └─┐build_object_type{name="Query"}
+    └─┐build_fields{fields_count=1}
+    ┌─┘
+  ┌─┘
+┌─┘
+└─┐decompose_from_supergraph{graph_id="B"}
+┌─┘
+└─┐decompose_from_supergraph{graph_id="C"}
+┌─┘
+└─┐decompose_from_supergraph{graph_id="A"}
+┌─┘
+┘
+┐graph_from_supergraph_state{}
+└─┐build_graph{}
+  ├─   0.006004s   0ms DEBUG Building graph for supergraph with 16 definitions
+  └─┐build_root_nodes{}
+    ├─   0.006058s   0ms DEBUG added root type for queries: Query
+  ┌─┘
+  └─┐link_root_edges{}
+  ┌─┘
+  └─┐build_field_edges{}
+    ├─   0.006109s   0ms INFO [x] Creating owned field move edge 'Book.__typename/A' (type: String)
+    ├─   0.006122s   0ms INFO [ ] Field 'Book.author/A' does is not available in the subgraph, skipping edge creation (type: Author)
+    ├─   0.006127s   0ms INFO [ ] Field 'Book.id/A' does is not available in the subgraph, skipping edge creation (type: ID)
+    ├─   0.006133s   0ms INFO [x] Creating field move edge 'Book.upc/A' (type: ID)
+    ├─   0.006141s   0ms INFO [x] Creating field move edge 'Book.upc/A' (type: ID)
+    ├─   0.006148s   0ms INFO [x] Creating owned field move edge 'Book.__typename/B' (type: String)
+    ├─   0.006154s   0ms INFO [ ] Field 'Book.author/B' does is not available in the subgraph, skipping edge creation (type: Author)
+    ├─   0.006159s   0ms INFO [x] Creating field move edge 'Book.id/B' (type: ID)
+    ├─   0.006167s   0ms INFO [x] Creating field move edge 'Book.id/B' (type: ID)
+    ├─   0.006172s   0ms INFO [x] Creating field move edge 'Book.upc/B' (type: ID)
+    ├─   0.006178s   0ms INFO [x] Creating field move edge 'Book.upc/B' (type: ID)
+    ├─   0.006184s   0ms INFO [x] Creating owned field move edge 'Book.__typename/B' (type: String)
+    ├─   0.006190s   0ms INFO [ ] Field 'Book.author/B' does is not available in the subgraph, skipping edge creation (type: Author)
+    ├─   0.006195s   0ms INFO [x] Creating field move edge 'Book.id/B' (type: ID)
+    ├─   0.006201s   0ms INFO [x] Creating field move edge 'Book.id/B' (type: ID)
+    ├─   0.006206s   0ms INFO [x] Creating field move edge 'Book.upc/B' (type: ID)
+    ├─   0.006212s   0ms INFO [x] Creating field move edge 'Book.upc/B' (type: ID)
+    ├─   0.006217s   0ms INFO [x] Creating owned field move edge 'Book.__typename/C' (type: String)
+    ├─   0.006224s   0ms INFO [x] Creating field move edge 'Book.author/C' (type: Author)
+    ├─   0.006229s   0ms INFO [x] Creating field move edge 'Book.author/C' (type: Author)
+    ├─   0.006235s   0ms INFO [x] Creating field move edge 'Book.id/C' (type: ID)
+    ├─   0.006241s   0ms INFO [x] Creating field move edge 'Book.id/C' (type: ID)
+    ├─   0.006247s   0ms INFO [ ] Field 'Book.upc/C' does is not available in the subgraph, skipping edge creation (type: ID)
+    ├─   0.006252s   0ms INFO [x] Creating owned field move edge 'Query.__typename/A' (type: String)
+    ├─   0.006258s   0ms INFO [x] Creating field move edge 'Query.bookContainers/A' (type: BookContainer)
+    ├─   0.006264s   0ms INFO [x] Creating field move edge 'Query.bookContainers/A' (type: BookContainer)
+    ├─   0.006270s   0ms INFO [x] Creating owned field move edge 'Query.__typename/B' (type: String)
+    ├─   0.006277s   0ms INFO [ ] Field 'Query.bookContainers/B' does is not available in the subgraph, skipping edge creation (type: BookContainer)
+    ├─   0.006281s   0ms INFO [x] Creating owned field move edge 'Query.__typename/C' (type: String)
+    ├─   0.006290s   0ms INFO [ ] Field 'Query.bookContainers/C' does is not available in the subgraph, skipping edge creation (type: BookContainer)
+    ├─   0.006296s   0ms INFO [x] Creating owned field move edge 'BookContainer.__typename/A' (type: String)
+    ├─   0.006302s   0ms INFO [x] Creating field move edge 'BookContainer.book/A' (type: Book)
+    ├─   0.006308s   0ms INFO [x] Creating field move edge 'BookContainer.book/A' (type: Book)
+    ├─   0.006313s   0ms INFO [x] Creating owned field move edge 'Author.__typename/C' (type: String)
+    ├─   0.006319s   0ms INFO [x] Creating field move edge 'Author.name/C' (type: String)
+    ├─   0.006325s   0ms INFO [x] Creating field move edge 'Author.name/C' (type: String)
+    ├─   0.006330s   0ms INFO [x] Creating field move edge 'Author.id/C' (type: ID)
+    ├─   0.006335s   0ms INFO [x] Creating field move edge 'Author.id/C' (type: ID)
+  ┌─┘
+  └─┐build_interface_implementation_edges{}
+  ┌─┘
+  └─┐build_entity_reference_edges{}
+    ├─   0.006433s   0ms INFO Creating self-referencing entity move edge in 'Book/A' via key 'upc'
+    ├─   0.006504s   0ms INFO Creating entity move edge from 'Book/A' to 'Book/B' via key 'id'
+    ├─   0.006571s   0ms INFO Creating entity move edge from 'Book/A' to 'Book/B' via key 'upc'
+    ├─   0.006637s   0ms INFO Creating entity move edge from 'Book/A' to 'Book/C' via key 'id'
+    ├─   0.006674s   0ms INFO Creating entity move edge from 'Book/B' to 'Book/A' via key 'upc'
+    ├─   0.006705s   0ms INFO Creating self-referencing entity move edge in 'Book/B' via key 'id'
+    ├─   0.006735s   0ms INFO Creating self-referencing entity move edge in 'Book/B' via key 'id'
+    ├─   0.006786s   0ms INFO Creating entity move edge from 'Book/B' to 'Book/C' via key 'id'
+    ├─   0.006855s   0ms INFO Creating entity move edge from 'Book/B' to 'Book/A' via key 'upc'
+    ├─   0.006897s   0ms INFO Creating self-referencing entity move edge in 'Book/B' via key 'upc'
+    ├─   0.006929s   0ms INFO Creating self-referencing entity move edge in 'Book/B' via key 'upc'
+    ├─   0.006965s   0ms INFO Creating entity move edge from 'Book/B' to 'Book/C' via key 'id'
+    ├─   0.007027s   0ms INFO Creating entity move edge from 'Book/C' to 'Book/A' via key 'upc'
+    ├─   0.007093s   0ms INFO Creating entity move edge from 'Book/C' to 'Book/B' via key 'id'
+    ├─   0.007129s   0ms INFO Creating entity move edge from 'Book/C' to 'Book/B' via key 'upc'
+    ├─   0.007161s   0ms INFO Creating self-referencing entity move edge in 'Book/C' via key 'id'
+  ┌─┘
+  └─┐build_viewed_field_edges{}
+  ┌─┘
+┌─┘
+┘
+   0.061595s INFO Starting server on http://localhost:4000
+   0.062505s INFO starting 16 workers
+   0.062548s INFO Actix runtime found; starting in Actix runtime
+   0.062558s INFO starting service: "actix-web-service-0.0.0.0:4000", workers: 16, listening on: 0.0.0.0:4000
+   0.295269s DEBUG original document: query ping {
+  __typename
+}
+
+   0.295372s DEBUG normalized document: query ping {__typename}
+
+   0.295401s DEBUG executable operation: query ping {__typename}
+┐execute{}
+┘
+   0.295796s DEBUG execution result: ExecutionResult { data: Some(Object {"__typename": String("Query")}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan")}}) }
+   0.371600s DEBUG original document: query {
+  bookContainers {
+    book {
+      upc
+      author {
+        name
+      }
+    }
+  }
+}
+
+   0.371719s DEBUG normalized document: query{bookContainers{book{upc author{name}}}}
+
+   0.371742s DEBUG executable operation: query{bookContainers{book{upc author{name}}}}
+┐walk_operation{}
+├─   0.372174s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="bookContainers", leaf=false}
+  ├─   0.372221s   0ms DEBUG Trying to advance to: bookContainers{book{upc author{name}}} through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "bookContainers", selections: SelectionSet { items: [SelectionItem::Field { name: "book", selections: SelectionSet { items: [SelectionItem::Field { name: "upc", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "author", selections: SelectionSet { items: [SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.372282s   0ms DEBUG checking edge Query/a -(bookContainers)- BookContainer/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="bookContainers"}
+        ├─   0.372303s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.372327s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(bookContainers)- BookContainer/a
+      ├─   0.372340s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(10)" }])
+    ┌─┘
+    ├─   0.372357s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "bookContainers", selections: SelectionSet { items: [SelectionItem::Field { name: "book", selections: SelectionSet { items: [SelectionItem::Field { name: "upc", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "author", selections: SelectionSet { items: [SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.372392s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.372399s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.372411s   0ms DEBUG Indirect paths found: 0
+    ├─   0.372418s   0ms DEBUG advanced: root(Query) -(a)- Query/a
+  ┌─┘
+  ├─   0.372432s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="book", leaf=false}
+  ├─   0.372452s   0ms DEBUG Trying to advance to: book{upc author{name}} through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "book", selections: SelectionSet { items: [SelectionItem::Field { name: "upc", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "author", selections: SelectionSet { items: [SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a", current_cost=1001}
+      ├─   0.372479s   0ms DEBUG checking edge BookContainer/a -(book)- Book/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a", edge="book"}
+        ├─   0.372494s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.372508s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a with edge BookContainer/a -(book)- Book/a
+      ├─   0.372516s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14)" }])
+    ┌─┘
+    ├─   0.372529s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "book", selections: SelectionSet { items: [SelectionItem::Field { name: "upc", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "author", selections: SelectionSet { items: [SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a", current_cost=1001}
+      ├─   0.372547s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.372553s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.372563s   0ms DEBUG Indirect paths found: 0
+    ├─   0.372570s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a
+  ┌─┘
+  ├─   0.372581s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="author", leaf=false}
+  ├─   0.372600s   0ms DEBUG Trying to advance to: author{name} through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "author", selections: SelectionSet { items: [SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+      ├─   0.372629s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.372641s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "author", selections: SelectionSet { items: [SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+      ├─   0.372659s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/c
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="id"}
+        ├─   0.372677s   0ms DEBUG checking requirements {id} for edge 'Book/a -(🔑🧩{id})- Book/c'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+              ├─   0.372712s   0ms INFO return=Ok([])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+              ├─   0.372739s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/c
+              ├─   0.372747s   0ms DEBUG Ignoring, graph is excluded and already visited (current: c, visited: {"c"})
+              ├─   0.372756s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/b
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="upc"}
+                ├─   0.372775s   0ms DEBUG checking requirements {upc} for edge 'Book/a -(🔑🧩{upc})- Book/b'
+                └─┐validate_field_requirement{}
+                  └─┐validate_field_requirement{}
+                    └─┐find_direct_paths{target=Field(FieldSelection { name: "upc", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+                      ├─   0.372830s   0ms DEBUG checking edge Book/a -(upc)- ID/a
+                      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="upc"}
+                        ├─   0.372859s   0ms INFO return=Ok(Some([]))
+                      ┌─┘
+                      ├─   0.372880s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a with edge Book/a -(upc)- ID/a
+                      ├─   0.372892s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(2)" }])
+                    ┌─┘
+                    └─┐find_indirect_paths{target=Field(FieldSelection { name: "upc", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+                      ├─   0.372936s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/c
+                      ├─   0.372944s   0ms DEBUG Ignoring, graph is excluded and already visited (current: c, visited: {"c", "b"})
+                      ├─   0.372951s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/b
+                      ├─   0.372958s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"c", "b"})
+                      ├─   0.372966s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/b
+                      ├─   0.372972s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"c", "b"})
+                      ├─   0.372979s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/a
+                      ├─   0.372988s   0ms DEBUG Ignoring. We would go back to the same graph
+                      ├─   0.373008s   0ms DEBUG Finished finding indirect paths, found total of 0
+                      ├─   0.373018s   0ms INFO return=Ok([])
+                    ┌─┘
+                    ├─   0.373040s   0ms INFO return=Ok(Some(([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(2)" }], [])))
+                  ┌─┘
+                  ├─   0.373060s   0ms INFO return=Ok(Some(([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(2)" }], [])))
+                ┌─┘
+                ├─   0.373076s   0ms DEBUG Paths for upc
+                ├─   0.373088s   0ms DEBUG   Path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(upc)- ID/a is valid
+                ├─   0.373095s   0ms DEBUG Found 1 best paths for this leaf requirement
+                ├─   0.373111s   0ms DEBUG path Book/a -(upc)- ID/a is valid
+                ├─   0.373118s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(2)" }]))
+              ┌─┘
+              ├─   0.373134s   0ms DEBUG Advancing path to Book/a -(🔑🧩{upc})- Book/b
+              └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(2)" }, root_node="Book/a"}
+                └─┐create_root_for_path_sequences{root_node="Book/a", segments_count=1}
+                  ├─   0.373166s   0ms DEBUG Building root query tree node: Book/a
+                  └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+                    ├─   0.373184s   0ms DEBUG Processing edge: Book/a -(upc)- ID/a
+                    └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+                    ┌─┘
+                    ├─   0.373208s   0ms DEBUG No subsequent steps (leaf or end of path)
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+              └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b", current_cost=2004}
+                ├─   0.373276s   0ms DEBUG checking edge Book/b -(id)- ID/b
+                └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b", edge="id"}
+                  ├─   0.373305s   0ms INFO return=Ok(Some([]))
+                ┌─┘
+                ├─   0.373325s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b with edge Book/b -(id)- ID/b
+                ├─   0.373335s   0ms INFO return=Ok([ { cost: 2005, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(20) --> EdgeIndex(4)" }])
+              ┌─┘
+              ├─   0.373354s   0ms DEBUG Found 1 direct paths to Book/a -(🔑🧩{upc})- Book/b
+              ├─   0.373371s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/b
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="id"}
+                ├─   0.373392s   0ms DEBUG checking requirements {id} for edge 'Book/a -(🔑🧩{id})- Book/b'
+                └─┐validate_field_requirement{}
+                  └─┐validate_field_requirement{}
+                    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+                      ├─   0.373426s   0ms INFO return=Ok([])
+                    ┌─┘
+                    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+                      ├─   0.373456s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/c
+                      ├─   0.373464s   0ms DEBUG Ignoring, graph is excluded and already visited (current: c, visited: {"c", "b"})
+                      ├─   0.373472s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/b
+                      ├─   0.373478s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"c", "b"})
+                      ├─   0.373485s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/b
+                      ├─   0.373492s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"c", "b"})
+                      ├─   0.373499s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/a
+                      ├─   0.373506s   0ms DEBUG Ignoring. We would go back to the same graph
+                      ├─   0.373514s   0ms DEBUG Finished finding indirect paths, found total of 0
+                      ├─   0.373521s   0ms INFO return=Ok([])
+                    ┌─┘
+                    ├─   0.373537s   0ms INFO return=Ok(None)
+                  ┌─┘
+                  ├─   0.373551s   0ms INFO return=Ok(None)
+                ┌─┘
+                ├─   0.373565s   0ms INFO return=Ok(None)
+              ┌─┘
+              ├─   0.373578s   0ms DEBUG Requirements not satisfied, continue look up...
+              ├─   0.373585s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/a
+              ├─   0.373591s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.373599s   0ms DEBUG Finished finding indirect paths, found total of 1
+              ├─   0.373604s   0ms INFO return=Ok([ { cost: 2005, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(20) --> EdgeIndex(4)" }])
+            ┌─┘
+            ├─   0.373621s   0ms INFO return=Ok(Some(([ { cost: 2005, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(20) --> EdgeIndex(4)" }], [])))
+          ┌─┘
+          ├─   0.373636s   0ms INFO return=Ok(Some(([ { cost: 2005, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(20) --> EdgeIndex(4)" }], [])))
+        ┌─┘
+        ├─   0.373649s   0ms DEBUG Paths for id
+        ├─   0.373658s   0ms DEBUG   Path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b -(id)- ID/b is valid
+        ├─   0.373664s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.373675s   1ms DEBUG path Book/a -(🔑🧩{upc})- Book/b -(id)- ID/b is valid
+        ├─   0.373681s   1ms INFO return=Ok(Some([ { cost: 1003, egdes: "EdgeIndex(20) --> EdgeIndex(4)" }]))
+      ┌─┘
+      ├─   0.373694s   1ms DEBUG Advancing path to Book/a -(🔑🧩{id})- Book/c
+      └─┐from_path{path= { cost: 1003, egdes: "EdgeIndex(20) --> EdgeIndex(4)" }, root_node="Book/a"}
+        └─┐create_root_for_path_sequences{root_node="Book/a", segments_count=2}
+          ├─   0.373719s   0ms DEBUG Building root query tree node: Book/a
+          └─┐from_path_segment_sequences{current_index=0, total_segments=2}
+            ├─   0.373732s   0ms DEBUG Processing edge: Book/a -(🔑🧩{upc})- Book/b
+            └─┐from_path_segment_sequences{current_index=1, total_segments=2}
+              ├─   0.373745s   0ms DEBUG Processing edge: Book/b -(id)- ID/b
+              └─┐from_path_segment_sequences{current_index=2, total_segments=2}
+              ┌─┘
+              ├─   0.373765s   0ms DEBUG No subsequent steps (leaf or end of path)
+            ┌─┘
+            ├─   0.373779s   0ms DEBUG Adding subsequent step as child
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "author", selections: SelectionSet { items: [SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{id})- Book/c", current_cost=2004}
+        ├─   0.373823s   0ms DEBUG checking edge Book/c -(author)- Author/c
+        └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{id})- Book/c", edge="author"}
+          ├─   0.373841s   0ms INFO return=Ok(Some([]))
+        ┌─┘
+        ├─   0.373856s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{id})- Book/c with edge Book/c -(author)- Author/c
+        ├─   0.373864s   0ms INFO return=Ok([ { cost: 2005, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(21) --> EdgeIndex(7)" }])
+      ┌─┘
+      ├─   0.373878s   1ms DEBUG Found 1 direct paths to Book/a -(🔑🧩{id})- Book/c
+      ├─   0.373886s   1ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/b
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="upc"}
+        ├─   0.373903s   0ms DEBUG checking requirements {upc} for edge 'Book/a -(🔑🧩{upc})- Book/b'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "upc", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+              ├─   0.373934s   0ms DEBUG checking edge Book/a -(upc)- ID/a
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="upc"}
+                ├─   0.373953s   0ms INFO return=Ok(Some([]))
+              ┌─┘
+              ├─   0.373969s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a with edge Book/a -(upc)- ID/a
+              ├─   0.373978s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(2)" }])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "upc", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+              ├─   0.374007s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/c
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="id"}
+                ├─   0.374025s   0ms DEBUG checking requirements {id} for edge 'Book/a -(🔑🧩{id})- Book/c'
+                └─┐validate_field_requirement{}
+                  └─┐validate_field_requirement{}
+                    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+                      ├─   0.374059s   0ms INFO return=Ok([])
+                    ┌─┘
+                    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+                      ├─   0.374087s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/c
+                      ├─   0.374095s   0ms DEBUG Ignoring, graph is excluded and already visited (current: c, visited: {"c", "b"})
+                      ├─   0.374102s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/b
+                      ├─   0.374109s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"c", "b"})
+                      ├─   0.374116s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/b
+                      ├─   0.374122s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"c", "b"})
+                      ├─   0.374129s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/a
+                      ├─   0.374136s   0ms DEBUG Ignoring. We would go back to the same graph
+                      ├─   0.374144s   0ms DEBUG Finished finding indirect paths, found total of 0
+                      ├─   0.374155s   0ms INFO return=Ok([])
+                    ┌─┘
+                    ├─   0.374171s   0ms INFO return=Ok(None)
+                  ┌─┘
+                  ├─   0.374185s   0ms INFO return=Ok(None)
+                ┌─┘
+                ├─   0.374198s   0ms INFO return=Ok(None)
+              ┌─┘
+              ├─   0.374211s   0ms DEBUG Requirements not satisfied, continue look up...
+              ├─   0.374218s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/b
+              ├─   0.374224s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+              ├─   0.374230s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/b
+              ├─   0.374236s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+              ├─   0.374242s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/a
+              ├─   0.374248s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.374254s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.374259s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.374272s   0ms INFO return=Ok(Some(([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(2)" }], [])))
+          ┌─┘
+          ├─   0.374287s   0ms INFO return=Ok(Some(([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(2)" }], [])))
+        ┌─┘
+        ├─   0.374301s   0ms DEBUG Paths for upc
+        ├─   0.374309s   0ms DEBUG   Path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(upc)- ID/a is valid
+        ├─   0.374314s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.374324s   0ms DEBUG path Book/a -(upc)- ID/a is valid
+        ├─   0.374330s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(2)" }]))
+      ┌─┘
+      ├─   0.374343s   1ms DEBUG Advancing path to Book/a -(🔑🧩{upc})- Book/b
+      └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(2)" }, root_node="Book/a"}
+        └─┐create_root_for_path_sequences{root_node="Book/a", segments_count=1}
+          ├─   0.374366s   0ms DEBUG Building root query tree node: Book/a
+          └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+            ├─   0.374379s   0ms DEBUG Processing edge: Book/a -(upc)- ID/a
+            └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+            ┌─┘
+            ├─   0.374398s   0ms DEBUG No subsequent steps (leaf or end of path)
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "author", selections: SelectionSet { items: [SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b", current_cost=2004}
+        ├─   0.374528s   0ms INFO return=Ok([])
+      ┌─┘
+      ├─   0.374551s   1ms DEBUG No direct paths found
+      ├─   0.374562s   1ms DEBUG going deeper
+      ├─   0.374571s   1ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/b
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="id"}
+        ├─   0.374595s   0ms DEBUG checking requirements {id} for edge 'Book/a -(🔑🧩{id})- Book/b'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+              ├─   0.374626s   0ms INFO return=Ok([])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+              ├─   0.374656s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/c
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="id"}
+                ├─   0.374675s   0ms DEBUG checking requirements {id} for edge 'Book/a -(🔑🧩{id})- Book/c'
+                └─┐validate_field_requirement{}
+                  └─┐validate_field_requirement{}
+                    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+                      ├─   0.374709s   0ms INFO return=Ok([])
+                    ┌─┘
+                    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+                      ├─   0.374740s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/c
+                      ├─   0.374747s   0ms DEBUG Ignoring, graph is excluded and already visited (current: c, visited: {"c", "b"})
+                      ├─   0.374755s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/b
+                      ├─   0.374763s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"c", "b"})
+                      ├─   0.374770s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/b
+                      ├─   0.374777s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"c", "b"})
+                      ├─   0.374784s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/a
+                      ├─   0.374790s   0ms DEBUG Ignoring. We would go back to the same graph
+                      ├─   0.374799s   0ms DEBUG Finished finding indirect paths, found total of 0
+                      ├─   0.374806s   0ms INFO return=Ok([])
+                    ┌─┘
+                    ├─   0.374823s   0ms INFO return=Ok(None)
+                  ┌─┘
+                  ├─   0.374837s   0ms INFO return=Ok(None)
+                ┌─┘
+                ├─   0.374858s   0ms INFO return=Ok(None)
+              ┌─┘
+              ├─   0.374876s   0ms DEBUG Requirements not satisfied, continue look up...
+              ├─   0.374885s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/b
+              ├─   0.374893s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+              ├─   0.374900s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/b
+              ├─   0.374906s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+              ├─   0.374912s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/a
+              ├─   0.374918s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.374924s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.374930s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.374944s   0ms INFO return=Ok(None)
+          ┌─┘
+          ├─   0.374956s   0ms INFO return=Ok(None)
+        ┌─┘
+        ├─   0.374967s   0ms INFO return=Ok(None)
+      ┌─┘
+      ├─   0.374978s   2ms DEBUG Requirements not satisfied, continue look up...
+      ├─   0.374984s   2ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/a
+      ├─   0.374989s   2ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.374995s   2ms DEBUG Exploring edge Book/b -(🔑🧩{upc})- Book/b
+      ├─   0.375000s   2ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+      ├─   0.375005s   2ms DEBUG Exploring edge Book/b -(🔑🧩{id})- Book/c
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b", edge="id"}
+        ├─   0.375033s   0ms DEBUG checking requirements {id} for edge 'Book/b -(🔑🧩{id})- Book/c'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b", current_cost=2004}
+              ├─   0.375066s   0ms DEBUG checking edge Book/b -(id)- ID/b
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b", edge="id"}
+                ├─   0.375085s   0ms INFO return=Ok(Some([]))
+              ┌─┘
+              ├─   0.375103s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b with edge Book/b -(id)- ID/b
+              ├─   0.375113s   0ms INFO return=Ok([ { cost: 2005, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(20) --> EdgeIndex(4)" }])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b", current_cost=2004}
+              ├─   0.375146s   0ms DEBUG Exploring edge Book/b -(🔑🧩{upc})- Book/b
+              ├─   0.375153s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.375159s   0ms DEBUG Exploring edge Book/b -(🔑🧩{id})- Book/c
+              ├─   0.375165s   0ms DEBUG Ignoring, graph is excluded and already visited (current: c, visited: {"c"})
+              ├─   0.375195s   0ms DEBUG Exploring edge Book/b -(🔑🧩{id})- Book/b
+              ├─   0.375204s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.375210s   0ms DEBUG Exploring edge Book/b -(🔑🧩{upc})- Book/a
+              ├─   0.375219s   0ms DEBUG Ignoring. Already visited similar edge
+              ├─   0.375228s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.375238s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.375257s   0ms INFO return=Ok(Some(([ { cost: 2005, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(20) --> EdgeIndex(4)" }], [])))
+          ┌─┘
+          ├─   0.375275s   0ms INFO return=Ok(Some(([ { cost: 2005, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(20) --> EdgeIndex(4)" }], [])))
+        ┌─┘
+        ├─   0.375289s   0ms DEBUG Paths for id
+        ├─   0.375299s   0ms DEBUG   Path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b -(id)- ID/b is valid
+        ├─   0.375305s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.375316s   0ms DEBUG path Book/b -(id)- ID/b is valid
+        ├─   0.375321s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(4)" }]))
+      ┌─┘
+      ├─   0.375335s   2ms DEBUG Advancing path to Book/b -(🔑🧩{id})- Book/c
+      └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(4)" }, root_node="Book/b"}
+        └─┐create_root_for_path_sequences{root_node="Book/b", segments_count=1}
+          ├─   0.375361s   0ms DEBUG Building root query tree node: Book/b
+          └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+            ├─   0.375374s   0ms DEBUG Processing edge: Book/b -(id)- ID/b
+            └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+            ┌─┘
+            ├─   0.375393s   0ms DEBUG No subsequent steps (leaf or end of path)
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "author", selections: SelectionSet { items: [SelectionItem::Field { name: "name", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b -(🔑🧩{id})- Book/c", current_cost=3006}
+        ├─   0.375438s   0ms DEBUG checking edge Book/c -(author)- Author/c
+        └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b -(🔑🧩{id})- Book/c", edge="author"}
+          ├─   0.375460s   0ms INFO return=Ok(Some([]))
+        ┌─┘
+        ├─   0.375477s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b -(🔑🧩{id})- Book/c with edge Book/c -(author)- Author/c
+        ├─   0.375485s   0ms INFO return=Ok([ { cost: 3007, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(20) --> EdgeIndex(24) --> EdgeIndex(7)" }])
+      ┌─┘
+      ├─   0.375501s   2ms DEBUG Found 1 direct paths to Book/b -(🔑🧩{id})- Book/c
+      ├─   0.375511s   2ms DEBUG Exploring edge Book/b -(🔑🧩{id})- Book/b
+      ├─   0.375517s   2ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+      ├─   0.375523s   2ms DEBUG Exploring edge Book/b -(🔑🧩{upc})- Book/a
+      ├─   0.375528s   2ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.375535s   2ms DEBUG Finished finding indirect paths, found total of 1
+      ├─   0.375541s   2ms INFO return=Ok([ { cost: 2005, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(21) --> EdgeIndex(7)" }])
+    ┌─┘
+    ├─   0.375554s   2ms DEBUG Indirect paths found: 1
+    ├─   0.375563s   2ms DEBUG advanced: root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a
+  ┌─┘
+  ├─   0.375574s   2ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="name", leaf=true}
+  ├─   0.375593s   0ms DEBUG Trying to advance to: name through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{id})- Book/c -(author)- Author/c"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{id})- Book/c -(author)- Author/c", current_cost=2005}
+      ├─   0.375622s   0ms DEBUG checking edge Author/c -(name)- String/c
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{id})- Book/c -(author)- Author/c", edge="name"}
+        ├─   0.375640s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.375655s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{id})- Book/c -(author)- Author/c with edge Author/c -(name)- String/c
+      ├─   0.375662s   0ms INFO return=Ok([ { cost: 2006, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(21) --> EdgeIndex(7) --> EdgeIndex(16)" }])
+    ┌─┘
+    ├─   0.375676s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "name", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{id})- Book/c -(author)- Author/c", current_cost=2005}
+      ├─   0.375696s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.375702s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.375713s   0ms DEBUG Indirect paths found: 0
+    ├─   0.375721s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{id})- Book/c -(author)- Author/c
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="upc", leaf=true}
+  ├─   0.375745s   0ms DEBUG Trying to advance to: upc through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "upc", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+      ├─   0.375769s   0ms DEBUG checking edge Book/a -(upc)- ID/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="upc"}
+        ├─   0.375784s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.375798s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a with edge Book/a -(upc)- ID/a
+      ├─   0.375806s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(2)" }])
+    ┌─┘
+    ├─   0.375819s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "upc", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+      ├─   0.375837s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/c
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="id"}
+        ├─   0.375880s   0ms DEBUG checking requirements {id} for edge 'Book/a -(🔑🧩{id})- Book/c'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+              ├─   0.375913s   0ms INFO return=Ok([])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+              ├─   0.375943s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/c
+              ├─   0.375950s   0ms DEBUG Ignoring, graph is excluded and already visited (current: c, visited: {"c"})
+              ├─   0.375957s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/b
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="upc"}
+                ├─   0.375975s   0ms DEBUG checking requirements {upc} for edge 'Book/a -(🔑🧩{upc})- Book/b'
+                └─┐validate_field_requirement{}
+                  └─┐validate_field_requirement{}
+                    └─┐find_direct_paths{target=Field(FieldSelection { name: "upc", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+                      ├─   0.376008s   0ms DEBUG checking edge Book/a -(upc)- ID/a
+                      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="upc"}
+                        ├─   0.376027s   0ms INFO return=Ok(Some([]))
+                      ┌─┘
+                      ├─   0.376045s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a with edge Book/a -(upc)- ID/a
+                      ├─   0.376056s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(2)" }])
+                    ┌─┘
+                    └─┐find_indirect_paths{target=Field(FieldSelection { name: "upc", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+                      ├─   0.376087s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/c
+                      ├─   0.376095s   0ms DEBUG Ignoring, graph is excluded and already visited (current: c, visited: {"c", "b"})
+                      ├─   0.376102s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/b
+                      ├─   0.376109s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"c", "b"})
+                      ├─   0.376116s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/b
+                      ├─   0.376123s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"c", "b"})
+                      ├─   0.376130s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/a
+                      ├─   0.376136s   0ms DEBUG Ignoring. We would go back to the same graph
+                      ├─   0.376145s   0ms DEBUG Finished finding indirect paths, found total of 0
+                      ├─   0.376151s   0ms INFO return=Ok([])
+                    ┌─┘
+                    ├─   0.376168s   0ms INFO return=Ok(Some(([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(2)" }], [])))
+                  ┌─┘
+                  ├─   0.376185s   0ms INFO return=Ok(Some(([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(2)" }], [])))
+                ┌─┘
+                ├─   0.376200s   0ms DEBUG Paths for upc
+                ├─   0.376209s   0ms DEBUG   Path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(upc)- ID/a is valid
+                ├─   0.376216s   0ms DEBUG Found 1 best paths for this leaf requirement
+                ├─   0.376227s   0ms DEBUG path Book/a -(upc)- ID/a is valid
+                ├─   0.376234s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(2)" }]))
+              ┌─┘
+              ├─   0.376249s   0ms DEBUG Advancing path to Book/a -(🔑🧩{upc})- Book/b
+              └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(2)" }, root_node="Book/a"}
+                └─┐create_root_for_path_sequences{root_node="Book/a", segments_count=1}
+                  ├─   0.376275s   0ms DEBUG Building root query tree node: Book/a
+                  └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+                    ├─   0.376289s   0ms DEBUG Processing edge: Book/a -(upc)- ID/a
+                    └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+                    ┌─┘
+                    ├─   0.376312s   0ms DEBUG No subsequent steps (leaf or end of path)
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+              └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b", current_cost=2004}
+                ├─   0.376362s   0ms DEBUG checking edge Book/b -(id)- ID/b
+                └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b", edge="id"}
+                  ├─   0.376382s   0ms INFO return=Ok(Some([]))
+                ┌─┘
+                ├─   0.376399s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b with edge Book/b -(id)- ID/b
+                ├─   0.376407s   0ms INFO return=Ok([ { cost: 2005, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(20) --> EdgeIndex(4)" }])
+              ┌─┘
+              ├─   0.376427s   0ms DEBUG Found 1 direct paths to Book/a -(🔑🧩{upc})- Book/b
+              ├─   0.376436s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/b
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="id"}
+                ├─   0.376455s   0ms DEBUG checking requirements {id} for edge 'Book/a -(🔑🧩{id})- Book/b'
+                └─┐validate_field_requirement{}
+                  └─┐validate_field_requirement{}
+                    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+                      ├─   0.376488s   0ms INFO return=Ok([])
+                    ┌─┘
+                    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+                      ├─   0.376517s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/c
+                      ├─   0.376524s   0ms DEBUG Ignoring, graph is excluded and already visited (current: c, visited: {"c", "b"})
+                      ├─   0.376532s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/b
+                      ├─   0.376538s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"c", "b"})
+                      ├─   0.376545s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/b
+                      ├─   0.376552s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"c", "b"})
+                      ├─   0.376559s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/a
+                      ├─   0.376566s   0ms DEBUG Ignoring. We would go back to the same graph
+                      ├─   0.376574s   0ms DEBUG Finished finding indirect paths, found total of 0
+                      ├─   0.376580s   0ms INFO return=Ok([])
+                    ┌─┘
+                    ├─   0.376596s   0ms INFO return=Ok(None)
+                  ┌─┘
+                  ├─   0.376610s   0ms INFO return=Ok(None)
+                ┌─┘
+                ├─   0.376623s   0ms INFO return=Ok(None)
+              ┌─┘
+              ├─   0.376636s   0ms DEBUG Requirements not satisfied, continue look up...
+              ├─   0.376643s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/a
+              ├─   0.376649s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.376656s   0ms DEBUG Finished finding indirect paths, found total of 1
+              ├─   0.376662s   0ms INFO return=Ok([ { cost: 2005, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(20) --> EdgeIndex(4)" }])
+            ┌─┘
+            ├─   0.376679s   0ms INFO return=Ok(Some(([ { cost: 2005, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(20) --> EdgeIndex(4)" }], [])))
+          ┌─┘
+          ├─   0.376694s   0ms INFO return=Ok(Some(([ { cost: 2005, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(20) --> EdgeIndex(4)" }], [])))
+        ┌─┘
+        ├─   0.376707s   0ms DEBUG Paths for id
+        ├─   0.376716s   0ms DEBUG   Path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b -(id)- ID/b is valid
+        ├─   0.376721s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.376732s   0ms DEBUG path Book/a -(🔑🧩{upc})- Book/b -(id)- ID/b is valid
+        ├─   0.376738s   0ms INFO return=Ok(Some([ { cost: 1003, egdes: "EdgeIndex(20) --> EdgeIndex(4)" }]))
+      ┌─┘
+      ├─   0.376751s   0ms DEBUG Advancing path to Book/a -(🔑🧩{id})- Book/c
+      └─┐from_path{path= { cost: 1003, egdes: "EdgeIndex(20) --> EdgeIndex(4)" }, root_node="Book/a"}
+        └─┐create_root_for_path_sequences{root_node="Book/a", segments_count=2}
+          ├─   0.376775s   0ms DEBUG Building root query tree node: Book/a
+          └─┐from_path_segment_sequences{current_index=0, total_segments=2}
+            ├─   0.376788s   0ms DEBUG Processing edge: Book/a -(🔑🧩{upc})- Book/b
+            └─┐from_path_segment_sequences{current_index=1, total_segments=2}
+              ├─   0.376801s   0ms DEBUG Processing edge: Book/b -(id)- ID/b
+              └─┐from_path_segment_sequences{current_index=2, total_segments=2}
+              ┌─┘
+              ├─   0.376821s   0ms DEBUG No subsequent steps (leaf or end of path)
+            ┌─┘
+            ├─   0.376833s   0ms DEBUG Adding subsequent step as child
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "upc", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{id})- Book/c", current_cost=2004}
+        ├─   0.376874s   0ms INFO return=Ok([])
+      ┌─┘
+      ├─   0.376886s   1ms DEBUG No direct paths found
+      ├─   0.376893s   1ms DEBUG going deeper
+      ├─   0.376900s   1ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/b
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="upc"}
+        ├─   0.376916s   0ms DEBUG checking requirements {upc} for edge 'Book/a -(🔑🧩{upc})- Book/b'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "upc", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+              ├─   0.376946s   0ms DEBUG checking edge Book/a -(upc)- ID/a
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="upc"}
+                ├─   0.376963s   0ms INFO return=Ok(Some([]))
+              ┌─┘
+              ├─   0.376980s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a with edge Book/a -(upc)- ID/a
+              ├─   0.376989s   0ms INFO return=Ok([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(2)" }])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "upc", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+              ├─   0.377017s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/c
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="id"}
+                ├─   0.377035s   0ms DEBUG checking requirements {id} for edge 'Book/a -(🔑🧩{id})- Book/c'
+                └─┐validate_field_requirement{}
+                  └─┐validate_field_requirement{}
+                    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+                      ├─   0.377068s   0ms INFO return=Ok([])
+                    ┌─┘
+                    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+                      ├─   0.377100s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/c
+                      ├─   0.377108s   0ms DEBUG Ignoring, graph is excluded and already visited (current: c, visited: {"c", "b"})
+                      ├─   0.377115s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/b
+                      ├─   0.377122s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"c", "b"})
+                      ├─   0.377129s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/b
+                      ├─   0.377135s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"c", "b"})
+                      ├─   0.377142s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/a
+                      ├─   0.377149s   0ms DEBUG Ignoring. We would go back to the same graph
+                      ├─   0.377157s   0ms DEBUG Finished finding indirect paths, found total of 0
+                      ├─   0.377164s   0ms INFO return=Ok([])
+                    ┌─┘
+                    ├─   0.377180s   0ms INFO return=Ok(None)
+                  ┌─┘
+                  ├─   0.377194s   0ms INFO return=Ok(None)
+                ┌─┘
+                ├─   0.377207s   0ms INFO return=Ok(None)
+              ┌─┘
+              ├─   0.377220s   0ms DEBUG Requirements not satisfied, continue look up...
+              ├─   0.377227s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/b
+              ├─   0.377233s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+              ├─   0.377239s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/b
+              ├─   0.377245s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+              ├─   0.377251s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/a
+              ├─   0.377256s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.377263s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.377268s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.377281s   0ms INFO return=Ok(Some(([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(2)" }], [])))
+          ┌─┘
+          ├─   0.377296s   0ms INFO return=Ok(Some(([ { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(2)" }], [])))
+        ┌─┘
+        ├─   0.377309s   0ms DEBUG Paths for upc
+        ├─   0.377317s   0ms DEBUG   Path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(upc)- ID/a is valid
+        ├─   0.377323s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.377333s   0ms DEBUG path Book/a -(upc)- ID/a is valid
+        ├─   0.377351s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(2)" }]))
+      ┌─┘
+      ├─   0.377387s   1ms DEBUG Advancing path to Book/a -(🔑🧩{upc})- Book/b
+      └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(2)" }, root_node="Book/a"}
+        └─┐create_root_for_path_sequences{root_node="Book/a", segments_count=1}
+          ├─   0.377416s   0ms DEBUG Building root query tree node: Book/a
+          └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+            ├─   0.377430s   0ms DEBUG Processing edge: Book/a -(upc)- ID/a
+            └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+            ┌─┘
+            ├─   0.377449s   0ms DEBUG No subsequent steps (leaf or end of path)
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "upc", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b", current_cost=2004}
+        ├─   0.377501s   0ms DEBUG checking edge Book/b -(upc)- ID/b
+        └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b", edge="upc"}
+          ├─   0.377519s   0ms INFO return=Ok(Some([]))
+        ┌─┘
+        ├─   0.377534s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{upc})- Book/b with edge Book/b -(upc)- ID/b
+        ├─   0.377542s   0ms INFO return=Ok([ { cost: 2005, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(20) --> EdgeIndex(5)" }])
+      ┌─┘
+      ├─   0.377557s   1ms DEBUG Found 1 direct paths to Book/a -(🔑🧩{upc})- Book/b
+      ├─   0.377566s   1ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/b
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="id"}
+        ├─   0.377582s   0ms DEBUG checking requirements {id} for edge 'Book/a -(🔑🧩{id})- Book/b'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+              ├─   0.377612s   0ms INFO return=Ok([])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+              ├─   0.377639s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/c
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", edge="id"}
+                ├─   0.377657s   0ms DEBUG checking requirements {id} for edge 'Book/a -(🔑🧩{id})- Book/c'
+                └─┐validate_field_requirement{}
+                  └─┐validate_field_requirement{}
+                    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+                      ├─   0.377691s   0ms INFO return=Ok([])
+                    ┌─┘
+                    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a", current_cost=1002}
+                      ├─   0.377719s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/c
+                      ├─   0.377727s   0ms DEBUG Ignoring, graph is excluded and already visited (current: c, visited: {"c", "b"})
+                      ├─   0.377734s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/b
+                      ├─   0.377741s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"c", "b"})
+                      ├─   0.377748s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/b
+                      ├─   0.377754s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"c", "b"})
+                      ├─   0.377761s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/a
+                      ├─   0.377768s   0ms DEBUG Ignoring. We would go back to the same graph
+                      ├─   0.377776s   0ms DEBUG Finished finding indirect paths, found total of 0
+                      ├─   0.377783s   0ms INFO return=Ok([])
+                    ┌─┘
+                    ├─   0.377799s   0ms INFO return=Ok(None)
+                  ┌─┘
+                  ├─   0.377814s   0ms INFO return=Ok(None)
+                ┌─┘
+                ├─   0.377827s   0ms INFO return=Ok(None)
+              ┌─┘
+              ├─   0.377840s   0ms DEBUG Requirements not satisfied, continue look up...
+              ├─   0.377847s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/b
+              ├─   0.377853s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+              ├─   0.377859s   0ms DEBUG Exploring edge Book/a -(🔑🧩{id})- Book/b
+              ├─   0.377865s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+              ├─   0.377871s   0ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/a
+              ├─   0.377877s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.377883s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.377888s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.377901s   0ms INFO return=Ok(None)
+          ┌─┘
+          ├─   0.377912s   0ms INFO return=Ok(None)
+        ┌─┘
+        ├─   0.377923s   0ms INFO return=Ok(None)
+      ┌─┘
+      ├─   0.377933s   2ms DEBUG Requirements not satisfied, continue look up...
+      ├─   0.377939s   2ms DEBUG Exploring edge Book/a -(🔑🧩{upc})- Book/a
+      ├─   0.377944s   2ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.377950s   2ms DEBUG Exploring edge Book/c -(🔑🧩{id})- Book/c
+      ├─   0.377955s   2ms DEBUG Ignoring, graph is excluded and already visited (current: c, visited: {"c"})
+      ├─   0.377961s   2ms DEBUG Exploring edge Book/c -(🔑🧩{upc})- Book/b
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{id})- Book/c", edge="upc"}
+        ├─   0.377982s   0ms DEBUG checking requirements {upc} for edge 'Book/c -(🔑🧩{upc})- Book/b'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "upc", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{id})- Book/c", current_cost=2004}
+              ├─   0.378013s   0ms INFO return=Ok([])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "upc", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{id})- Book/c", current_cost=2004}
+              ├─   0.378042s   0ms DEBUG Exploring edge Book/c -(🔑🧩{id})- Book/c
+              ├─   0.378049s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.378055s   0ms DEBUG Exploring edge Book/c -(🔑🧩{upc})- Book/b
+              ├─   0.378061s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+              ├─   0.378067s   0ms DEBUG Exploring edge Book/c -(🔑🧩{id})- Book/b
+              ├─   0.378073s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"b"})
+              ├─   0.378079s   0ms DEBUG Exploring edge Book/c -(🔑🧩{upc})- Book/a
+              └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{id})- Book/c", edge="upc"}
+                ├─   0.378099s   0ms DEBUG checking requirements {upc} for edge 'Book/c -(🔑🧩{upc})- Book/a'
+                └─┐validate_field_requirement{}
+                  └─┐validate_field_requirement{}
+                    └─┐find_direct_paths{target=Field(FieldSelection { name: "upc", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{id})- Book/c", current_cost=2004}
+                      ├─   0.378133s   0ms INFO return=Ok([])
+                    ┌─┘
+                    └─┐find_indirect_paths{target=Field(FieldSelection { name: "upc", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a -(🔑🧩{id})- Book/c", current_cost=2004}
+                      ├─   0.378164s   0ms DEBUG Exploring edge Book/c -(🔑🧩{id})- Book/c
+                      ├─   0.378172s   0ms DEBUG Ignoring. We would go back to the same graph
+                      ├─   0.378179s   0ms DEBUG Exploring edge Book/c -(🔑🧩{upc})- Book/b
+                      ├─   0.378187s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"a", "b"})
+                      ├─   0.378194s   0ms DEBUG Exploring edge Book/c -(🔑🧩{id})- Book/b
+                      ├─   0.378200s   0ms DEBUG Ignoring, graph is excluded and already visited (current: b, visited: {"a", "b"})
+                      ├─   0.378207s   0ms DEBUG Exploring edge Book/c -(🔑🧩{upc})- Book/a
+                      ├─   0.378214s   0ms DEBUG Ignoring, graph is excluded and already visited (current: a, visited: {"a", "b"})
+                      ├─   0.378222s   0ms DEBUG Finished finding indirect paths, found total of 0
+                      ├─   0.378229s   0ms INFO return=Ok([])
+                    ┌─┘
+                    ├─   0.378245s   0ms INFO return=Ok(None)
+                  ┌─┘
+                  ├─   0.378258s   0ms INFO return=Ok(None)
+                ┌─┘
+                ├─   0.378272s   0ms INFO return=Ok(None)
+              ┌─┘
+              ├─   0.378284s   0ms DEBUG Requirements not satisfied, continue look up...
+              ├─   0.378291s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.378297s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.378309s   0ms INFO return=Ok(None)
+          ┌─┘
+          ├─   0.378320s   0ms INFO return=Ok(None)
+        ┌─┘
+        ├─   0.378331s   0ms INFO return=Ok(None)
+      ┌─┘
+      ├─   0.378342s   2ms DEBUG Requirements not satisfied, continue look up...
+      ├─   0.378348s   2ms DEBUG Exploring edge Book/c -(🔑🧩{id})- Book/b
+      ├─   0.378354s   2ms DEBUG Ignoring. Already visited similar edge
+      ├─   0.378359s   2ms DEBUG Exploring edge Book/c -(🔑🧩{upc})- Book/a
+      ├─   0.378364s   2ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.378372s   2ms DEBUG Finished finding indirect paths, found total of 1
+      ├─   0.378377s   2ms INFO return=Ok([ { cost: 2005, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(20) --> EdgeIndex(5)" }])
+    ┌─┘
+    ├─   0.378392s   2ms DEBUG Indirect paths found: 1
+    ├─   0.378401s   2ms DEBUG advanced: root(Query) -(a)- Query/a -(bookContainers)- BookContainer/a -(book)- Book/a
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 2006, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(21) --> EdgeIndex(7) --> EdgeIndex(16)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=6}
+  ├─   0.378443s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=6}
+    ├─   0.378455s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=6}
+      ├─   0.378466s   0ms DEBUG Processing edge: Query/a -(bookContainers)- BookContainer/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=6}
+        ├─   0.378477s   0ms DEBUG Processing edge: BookContainer/a -(book)- Book/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=6}
+          ├─   0.378490s   0ms DEBUG Processing edge: Book/a -(🔑🧩{id})- Book/c
+          └─┐from_path_segment_sequences{current_index=4, total_segments=6}
+            ├─   0.378502s   0ms DEBUG Processing edge: Book/c -(author)- Author/c
+            └─┐from_path_segment_sequences{current_index=5, total_segments=6}
+              ├─   0.378515s   0ms DEBUG Processing edge: Author/c -(name)- String/c
+              └─┐from_path_segment_sequences{current_index=6, total_segments=6}
+              ┌─┘
+              ├─   0.378535s   0ms DEBUG No subsequent steps (leaf or end of path)
+            ┌─┘
+            ├─   0.378547s   0ms DEBUG Adding subsequent step as child
+          ┌─┘
+          ├─   0.378558s   0ms DEBUG Adding subsequent step as child
+        ┌─┘
+        ├─   0.378569s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.378579s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.378589s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1003, egdes: "EdgeIndex(0) --> EdgeIndex(10) --> EdgeIndex(14) --> EdgeIndex(2)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.378621s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.378632s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.378643s   0ms DEBUG Processing edge: Query/a -(bookContainers)- BookContainer/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.378654s   0ms DEBUG Processing edge: BookContainer/a -(book)- Book/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.378666s   0ms DEBUG Processing edge: Book/a -(upc)- ID/a
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.378684s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.378695s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.378705s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.378715s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=2}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="a", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="bookContainers", leaf=false, list=true, response_path="", fetch_path=""}
+          ├─   0.378834s   0ms DEBUG adding output field 'bookContainers' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="BookContainer", field="book", leaf=false, list=false, response_path="bookContainers.@", fetch_path="bookContainers.@"}
+              ├─   0.378863s   0ms DEBUG adding output field 'book' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=2, parent_fetch_step_index=1}
+                └─┐process_entity_move_edge{edge="Book/a -(🔑🧩{id})- Book/c", parent_fetch_step_index=1}
+                  ├─   0.378897s   0ms DEBUG created a new fetch step [2] subgraph(c) type(Book) requirement() key({id}) in children of 1
+                  ├─   0.378905s   0ms DEBUG adding input requirement '{id}' to fetch step [2]
+                  ├─   0.378913s   0ms DEBUG adding __typename field to output for type 'Book'
+                  ├─   0.378921s   0ms DEBUG connecting fetch step to parent [1] -> [2]
+                  └─┐connect{parent=1, child=2}
+                  ┌─┘
+                  └─┐process_requirements_for_fetch_steps{count=1}
+                    └─┐process_noop_edge{}
+                      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1, requiring_fetch_step_index=2}
+                        └─┐process_entity_move_edge{edge="Book/a -(🔑🧩{upc})- Book/b", parent_fetch_step_index=1, requiring_fetch_step_index=2}
+                          ├─   0.378982s   0ms DEBUG created a new fetch step [3] subgraph(b) type(Book) requirement() key({upc}) in children of 1
+                          ├─   0.378991s   0ms DEBUG adding input requirement '{upc}' to fetch step [3]
+                          ├─   0.378999s   0ms DEBUG adding __typename field to output for type 'Book'
+                          ├─   0.379006s   0ms DEBUG connecting fetch step to parent [1] -> [3]
+                          └─┐connect{parent=1, child=3}
+                          ┌─┘
+                          └─┐process_requirements_for_fetch_steps{count=1}
+                            └─┐process_noop_edge{}
+                              └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1, requiring_fetch_step_index=3}
+                                └─┐process_plain_field_edge{parent_fetch_step_index=1, requiring_fetch_step_index=3, type_name="Book", field="upc", leaf=true, list=false, response_path="bookContainers.@.book", fetch_path="bookContainers.@.book"}
+                                  ├─   0.379077s   0ms DEBUG connecting parent fetch step [1] to requiring fetch step [3]
+                                  └─┐connect{parent=1, child=3}
+                                  ┌─┘
+                                  ├─   0.379106s   0ms DEBUG adding output field 'upc' to fetch step [1]
+                                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1, requiring_fetch_step_index=3}
+                                  ┌─┘
+                                ┌─┘
+                              ┌─┘
+                            ┌─┘
+                            └─┐connect{parent=1, child=3}
+                            ┌─┘
+                          ┌─┘
+                          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=3, requiring_fetch_step_index=2}
+                            └─┐process_plain_field_edge{parent_fetch_step_index=3, requiring_fetch_step_index=2, type_name="Book", field="id", leaf=true, list=false, response_path="bookContainers.@.book", fetch_path=""}
+                              ├─   0.379209s   0ms DEBUG connecting parent fetch step [3] to requiring fetch step [2]
+                              └─┐connect{parent=3, child=2}
+                              ┌─┘
+                              ├─   0.379235s   0ms DEBUG adding output field 'id' to fetch step [3]
+                              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=3, requiring_fetch_step_index=2}
+                              ┌─┘
+                            ┌─┘
+                          ┌─┘
+                        ┌─┘
+                      ┌─┘
+                    ┌─┘
+                    └─┐connect{parent=1, child=2}
+                    ┌─┘
+                  ┌─┘
+                  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=2}
+                    └─┐process_plain_field_edge{parent_fetch_step_index=2, type_name="Book", field="author", leaf=false, list=false, response_path="bookContainers.@.book", fetch_path=""}
+                      ├─   0.379341s   0ms DEBUG adding output field 'author' to fetch step [2]
+                      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=2}
+                        └─┐process_plain_field_edge{parent_fetch_step_index=2, type_name="Author", field="name", leaf=true, list=false, response_path="bookContainers.@.book.author", fetch_path="author"}
+                          ├─   0.379368s   0ms DEBUG adding output field 'name' to fetch step [2]
+                          └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=2}
+                          ┌─┘
+                        ┌─┘
+                      ┌─┘
+                    ┌─┘
+                  ┌─┘
+                ┌─┘
+                └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Book", field="upc", leaf=true, list=false, response_path="bookContainers.@.book", fetch_path="bookContainers.@.book"}
+                  ├─   0.379440s   0ms DEBUG adding output field 'upc' to fetch step [1]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.379529s   0ms DEBUG Done
+├─   0.379552s   0ms DEBUG found roots
+├─   0.379559s   0ms DEBUG print graph
+├─   0.379564s   0ms DEBUG Nodes:
+│ [1] Query/a {} → {bookContainers{book{__typename upc}}} at $.
+│ [2] Book/c {__typename id} → {author{name}} at $.bookContainers.@.book
+│ [3] Book/b {__typename upc} → {id} at $.bookContainers.@.book
+│ 
+│ Tree:
+│ [1]
+│   [2]
+│   [3]
+│     [2]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐SequenceNode::execute{data=Null, representations=[]}
+  └─┐FetchNode::execute{data=Null, representations=[]}
+    └─┐execute{subgraph_name="a"}
+      └─┐execute{subgraph_name="a"}
+        ├─   0.380053s   0ms DEBUG starting new connection: http://localhost:4200/
+        ├─   0.380401s   0ms DEBUG connecting to 127.0.0.1:4200
+        ├─   0.380817s   0ms DEBUG connected to 127.0.0.1:4200
+        ├─   0.385530s   5ms DEBUG pooling idle connection for ("http", localhost:4200)
+      ┌─┘
+    ┌─┘
+  ┌─┘
+  └─┐FlattenNode::execute{data=Object {"bookContainers": Array [Object {"book": Object {"__typename": String("Book"), "upc": String("b1")}}, Object {"book": Object {"__typename": String("Book"), "upc": String("b2")}}, Object {"book": Object {"__typename": String("Book"), "upc": String("b3")}}]}, representations=[]}
+    └─┐FetchNode::execute{data=Null, representations=[Object {"__typename": String("Book"), "upc": String("b1")}, Object {"__typename": String("Book"), "upc": String("b2")}, Object {"__typename": String("Book"), "upc": String("b3")}]}
+      └─┐project_requires{requires_selections=[SelectionItem::Fragment { type_name: "Book", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "upc", selections: SelectionSet { items: [] } }] } }], entity=Object {"__typename": String("Book"), "upc": String("b1")}}
+        └─┐entity_satisfies_type_condition{possible_types={}, type_name="Book", type_condition="Book"}
+        ┌─┘
+        └─┐project_requires{requires_selections=[SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "upc", selections: SelectionSet { items: [] } }], entity=Object {"__typename": String("Book"), "upc": String("b1")}}
+          └─┐project_requires{requires_selections=[], entity=String("Book")}
+          ┌─┘
+          └─┐project_requires{requires_selections=[], entity=String("b1")}
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐project_requires{requires_selections=[SelectionItem::Fragment { type_name: "Book", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "upc", selections: SelectionSet { items: [] } }] } }], entity=Object {"__typename": String("Book"), "upc": String("b2")}}
+        └─┐entity_satisfies_type_condition{possible_types={}, type_name="Book", type_condition="Book"}
+        ┌─┘
+        └─┐project_requires{requires_selections=[SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "upc", selections: SelectionSet { items: [] } }], entity=Object {"__typename": String("Book"), "upc": String("b2")}}
+          └─┐project_requires{requires_selections=[], entity=String("Book")}
+          ┌─┘
+          └─┐project_requires{requires_selections=[], entity=String("b2")}
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐project_requires{requires_selections=[SelectionItem::Fragment { type_name: "Book", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "upc", selections: SelectionSet { items: [] } }] } }], entity=Object {"__typename": String("Book"), "upc": String("b3")}}
+        └─┐entity_satisfies_type_condition{possible_types={}, type_name="Book", type_condition="Book"}
+        ┌─┘
+        └─┐project_requires{requires_selections=[SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "upc", selections: SelectionSet { items: [] } }], entity=Object {"__typename": String("Book"), "upc": String("b3")}}
+          └─┐project_requires{requires_selections=[], entity=String("Book")}
+          ┌─┘
+          └─┐project_requires{requires_selections=[], entity=String("b3")}
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐execute{subgraph_name="b"}
+        └─┐execute{subgraph_name="b"}
+          ├─   0.386576s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+          ├─   0.390763s   4ms DEBUG pooling idle connection for ("http", localhost:4200)
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+  └─┐FlattenNode::execute{data=Object {"bookContainers": Array [Object {"book": Object {"__typename": String("Book"), "upc": String("b1"), "id": String("1")}}, Object {"book": Object {"__typename": String("Book"), "upc": String("b2"), "id": String("2")}}, Object {"book": Object {"__typename": String("Book"), "upc": String("b3")}}]}, representations=[]}
+    └─┐FetchNode::execute{data=Null, representations=[Object {"__typename": String("Book"), "upc": String("b1"), "id": String("1")}, Object {"__typename": String("Book"), "upc": String("b2"), "id": String("2")}, Object {"__typename": String("Book"), "upc": String("b3")}]}
+      └─┐project_requires{requires_selections=[SelectionItem::Fragment { type_name: "Book", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] } }], entity=Object {"__typename": String("Book"), "upc": String("b1"), "id": String("1")}}
+        └─┐entity_satisfies_type_condition{possible_types={}, type_name="Book", type_condition="Book"}
+        ┌─┘
+        └─┐project_requires{requires_selections=[SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }], entity=Object {"__typename": String("Book"), "upc": String("b1"), "id": String("1")}}
+          └─┐project_requires{requires_selections=[], entity=String("Book")}
+          ┌─┘
+          └─┐project_requires{requires_selections=[], entity=String("1")}
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐project_requires{requires_selections=[SelectionItem::Fragment { type_name: "Book", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] } }], entity=Object {"__typename": String("Book"), "upc": String("b2"), "id": String("2")}}
+        └─┐entity_satisfies_type_condition{possible_types={}, type_name="Book", type_condition="Book"}
+        ┌─┘
+        └─┐project_requires{requires_selections=[SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }], entity=Object {"__typename": String("Book"), "upc": String("b2"), "id": String("2")}}
+          └─┐project_requires{requires_selections=[], entity=String("Book")}
+          ┌─┘
+          └─┐project_requires{requires_selections=[], entity=String("2")}
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐project_requires{requires_selections=[SelectionItem::Fragment { type_name: "Book", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] } }], entity=Object {"__typename": String("Book"), "upc": String("b3")}}
+        └─┐entity_satisfies_type_condition{possible_types={}, type_name="Book", type_condition="Book"}
+        ┌─┘
+        └─┐project_requires{requires_selections=[SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }], entity=Object {"__typename": String("Book"), "upc": String("b3")}}
+          └─┐project_requires{requires_selections=[], entity=String("Book")}
+          ┌─┘
+          └─┐project_requires{requires_selections=[], entity=Null}
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐execute{subgraph_name="c"}
+        └─┐execute{subgraph_name="c"}
+          ├─   0.391483s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+          ├─   0.394989s   3ms DEBUG pooling idle connection for ("http", localhost:4200)
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.395323s DEBUG execution result: ExecutionResult { data: Some(Object {"bookContainers": Array [Object {"book": Object {"upc": String("b1"), "author": Object {"name": String("Alice")}}}, Object {"book": Object {"upc": String("b2"), "author": Object {"name": String("Bob")}}}, Object {"book": Object {"upc": String("b3"), "author": Null}}]}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Sequence"), "nodes": Array [Object {"kind": String("Fetch"), "serviceName": String("a"), "operationKind": String("query"), "operation": String("{bookContainers{book{__typename upc}}}")}, Object {"kind": String("Flatten"), "path": Array [String("bookContainers"), String("@"), String("book")], "node": Object {"kind": String("Fetch"), "serviceName": String("b"), "operationKind": String("query"), "operation": String("query($representations:[_Any!]!){_entities(representations: $representations){...on Book{id}}}"), "requires": Array [Object {"kind": String("InlineFragment"), "typeCondition": String("Book"), "selections": Array [Object {"kind": String("Field"), "name": String("__typename")}, Object {"kind": String("Field"), "name": String("upc")}]}]}}, Object {"kind": String("Flatten"), "path": Array [String("bookContainers"), String("@"), String("book")], "node": Object {"kind": String("Fetch"), "serviceName": String("c"), "operationKind": String("query"), "operation": String("query($representations:[_Any!]!){_entities(representations: $representations){...on Book{author{name}}}}"), "requires": Array [Object {"kind": String("InlineFragment"), "typeCondition": String("Book"), "selections": Array [Object {"kind": String("Field"), "name": String("__typename")}, Object {"kind": String("Field"), "name": String("id")}]}]}}]}}}) }

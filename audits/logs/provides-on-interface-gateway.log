@@ -1,0 +1,186 @@
+generating supergraph file for test...
+running gateway...
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running `target/debug/gateway audits/fed-audit-supergraph.graphql`
+┐new_supergraph_state{}
+└─┐build_map{}
+  └─┐build_interface_type{name="Animal"}
+    └─┐build_fields{fields_count=2}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Book"}
+    └─┐build_fields{fields_count=2}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Cat"}
+    └─┐build_fields{fields_count=3}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Dog"}
+    └─┐build_fields{fields_count=3}
+    ┌─┘
+  ┌─┘
+  └─┐build_scalar_type{name="join__FieldSet"}
+  ┌─┘
+  └─┐build_enum_type{name="join__Graph"}
+  ┌─┘
+  └─┐build_scalar_type{name="link__Import"}
+  ┌─┘
+  └─┐build_enum_type{name="link__Purpose"}
+  ┌─┘
+  └─┐build_interface_type{name="Media"}
+    └─┐build_fields{fields_count=2}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Query"}
+    └─┐build_fields{fields_count=2}
+    ┌─┘
+  ┌─┘
+┌─┘
+└─┐decompose_from_supergraph{graph_id="A"}
+┌─┘
+└─┐decompose_from_supergraph{graph_id="B"}
+┌─┘
+└─┐decompose_from_supergraph{graph_id="C"}
+┌─┘
+┘
+┐graph_from_supergraph_state{}
+└─┐build_graph{}
+  ├─   0.007105s   0ms DEBUG Building graph for supergraph with 18 definitions
+  └─┐build_root_nodes{}
+    ├─   0.007139s   0ms DEBUG added root type for queries: Query
+  ┌─┘
+  └─┐link_root_edges{}
+  ┌─┘
+  └─┐build_field_edges{}
+    ├─   0.007191s   0ms INFO [x] Creating owned field move edge 'Book.__typename/A' (type: String)
+    ├─   0.007206s   0ms INFO [x] Creating field move edge 'Book.id/A' (type: ID)
+    ├─   0.007214s   0ms INFO [x] Creating field move edge 'Book.id/A' (type: ID)
+    ├─   0.007220s   0ms INFO [x] Creating field move edge 'Book.animals/A' (type: Animal)
+    ├─   0.007227s   0ms INFO [x] Creating field move edge 'Book.animals/A' (type: Animal)
+    ├─   0.007233s   0ms INFO [x] Creating owned field move edge 'Book.__typename/B' (type: String)
+    ├─   0.007242s   0ms INFO [x] Creating field move edge 'Book.id/B' (type: ID)
+    ├─   0.007249s   0ms INFO [x] Creating field move edge 'Book.id/B' (type: ID)
+    ├─   0.007255s   0ms INFO [ ] Field 'Book.animals/B' is external, skipping edge creation
+    ├─   0.007260s   0ms INFO [x] Creating owned field move edge 'Book.__typename/C' (type: String)
+    ├─   0.007267s   0ms INFO [x] Creating field move edge 'Book.id/C' (type: ID)
+    ├─   0.007274s   0ms INFO [x] Creating field move edge 'Book.id/C' (type: ID)
+    ├─   0.007280s   0ms INFO [x] Creating field move edge 'Book.animals/C' (type: Animal)
+    ├─   0.007286s   0ms INFO [x] Creating field move edge 'Book.animals/C' (type: Animal)
+    ├─   0.007292s   0ms INFO [x] Creating owned field move edge 'Dog.__typename/A' (type: String)
+    ├─   0.007302s   0ms INFO [ ] Field 'Dog.name/A' is external, skipping edge creation
+    ├─   0.007308s   0ms INFO [ ] Field 'Dog.age/A' does is not available in the subgraph, skipping edge creation (type: Int)
+    ├─   0.007313s   0ms INFO [ ] Field 'Dog.id/A' is external, skipping edge creation
+    ├─   0.007318s   0ms INFO [x] Creating owned field move edge 'Dog.__typename/B' (type: String)
+    ├─   0.007325s   0ms INFO [ ] Field 'Dog.name/B' is external, skipping edge creation
+    ├─   0.007330s   0ms INFO [ ] Field 'Dog.age/B' does is not available in the subgraph, skipping edge creation (type: Int)
+    ├─   0.007335s   0ms INFO [ ] Field 'Dog.id/B' is external, skipping edge creation
+    ├─   0.007340s   0ms INFO [x] Creating owned field move edge 'Dog.__typename/C' (type: String)
+    ├─   0.007349s   0ms INFO [x] Creating field move edge 'Dog.name/C' (type: String)
+    ├─   0.007355s   0ms INFO [x] Creating field move edge 'Dog.name/C' (type: String)
+    ├─   0.007361s   0ms INFO [x] Creating field move edge 'Dog.age/C' (type: Int)
+    ├─   0.007367s   0ms INFO [x] Creating field move edge 'Dog.age/C' (type: Int)
+    ├─   0.007373s   0ms INFO [x] Creating field move edge 'Dog.id/C' (type: ID)
+    ├─   0.007379s   0ms INFO [x] Creating field move edge 'Dog.id/C' (type: ID)
+    ├─   0.007403s   0ms INFO [x] Creating owned field move edge 'Media.__typename/A' (type: String)
+    ├─   0.007418s   0ms INFO [x] Creating field move edge 'Media.id/A' (type: ID)
+    ├─   0.007425s   0ms INFO [x] Creating field move edge 'Media.id/A' (type: ID)
+    ├─   0.007430s   0ms INFO [ ] Field 'Media.animals/A' does is not available in the subgraph, skipping edge creation (type: Animal)
+    ├─   0.007435s   0ms INFO [x] Creating owned field move edge 'Media.__typename/B' (type: String)
+    ├─   0.007442s   0ms INFO [x] Creating field move edge 'Media.id/B' (type: ID)
+    ├─   0.007448s   0ms INFO [x] Creating field move edge 'Media.id/B' (type: ID)
+    ├─   0.007453s   0ms INFO [x] Creating field move edge 'Media.animals/B' (type: Animal)
+    ├─   0.007459s   0ms INFO [x] Creating field move edge 'Media.animals/B' (type: Animal)
+    ├─   0.007465s   0ms INFO [x] Creating owned field move edge 'Media.__typename/C' (type: String)
+    ├─   0.007472s   0ms INFO [x] Creating field move edge 'Media.id/C' (type: ID)
+    ├─   0.007478s   0ms INFO [x] Creating field move edge 'Media.id/C' (type: ID)
+    ├─   0.007483s   0ms INFO [x] Creating field move edge 'Media.animals/C' (type: Animal)
+    ├─   0.007489s   0ms INFO [x] Creating field move edge 'Media.animals/C' (type: Animal)
+    ├─   0.007495s   0ms INFO [x] Creating owned field move edge 'Animal.__typename/A' (type: String)
+    ├─   0.007501s   0ms INFO [ ] Field 'Animal.name/A' does is not available in the subgraph, skipping edge creation (type: String)
+    ├─   0.007506s   0ms INFO [x] Creating field move edge 'Animal.id/A' (type: ID)
+    ├─   0.007512s   0ms INFO [x] Creating field move edge 'Animal.id/A' (type: ID)
+    ├─   0.007517s   0ms INFO [x] Creating owned field move edge 'Animal.__typename/B' (type: String)
+    ├─   0.007524s   0ms INFO [x] Creating field move edge 'Animal.name/B' (type: String)
+    ├─   0.007530s   0ms INFO [x] Creating field move edge 'Animal.name/B' (type: String)
+    ├─   0.007535s   0ms INFO [x] Creating field move edge 'Animal.id/B' (type: ID)
+    ├─   0.007541s   0ms INFO [x] Creating field move edge 'Animal.id/B' (type: ID)
+    ├─   0.007546s   0ms INFO [x] Creating owned field move edge 'Animal.__typename/C' (type: String)
+    ├─   0.007553s   0ms INFO [x] Creating field move edge 'Animal.name/C' (type: String)
+    ├─   0.007559s   0ms INFO [x] Creating field move edge 'Animal.name/C' (type: String)
+    ├─   0.007564s   0ms INFO [x] Creating field move edge 'Animal.id/C' (type: ID)
+    ├─   0.007570s   0ms INFO [x] Creating field move edge 'Animal.id/C' (type: ID)
+    ├─   0.007575s   0ms INFO [x] Creating owned field move edge 'Cat.__typename/A' (type: String)
+    ├─   0.007583s   0ms INFO [ ] Field 'Cat.age/A' does is not available in the subgraph, skipping edge creation (type: Int)
+    ├─   0.007589s   0ms INFO [ ] Field 'Cat.id/A' is external, skipping edge creation
+    ├─   0.007594s   0ms INFO [ ] Field 'Cat.name/A' does is not available in the subgraph, skipping edge creation (type: String)
+    ├─   0.007599s   0ms INFO [x] Creating owned field move edge 'Cat.__typename/B' (type: String)
+    ├─   0.007605s   0ms INFO [ ] Field 'Cat.age/B' does is not available in the subgraph, skipping edge creation (type: Int)
+    ├─   0.007610s   0ms INFO [ ] Field 'Cat.id/B' is external, skipping edge creation
+    ├─   0.007615s   0ms INFO [ ] Field 'Cat.name/B' is external, skipping edge creation
+    ├─   0.007620s   0ms INFO [x] Creating owned field move edge 'Cat.__typename/C' (type: String)
+    ├─   0.007627s   0ms INFO [x] Creating field move edge 'Cat.age/C' (type: Int)
+    ├─   0.007633s   0ms INFO [x] Creating field move edge 'Cat.age/C' (type: Int)
+    ├─   0.007638s   0ms INFO [x] Creating field move edge 'Cat.id/C' (type: ID)
+    ├─   0.007644s   0ms INFO [x] Creating field move edge 'Cat.id/C' (type: ID)
+    ├─   0.007649s   0ms INFO [x] Creating field move edge 'Cat.name/C' (type: String)
+    ├─   0.007655s   0ms INFO [x] Creating field move edge 'Cat.name/C' (type: String)
+    ├─   0.007662s   0ms INFO [x] Creating owned field move edge 'Query.__typename/A' (type: String)
+    ├─   0.007669s   0ms INFO [x] Creating field move edge 'Query.book/A' (type: Book)
+    ├─   0.007675s   0ms INFO [x] Creating field move edge 'Query.book/A' (type: Book)
+    ├─   0.007680s   0ms INFO [x] Creating field move edge 'Query.media/A' (type: Media)
+    ├─   0.007686s   0ms INFO [x] Creating field move edge 'Query.media/A' (type: Media)
+    ├─   0.007692s   0ms INFO [x] Creating owned field move edge 'Query.__typename/B' (type: String)
+    ├─   0.007698s   0ms INFO [ ] Field 'Query.book/B' does is not available in the subgraph, skipping edge creation (type: Book)
+    ├─   0.007703s   0ms INFO [x] Creating field move edge 'Query.media/B' (type: Media)
+    ├─   0.007709s   0ms INFO [x] Creating field move edge 'Query.media/B' (type: Media)
+    ├─   0.007715s   0ms INFO [x] Creating owned field move edge 'Query.__typename/C' (type: String)
+    ├─   0.007721s   0ms INFO [ ] Field 'Query.book/C' does is not available in the subgraph, skipping edge creation (type: Book)
+    ├─   0.007726s   0ms INFO [ ] Field 'Query.media/C' does is not available in the subgraph, skipping edge creation (type: Media)
+  ┌─┘
+  └─┐build_interface_implementation_edges{}
+    ├─   0.007754s   0ms INFO Building interface implementation edge from 'Book/A' to 'Media/A'
+    ├─   0.007761s   0ms INFO Building interface implementation edge from 'Book/B' to 'Media/B'
+    ├─   0.007767s   0ms INFO Building interface implementation edge from 'Book/C' to 'Media/C'
+    ├─   0.007773s   0ms INFO Building interface implementation edge from 'Dog/A' to 'Animal/A'
+    ├─   0.007779s   0ms INFO Building interface implementation edge from 'Dog/B' to 'Animal/B'
+    ├─   0.007786s   0ms INFO Building interface implementation edge from 'Dog/C' to 'Animal/C'
+    ├─   0.007792s   0ms INFO Building interface implementation edge from 'Cat/A' to 'Animal/A'
+    ├─   0.007799s   0ms INFO Building interface implementation edge from 'Cat/B' to 'Animal/B'
+    ├─   0.007805s   0ms INFO Building interface implementation edge from 'Cat/C' to 'Animal/C'
+  ┌─┘
+  └─┐build_entity_reference_edges{}
+    ├─   0.007892s   0ms INFO Creating self-referencing entity move edge in 'Book/A' via key 'id'
+    ├─   0.007967s   0ms INFO Creating entity move edge from 'Book/A' to 'Book/C' via key 'id'
+    ├─   0.008038s   0ms INFO Creating entity move edge from 'Book/B' to 'Book/A' via key 'id'
+    ├─   0.008080s   0ms INFO Creating entity move edge from 'Book/B' to 'Book/C' via key 'id'
+    ├─   0.008144s   0ms INFO Creating entity move edge from 'Book/C' to 'Book/A' via key 'id'
+    ├─   0.008212s   0ms INFO Creating self-referencing entity move edge in 'Book/C' via key 'id'
+    ├─   0.008255s   0ms INFO Creating self-referencing entity move edge in 'Dog/A' via key 'id'
+    ├─   0.008293s   0ms INFO Creating entity move edge from 'Dog/A' to 'Dog/C' via key 'id'
+    ├─   0.008330s   0ms INFO Creating entity move edge from 'Dog/B' to 'Dog/A' via key 'id'
+    ├─   0.008404s   0ms INFO Creating entity move edge from 'Dog/B' to 'Dog/C' via key 'id'
+    ├─   0.008471s   0ms INFO Creating entity move edge from 'Dog/C' to 'Dog/A' via key 'id'
+    ├─   0.008538s   0ms INFO Creating self-referencing entity move edge in 'Dog/C' via key 'id'
+    ├─   0.008631s   0ms INFO Creating self-referencing entity move edge in 'Cat/A' via key 'id'
+    ├─   0.008703s   0ms INFO Creating entity move edge from 'Cat/A' to 'Cat/C' via key 'id'
+    ├─   0.008741s   0ms INFO Creating entity move edge from 'Cat/B' to 'Cat/A' via key 'id'
+    ├─   0.008777s   0ms INFO Creating entity move edge from 'Cat/B' to 'Cat/C' via key 'id'
+    ├─   0.008841s   1ms INFO Creating entity move edge from 'Cat/C' to 'Cat/A' via key 'id'
+    ├─   0.008908s   1ms INFO Creating self-referencing entity move edge in 'Cat/C' via key 'id'
+  ┌─┘
+  └─┐build_viewed_field_edges{}
+    ├─   0.009012s   0ms INFO Creating viewed (#1) link for provided field 'Query.book/"A"' (type: Book)
+    └─┐handle_viewed_selection_set{graph_id="A", view_id=1, parent_type_name="Book"}
+      ├─   0.009042s   0ms INFO Upserting graph viewed node for 'Animal.A'
+      ├─   0.009049s   0ms INFO Creating viewed (#1) field edge for 'Book.animals' (type: Animal)
+      └─┐handle_viewed_selection_set{graph_id="A", view_id=1, parent_type_name="Animal"}
+
+thread 'main' panicked at lib/query-planner/src/graph/mod.rs:791:22:
+not implemented: fragments are not supported in provides yet
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+┘

@@ -1,0 +1,1649 @@
+generating supergraph file for test...
+running gateway...
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running `target/debug/gateway audits/fed-audit-supergraph.graphql`
+┐new_supergraph_state{}
+└─┐build_map{}
+  └─┐build_object_type{name="Admin"}
+    └─┐build_fields{fields_count=3}
+    ┌─┘
+  ┌─┘
+  └─┐build_scalar_type{name="join__FieldSet"}
+  ┌─┘
+  └─┐build_enum_type{name="join__Graph"}
+  ┌─┘
+  └─┐build_scalar_type{name="link__Import"}
+  ┌─┘
+  └─┐build_enum_type{name="link__Purpose"}
+  ┌─┘
+  └─┐build_interface_type{name="Node"}
+    └─┐build_fields{fields_count=1}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Oven"}
+    └─┐build_fields{fields_count=1}
+    ┌─┘
+  ┌─┘
+  └─┐build_union_type{name="Product"}
+  ┌─┘
+  └─┐build_object_type{name="Query"}
+    └─┐build_fields{fields_count=3}
+    ┌─┘
+  ┌─┘
+  └─┐build_object_type{name="Toaster"}
+    └─┐build_fields{fields_count=1}
+    ┌─┘
+  ┌─┘
+  └─┐build_interface_type{name="User"}
+    └─┐build_fields{fields_count=2}
+    ┌─┘
+  ┌─┘
+┌─┘
+└─┐decompose_from_supergraph{graph_id="B"}
+┌─┘
+└─┐decompose_from_supergraph{graph_id="A"}
+┌─┘
+┘
+┐graph_from_supergraph_state{}
+└─┐build_graph{}
+  ├─   0.006451s   0ms DEBUG Building graph for supergraph with 19 definitions
+  └─┐build_root_nodes{}
+    ├─   0.006505s   0ms DEBUG added root type for queries: Query
+  ┌─┘
+  └─┐link_root_edges{}
+  ┌─┘
+  └─┐build_field_edges{}
+    ├─   0.006568s   0ms INFO [x] Creating owned field move edge 'Oven.__typename/A' (type: String)
+    ├─   0.006583s   0ms INFO [x] Creating field move edge 'Oven.id/A' (type: ID)
+    ├─   0.006593s   0ms INFO [x] Creating field move edge 'Oven.id/A' (type: ID)
+    ├─   0.006599s   0ms INFO [x] Creating owned field move edge 'Node.__typename/A' (type: String)
+    ├─   0.006607s   0ms INFO [x] Creating field move edge 'Node.id/A' (type: ID)
+    ├─   0.006613s   0ms INFO [x] Creating field move edge 'Node.id/A' (type: ID)
+    ├─   0.006619s   0ms INFO [x] Creating owned field move edge 'User.__typename/A' (type: String)
+    ├─   0.006628s   0ms INFO [x] Creating field move edge 'User.id/A' (type: ID)
+    ├─   0.006634s   0ms INFO [x] Creating field move edge 'User.id/A' (type: ID)
+    ├─   0.006640s   0ms INFO [ ] Field 'User.name/A' does is not available in the subgraph, skipping edge creation (type: String)
+    ├─   0.006645s   0ms INFO [x] Creating owned field move edge 'User.__typename/B' (type: String)
+    ├─   0.006653s   0ms INFO [x] Creating field move edge 'User.id/B' (type: ID)
+    ├─   0.006659s   0ms INFO [x] Creating field move edge 'User.id/B' (type: ID)
+    ├─   0.006665s   0ms INFO [x] Creating field move edge 'User.name/B' (type: String)
+    ├─   0.006671s   0ms INFO [x] Creating field move edge 'User.name/B' (type: String)
+    ├─   0.006678s   0ms INFO [x] Creating owned field move edge 'Query.__typename/A' (type: String)
+    ├─   0.006685s   0ms INFO [x] Creating field move edge 'Query.interface/A' (type: Node)
+    ├─   0.006691s   0ms INFO [x] Creating field move edge 'Query.interface/A' (type: Node)
+    ├─   0.006697s   0ms INFO [ ] Field 'Query.users/A' does is not available in the subgraph, skipping edge creation (type: User)
+    ├─   0.006716s   0ms INFO Handling a field Query.union/A resolving a union type Product
+    ├─   0.006726s   0ms INFO   [x] Creating field move edge 'Query.__typename/A' (type: String)
+    ├─   0.006732s   0ms INFO   [x] Creating field move edge 'Query.union/A' (type: String)
+    ├─   0.006739s   0ms INFO   [x] Creating abstract move edge for 'Query.union/A' (union member: Oven)
+    ├─   0.006746s   0ms INFO   [x] Creating field move edge 'Query.__typename/A' (type: String)
+    ├─   0.006751s   0ms INFO   [x] Creating field move edge 'Query.union/A' (type: String)
+    ├─   0.006757s   0ms INFO   [x] Creating abstract move edge for 'Query.union/A' (union member: Toaster)
+    ├─   0.006762s   0ms INFO [x] Creating owned field move edge 'Query.__typename/B' (type: String)
+    ├─   0.006769s   0ms INFO [ ] Field 'Query.interface/B' does is not available in the subgraph, skipping edge creation (type: Node)
+    ├─   0.006775s   0ms INFO [x] Creating field move edge 'Query.users/B' (type: User)
+    ├─   0.006780s   0ms INFO [x] Creating field move edge 'Query.users/B' (type: User)
+    ├─   0.006786s   0ms INFO [ ] Field 'Query.union/B' does is not available in the subgraph, skipping edge creation (type: Product)
+    ├─   0.006792s   0ms INFO [x] Creating owned field move edge 'Admin.__typename/A' (type: String)
+    ├─   0.006802s   0ms INFO [x] Creating field move edge 'Admin.isMain/A' (type: Boolean)
+    ├─   0.006808s   0ms INFO [x] Creating field move edge 'Admin.isMain/A' (type: Boolean)
+    ├─   0.006814s   0ms INFO [x] Creating field move edge 'Admin.id/A' (type: ID)
+    ├─   0.006820s   0ms INFO [x] Creating field move edge 'Admin.id/A' (type: ID)
+    ├─   0.006825s   0ms INFO [ ] Field 'Admin.name/A' does is not available in the subgraph, skipping edge creation (type: String)
+    ├─   0.006830s   0ms INFO [x] Creating owned field move edge 'Product.__typename/A' (type: String)
+    ├─   0.006838s   0ms INFO [x] Creating owned field move edge 'Toaster.__typename/A' (type: String)
+    ├─   0.006844s   0ms INFO [x] Creating field move edge 'Toaster.id/A' (type: ID)
+    ├─   0.006850s   0ms INFO [x] Creating field move edge 'Toaster.id/A' (type: ID)
+  ┌─┘
+  └─┐build_interface_implementation_edges{}
+    ├─   0.006876s   0ms INFO Building interface implementation edge from 'Oven/A' to 'Node/A'
+    ├─   0.006883s   0ms INFO Building interface implementation edge from 'Admin/A' to 'User/A'
+    ├─   0.006889s   0ms INFO Building interface implementation edge from 'Toaster/A' to 'Node/A'
+  ┌─┘
+  └─┐build_entity_reference_edges{}
+    ├─   0.006979s   0ms INFO Creating self-referencing entity move edge in 'User/A' via key 'id'
+    ├─   0.007056s   0ms INFO Creating entity move edge from 'User/A' to 'User/B' via key 'id'
+    ├─   0.007127s   0ms INFO Creating entity move edge from 'User/B' to 'User/A' via key 'id'
+    ├─   0.007196s   0ms INFO Creating self-referencing entity move edge in 'User/B' via key 'id'
+    ├─   0.007238s   0ms INFO Creating self-referencing entity move edge in 'Admin/A' via key 'id'
+  ┌─┘
+  └─┐build_viewed_field_edges{}
+  ┌─┘
+┌─┘
+┘
+   0.066610s INFO Starting server on http://localhost:4000
+   0.067776s INFO starting 16 workers
+   0.067815s INFO Actix runtime found; starting in Actix runtime
+   0.067823s INFO starting service: "actix-web-service-0.0.0.0:4000", workers: 16, listening on: 0.0.0.0:4000
+   0.170961s DEBUG original document: query ping {
+  __typename
+}
+
+   0.171117s DEBUG normalized document: query ping {__typename}
+
+   0.171149s DEBUG executable operation: query ping {__typename}
+┐execute{}
+┘
+   0.171576s DEBUG execution result: ExecutionResult { data: Some(Object {"__typename": String("Query")}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan")}}) }
+   0.256333s DEBUG original document: query {
+  union {
+    __typename
+    typename: __typename
+  }
+}
+
+   0.256498s DEBUG normalized document: query{union{__typename typename: __typename}}
+
+   0.256513s DEBUG executable operation: query{union{__typename typename: __typename}}
+┐walk_operation{}
+├─   0.256887s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="union", leaf=false}
+  ├─   0.256939s   0ms DEBUG Trying to advance to: union{__typename typename: __typename} through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "union", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.257028s   0ms DEBUG checking edge Query/a -(union)- Product/a/Query.union/Toaster
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="union"}
+        ├─   0.257052s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.257081s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(union)- Product/a/Query.union/Toaster
+      ├─   0.257097s   0ms DEBUG checking edge Query/a -(union)- Product/a/Query.union/Oven
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="union"}
+        ├─   0.257133s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.257151s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(union)- Product/a/Query.union/Oven
+      ├─   0.257163s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(17)" },  { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(14)" }])
+    ┌─┘
+    ├─   0.257181s   0ms DEBUG Direct paths found: 2
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "union", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.257229s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.257235s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.257247s   0ms DEBUG Indirect paths found: 0
+    ├─   0.257255s   0ms DEBUG advanced: root(Query) -(a)- Query/a
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(b)- Query/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "union", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.257284s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.257295s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "union", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.257310s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.257316s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.257326s   0ms DEBUG Indirect paths found: 0
+    ├─   0.257333s   0ms WARN failed to advance: root(Query) -(b)- Query/b
+  ┌─┘
+  ├─   0.257352s   0ms DEBUG Found 2 paths
+┌─┘
+└─┐process_field{field_name="__typename", leaf=true}
+  ├─   0.257378s   0ms DEBUG Trying to advance to: typename: __typename through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: Some("typename"), arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster", current_cost=1001}
+      ├─   0.257404s   0ms DEBUG checking edge Product/a/Query.union/Toaster -(__typename)- String/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster", edge="__typename"}
+        ├─   0.257420s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.257434s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster with edge Product/a/Query.union/Toaster -(__typename)- String/a
+      ├─   0.257442s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(16)" }])
+    ┌─┘
+    ├─   0.257455s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: Some("typename"), arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster", current_cost=1001}
+      ├─   0.257491s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.257500s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.257515s   0ms DEBUG Indirect paths found: 0
+    ├─   0.257525s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: Some("typename"), arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven", current_cost=1001}
+      ├─   0.257558s   0ms DEBUG checking edge Product/a/Query.union/Oven -(__typename)- String/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven", edge="__typename"}
+        ├─   0.257574s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.257588s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven with edge Product/a/Query.union/Oven -(__typename)- String/a
+      ├─   0.257597s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(14) --> EdgeIndex(13)" }])
+    ┌─┘
+    ├─   0.257610s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: Some("typename"), arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven", current_cost=1001}
+      ├─   0.257632s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.257637s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.257648s   0ms DEBUG Indirect paths found: 0
+    ├─   0.257655s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="__typename", leaf=true}
+  ├─   0.257682s   0ms DEBUG Trying to advance to: __typename through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster", current_cost=1001}
+      ├─   0.257706s   0ms DEBUG checking edge Product/a/Query.union/Toaster -(__typename)- String/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster", edge="__typename"}
+        ├─   0.257721s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.257735s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster with edge Product/a/Query.union/Toaster -(__typename)- String/a
+      ├─   0.257742s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(16)" }])
+    ┌─┘
+    ├─   0.257755s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster", current_cost=1001}
+      ├─   0.257773s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.257778s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.257789s   0ms DEBUG Indirect paths found: 0
+    ├─   0.257796s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven", current_cost=1001}
+      ├─   0.257825s   0ms DEBUG checking edge Product/a/Query.union/Oven -(__typename)- String/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven", edge="__typename"}
+        ├─   0.257866s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.257884s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven with edge Product/a/Query.union/Oven -(__typename)- String/a
+      ├─   0.257893s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(14) --> EdgeIndex(13)" }])
+    ┌─┘
+    ├─   0.257907s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven", current_cost=1001}
+      ├─   0.257942s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.257950s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.257965s   0ms DEBUG Indirect paths found: 0
+    ├─   0.257975s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(16)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.258040s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.258059s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.258071s   0ms DEBUG Processing edge: Query/a -(union)- Product/a/Query.union/Toaster
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.258083s   0ms DEBUG Processing edge: Product/a/Query.union/Toaster -(__typename)- String/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.258105s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.258117s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.258127s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(16)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.258163s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.258175s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.258186s   0ms DEBUG Processing edge: Query/a -(union)- Product/a/Query.union/Toaster
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.258197s   0ms DEBUG Processing edge: Product/a/Query.union/Toaster -(__typename)- String/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.258215s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.258225s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.258235s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=2}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="a", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="union", leaf=false, list=false, response_path="", fetch_path=""}
+          ├─   0.258365s   0ms DEBUG adding output field 'union' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=2, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Product", field="__typename", alias="typename", leaf=true, list=false, response_path="union", fetch_path="union"}
+              ├─   0.258422s   0ms DEBUG adding output field '__typename' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Product", field="__typename", leaf=true, list=false, response_path="union", fetch_path="union"}
+              ├─   0.258470s   0ms DEBUG adding output field '__typename' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.258535s   0ms DEBUG Done
+├─   0.258543s   0ms DEBUG found roots
+├─   0.258561s   0ms DEBUG print graph
+├─   0.258569s   0ms DEBUG Nodes:
+│ [1] Query/a {} → {union{typename: __typename __typename}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="a"}
+    └─┐execute{subgraph_name="a"}
+      ├─   0.259019s   0ms DEBUG starting new connection: http://localhost:4200/
+      ├─   0.259399s   0ms DEBUG connecting to 127.0.0.1:4200
+      ├─   0.259797s   1ms DEBUG connected to 127.0.0.1:4200
+      ├─   0.264638s   5ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.264958s DEBUG execution result: ExecutionResult { data: Some(Object {"union": Object {"__typename": String("Oven"), "typename": String("Oven")}}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("a"), "operationKind": String("query"), "operation": String("{union{typename: __typename __typename}}")}}}) }
+   0.271604s DEBUG original document: query {
+  interface {
+    id
+    __typename
+    typename: __typename
+    t: __typename
+  }
+}
+
+   0.271741s DEBUG normalized document: query{interface{id __typename typename: __typename t: __typename}}
+
+   0.271754s DEBUG executable operation: query{interface{id __typename typename: __typename t: __typename}}
+┐walk_operation{}
+├─   0.272094s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="interface", leaf=false}
+  ├─   0.272139s   0ms DEBUG Trying to advance to: interface{id __typename typename: __typename t: __typename} through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "interface", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.272211s   0ms DEBUG checking edge Query/a -(interface)- Node/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="interface"}
+        ├─   0.272232s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.272256s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(interface)- Node/a
+      ├─   0.272267s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(12)" }])
+    ┌─┘
+    ├─   0.272283s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "interface", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.272311s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.272317s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.272328s   0ms DEBUG Indirect paths found: 0
+    ├─   0.272335s   0ms DEBUG advanced: root(Query) -(a)- Query/a
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(b)- Query/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "interface", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.272364s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.272375s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "interface", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.272390s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.272395s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.272406s   0ms DEBUG Indirect paths found: 0
+    ├─   0.272412s   0ms WARN failed to advance: root(Query) -(b)- Query/b
+  ┌─┘
+  ├─   0.272426s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="__typename", leaf=true}
+  ├─   0.272447s   0ms DEBUG Trying to advance to: t: __typename through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(interface)- Node/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: Some("t"), arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(interface)- Node/a", current_cost=1001}
+      ├─   0.272475s   0ms DEBUG checking edge Node/a -(__typename)- String/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(interface)- Node/a", edge="__typename"}
+        ├─   0.272490s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.272504s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(interface)- Node/a with edge Node/a -(__typename)- String/a
+      ├─   0.272512s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(4)" }])
+    ┌─┘
+    ├─   0.272525s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: Some("t"), arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(interface)- Node/a", current_cost=1001}
+      ├─   0.272543s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.272548s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.272559s   0ms DEBUG Indirect paths found: 0
+    ├─   0.272566s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(interface)- Node/a
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="__typename", leaf=true}
+  ├─   0.272590s   0ms DEBUG Trying to advance to: typename: __typename through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(interface)- Node/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: Some("typename"), arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(interface)- Node/a", current_cost=1001}
+      ├─   0.272614s   0ms DEBUG checking edge Node/a -(__typename)- String/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(interface)- Node/a", edge="__typename"}
+        ├─   0.272628s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.272642s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(interface)- Node/a with edge Node/a -(__typename)- String/a
+      ├─   0.272649s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(4)" }])
+    ┌─┘
+    ├─   0.272662s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: Some("typename"), arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(interface)- Node/a", current_cost=1001}
+      ├─   0.272679s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.272685s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.272695s   0ms DEBUG Indirect paths found: 0
+    ├─   0.272702s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(interface)- Node/a
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="__typename", leaf=true}
+  ├─   0.272742s   0ms DEBUG Trying to advance to: __typename through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(interface)- Node/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(interface)- Node/a", current_cost=1001}
+      ├─   0.272788s   0ms DEBUG checking edge Node/a -(__typename)- String/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(interface)- Node/a", edge="__typename"}
+        ├─   0.272811s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.272828s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(interface)- Node/a with edge Node/a -(__typename)- String/a
+      ├─   0.272837s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(4)" }])
+    ┌─┘
+    ├─   0.272850s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(interface)- Node/a", current_cost=1001}
+      ├─   0.272870s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.272876s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.272887s   0ms DEBUG Indirect paths found: 0
+    ├─   0.272894s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(interface)- Node/a
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="id", leaf=true}
+  ├─   0.272919s   0ms DEBUG Trying to advance to: id through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(interface)- Node/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(interface)- Node/a", current_cost=1001}
+      ├─   0.272943s   0ms DEBUG checking edge Node/a -(id)- ID/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(interface)- Node/a", edge="id"}
+        ├─   0.272957s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.272971s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(interface)- Node/a with edge Node/a -(id)- ID/a
+      ├─   0.272978s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(5)" }])
+    ┌─┘
+    ├─   0.272991s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(interface)- Node/a", current_cost=1001}
+      ├─   0.273009s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.273014s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.273025s   0ms DEBUG Indirect paths found: 0
+    ├─   0.273032s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(interface)- Node/a
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(4)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.273075s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.273118s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.273135s   0ms DEBUG Processing edge: Query/a -(interface)- Node/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.273147s   0ms DEBUG Processing edge: Node/a -(__typename)- String/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.273169s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.273181s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.273191s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(4)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.273228s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.273239s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.273250s   0ms DEBUG Processing edge: Query/a -(interface)- Node/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.273262s   0ms DEBUG Processing edge: Node/a -(__typename)- String/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.273279s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.273290s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.273300s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(4)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.273335s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.273346s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.273357s   0ms DEBUG Processing edge: Query/a -(interface)- Node/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.273368s   0ms DEBUG Processing edge: Node/a -(__typename)- String/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.273386s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.273396s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.273406s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(5)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.273438s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.273449s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.273460s   0ms DEBUG Processing edge: Query/a -(interface)- Node/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.273471s   0ms DEBUG Processing edge: Node/a -(id)- ID/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.273488s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.273499s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.273509s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=4}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="a", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="interface", leaf=false, list=false, response_path="", fetch_path=""}
+          ├─   0.273620s   0ms DEBUG adding output field 'interface' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=4, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Node", field="__typename", alias="t", leaf=true, list=false, response_path="interface", fetch_path="interface"}
+              ├─   0.273660s   0ms DEBUG adding output field '__typename' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Node", field="__typename", alias="typename", leaf=true, list=false, response_path="interface", fetch_path="interface"}
+              ├─   0.273702s   0ms DEBUG adding output field '__typename' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Node", field="__typename", leaf=true, list=false, response_path="interface", fetch_path="interface"}
+              ├─   0.273742s   0ms DEBUG adding output field '__typename' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Node", field="id", leaf=true, list=false, response_path="interface", fetch_path="interface"}
+              ├─   0.273779s   0ms DEBUG adding output field 'id' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.273840s   0ms DEBUG Done
+├─   0.273847s   0ms DEBUG found roots
+├─   0.273851s   0ms DEBUG print graph
+├─   0.273856s   0ms DEBUG Nodes:
+│ [1] Query/a {} → {interface{t: __typename typename: __typename __typename id}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="a"}
+    └─┐execute{subgraph_name="a"}
+      ├─   0.274256s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+      ├─   0.276106s   2ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.276313s DEBUG execution result: ExecutionResult { data: Some(Object {"interface": Object {"id": String("2"), "__typename": String("Toaster"), "typename": String("Toaster"), "t": String("Toaster")}}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("a"), "operationKind": String("query"), "operation": String("{interface{t: __typename typename: __typename __typename id}}")}}}) }
+   0.279109s DEBUG original document: query {
+  union {
+    __typename
+    ... on Oven {
+      typename: __typename
+    }
+    ... on Toaster {
+      typename: __typename
+    }
+  }
+}
+
+   0.279258s DEBUG normalized document: query{union{__typename ...on Oven{typename: __typename} ...on Toaster{typename: __typename}}}
+
+   0.279271s DEBUG executable operation: query{union{__typename ...on Oven{typename: __typename} ...on Toaster{typename: __typename}}}
+┐walk_operation{}
+├─   0.279571s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="union", leaf=false}
+  ├─   0.279613s   0ms DEBUG Trying to advance to: union{__typename ...on Oven{typename: __typename} ...on Toaster{typename: __typename}} through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "union", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Fragment { type_name: "Oven", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }, SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.279667s   0ms DEBUG checking edge Query/a -(union)- Product/a/Query.union/Toaster
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="union"}
+        ├─   0.279686s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.279710s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(union)- Product/a/Query.union/Toaster
+      ├─   0.279722s   0ms DEBUG checking edge Query/a -(union)- Product/a/Query.union/Oven
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="union"}
+        ├─   0.279737s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.279751s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(union)- Product/a/Query.union/Oven
+      ├─   0.279758s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(17)" },  { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(14)" }])
+    ┌─┘
+    ├─   0.279775s   0ms DEBUG Direct paths found: 2
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "union", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Fragment { type_name: "Oven", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }, SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.279807s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.279813s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.279825s   0ms DEBUG Indirect paths found: 0
+    ├─   0.279833s   0ms DEBUG advanced: root(Query) -(a)- Query/a
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(b)- Query/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "union", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Fragment { type_name: "Oven", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }, SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.279884s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.279895s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "union", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Fragment { type_name: "Oven", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }, SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.279912s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.279917s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.279928s   0ms DEBUG Indirect paths found: 0
+    ├─   0.279935s   0ms WARN failed to advance: root(Query) -(b)- Query/b
+  ┌─┘
+  ├─   0.279950s   0ms DEBUG Found 2 paths
+┌─┘
+└─┐process_inline_fragment{type_condition="Toaster"}
+  ├─   0.279977s   0ms DEBUG Processing inline fragment '{typename: __typename}' on type 'Toaster' through 2 possible paths
+  ├─   0.279984s   0ms DEBUG Trying to advance to: ... on Toaster, through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster"}
+    └─┐find_direct_paths{target=ConcreteType("Toaster"), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster", current_cost=1001}
+      ├─   0.280012s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster with edge Product/a/Query.union/Toaster -(🔮)- Toaster/a
+      ├─   0.280020s   0ms INFO return=Ok([ { cost: 2001, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(18)" }])
+    ┌─┘
+    ├─   0.280035s   0ms DEBUG Direct paths found: 1
+    ├─   0.280042s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven"}
+    └─┐find_direct_paths{target=ConcreteType("Toaster"), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven", current_cost=1001}
+      ├─   0.280073s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.280085s   0ms DEBUG Direct paths found: 0
+    ├─   0.280091s   0ms WARN Object type 'Toaster' is not resolvable by 'Product', resolve only the __typename
+  ┌─┘
+  └─┐process_selection_set{}
+    └─┐process_field{field_name="__typename", leaf=true}
+      ├─   0.280137s   0ms DEBUG Trying to advance to: typename: __typename through 1 possible paths
+      └─┐explore_path{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster -(🔮)- Toaster/a"}
+        └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: Some("typename"), arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster -(🔮)- Toaster/a", current_cost=2001}
+          ├─   0.280179s   0ms DEBUG checking edge Toaster/a -(__typename)- String/a
+          └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster -(🔮)- Toaster/a", edge="__typename"}
+            ├─   0.280199s   0ms INFO return=Ok(Some([]))
+          ┌─┘
+          ├─   0.280218s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster -(🔮)- Toaster/a with edge Toaster/a -(__typename)- String/a
+          ├─   0.280228s   0ms INFO return=Ok([ { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(18) --> EdgeIndex(25)" }])
+        ┌─┘
+        ├─   0.280244s   0ms DEBUG Direct paths found: 1
+        └─┐find_indirect_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: Some("typename"), arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster -(🔮)- Toaster/a", current_cost=2001}
+          ├─   0.280308s   0ms DEBUG Finished finding indirect paths, found total of 0
+          ├─   0.280318s   0ms INFO return=Ok([])
+        ┌─┘
+        ├─   0.280334s   0ms DEBUG Indirect paths found: 0
+        ├─   0.280345s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster -(🔮)- Toaster/a
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+└─┐process_inline_fragment{type_condition="Oven"}
+  ├─   0.280388s   0ms DEBUG Processing inline fragment '{typename: __typename}' on type 'Oven' through 2 possible paths
+  ├─   0.280394s   0ms DEBUG Trying to advance to: ... on Oven, through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster"}
+    └─┐find_direct_paths{target=ConcreteType("Oven"), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster", current_cost=1001}
+      ├─   0.280419s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.280431s   0ms DEBUG Direct paths found: 0
+    ├─   0.280436s   0ms WARN Object type 'Oven' is not resolvable by 'Product', resolve only the __typename
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven"}
+    └─┐find_direct_paths{target=ConcreteType("Oven"), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven", current_cost=1001}
+      ├─   0.280466s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven with edge Product/a/Query.union/Oven -(🔮)- Oven/a
+      ├─   0.280484s   0ms INFO return=Ok([ { cost: 2001, egdes: "EdgeIndex(0) --> EdgeIndex(14) --> EdgeIndex(15)" }])
+    ┌─┘
+    ├─   0.280498s   0ms DEBUG Direct paths found: 1
+    ├─   0.280505s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven
+  ┌─┘
+  └─┐process_selection_set{}
+    └─┐process_field{field_name="__typename", leaf=true}
+      ├─   0.280529s   0ms DEBUG Trying to advance to: typename: __typename through 1 possible paths
+      └─┐explore_path{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven -(🔮)- Oven/a"}
+        └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: Some("typename"), arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven -(🔮)- Oven/a", current_cost=2001}
+          ├─   0.280576s   0ms DEBUG checking edge Oven/a -(__typename)- String/a
+          └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven -(🔮)- Oven/a", edge="__typename"}
+            ├─   0.280603s   0ms INFO return=Ok(Some([]))
+          ┌─┘
+          ├─   0.280622s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven -(🔮)- Oven/a with edge Oven/a -(__typename)- String/a
+          ├─   0.280632s   0ms INFO return=Ok([ { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(14) --> EdgeIndex(15) --> EdgeIndex(2)" }])
+        ┌─┘
+        ├─   0.280648s   0ms DEBUG Direct paths found: 1
+        └─┐find_indirect_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: Some("typename"), arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven -(🔮)- Oven/a", current_cost=2001}
+          ├─   0.280671s   0ms DEBUG Finished finding indirect paths, found total of 0
+          ├─   0.280677s   0ms INFO return=Ok([])
+        ┌─┘
+        ├─   0.280689s   0ms DEBUG Indirect paths found: 0
+        ├─   0.280697s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven -(🔮)- Oven/a
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="__typename", leaf=true}
+  ├─   0.280738s   0ms DEBUG Trying to advance to: __typename through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster", current_cost=1001}
+      ├─   0.280764s   0ms DEBUG checking edge Product/a/Query.union/Toaster -(__typename)- String/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster", edge="__typename"}
+        ├─   0.280794s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.280819s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster with edge Product/a/Query.union/Toaster -(__typename)- String/a
+      ├─   0.280828s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(16)" }])
+    ┌─┘
+    ├─   0.280854s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster", current_cost=1001}
+      ├─   0.280877s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.280883s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.280894s   0ms DEBUG Indirect paths found: 0
+    ├─   0.280902s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Toaster
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven", current_cost=1001}
+      ├─   0.280942s   0ms DEBUG checking edge Product/a/Query.union/Oven -(__typename)- String/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven", edge="__typename"}
+        ├─   0.280973s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.280997s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven with edge Product/a/Query.union/Oven -(__typename)- String/a
+      ├─   0.281007s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(14) --> EdgeIndex(13)" }])
+    ┌─┘
+    ├─   0.281036s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven", current_cost=1001}
+      ├─   0.281071s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.281077s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.281089s   0ms DEBUG Indirect paths found: 0
+    ├─   0.281096s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(union)- Product/a/Query.union/Oven
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(18) --> EdgeIndex(25)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.281164s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.281181s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.281208s   0ms DEBUG Processing edge: Query/a -(union)- Product/a/Query.union/Toaster
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.281222s   0ms DEBUG Processing edge: Product/a/Query.union/Toaster -(🔮)- Toaster/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.281235s   0ms DEBUG Processing edge: Toaster/a -(__typename)- String/a
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.281257s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.281270s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.281281s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.281293s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(14) --> EdgeIndex(15) --> EdgeIndex(2)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.281331s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.281343s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.281355s   0ms DEBUG Processing edge: Query/a -(union)- Product/a/Query.union/Oven
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.281367s   0ms DEBUG Processing edge: Product/a/Query.union/Oven -(🔮)- Oven/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.281381s   0ms DEBUG Processing edge: Oven/a -(__typename)- String/a
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.281433s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.281447s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.281458s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.281468s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(17) --> EdgeIndex(16)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.281521s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.281539s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.281551s   0ms DEBUG Processing edge: Query/a -(union)- Product/a/Query.union/Toaster
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.281563s   0ms DEBUG Processing edge: Product/a/Query.union/Toaster -(__typename)- String/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.281583s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.281594s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.281605s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=3}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="a", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=2, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="union", leaf=false, list=false, response_path="", fetch_path=""}
+          ├─   0.281745s   0ms DEBUG adding output field 'union' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=2, parent_fetch_step_index=1}
+            └─┐process_abstract_edge{parent_fetch_step_index=1, type_name="Toaster", response_path="union", fetch_path="union"}
+              ├─   0.281796s   0ms DEBUG adding output field '__typename' and starting an inline fragment for type '1' to fetch step [Toaster]
+              └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+                └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Toaster", field="__typename", alias="typename", leaf=true, list=false, response_path="union", fetch_path="union"}
+                  ├─   0.281857s   0ms DEBUG adding output field '__typename' to fetch step [1]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+            ┌─┘
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Product", field="__typename", leaf=true, list=false, response_path="union", fetch_path="union"}
+              ├─   0.281942s   0ms DEBUG adding output field '__typename' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="union", leaf=false, list=false, response_path="", fetch_path=""}
+          ├─   0.282031s   0ms DEBUG adding output field 'union' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+            └─┐process_abstract_edge{parent_fetch_step_index=1, type_name="Oven", response_path="union", fetch_path="union"}
+              ├─   0.282058s   0ms DEBUG adding output field '__typename' and starting an inline fragment for type '1' to fetch step [Oven]
+              └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+                └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Oven", field="__typename", alias="typename", leaf=true, list=false, response_path="union", fetch_path="union"}
+                  ├─   0.282084s   0ms DEBUG adding output field '__typename' to fetch step [1]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.282164s   0ms DEBUG Done
+├─   0.282172s   0ms DEBUG found roots
+├─   0.282177s   0ms DEBUG print graph
+├─   0.282181s   0ms DEBUG Nodes:
+│ [1] Query/a {} → {union{__typename ...on Toaster{typename: __typename} ...on Oven{typename: __typename}}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="a"}
+    └─┐execute{subgraph_name="a"}
+      ├─   0.282635s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+      ├─   0.284766s   2ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "User": ["Admin"], "Node": ["Oven", "Toaster"]}, type_name="Oven", type_condition="Oven"}
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "User": ["Admin"], "Node": ["Oven", "Toaster"]}, type_name="Oven", type_condition="Toaster"}
+┘
+   0.285130s DEBUG execution result: ExecutionResult { data: Some(Object {"union": Object {"__typename": String("Oven"), "typename": String("Oven")}}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("a"), "operationKind": String("query"), "operation": String("{union{__typename ...on Toaster{typename: __typename} ...on Oven{typename: __typename}}}")}}}) }
+   0.287873s DEBUG original document: query {
+  interface {
+    __typename
+    ... on Oven {
+      typename: __typename
+    }
+    ... on Toaster {
+      typename: __typename
+    }
+  }
+}
+
+   0.288004s DEBUG normalized document: query{interface{__typename ...on Oven{typename: __typename} ...on Toaster{typename: __typename}}}
+
+   0.288017s DEBUG executable operation: query{interface{__typename ...on Oven{typename: __typename} ...on Toaster{typename: __typename}}}
+┐walk_operation{}
+├─   0.288352s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="interface", leaf=false}
+  ├─   0.288397s   0ms DEBUG Trying to advance to: interface{__typename ...on Oven{typename: __typename} ...on Toaster{typename: __typename}} through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "interface", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Fragment { type_name: "Oven", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }, SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.288473s   0ms DEBUG checking edge Query/a -(interface)- Node/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a", edge="interface"}
+        ├─   0.288501s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.288525s   0ms DEBUG Advancing path root(Query) -(a)- Query/a with edge Query/a -(interface)- Node/a
+      ├─   0.288537s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(0) --> EdgeIndex(12)" }])
+    ┌─┘
+    ├─   0.288554s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "interface", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Fragment { type_name: "Oven", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }, SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.288586s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.288592s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.288605s   0ms DEBUG Indirect paths found: 0
+    ├─   0.288612s   0ms DEBUG advanced: root(Query) -(a)- Query/a
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(b)- Query/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "interface", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Fragment { type_name: "Oven", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }, SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.288643s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.288655s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "interface", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }, SelectionItem::Fragment { type_name: "Oven", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }, SelectionItem::Fragment { type_name: "Toaster", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.288685s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.288694s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.288708s   0ms DEBUG Indirect paths found: 0
+    ├─   0.288716s   0ms WARN failed to advance: root(Query) -(b)- Query/b
+  ┌─┘
+  ├─   0.288732s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_inline_fragment{type_condition="Toaster"}
+  ├─   0.288755s   0ms DEBUG Processing inline fragment '{typename: __typename}' on type 'Toaster' through 1 possible paths
+  ├─   0.288763s   0ms DEBUG Trying to advance to: ... on Toaster, through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(interface)- Node/a"}
+    └─┐find_direct_paths{target=ConcreteType("Toaster"), path="root(Query) -(a)- Query/a -(interface)- Node/a", current_cost=1001}
+      ├─   0.288823s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(interface)- Node/a with edge Node/a -(🔮)- Toaster/a
+      ├─   0.288834s   0ms INFO return=Ok([ { cost: 2001, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(29)" }])
+    ┌─┘
+    ├─   0.288852s   0ms DEBUG Direct paths found: 1
+    ├─   0.288860s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(interface)- Node/a
+  ┌─┘
+  └─┐process_selection_set{}
+    └─┐process_field{field_name="__typename", leaf=true}
+      ├─   0.288908s   0ms DEBUG Trying to advance to: typename: __typename through 1 possible paths
+      └─┐explore_path{path="root(Query) -(a)- Query/a -(interface)- Node/a -(🔮)- Toaster/a"}
+        └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: Some("typename"), arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(interface)- Node/a -(🔮)- Toaster/a", current_cost=2001}
+          ├─   0.288962s   0ms DEBUG checking edge Toaster/a -(__typename)- String/a
+          └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(interface)- Node/a -(🔮)- Toaster/a", edge="__typename"}
+            ├─   0.289009s   0ms INFO return=Ok(Some([]))
+          ┌─┘
+          ├─   0.289028s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(interface)- Node/a -(🔮)- Toaster/a with edge Toaster/a -(__typename)- String/a
+          ├─   0.289039s   0ms INFO return=Ok([ { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(29) --> EdgeIndex(25)" }])
+        ┌─┘
+        ├─   0.289055s   0ms DEBUG Direct paths found: 1
+        └─┐find_indirect_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: Some("typename"), arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(interface)- Node/a -(🔮)- Toaster/a", current_cost=2001}
+          ├─   0.289079s   0ms DEBUG Finished finding indirect paths, found total of 0
+          ├─   0.289086s   0ms INFO return=Ok([])
+        ┌─┘
+        ├─   0.289098s   0ms DEBUG Indirect paths found: 0
+        ├─   0.289107s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(interface)- Node/a -(🔮)- Toaster/a
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+└─┐process_inline_fragment{type_condition="Oven"}
+  ├─   0.289147s   0ms DEBUG Processing inline fragment '{typename: __typename}' on type 'Oven' through 1 possible paths
+  ├─   0.289154s   0ms DEBUG Trying to advance to: ... on Oven, through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(interface)- Node/a"}
+    └─┐find_direct_paths{target=ConcreteType("Oven"), path="root(Query) -(a)- Query/a -(interface)- Node/a", current_cost=1001}
+      ├─   0.289181s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(interface)- Node/a with edge Node/a -(🔮)- Oven/a
+      ├─   0.289188s   0ms INFO return=Ok([ { cost: 2001, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(27)" }])
+    ┌─┘
+    ├─   0.289226s   0ms DEBUG Direct paths found: 1
+    ├─   0.289238s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(interface)- Node/a
+  ┌─┘
+  └─┐process_selection_set{}
+    └─┐process_field{field_name="__typename", leaf=true}
+      ├─   0.289320s   0ms DEBUG Trying to advance to: typename: __typename through 1 possible paths
+      └─┐explore_path{path="root(Query) -(a)- Query/a -(interface)- Node/a -(🔮)- Oven/a"}
+        └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: Some("typename"), arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(interface)- Node/a -(🔮)- Oven/a", current_cost=2001}
+          ├─   0.289355s   0ms DEBUG checking edge Oven/a -(__typename)- String/a
+          └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(interface)- Node/a -(🔮)- Oven/a", edge="__typename"}
+            ├─   0.289375s   0ms INFO return=Ok(Some([]))
+          ┌─┘
+          ├─   0.289392s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(interface)- Node/a -(🔮)- Oven/a with edge Oven/a -(__typename)- String/a
+          ├─   0.289404s   0ms INFO return=Ok([ { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(27) --> EdgeIndex(2)" }])
+        ┌─┘
+        ├─   0.289420s   0ms DEBUG Direct paths found: 1
+        └─┐find_indirect_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: Some("typename"), arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(interface)- Node/a -(🔮)- Oven/a", current_cost=2001}
+          ├─   0.289452s   0ms DEBUG Finished finding indirect paths, found total of 0
+          ├─   0.289458s   0ms INFO return=Ok([])
+        ┌─┘
+        ├─   0.289471s   0ms DEBUG Indirect paths found: 0
+        ├─   0.289479s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(interface)- Node/a -(🔮)- Oven/a
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+└─┐process_field{field_name="__typename", leaf=true}
+  ├─   0.289518s   0ms DEBUG Trying to advance to: __typename through 1 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a -(interface)- Node/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(interface)- Node/a", current_cost=1001}
+      ├─   0.289543s   0ms DEBUG checking edge Node/a -(__typename)- String/a
+      └─┐can_satisfy_edge{path="root(Query) -(a)- Query/a -(interface)- Node/a", edge="__typename"}
+        ├─   0.289563s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.289578s   0ms DEBUG Advancing path root(Query) -(a)- Query/a -(interface)- Node/a with edge Node/a -(__typename)- String/a
+      ├─   0.289586s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(4)" }])
+    ┌─┘
+    ├─   0.289621s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a -(interface)- Node/a", current_cost=1001}
+      ├─   0.289650s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.289656s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.289668s   0ms DEBUG Indirect paths found: 0
+    ├─   0.289676s   0ms DEBUG advanced: root(Query) -(a)- Query/a -(interface)- Node/a
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(29) --> EdgeIndex(25)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.289723s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.289756s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.289784s   0ms DEBUG Processing edge: Query/a -(interface)- Node/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.289799s   0ms DEBUG Processing edge: Node/a -(🔮)- Toaster/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.289812s   0ms DEBUG Processing edge: Toaster/a -(__typename)- String/a
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.289838s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.289852s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.289863s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.289874s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 2002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(27) --> EdgeIndex(2)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=4}
+  ├─   0.289931s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=4}
+    ├─   0.289950s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=4}
+      ├─   0.289962s   0ms DEBUG Processing edge: Query/a -(interface)- Node/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=4}
+        ├─   0.289975s   0ms DEBUG Processing edge: Node/a -(🔮)- Oven/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=4}
+          ├─   0.290003s   0ms DEBUG Processing edge: Oven/a -(__typename)- String/a
+          └─┐from_path_segment_sequences{current_index=4, total_segments=4}
+          ┌─┘
+          ├─   0.290031s   0ms DEBUG No subsequent steps (leaf or end of path)
+        ┌─┘
+        ├─   0.290044s   0ms DEBUG Adding subsequent step as child
+      ┌─┘
+      ├─   0.290055s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.290067s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(0) --> EdgeIndex(12) --> EdgeIndex(4)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.290105s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.290117s   0ms DEBUG Processing edge: root(Query) -(a)- Query/a
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.290129s   0ms DEBUG Processing edge: Query/a -(interface)- Node/a
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.290141s   0ms DEBUG Processing edge: Node/a -(__typename)- String/a
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.290162s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.290173s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.290184s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=3}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="a", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="interface", leaf=false, list=false, response_path="", fetch_path=""}
+          ├─   0.290299s   0ms DEBUG adding output field 'interface' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=3, parent_fetch_step_index=1}
+            └─┐process_abstract_edge{parent_fetch_step_index=1, type_name="Toaster", response_path="interface", fetch_path="interface"}
+              ├─   0.290329s   0ms DEBUG adding output field '__typename' and starting an inline fragment for type '1' to fetch step [Toaster]
+              └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+                └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Toaster", field="__typename", alias="typename", leaf=true, list=false, response_path="interface", fetch_path="interface"}
+                  ├─   0.290387s   0ms DEBUG adding output field '__typename' to fetch step [1]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+            ┌─┘
+            └─┐process_abstract_edge{parent_fetch_step_index=1, type_name="Oven", response_path="interface", fetch_path="interface"}
+              ├─   0.290471s   0ms DEBUG adding output field '__typename' and starting an inline fragment for type '1' to fetch step [Oven]
+              └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+                └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Oven", field="__typename", alias="typename", leaf=true, list=false, response_path="interface", fetch_path="interface"}
+                  ├─   0.290502s   0ms DEBUG adding output field '__typename' to fetch step [1]
+                  └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+                  ┌─┘
+                ┌─┘
+              ┌─┘
+            ┌─┘
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Node", field="__typename", leaf=true, list=false, response_path="interface", fetch_path="interface"}
+              ├─   0.290566s   0ms DEBUG adding output field '__typename' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.290631s   0ms DEBUG Done
+├─   0.290638s   0ms DEBUG found roots
+├─   0.290643s   0ms DEBUG print graph
+├─   0.290648s   0ms DEBUG Nodes:
+│ [1] Query/a {} → {interface{__typename ...on Toaster{typename: __typename} ...on Oven{typename: __typename}}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="a"}
+    └─┐execute{subgraph_name="a"}
+      ├─   0.290996s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+      ├─   0.293038s   2ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "User": ["Admin"], "Node": ["Oven", "Toaster"]}, type_name="Toaster", type_condition="Oven"}
+┘
+┐entity_satisfies_type_condition{possible_types={"Product": ["Oven", "Toaster"], "User": ["Admin"], "Node": ["Oven", "Toaster"]}, type_name="Toaster", type_condition="Toaster"}
+┘
+   0.293423s DEBUG execution result: ExecutionResult { data: Some(Object {"interface": Object {"__typename": String("Toaster"), "typename": String("Toaster")}}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("a"), "operationKind": String("query"), "operation": String("{interface{__typename ...on Toaster{typename: __typename} ...on Oven{typename: __typename}}}")}}}) }
+   0.295892s DEBUG original document: query {
+  users {
+    id
+  }
+}
+
+   0.296002s DEBUG normalized document: query{users{id}}
+
+   0.296011s DEBUG executable operation: query{users{id}}
+┐walk_operation{}
+├─   0.296268s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="users", leaf=false}
+  ├─   0.296308s   0ms DEBUG Trying to advance to: users{id} through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "users", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.296356s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.296378s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "users", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.296403s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.296410s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.296422s   0ms DEBUG Indirect paths found: 0
+    ├─   0.296429s   0ms WARN failed to advance: root(Query) -(a)- Query/a
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(b)- Query/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "users", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.296460s   0ms DEBUG checking edge Query/b -(users)- User/b
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b", edge="users"}
+        ├─   0.296506s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.296525s   0ms DEBUG Advancing path root(Query) -(b)- Query/b with edge Query/b -(users)- User/b
+      ├─   0.296536s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(1) --> EdgeIndex(20)" }])
+    ┌─┘
+    ├─   0.296551s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "users", selections: SelectionSet { items: [SelectionItem::Field { name: "id", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.296574s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.296580s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.296591s   0ms DEBUG Indirect paths found: 0
+    ├─   0.296598s   0ms DEBUG advanced: root(Query) -(b)- Query/b
+  ┌─┘
+  ├─   0.296611s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="id", leaf=true}
+  ├─   0.296654s   0ms DEBUG Trying to advance to: id through 1 possible paths
+  └─┐explore_path{path="root(Query) -(b)- Query/b -(users)- User/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(users)- User/b", current_cost=1001}
+      ├─   0.296713s   0ms DEBUG checking edge User/b -(id)- ID/b
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(users)- User/b", edge="id"}
+        ├─   0.296737s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.296755s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(users)- User/b with edge User/b -(id)- ID/b
+      ├─   0.296764s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(20) --> EdgeIndex(9)" }])
+    ┌─┘
+    ├─   0.296778s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(users)- User/b", current_cost=1001}
+      ├─   0.296803s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/b
+      ├─   0.296810s   0ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.296817s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/a
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(users)- User/b", edge="id"}
+        ├─   0.296838s   0ms DEBUG checking requirements {id} for edge 'User/b -(🔑🧩{id})- User/a'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(users)- User/b", current_cost=1001}
+              ├─   0.296876s   0ms DEBUG checking edge User/b -(id)- ID/b
+              └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(users)- User/b", edge="id"}
+                ├─   0.296894s   0ms INFO return=Ok(Some([]))
+              ┌─┘
+              ├─   0.296911s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(users)- User/b with edge User/b -(id)- ID/b
+              ├─   0.296920s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(20) --> EdgeIndex(9)" }])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(users)- User/b", current_cost=1001}
+              ├─   0.296949s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/b
+              ├─   0.296956s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.296963s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/a
+              ├─   0.296971s   0ms DEBUG Ignoring, graph is excluded and already visited (current: a, visited: {"a"})
+              ├─   0.296995s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.297005s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.297027s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(20) --> EdgeIndex(9)" }], [])))
+          ┌─┘
+          ├─   0.297048s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(20) --> EdgeIndex(9)" }], [])))
+        ┌─┘
+        ├─   0.297062s   0ms DEBUG Paths for id
+        ├─   0.297073s   0ms DEBUG   Path root(Query) -(b)- Query/b -(users)- User/b -(id)- ID/b is valid
+        ├─   0.297080s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.297095s   0ms DEBUG path User/b -(id)- ID/b is valid
+        ├─   0.297105s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(9)" }]))
+      ┌─┘
+      ├─   0.297121s   0ms DEBUG Advancing path to User/b -(🔑🧩{id})- User/a
+      └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(9)" }, root_node="User/b"}
+        └─┐create_root_for_path_sequences{root_node="User/b", segments_count=1}
+          ├─   0.297149s   0ms DEBUG Building root query tree node: User/b
+          └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+            ├─   0.297164s   0ms DEBUG Processing edge: User/b -(id)- ID/b
+            └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+            ┌─┘
+            ├─   0.297185s   0ms DEBUG No subsequent steps (leaf or end of path)
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(users)- User/b -(🔑🧩{id})- User/a", current_cost=2003}
+        ├─   0.297231s   0ms DEBUG checking edge User/a -(id)- ID/a
+        └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(users)- User/b -(🔑🧩{id})- User/a", edge="id"}
+          ├─   0.297250s   0ms INFO return=Ok(Some([]))
+        ┌─┘
+        ├─   0.297266s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(users)- User/b -(🔑🧩{id})- User/a with edge User/a -(id)- ID/a
+        ├─   0.297280s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(1) --> EdgeIndex(20) --> EdgeIndex(32) --> EdgeIndex(7)" }])
+      ┌─┘
+      ├─   0.297296s   0ms DEBUG Found 1 direct paths to User/b -(🔑🧩{id})- User/a
+      ├─   0.297307s   0ms DEBUG Finished finding indirect paths, found total of 1
+      ├─   0.297316s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(1) --> EdgeIndex(20) --> EdgeIndex(32) --> EdgeIndex(7)" }])
+    ┌─┘
+    ├─   0.297330s   0ms DEBUG Indirect paths found: 1
+    ├─   0.297341s   0ms DEBUG advanced: root(Query) -(b)- Query/b -(users)- User/b
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(20) --> EdgeIndex(9)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.297414s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.297428s   0ms DEBUG Processing edge: root(Query) -(b)- Query/b
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.297440s   0ms DEBUG Processing edge: Query/b -(users)- User/b
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.297452s   0ms DEBUG Processing edge: User/b -(id)- ID/b
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.297473s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.297484s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.297494s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=1}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="b", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="users", leaf=false, list=true, response_path="", fetch_path=""}
+          ├─   0.297628s   0ms DEBUG adding output field 'users' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="User", field="id", leaf=true, list=false, response_path="users.@", fetch_path="users.@"}
+              ├─   0.297662s   0ms DEBUG adding output field 'id' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.297729s   0ms DEBUG Done
+├─   0.297736s   0ms DEBUG found roots
+├─   0.297741s   0ms DEBUG print graph
+├─   0.297745s   0ms DEBUG Nodes:
+│ [1] Query/b {} → {users{id}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="b"}
+    └─┐execute{subgraph_name="b"}
+      ├─   0.298123s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+      ├─   0.302520s   4ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.302745s DEBUG execution result: ExecutionResult { data: Some(Object {"users": Array [Object {"id": String("u1")}, Object {"id": String("u2")}]}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("b"), "operationKind": String("query"), "operation": String("{users{id}}")}}}) }
+   0.305438s DEBUG original document: query {
+  users {
+    __typename
+  }
+}
+
+   0.305614s DEBUG normalized document: query{users{__typename}}
+
+   0.305641s DEBUG executable operation: query{users{__typename}}
+┐walk_operation{}
+├─   0.305996s   0ms DEBUG operation is of type Query
+└─┐process_field{field_name="users", leaf=false}
+  ├─   0.306074s   0ms DEBUG Trying to advance to: users{__typename} through 2 possible paths
+  └─┐explore_path{path="root(Query) -(a)- Query/a"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "users", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.306143s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.306171s   0ms DEBUG Direct paths found: 0
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "users", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(a)- Query/a", current_cost=1000}
+      ├─   0.306202s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.306225s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.306244s   0ms DEBUG Indirect paths found: 0
+    ├─   0.306254s   0ms WARN failed to advance: root(Query) -(a)- Query/a
+  ┌─┘
+  └─┐explore_path{path="root(Query) -(b)- Query/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "users", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.306292s   0ms DEBUG checking edge Query/b -(users)- User/b
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b", edge="users"}
+        ├─   0.306313s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.306329s   0ms DEBUG Advancing path root(Query) -(b)- Query/b with edge Query/b -(users)- User/b
+      ├─   0.306339s   0ms INFO return=Ok([ { cost: 1001, egdes: "EdgeIndex(1) --> EdgeIndex(20)" }])
+    ┌─┘
+    ├─   0.306376s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "users", selections: SelectionSet { items: [SelectionItem::Field { name: "__typename", selections: SelectionSet { items: [] } }] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b", current_cost=1000}
+      ├─   0.306408s   0ms DEBUG Finished finding indirect paths, found total of 0
+      ├─   0.306414s   0ms INFO return=Ok([])
+    ┌─┘
+    ├─   0.306426s   0ms DEBUG Indirect paths found: 0
+    ├─   0.306433s   0ms DEBUG advanced: root(Query) -(b)- Query/b
+  ┌─┘
+  ├─   0.306448s   0ms DEBUG Found 1 paths
+┌─┘
+└─┐process_field{field_name="__typename", leaf=true}
+  ├─   0.306491s   0ms DEBUG Trying to advance to: __typename through 1 possible paths
+  └─┐explore_path{path="root(Query) -(b)- Query/b -(users)- User/b"}
+    └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(users)- User/b", current_cost=1001}
+      ├─   0.306524s   0ms DEBUG checking edge User/b -(__typename)- String/b
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(users)- User/b", edge="__typename"}
+        ├─   0.306553s   0ms INFO return=Ok(Some([]))
+      ┌─┘
+      ├─   0.306576s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(users)- User/b with edge User/b -(__typename)- String/b
+      ├─   0.306586s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(20) --> EdgeIndex(8)" }])
+    ┌─┘
+    ├─   0.306601s   0ms DEBUG Direct paths found: 1
+    └─┐find_indirect_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(users)- User/b", current_cost=1001}
+      ├─   0.306627s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/b
+      ├─   0.306633s   0ms DEBUG Ignoring. We would go back to the same graph
+      ├─   0.306640s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/a
+      └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(users)- User/b", edge="id"}
+        ├─   0.306662s   0ms DEBUG checking requirements {id} for edge 'User/b -(🔑🧩{id})- User/a'
+        └─┐validate_field_requirement{}
+          └─┐validate_field_requirement{}
+            └─┐find_direct_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(users)- User/b", current_cost=1001}
+              ├─   0.306701s   0ms DEBUG checking edge User/b -(id)- ID/b
+              └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(users)- User/b", edge="id"}
+                ├─   0.306721s   0ms INFO return=Ok(Some([]))
+              ┌─┘
+              ├─   0.306738s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(users)- User/b with edge User/b -(id)- ID/b
+              ├─   0.306773s   0ms INFO return=Ok([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(20) --> EdgeIndex(9)" }])
+            ┌─┘
+            └─┐find_indirect_paths{target=Field(FieldSelection { name: "id", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(users)- User/b", current_cost=1001}
+              ├─   0.306819s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/b
+              ├─   0.306827s   0ms DEBUG Ignoring. We would go back to the same graph
+              ├─   0.306833s   0ms DEBUG Exploring edge User/b -(🔑🧩{id})- User/a
+              ├─   0.306841s   0ms DEBUG Ignoring, graph is excluded and already visited (current: a, visited: {"a"})
+              ├─   0.306850s   0ms DEBUG Finished finding indirect paths, found total of 0
+              ├─   0.306856s   0ms INFO return=Ok([])
+            ┌─┘
+            ├─   0.306874s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(20) --> EdgeIndex(9)" }], [])))
+          ┌─┘
+          ├─   0.306891s   0ms INFO return=Ok(Some(([ { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(20) --> EdgeIndex(9)" }], [])))
+        ┌─┘
+        ├─   0.306905s   0ms DEBUG Paths for id
+        ├─   0.306914s   0ms DEBUG   Path root(Query) -(b)- Query/b -(users)- User/b -(id)- ID/b is valid
+        ├─   0.306921s   0ms DEBUG Found 1 best paths for this leaf requirement
+        ├─   0.306937s   0ms DEBUG path User/b -(id)- ID/b is valid
+        ├─   0.306958s   0ms INFO return=Ok(Some([ { cost: 1, egdes: "EdgeIndex(9)" }]))
+      ┌─┘
+      ├─   0.306982s   0ms DEBUG Advancing path to User/b -(🔑🧩{id})- User/a
+      └─┐from_path{path= { cost: 1, egdes: "EdgeIndex(9)" }, root_node="User/b"}
+        └─┐create_root_for_path_sequences{root_node="User/b", segments_count=1}
+          ├─   0.307012s   0ms DEBUG Building root query tree node: User/b
+          └─┐from_path_segment_sequences{current_index=0, total_segments=1}
+            ├─   0.307027s   0ms DEBUG Processing edge: User/b -(id)- ID/b
+            └─┐from_path_segment_sequences{current_index=1, total_segments=1}
+            ┌─┘
+            ├─   0.307048s   0ms DEBUG No subsequent steps (leaf or end of path)
+          ┌─┘
+        ┌─┘
+      ┌─┘
+      └─┐find_direct_paths{target=Field(FieldSelection { name: "__typename", selections: SelectionSet { items: [] }, alias: None, arguments: None, skip_if: None, include_if: None }), path="root(Query) -(b)- Query/b -(users)- User/b -(🔑🧩{id})- User/a", current_cost=2003}
+        ├─   0.307110s   0ms DEBUG checking edge User/a -(__typename)- String/a
+        └─┐can_satisfy_edge{path="root(Query) -(b)- Query/b -(users)- User/b -(🔑🧩{id})- User/a", edge="__typename"}
+          ├─   0.307138s   0ms INFO return=Ok(Some([]))
+        ┌─┘
+        ├─   0.307156s   0ms DEBUG Advancing path root(Query) -(b)- Query/b -(users)- User/b -(🔑🧩{id})- User/a with edge User/a -(__typename)- String/a
+        ├─   0.307169s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(1) --> EdgeIndex(20) --> EdgeIndex(32) --> EdgeIndex(6)" }])
+      ┌─┘
+      ├─   0.307203s   0ms DEBUG Found 1 direct paths to User/b -(🔑🧩{id})- User/a
+      ├─   0.307217s   0ms DEBUG Finished finding indirect paths, found total of 1
+      ├─   0.307223s   0ms INFO return=Ok([ { cost: 2004, egdes: "EdgeIndex(1) --> EdgeIndex(20) --> EdgeIndex(32) --> EdgeIndex(6)" }])
+    ┌─┘
+    ├─   0.307239s   0ms DEBUG Indirect paths found: 1
+    ├─   0.307250s   0ms DEBUG advanced: root(Query) -(b)- Query/b -(users)- User/b
+  ┌─┘
+┌─┘
+┘
+┐from_path{path= { cost: 1002, egdes: "EdgeIndex(1) --> EdgeIndex(20) --> EdgeIndex(8)" }, root_node="root(Query)"}
+└─┐create_root_for_path_sequences{root_node="root(Query)", segments_count=3}
+  ├─   0.307315s   0ms DEBUG Building root query tree node: root(Query)
+  └─┐from_path_segment_sequences{current_index=0, total_segments=3}
+    ├─   0.307334s   0ms DEBUG Processing edge: root(Query) -(b)- Query/b
+    └─┐from_path_segment_sequences{current_index=1, total_segments=3}
+      ├─   0.307346s   0ms DEBUG Processing edge: Query/b -(users)- User/b
+      └─┐from_path_segment_sequences{current_index=2, total_segments=3}
+        ├─   0.307358s   0ms DEBUG Processing edge: User/b -(__typename)- String/b
+        └─┐from_path_segment_sequences{current_index=3, total_segments=3}
+        ┌─┘
+        ├─   0.307378s   0ms DEBUG No subsequent steps (leaf or end of path)
+      ┌─┘
+      ├─   0.307390s   0ms DEBUG Adding subsequent step as child
+    ┌─┘
+    ├─   0.307400s   0ms DEBUG Adding subsequent step as child
+  ┌─┘
+┌─┘
+┘
+┐merge_trees{tree_count=1}
+┘
+┐build_fetch_graph_from_query_tree{requirements_count=0, children_count=1}
+└─┐process_noop_edge{}
+  └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=0}
+    └─┐process_subgraph_entrypoint_edge{subgraph="b", type_name="Query", parent_fetch_step_index=0}
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐connect{parent=0, child=1}
+      ┌─┘
+      └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+        └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="Query", field="users", leaf=false, list=true, response_path="", fetch_path=""}
+          ├─   0.307531s   0ms DEBUG adding output field 'users' to fetch step [1]
+          └─┐process_children_for_fetch_steps{count=1, parent_fetch_step_index=1}
+            └─┐process_plain_field_edge{parent_fetch_step_index=1, type_name="User", field="__typename", leaf=true, list=false, response_path="users.@", fetch_path="users.@"}
+              ├─   0.307581s   0ms DEBUG adding output field '__typename' to fetch step [1]
+              └─┐process_children_for_fetch_steps{count=0, parent_fetch_step_index=1}
+              ┌─┘
+            ┌─┘
+          ┌─┘
+        ┌─┘
+      ┌─┘
+    ┌─┘
+  ┌─┘
+┌─┘
+├─   0.307656s   0ms DEBUG Done
+├─   0.307664s   0ms DEBUG found roots
+├─   0.307669s   0ms DEBUG print graph
+├─   0.307674s   0ms DEBUG Nodes:
+│ [1] Query/b {} → {users{__typename}} at $.
+│ 
+│ Tree:
+│ [1]
+│ 
+└─┐optimize{}
+  └─┐merge_passthrough_child{}
+  ┌─┘
+  └─┐merge_children_with_parents{}
+  ┌─┘
+  └─┐merge_siblings{}
+  ┌─┘
+  └─┐deduplicate_and_prune_fetch_steps{}
+  ┌─┘
+  └─┐turn_mutations_into_sequence{}
+  ┌─┘
+┌─┘
+┘
+┐build_query_plan_from_fetch_graph{}
+┘
+┐execute{}
+└─┐FetchNode::execute{data=Null, representations=[]}
+  └─┐execute{subgraph_name="b"}
+    └─┐execute{subgraph_name="b"}
+      ├─   0.308121s   0ms DEBUG reuse idle connection for ("http", localhost:4200)
+      ├─   0.310203s   2ms DEBUG pooling idle connection for ("http", localhost:4200)
+    ┌─┘
+  ┌─┘
+┌─┘
+┘
+   0.310484s DEBUG execution result: ExecutionResult { data: Some(Object {"users": Array [Object {"__typename": String("User")}, Object {"__typename": String("User")}]}), errors: None, extensions: Some({"queryPlan": Object {"kind": String("QueryPlan"), "node": Object {"kind": String("Fetch"), "serviceName": String("b"), "operationKind": String("query"), "operation": String("{users{__typename}}")}}}) }

@@ -1,0 +1,31 @@
+TAP version 13
+# Using gateway at     http://localhost:4000/graphql
+# Fetching tests from  http://localhost:4200/unavailable-override/tests
+# Subtest: unavailable-override
+    # Subtest: unavailable-override_0
+    ok 1 - unavailable-override_0
+      ---
+      duration_ms: 24.736964
+      type: 'test'
+      ...
+    # Subtest: unavailable-override_1
+    ok 2 - unavailable-override_1
+      ---
+      duration_ms: 16.042989
+      type: 'test'
+      ...
+    1..2
+ok 1 - unavailable-override
+  ---
+  duration_ms: 41.525326
+  type: 'suite'
+  ...
+1..1
+# tests 2
+# suites 1
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 155.751968
