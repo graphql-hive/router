@@ -9,10 +9,8 @@ pub enum NormalizationError {
     #[error("Specified operation '{operation_name}' not found.")]
     SpecifiedOperationNotFound { operation_name: String },
 
-    #[error(
-        "An anonymous operation was expected, but either none were present, or all were named."
-    )]
-    AnonymousOperationNotFound,
+    #[error("An operation was expected, but none were present.")]
+    OperationNotFound,
 
     #[error("Schema type '{type_name}' not found.")]
     SchemaTypeNotFound { type_name: String },
