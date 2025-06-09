@@ -52,6 +52,16 @@ impl From<&Vec<(String, ParserValue<'_, String>)>> for ArgumentsMap {
     }
 }
 
+impl From<&mut Vec<(String, ParserValue<'_, String>)>> for ArgumentsMap {
+    fn from(args: &mut Vec<(String, ParserValue<'_, String>)>) -> Self {
+        let arguments_map = args
+            .iter()
+            .map(|(key, value)| (key.clone(), Value::from(value)))
+            .collect();
+        Self { arguments_map }
+    }
+}
+
 impl ArgumentsMap {
     pub fn new() -> Self {
         Self::default()

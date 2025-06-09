@@ -1,6 +1,6 @@
 use error::QueryPlanError;
 use fetch::{error::FetchGraphError, fetch_graph::build_fetch_graph_from_query_tree};
-use graphql_parser::{query, schema};
+use graphql_parser::schema;
 use plan_nodes::QueryPlan;
 use query_plan::build_query_plan_from_fetch_graph;
 use tree::{paths_to_trees, query_tree::QueryTree};
@@ -11,7 +11,6 @@ use crate::{
     consumer_schema::ConsumerSchema,
     graph::{error::GraphError, Graph},
     state::supergraph_state::SupergraphState,
-    utils::operation_utils::prepare_document,
 };
 
 mod error;
@@ -82,18 +81,6 @@ impl Planner {
             graph,
             consumer_schema,
         })
-    }
-
-    pub fn plan(
-        &self,
-        operation_document: query::Document<'static, String>,
-        operation_name: Option<&str>,
-    ) -> Result<QueryPlan, PlannerError> {
-        let document = prepare_document(&operation_document, operation_name);
-        let operation = document
-            .executable_operation()
-            .ok_or(PlannerError::MissingOperationToExecute)?;
-        self.plan_from_normalized_operation(operation)
     }
 
     pub fn plan_from_normalized_operation(

@@ -1,9 +1,3 @@
-//! Calculate a hash for a GraphQL query that reflects the shape of
-//! the query. The shape hash will be the same for two instances of a query
-//! that are deemed identical except for unimportant details. Those details
-//! are any values used with filters, and any differences in the query
-//! name or response keys
-
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
@@ -13,6 +7,8 @@ use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
 use crate::ast::value::Value;
 use crate::state::supergraph_state::{self, OperationKind};
+
+// TODO: implement a hashing that does not care about order of things
 
 type ASTHasher = DefaultHasher;
 

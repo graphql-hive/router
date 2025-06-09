@@ -5,6 +5,7 @@ use std::sync::Once;
 use lazy_static::lazy_static;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+use crate::consumer_schema::ConsumerSchema;
 use crate::graph::Graph;
 use crate::state::supergraph_state::SupergraphState;
 use crate::utils::parsing::parse_schema;
@@ -36,12 +37,15 @@ pub fn init_logger() {
     });
 }
 
-pub fn read_supergraph(fixture_path: &str) -> Graph {
+pub fn read_supergraph(fixture_path: &str) -> (Graph, ConsumerSchema) {
     let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(fixture_path);
     let supergraph_sdl =
         std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
     let schema = parse_schema(&supergraph_sdl);
     let supergraph_state = SupergraphState::new(&schema);
 
-    Graph::graph_from_supergraph_state(&supergraph_state).expect("failed to create graph")
+    (
+        Graph::graph_from_supergraph_state(&supergraph_state).expect("failed to create graph"),
+        ConsumerSchema::new_from_supergraph(&schema),
+    )
 }

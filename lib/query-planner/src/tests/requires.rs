@@ -1,4 +1,5 @@
 use crate::{
+    ast::normalization::normalize_operation,
     planner::{
         fetch::fetch_graph::build_fetch_graph_from_query_tree,
         query_plan::build_query_plan_from_fetch_graph,
@@ -6,14 +7,15 @@ use crate::{
         walker::walk_operation,
     },
     tests::testkit::{init_logger, read_supergraph},
-    utils::{operation_utils::prepare_document, parsing::parse_operation},
+    utils::parsing::parse_operation,
 };
 use std::error::Error;
 
 #[test]
 fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let graph = read_supergraph("fixture/tests/two-same-service-calls.supergraph.graphql");
+    let (graph, consumer_schema) =
+        read_supergraph("fixture/tests/two-same-service-calls.supergraph.graphql");
     let document = parse_operation(
         r#"
         query {
@@ -22,8 +24,8 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(&document, None);
-    let operation = document.executable_operation().unwrap();
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
+    let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
@@ -158,7 +160,8 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
 #[test]
 fn simplest_requires() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let graph = read_supergraph("fixture/tests/simplest-requires.supergraph.graphql");
+    let (graph, consumer_schema) =
+        read_supergraph("fixture/tests/simplest-requires.supergraph.graphql");
     let document = parse_operation(
         r#"
         query {
@@ -167,8 +170,8 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(&document, None);
-    let operation = document.executable_operation().unwrap();
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
+    let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
@@ -261,7 +264,8 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
 #[test]
 fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let graph = read_supergraph("fixture/tests/requires-local-sibling.supergraph.graphql");
+    let (graph, consumer_schema) =
+        read_supergraph("fixture/tests/requires-local-sibling.supergraph.graphql");
     let document = parse_operation(
         r#"
         query {
@@ -271,8 +275,8 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(&document, None);
-    let operation = document.executable_operation().unwrap();
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
+    let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 2);
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
@@ -366,7 +370,8 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
 #[test]
 fn simple_requires() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let graph = read_supergraph("fixture/tests/simple-requires.supergraph.graphql");
+    let (graph, consumer_schema) =
+        read_supergraph("fixture/tests/simple-requires.supergraph.graphql");
     let document = parse_operation(
         r#"
         query {
@@ -375,8 +380,8 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(&document, None);
-    let operation = document.executable_operation().unwrap();
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
+    let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
@@ -475,7 +480,7 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
 #[test]
 fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let graph = read_supergraph(
+    let (graph, consumer_schema) = read_supergraph(
         "fixture/tests/two_fields_same_subgraph_same_requirement.supergraph.graphql",
     );
     let document = parse_operation(
@@ -487,8 +492,8 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(&document, None);
-    let operation = document.executable_operation().unwrap();
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
+    let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 2);
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
@@ -588,7 +593,8 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
 #[test]
 fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let graph = read_supergraph("fixture/tests/simple_requires_with_child.supergraph.graphql");
+    let (graph, consumer_schema) =
+        read_supergraph("fixture/tests/simple_requires_with_child.supergraph.graphql");
     let document = parse_operation(
         r#"
         query {
@@ -599,8 +605,8 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(&document, None);
-    let operation = document.executable_operation().unwrap();
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
+    let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
@@ -701,7 +707,7 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
 #[test]
 fn keys_mashup() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let graph = read_supergraph("fixture/tests/keys-mashup.supergraph.graphql");
+    let (graph, consumer_schema) = read_supergraph("fixture/tests/keys-mashup.supergraph.graphql");
     let document = parse_operation(
         r#"
         query {
@@ -715,8 +721,8 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(&document, None);
-    let operation = document.executable_operation().unwrap();
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
+    let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 4);
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
@@ -878,7 +884,8 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
 #[test]
 fn deep_requires() -> Result<(), Box<dyn Error>> {
     init_logger();
-    let graph = read_supergraph("fixture/tests/deep-requires.supergraph.graphql");
+    let (graph, consumer_schema) =
+        read_supergraph("fixture/tests/deep-requires.supergraph.graphql");
     let document = parse_operation(
         r#"
         query {
@@ -889,8 +896,8 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
           }
         }"#,
     );
-    let document = prepare_document(&document, None);
-    let operation = document.executable_operation().unwrap();
+    let document = normalize_operation(&consumer_schema, &document, None).unwrap();
+    let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     assert_eq!(best_paths_per_leaf.len(), 1);
     let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;

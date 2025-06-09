@@ -81,7 +81,7 @@ impl Display for OperationDefinition {
         }
 
         if let Some(name) = &self.name {
-            write!(f, "{}", name)?;
+            write!(f, " {} ", name)?;
         }
 
         if let Some(variable_definitions) = &self.variable_definitions {

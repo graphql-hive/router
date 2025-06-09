@@ -8,13 +8,14 @@ use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Resp
 use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
 use query_plan_executor::{execute_query_plan, ExecutionResult};
 use query_plan_executor::{ExecutionRequest, GraphQLError};
+use query_planner::ast::normalization::normalize_operation;
 use query_planner::planner::Planner;
 use query_planner::state::supergraph_state::{OperationKind, SupergraphState};
 use query_planner::utils::parsing::parse_schema;
 use query_planner::utils::parsing::safe_parse_operation;
 use serde_json::json;
 use serde_json::Value::{self};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
@@ -185,16 +186,14 @@ async fn handle_execution_request(
 
     debug!("original document: {}", original_document);
 
-    let normalized_document = query_planner::utils::operation_utils::prepare_document(
+    let normalized_document = match normalize_operation(
+        &serve_data.planner.consumer_schema,
         &original_document,
         execution_request.operation_name.as_deref(),
-    );
-
-    debug!("normalized document: {}", normalized_document);
-
-    let operation = match normalized_document.executable_operation() {
-        Some(operation) => operation,
-        None => {
+    ) {
+        Ok(doc) => doc,
+        Err(err) => {
+            error!("Normalization error {err}");
             return make_error_response(
                 ExecutionResult {
                     data: None,
@@ -213,7 +212,9 @@ async fn handle_execution_request(
             );
         }
     };
+    debug!("normalized document: {}", normalized_document);
 
+    let operation = normalized_document.executable_operation();
     debug!("executable operation: {}", operation);
 
     if req.method() == Method::GET && operation.operation_kind.is_some() {

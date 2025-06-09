@@ -12,9 +12,8 @@ pub struct ConsumerSchema {
 
 impl ConsumerSchema {
     pub fn new_from_supergraph(supergraph: &Document<'static, String>) -> Self {
-        Self {
-            document: Self::create_consumer_schema(supergraph),
-        }
+        let document = Self::create_consumer_schema(supergraph);
+        Self { document }
     }
 
     fn create_consumer_schema(supergraph: &Document<'static, String>) -> Document<'static, String> {

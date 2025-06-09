@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Display,
+    mem,
 };
 
 use graphql_parser::query::Value as ParserValue;
@@ -55,6 +56,31 @@ impl From<&ParserValue<'_, String>> for Value {
     }
 }
 
+impl From<&mut ParserValue<'_, String>> for Value {
+    fn from(value: &mut ParserValue<'_, String>) -> Self {
+        match value {
+            ParserValue::Variable(name) => Value::Variable(mem::take(name)),
+            // TODO: Consider `TryFrom` and handle this in a better way
+            ParserValue::Int(i) => {
+                Value::Int(i.as_i64().expect("GraphQL integer value out of i64 range"))
+            }
+            ParserValue::Float(f) => Value::Float(mem::take(f)),
+            ParserValue::String(s) => Value::String(mem::take(s)),
+            ParserValue::Boolean(b) => Value::Boolean(mem::take(b)),
+            ParserValue::Null => Value::Null,
+            ParserValue::Enum(e) => Value::Enum(mem::take(e)),
+            ParserValue::List(l) => Value::List(l.iter_mut().map(Value::from).collect()),
+            ParserValue::Object(o) => {
+                let mut map = BTreeMap::new();
+                for (k, v) in o {
+                    map.insert(k.to_string(), Value::from(v));
+                }
+                Value::Object(map)
+            }
+        }
+    }
+}
+
 impl From<&Value> for serde_json::Value {
     fn from(value: &Value) -> Self {
         match value {
@@ -74,6 +100,32 @@ impl From<&Value> for serde_json::Value {
                 o.iter().map(|(k, v)| (k.to_string(), v.into())).collect(),
             ),
             Value::String(s) => serde_json::Value::String(s.to_string()),
+            Value::Variable(_var_name) => serde_json::Value::Null,
+        }
+    }
+}
+
+impl From<&mut Value> for serde_json::Value {
+    fn from(value: &mut Value) -> Self {
+        match value {
+            Value::Null => serde_json::Value::Null,
+            Value::Int(n) => serde_json::Value::Number((mem::take(n)).into()),
+            Value::Boolean(b) => serde_json::Value::Bool(mem::take(b)),
+            Value::Enum(s) => serde_json::Value::String(mem::take(s)),
+            Value::Float(n) => {
+                let number = serde_json::Number::from_f64(mem::take(n));
+                match number {
+                    Some(num) => serde_json::Value::Number(num),
+                    None => serde_json::Value::Null, // Handle case where float conversion fails
+                }
+            }
+            Value::List(l) => serde_json::Value::Array(l.iter_mut().map(|v| v.into()).collect()),
+            Value::Object(o) => serde_json::Value::Object(
+                o.iter_mut()
+                    .map(|(k, v)| (k.to_string(), v.into()))
+                    .collect(),
+            ),
+            Value::String(s) => serde_json::Value::String(mem::take(s)),
             Value::Variable(_var_name) => serde_json::Value::Null,
         }
     }
