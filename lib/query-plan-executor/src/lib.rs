@@ -313,7 +313,7 @@ impl ApplyFetchRewrite for FetchRewrite {
     fn apply(&self, possible_types: &HashMap<String, Vec<String>>, value: &mut Value) {
         match self {
             FetchRewrite::KeyRenamer(renamer) => renamer.apply(possible_types, value),
-            FetchRewrite::ValueSetter(renamer) => renamer.apply(possible_types, value),
+            FetchRewrite::ValueSetter(setter) => setter.apply(possible_types, value),
         }
     }
 }
@@ -334,7 +334,7 @@ impl ApplyFetchRewrite for KeyRenamer {
 
         match value {
             Value::Array(arr) => {
-                for item in arr.iter_mut() {
+                for item in arr {
                     self.apply_path(possible_types, item, path);
                 }
             }
@@ -389,12 +389,9 @@ impl ApplyFetchRewrite for ValueSetter {
 
         match data {
             Value::Array(arr) => {
-                for item in arr.iter_mut() {
+                for data in arr {
                     // Apply the path to each item in the array
-                    *item = {
-                        self.apply_path(possible_types, item, path);
-                        ().into()
-                    };
+                    self.apply_path(possible_types, data, path);
                 }
             }
             Value::Object(map) => {
@@ -409,9 +406,11 @@ impl ApplyFetchRewrite for ValueSetter {
                     if entity_satisfies_type_condition(possible_types, type_name, type_condition) {
                         self.apply_path(possible_types, data, remaining_path)
                     }
-                } else if !remaining_path.is_empty() {
-                    let entry_value = map.entry(current_key.to_string()).or_insert(Value::Null);
-                    self.apply_path(possible_types, entry_value, remaining_path)
+                } else if remaining_path.is_empty() {
+                    *data = self.set_value_to.clone();
+                } else if let Some(data) = map.get_mut(current_key) {
+                    // If the key exists, apply the remaining path to its value
+                    self.apply_path(possible_types, data, remaining_path);
                 }
             }
             _ => {
