@@ -148,8 +148,8 @@ pub struct Graph {
 
 impl Graph {
     #[instrument(skip(supergraph_state))]
-    pub fn graph_from_supergraph_state<'a>(
-        supergraph_state: &'a SupergraphState,
+    pub fn graph_from_supergraph_state(
+        supergraph_state: &SupergraphState,
     ) -> Result<Self, GraphError> {
         let mut instance = Graph {
             node_display_name_to_index: HashMap::new(),
