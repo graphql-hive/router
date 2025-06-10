@@ -525,7 +525,6 @@ pub struct FetchStepData {
     pub response_path: MergePath,
     pub input: TypeAwareSelection,
     pub output: TypeAwareSelection,
-    pub reserved_for_requires: Option<TypeAwareSelection>,
     pub kind: FetchStepKind,
 }
 
@@ -544,12 +543,6 @@ impl Display for FetchStepData {
 }
 
 impl FetchStepData {
-    pub fn is_reserved_for_requires(&self, selection: &TypeAwareSelection) -> bool {
-        self.reserved_for_requires
-            .as_ref()
-            .is_some_and(|requires| requires.eq(selection))
-    }
-
     pub fn pretty_write(
         &self,
         writer: &mut std::fmt::Formatter<'_>,
@@ -748,7 +741,6 @@ fn create_noop_fetch_step(fetch_graph: &mut FetchGraph) -> NodeIndex {
             selection_set: SelectionSet::default(),
             type_name: "*".to_string(),
         },
-        reserved_for_requires: None,
         kind: FetchStepKind::Root,
     })
 }
@@ -772,7 +764,6 @@ fn create_fetch_step_for_entity_move(
             selection_set: SelectionSet::default(),
             type_name: type_name.to_string(),
         },
-        reserved_for_requires: None,
         kind: FetchStepKind::Entity,
     })
 }
@@ -794,7 +785,6 @@ fn create_fetch_step_for_root_move(
             selection_set: SelectionSet::default(),
             type_name: type_name.to_string(),
         },
-        reserved_for_requires: None,
         kind: FetchStepKind::Root,
     });
 
@@ -836,15 +826,10 @@ fn ensure_fetch_step_for_subgraph(
                         }
                     }
 
-                    // The `requirement` should be equal.
-                    // If it's a subset,
-                    //  then some other field in step's requirement may postpone/affect the child FetchStep.
-                    // If the FetchStep has no requirement,
-                    //  then attaching required fields to it may postpone/affect the resolution of other fields.
-                    if let Some(requires) = &requires {
-                        if !fetch_step.is_reserved_for_requires(requires) {
-                            return None;
-                        }
+                    // If there are requirements, then we do not re-use
+                    // optimizations will try to re-use the existing step later, if possible.
+                    if requires.is_some() {
+                        return None;
                     }
 
                     return Some(to_child_edge_ref.target());
