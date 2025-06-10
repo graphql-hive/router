@@ -229,5 +229,128 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
     }
     "#);
 
+    let document = parse_operation(
+        r#"
+        query {
+          media {
+            ... on Book {
+              id
+              title
+            }
+            ... on Movie {
+              id
+              title
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/provides-on-union.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Parallel {
+          Fetch(service: "b") {
+            {
+              media {
+                __typename
+                ... on Book {
+                  title
+                }
+              }
+            }
+          },
+          Fetch(service: "a") {
+            {
+              media {
+                __typename
+                ... on Movie {
+                  __typename
+                  id
+                }
+                ... on Book {
+                  id
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "media") {
+          Fetch(service: "c") {
+              ... on Movie {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Movie {
+                title
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Parallel",
+            "nodes": [
+              {
+                "kind": "Fetch",
+                "serviceName": "b",
+                "operationKind": "query",
+                "operation": "{media{__typename ...on Book{title}}}"
+              },
+              {
+                "kind": "Fetch",
+                "serviceName": "a",
+                "operationKind": "query",
+                "operation": "{media{__typename ...on Movie{__typename id} ...on Book{id}}}"
+              }
+            ]
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "media"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "c",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Movie{title}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Movie",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+
     Ok(())
 }
