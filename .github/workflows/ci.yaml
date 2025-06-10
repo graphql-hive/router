@@ -108,7 +108,7 @@ jobs:
           files: |
             audits/reports/*.xml
       - name: Publish Test Results for details
-        uses: mikepenz/action-junit-report@v5
+        uses: mikepenz/action-junit-report@65fe03598d8d251738592a497a9e8547a5c48eaa # v5
         if: (!cancelled())
         with:
           report_paths: 'audits/reports/*.xml'
@@ -159,7 +159,7 @@ jobs:
           files: |
             audits/reports/*.xml
       - name: Publish Test Results for details
-        uses: mikepenz/action-junit-report@v5
+        uses: mikepenz/action-junit-report@65fe03598d8d251738592a497a9e8547a5c48eaa # v5
         if: (!cancelled())
         with:
           report_paths: 'audits/reports/*.xml'
