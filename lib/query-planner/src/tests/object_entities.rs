@@ -499,12 +499,12 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
           Fetch(service: "price") {
               ... on Product {
                 __typename
+                id
+                pid
                 category {
                   id
                   tag
                 }
-                id
-                pid
               }
             } =>
             {
@@ -584,6 +584,14 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
                     },
                     {
                       "kind": "Field",
+                      "name": "id"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "pid"
+                    },
+                    {
+                      "kind": "Field",
                       "name": "category",
                       "selections": [
                         {
@@ -595,14 +603,6 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
                           "name": "tag"
                         }
                       ]
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "id"
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "pid"
                     }
                   ]
                 }

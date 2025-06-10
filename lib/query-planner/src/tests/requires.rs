@@ -684,11 +684,11 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
             b {
               a {
                 __typename
-                compositeId {
-                  three
-                  two
-                }
                 id
+                compositeId {
+                  two
+                  three
+                }
               }
               id
             }
@@ -713,11 +713,11 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
               ... on A {
                 __typename
                 name
-                compositeId {
-                  three
-                  two
-                }
                 id
+                compositeId {
+                  two
+                  three
+                }
               }
             } =>
             {
@@ -740,7 +740,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "{b{a{__typename compositeId{three two} id} id}}"
+            "operation": "{b{a{__typename id compositeId{two three}} id}}"
           },
           {
             "kind": "Flatten",
@@ -799,21 +799,21 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
                     },
                     {
                       "kind": "Field",
+                      "name": "id"
+                    },
+                    {
+                      "kind": "Field",
                       "name": "compositeId",
                       "selections": [
                         {
                           "kind": "Field",
-                          "name": "three"
+                          "name": "two"
                         },
                         {
                           "kind": "Field",
-                          "name": "two"
+                          "name": "three"
                         }
                       ]
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "id"
                     }
                   ]
                 }

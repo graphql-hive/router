@@ -1,7 +1,4 @@
-use crate::state::{
-    selection_resolver::SelectionResolverError,
-    supergraph_state::{OperationKind, SupergraphStateError},
-};
+use crate::state::supergraph_state::{OperationKind, SupergraphStateError};
 use petgraph::graph::{EdgeIndex, NodeIndex};
 
 #[derive(thiserror::Error, Debug)]
@@ -18,18 +15,10 @@ pub enum GraphError {
     FieldDefinitionNotFound(String, String),
     #[error("Supergraph state error: {0}")]
     SupergraphStateError(Box<SupergraphStateError>),
-    #[error("Selection resolver error: {0}")]
-    SelectionResolverError(Box<SelectionResolverError>),
 }
 
 impl From<SupergraphStateError> for GraphError {
     fn from(err: SupergraphStateError) -> Self {
         GraphError::SupergraphStateError(Box::new(err))
-    }
-}
-
-impl From<SelectionResolverError> for GraphError {
-    fn from(err: SelectionResolverError) -> Self {
-        GraphError::SelectionResolverError(Box::new(err))
     }
 }

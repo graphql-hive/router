@@ -1,6 +1,10 @@
-use crate::utils::pretty_display::PrettyDisplay;
+use crate::{
+    ast::normalization::utils::extract_type_condition, utils::pretty_display::PrettyDisplay,
+};
+use graphql_parser::query as query_ast;
 
 use super::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
+use core::panic;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -197,3 +201,46 @@ impl PartialEq for SelectionItem {
 }
 
 impl Eq for SelectionItem {}
+
+impl From<query_ast::Selection<'_, String>> for SelectionItem {
+    fn from(value: query_ast::Selection<'_, String>) -> Self {
+        match value {
+            query_ast::Selection::Field(field) => SelectionItem::Field(field.into()),
+            query_ast::Selection::InlineFragment(fragment) => {
+                SelectionItem::InlineFragment(fragment.into())
+            }
+            query_ast::Selection::FragmentSpread(_) => {
+                panic!("Received a fragment spread, but it should be inlined after normalization");
+            }
+        }
+    }
+}
+
+impl From<query_ast::Field<'_, String>> for FieldSelection {
+    fn from(value: query_ast::Field<'_, String>) -> Self {
+        Self {
+            name: value.name,
+            alias: value.alias,
+            arguments: match value.arguments.len() {
+                0 => None,
+                _ => Some(value.arguments.into()),
+            },
+            selections: value.selection_set.into(),
+            skip_if: None,    // TODO: ?
+            include_if: None, // TODO: ?
+        }
+    }
+}
+
+impl From<query_ast::InlineFragment<'_, String>> for InlineFragmentSelection {
+    fn from(value: query_ast::InlineFragment<'_, String>) -> Self {
+        Self {
+            type_condition: extract_type_condition(
+                &value
+                    .type_condition
+                    .expect("expected a type condition after normalization"),
+            ),
+            selections: value.selection_set.into(),
+        }
+    }
+}

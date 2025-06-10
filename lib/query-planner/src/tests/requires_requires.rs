@@ -1234,8 +1234,8 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
           Fetch(service: "d") {
               ... on Product {
                 __typename
-                isExpensive
                 isExpensiveWithDiscount
+                isExpensive
                 id
               }
             } =>
@@ -1380,11 +1380,11 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
                     },
                     {
                       "kind": "Field",
-                      "name": "isExpensive"
+                      "name": "isExpensiveWithDiscount"
                     },
                     {
                       "kind": "Field",
-                      "name": "isExpensiveWithDiscount"
+                      "name": "isExpensive"
                     },
                     {
                       "kind": "Field",

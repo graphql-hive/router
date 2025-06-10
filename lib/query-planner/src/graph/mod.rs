@@ -12,6 +12,7 @@ use std::{
 
 use super::ast::normalization::utils::extract_type_condition;
 use crate::{
+    ast::type_aware_selection::TypeAwareSelection,
     federation_spec::FederationRules,
     graph::node::{SubgraphTypeSpecialization, UnionSubsetData},
     state::supergraph_state::{
@@ -290,28 +291,34 @@ impl Graph {
                                 def_name,
                                 state.resolve_graph_id(&join_type2.graph_id)?,
                             ));
-                            let selection_resolver =
-                                state.selection_resolvers_for_subgraph(&join_type2.graph_id)?;
-                            let selection = selection_resolver.resolve(def_name, key)?;
+                            let key_selection = FederationRules::parse_key(
+                                state,
+                                &join_type2.graph_id,
+                                def_name,
+                                key,
+                            );
 
                             info!(
                                 "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
                                 def_name, join_type1.graph_id, def_name, join_type2.graph_id, key
                             );
 
-                            self.upsert_edge(head, tail, Edge::create_entity_move(key, selection));
+                            self.upsert_edge(
+                                head,
+                                tail,
+                                Edge::create_entity_move(key, key_selection),
+                            );
                         }
                     } else if let (true, Some(key)) = (&join_type1.resolvable, &join_type1.key) {
-                        let selection_resolver =
-                            state.selection_resolvers_for_subgraph(&join_type1.graph_id)?;
-                        let selection = selection_resolver.resolve(def_name, key)?;
+                        let key_selection =
+                            FederationRules::parse_key(state, &join_type1.graph_id, def_name, key);
 
                         info!(
                             "Creating self-referencing entity move edge in '{}/{}' via key '{}'",
                             def_name, join_type1.graph_id, key
                         );
 
-                        self.upsert_edge(head, head, Edge::create_entity_move(key, selection));
+                        self.upsert_edge(head, head, Edge::create_entity_move(key, key_selection));
                     }
                 }
             }
@@ -514,19 +521,20 @@ impl Graph {
                         continue;
                     }
 
-                    let requirements = match maybe_join_field.and_then(|join_field| {
+                    let requirements = maybe_join_field.and_then(|join_field| {
                         join_field.requires.as_ref().map(|requires_str| {
                           (requires_str, join_field.graph_id.as_ref().expect("join__field(graph:) should exist when join__field(requires:) exists"))
                         })
-                    }) {
-                        Some((requires_str, graph_id)) => {
-                            let selection_resolver = state
-                                .selection_resolvers_for_subgraph(graph_id)?;
-
-                            Some(selection_resolver.resolve(def_name, requires_str)?)
-                        }
-                        None => None,
-                    };
+                    }).map(|(requires_str, graph_id)| TypeAwareSelection {
+                              type_name: def_name.to_string(),
+                              selection_set: FederationRules::parse_requires(
+                                state,
+                                graph_id,
+                                def_name,
+                                requires_str,
+                              )
+                              .into(),
+                          });
 
                     // If a field points to a union type:
                     //
@@ -850,17 +858,16 @@ impl Graph {
                                     view_id, def_name, field_name, join_type.graph_id, return_type_name
                                 );
 
-                                let requirements = match join_field.requires.as_ref() {
-                                    Some(requires_str) => {
-                                        let selection_resolver = state
-                                            .selection_resolvers_for_subgraph(
-                                                join_field.graph_id.as_ref().unwrap(),
-                                            )?;
-
-                                        Some(selection_resolver.resolve(def_name, requires_str)?)
-                                    }
-                                    None => None,
-                                };
+                                let requirements = join_field.requires.as_ref().map(|requires_str| TypeAwareSelection {
+                                        type_name: def_name.to_string(),
+                                        selection_set: FederationRules::parse_requires(
+                                            state,
+                                            join_field.graph_id.as_ref().unwrap(),
+                                            def_name,
+                                            requires_str,
+                                        )
+                                        .into(),
+                                    });
 
                                 self.upsert_edge(
                                     head,

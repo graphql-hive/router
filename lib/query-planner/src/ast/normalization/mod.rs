@@ -3,7 +3,7 @@ use std::mem;
 use graphql_parser::query::Value;
 use graphql_parser::query::{self as query_ast, Definition};
 
-mod context;
+pub mod context;
 mod error;
 mod pipeline;
 pub mod utils;
@@ -24,25 +24,6 @@ use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
 use crate::state::supergraph_state::{OperationKind, SupergraphState};
 use error::NormalizationError;
-
-pub fn normalize_provides_mut(
-    supergraph: &SupergraphState,
-    query: &mut query_ast::Document<'static, String>,
-    type_name: &str,
-    subgraph_name: &String,
-) -> Result<(), NormalizationError> {
-    normalize_operation_mut(
-        supergraph,
-        query,
-        None,
-        Some(RootTypes {
-            query: Some(type_name),
-            mutation: None,
-            subscription: None,
-        }),
-        Some(subgraph_name),
-    )
-}
 
 /// Normalizes the operation by mutating it
 pub fn normalize_operation_mut(
