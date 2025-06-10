@@ -104,6 +104,7 @@ jobs:
         with:
           check_name: graphql-over-http
           comment_title: GraphQL over HTTP Audit Results
+          comment_mode: changes
           files: |
             audits/reports/*.xml
       - name: Publish Test Results for details
@@ -154,6 +155,7 @@ jobs:
           fail_on: "nothing"
           check_name: federation-audit
           comment_title: Federation Audit Results
+          comment_mode: changes
           files: |
             audits/reports/*.xml
       - name: Publish Test Results for details
