@@ -1,0 +1,5 @@
+fed-audit-supergraph.graphql
+federation-audit-results.txt
+logs
+reports/*.xml
+node_modules/
