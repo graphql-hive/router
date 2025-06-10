@@ -384,6 +384,7 @@ impl ApplyFetchRewrite for ValueSetter {
         path: &[String],
     ) {
         if path.is_empty() {
+            *data = self.set_value_to.to_owned();
             return;
         }
 
@@ -406,11 +407,9 @@ impl ApplyFetchRewrite for ValueSetter {
                     if entity_satisfies_type_condition(possible_types, type_name, type_condition) {
                         self.apply_path(possible_types, data, remaining_path)
                     }
-                } else if remaining_path.is_empty() {
-                    *data = self.set_value_to.clone();
                 } else if let Some(data) = map.get_mut(current_key) {
                     // If the key exists, apply the remaining path to its value
-                    self.apply_path(possible_types, data, remaining_path);
+                    self.apply_path(possible_types, data, remaining_path)
                 }
             }
             _ => {
