@@ -219,7 +219,7 @@ fn process_inline_fragment<'a>(
         return Ok((vec![], vec![find_best_paths(next_paths)]));
     }
 
-    return process_selection_set(graph, &fragment.selections, &next_paths);
+    process_selection_set(graph, &fragment.selections, &next_paths)
 }
 
 #[instrument(skip(graph, field, paths), fields(
