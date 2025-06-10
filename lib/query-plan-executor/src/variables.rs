@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
-use query_planner::ast::operation::TypeNode;
+use query_planner::{ast::operation::TypeNode, consumer_schema::schema_metadata::SchemaMetadata};
 use serde_json::Value;
-
-use crate::schema_metadata::SchemaMetadata;
 
 pub fn collect_variables(
     operation: &query_planner::ast::operation::OperationDefinition,

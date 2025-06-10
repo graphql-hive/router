@@ -1,5 +1,12 @@
 use std::collections::HashMap;
 
+use crate::{
+    ast::{
+        operation::OperationDefinition, selection_item::SelectionItem,
+        selection_set::InlineFragmentSelection,
+    },
+    consumer_schema::value_from_ast::value_from_ast,
+};
 use graphql_parser::schema::TypeDefinition;
 use graphql_tools::introspection::{
     IntrospectionDirective, IntrospectionEnumType, IntrospectionEnumValue, IntrospectionField,
@@ -8,12 +15,6 @@ use graphql_tools::introspection::{
     IntrospectionOutputTypeRef, IntrospectionQuery, IntrospectionScalarType, IntrospectionSchema,
     IntrospectionType, IntrospectionUnionType,
 };
-use query_planner::ast::{
-    operation::OperationDefinition, selection_item::SelectionItem,
-    selection_set::InlineFragmentSelection,
-};
-
-use crate::value_from_ast::value_from_ast;
 
 fn introspection_output_type_ref_from_ast(
     ast: &graphql_parser::schema::Type<'static, String>,
@@ -508,8 +509,8 @@ fn get_builtin_props_from_directives(
 }
 
 fn filter_introspection_selections(
-    selection_set: &query_planner::ast::selection_set::SelectionSet,
-) -> (bool, query_planner::ast::selection_set::SelectionSet) {
+    selection_set: &crate::ast::selection_set::SelectionSet,
+) -> (bool, crate::ast::selection_set::SelectionSet) {
     let mut has_introspection = false;
     let filtered_selections: Vec<SelectionItem> = selection_set
         .items
@@ -542,7 +543,7 @@ fn filter_introspection_selections(
         .collect();
     (
         has_introspection,
-        query_planner::ast::selection_set::SelectionSet {
+        crate::ast::selection_set::SelectionSet {
             items: filtered_selections,
         },
     )

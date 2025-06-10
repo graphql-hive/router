@@ -5,7 +5,6 @@ use std::{env, vec};
 use actix_web::http::Method;
 use actix_web::web::Html;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
-use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
 use query_plan_executor::{execute_query_plan, ExecutionResult};
 use query_plan_executor::{ExecutionRequest, GraphQLError};
 use query_planner::ast::normalization::normalize_operation;
@@ -46,11 +45,9 @@ async fn main() {
     let supergraph_state = SupergraphState::new(&parsed_schema);
     let planner =
         Planner::new_from_supergraph_state(&supergraph_state).expect("failed to create planner");
-    let schema_metadata = planner.consumer_schema.schema_metadata();
     let serve_data = ServeData {
         supergraph_source: supergraph_path.to_string(),
         planner,
-        schema_metadata,
         validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
         subgraph_endpoint_map: supergraph_state.subgraph_endpoint_map,
         http_client: reqwest::Client::new(),
@@ -75,7 +72,6 @@ async fn main() {
 
 struct ServeData {
     supergraph_source: String,
-    schema_metadata: SchemaMetadata,
     planner: Planner,
     validation_plan: graphql_tools::validation::validate::ValidationPlan,
     subgraph_endpoint_map: HashMap<String, String>,
@@ -267,7 +263,9 @@ async fn handle_execution_request(
     }
 
     let (has_introspection, filtered_operation_for_plan) =
-        query_plan_executor::introspection::filter_introspection_fields_in_operation(operation);
+        query_planner::consumer_schema::introspection::filter_introspection_fields_in_operation(
+            operation,
+        );
     let plan_cache_key = filtered_operation_for_plan.hash();
 
     let query_plan = match serve_data.plan_cache.get(&plan_cache_key).await {
@@ -317,7 +315,7 @@ async fn handle_execution_request(
     let variable_values = match query_plan_executor::variables::collect_variables(
         &filtered_operation_for_plan,
         &execution_request.variables,
-        &serve_data.schema_metadata,
+        &serve_data.planner.consumer_schema.schema_metadata,
     ) {
         Ok(values) => values,
         Err(err) => {
@@ -344,7 +342,7 @@ async fn handle_execution_request(
         &query_plan,
         &serve_data.subgraph_endpoint_map,
         &variable_values,
-        &serve_data.schema_metadata,
+        &serve_data.planner.consumer_schema.schema_metadata,
         operation,
         has_introspection,
         &serve_data.http_client,

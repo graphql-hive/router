@@ -4,6 +4,7 @@ use query_planner::{
     ast::{
         operation::OperationDefinition, selection_item::SelectionItem, selection_set::SelectionSet,
     },
+    consumer_schema::schema_metadata::SchemaMetadata,
     planner::plan_nodes::{
         ConditionNode, FetchNode, FlattenNode, InputRewrite, KeyRenamer, OutputRewrite,
         ParallelNode, PlanNode, QueryPlan, SequenceNode, ValueSetter,
@@ -12,14 +13,10 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::{instrument, warn};
 
-use crate::schema_metadata::SchemaMetadata;
-pub mod introspection;
-pub mod schema_metadata;
 pub mod validation;
-mod value_from_ast;
 pub mod variables;
 
 #[async_trait]
@@ -87,7 +84,7 @@ trait ExecutableFetchNode {
     ) -> (Vec<Value>, Vec<GraphQLError>);
     fn apply_output_rewrites(
         &self,
-        possible_types: &HashMap<String, Vec<String>>,
+        possible_types: &HashMap<String, HashSet<String>>,
         data: &mut Value,
     );
     fn prepare_variables_for_fetch_node(
@@ -262,7 +259,7 @@ impl ExecutableFetchNode for FetchNode {
 
     fn apply_output_rewrites(
         &self,
-        possible_types: &HashMap<String, Vec<String>>,
+        possible_types: &HashMap<String, HashSet<String>>,
         data: &mut Value,
     ) {
         if let Some(output_rewrites) = &self.output_rewrites {
@@ -296,10 +293,10 @@ impl ExecutableFetchNode for FetchNode {
 }
 
 trait ApplyOutputRewrite {
-    fn apply(&self, possible_types: &HashMap<String, Vec<String>>, value: &mut Value);
+    fn apply(&self, possible_types: &HashMap<String, HashSet<String>>, value: &mut Value);
     fn apply_path(
         &self,
-        _possible_types: &HashMap<String, Vec<String>>,
+        _possible_types: &HashMap<String, HashSet<String>>,
         _value: &mut Value,
         _path: &[String],
     ) {
@@ -307,7 +304,7 @@ trait ApplyOutputRewrite {
 }
 
 impl ApplyOutputRewrite for OutputRewrite {
-    fn apply(&self, possible_types: &HashMap<String, Vec<String>>, value: &mut Value) {
+    fn apply(&self, possible_types: &HashMap<String, HashSet<String>>, value: &mut Value) {
         match self {
             OutputRewrite::KeyRenamer(renamer) => renamer.apply(possible_types, value),
         }
@@ -315,13 +312,13 @@ impl ApplyOutputRewrite for OutputRewrite {
 }
 
 impl ApplyOutputRewrite for KeyRenamer {
-    fn apply(&self, possible_types: &HashMap<String, Vec<String>>, value: &mut Value) {
+    fn apply(&self, possible_types: &HashMap<String, HashSet<String>>, value: &mut Value) {
         self.apply_path(possible_types, value, &self.path)
     }
     // Applies key rename operation on a Value (mutably)
     fn apply_path(
         &self,
-        possible_types: &HashMap<String, Vec<String>>,
+        possible_types: &HashMap<String, HashSet<String>>,
         value: &mut Value,
         path: &[String],
     ) {
@@ -369,10 +366,10 @@ impl ApplyOutputRewrite for KeyRenamer {
 }
 
 trait ApplyInputRewrite {
-    fn apply(&self, possible_types: &HashMap<String, Vec<String>>, data: Value) -> Value;
+    fn apply(&self, possible_types: &HashMap<String, HashSet<String>>, data: Value) -> Value;
     fn apply_path(
         &self,
-        _possible_types: &HashMap<String, Vec<String>>,
+        _possible_types: &HashMap<String, HashSet<String>>,
         _data: Value,
         _path: &[String],
     ) -> Value {
@@ -381,20 +378,20 @@ trait ApplyInputRewrite {
 }
 
 impl ApplyInputRewrite for InputRewrite {
-    fn apply(&self, possible_types: &HashMap<String, Vec<String>>, data: Value) -> Value {
+    fn apply(&self, possible_types: &HashMap<String, HashSet<String>>, data: Value) -> Value {
         match self {
             InputRewrite::ValueSetter(setter) => setter.apply(possible_types, data),
         }
     }
 }
 impl ApplyInputRewrite for ValueSetter {
-    fn apply(&self, possible_types: &HashMap<String, Vec<String>>, data: Value) -> Value {
+    fn apply(&self, possible_types: &HashMap<String, HashSet<String>>, data: Value) -> Value {
         self.apply_path(possible_types, data, &self.path)
     }
     // Applies value setting on a Value (returns a new Value)
     fn apply_path(
         &self,
-        possible_types: &HashMap<String, Vec<String>>,
+        possible_types: &HashMap<String, HashSet<String>>,
         data: Value,
         path: &[String],
     ) -> Value {
@@ -835,7 +832,7 @@ impl QueryPlanExecutionContext<'_> {
 
 #[instrument]
 fn entity_satisfies_type_condition(
-    possible_types: &HashMap<String, Vec<String>>,
+    possible_types: &HashMap<String, HashSet<String>>,
     type_name: &str,
     type_condition: &str,
 ) -> bool {

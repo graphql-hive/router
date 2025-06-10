@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
 use graphql_parser::{
     query::{
         Definition, Mutation, OperationDefinition, Query, Selection, SelectionSet, Subscription,
@@ -8,48 +6,26 @@ use graphql_parser::{
     schema::TypeDefinition,
 };
 use graphql_tools::ast::{
-    AbstractTypeDefinitionExtension, FieldByNameExtension, SchemaDocumentExtension,
-    TypeDefinitionExtension, TypeExtension,
+    FieldByNameExtension, SchemaDocumentExtension, TypeDefinitionExtension, TypeExtension,
 };
 
-use crate::ast::normalization::{
-    context::NormalizationContext,
-    error::NormalizationError,
-    utils::{extract_type_condition, vec_to_hashset},
+use crate::{
+    ast::normalization::{
+        context::NormalizationContext,
+        error::NormalizationError,
+        utils::{extract_type_condition, vec_to_hashset},
+    },
+    consumer_schema::schema_metadata::PossibleTypesMap,
 };
-
-type PossibleTypesMap<'a> = HashMap<&'a str, HashSet<String>>;
 
 pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
-    let mut possible_types = PossibleTypesMap::new();
-
-    for (type_name, type_def) in ctx.schema.type_map() {
-        match type_def {
-            TypeDefinition::Union(union_type) => {
-                possible_types.insert(type_name, vec_to_hashset(&union_type.types));
-            }
-            TypeDefinition::Interface(interface_type) => {
-                let mut object_types: HashSet<String> = HashSet::new();
-                for (obj_type_name, obj_type_def) in ctx.schema.type_map() {
-                    if let TypeDefinition::Object(object_type) = obj_type_def {
-                        if interface_type.is_implemented_by(object_type) {
-                            object_types.insert(obj_type_name.to_string());
-                        }
-                    }
-                }
-                possible_types.insert(type_name, object_types);
-            }
-            _ => {}
-        }
-    }
-
     for definition in &mut ctx.document.definitions {
         match definition {
             Definition::Operation(op_def) => match op_def {
                 OperationDefinition::SelectionSet(selection_set) => {
                     handle_selection_set(
                         ctx.schema,
-                        &possible_types,
+                        ctx.possible_types,
                         ctx.schema
                             .type_by_name(
                                 ctx.schema
@@ -67,7 +43,7 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
                 OperationDefinition::Query(Query { selection_set, .. }) => {
                     handle_selection_set(
                         ctx.schema,
-                        &possible_types,
+                        ctx.possible_types,
                         ctx.schema
                             .type_by_name(
                                 ctx.schema
@@ -85,7 +61,7 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
                 OperationDefinition::Mutation(Mutation { selection_set, .. }) => {
                     handle_selection_set(
                         ctx.schema,
-                        &possible_types,
+                        ctx.possible_types,
                         ctx.schema
                             .type_by_name(
                                 ctx.schema
@@ -103,7 +79,7 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
                 OperationDefinition::Subscription(Subscription { selection_set, .. }) => {
                     handle_selection_set(
                         ctx.schema,
-                        &possible_types,
+                        ctx.possible_types,
                         ctx.schema
                             .type_by_name(
                                 ctx.schema

@@ -35,6 +35,7 @@ pub fn normalize_operation(
         operation_name,
         document: &mut document,
         schema: &schema.document,
+        possible_types: &schema.schema_metadata.possible_types,
     };
 
     drop_unused_operations(&mut ctx)?;
