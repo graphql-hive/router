@@ -115,10 +115,78 @@ impl Display for VariableDefinition {
     }
 }
 
+impl From<parser::OperationDefinition<'_, String>> for OperationDefinition {
+    fn from(value: parser::OperationDefinition<'_, String>) -> Self {
+        match value {
+            parser::OperationDefinition::Query(query) => OperationDefinition {
+                name: query.name,
+                operation_kind: Some(OperationKind::Query),
+                variable_definitions: match query.variable_definitions.len() {
+                    0 => None,
+                    _ => Some(
+                        query
+                            .variable_definitions
+                            .into_iter()
+                            .map(|v| v.into())
+                            .collect(),
+                    ),
+                },
+                selection_set: query.selection_set.into(),
+            },
+            parser::OperationDefinition::SelectionSet(s) => OperationDefinition {
+                name: None,
+                operation_kind: Some(OperationKind::Query),
+                variable_definitions: None,
+                selection_set: s.into(),
+            },
+            parser::OperationDefinition::Mutation(mutation) => OperationDefinition {
+                name: mutation.name,
+                operation_kind: Some(OperationKind::Mutation),
+                variable_definitions: match mutation.variable_definitions.len() {
+                    0 => None,
+                    _ => Some(
+                        mutation
+                            .variable_definitions
+                            .into_iter()
+                            .map(|v| v.into())
+                            .collect(),
+                    ),
+                },
+                selection_set: mutation.selection_set.into(),
+            },
+            parser::OperationDefinition::Subscription(subscription) => OperationDefinition {
+                name: subscription.name,
+                operation_kind: Some(OperationKind::Subscription),
+                variable_definitions: match subscription.variable_definitions.len() {
+                    0 => None,
+                    _ => Some(
+                        subscription
+                            .variable_definitions
+                            .into_iter()
+                            .map(|v| v.into())
+                            .collect(),
+                    ),
+                },
+                selection_set: subscription.selection_set.into(),
+            },
+        }
+    }
+}
+
 impl From<&parser::VariableDefinition<'_, String>> for VariableDefinition {
     fn from(value: &parser::VariableDefinition<'_, String>) -> Self {
         VariableDefinition {
             name: value.name.clone(),
+            variable_type: (&value.var_type).into(),
+            default_value: value.default_value.as_ref().map(|v| v.into()),
+        }
+    }
+}
+
+impl From<parser::VariableDefinition<'_, String>> for VariableDefinition {
+    fn from(value: parser::VariableDefinition<'_, String>) -> Self {
+        VariableDefinition {
+            name: value.name,
             variable_type: (&value.var_type).into(),
             default_value: value.default_value.as_ref().map(|v| v.into()),
         }

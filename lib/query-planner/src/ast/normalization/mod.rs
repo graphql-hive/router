@@ -1,6 +1,3 @@
-use std::mem;
-
-use graphql_parser::query::Value;
 use graphql_parser::query::{self as query_ast, Definition};
 
 pub mod context;
@@ -8,7 +5,6 @@ mod error;
 mod pipeline;
 pub mod utils;
 
-use crate::ast::arguments::ArgumentsMap;
 use crate::ast::document::NormalizedDocument;
 use crate::ast::normalization::context::{NormalizationContext, RootTypes};
 use crate::ast::normalization::pipeline::drop_unused_operations;
@@ -18,11 +14,7 @@ use crate::ast::normalization::pipeline::merge_fields;
 use crate::ast::normalization::pipeline::merge_inline_fragments;
 use crate::ast::normalization::pipeline::normalize_fields;
 use crate::ast::normalization::pipeline::{drop_duplicated_fields, drop_fragment_definitions};
-use crate::ast::normalization::utils::extract_type_condition;
-use crate::ast::operation::{OperationDefinition, VariableDefinition};
-use crate::ast::selection_item::SelectionItem;
-use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
-use crate::state::supergraph_state::{OperationKind, SupergraphState};
+use crate::state::supergraph_state::SupergraphState;
 use error::NormalizationError;
 
 /// Normalizes the operation by mutating it
@@ -67,150 +59,19 @@ pub fn normalize_operation(
 
     let op_def = operation.ok_or(NormalizationError::ExpectedTransformedOperationNotFound)?;
 
-    Ok(create_normalized_document(op_def, operation_name))
+    Ok(create_normalized_document(
+        op_def.to_owned(),
+        operation_name,
+    ))
 }
 
 pub fn create_normalized_document<'a, 'd>(
-    operation_ast: &'a mut query_ast::OperationDefinition<'d, String>,
+    operation_ast: query_ast::OperationDefinition<'d, String>,
     operation_name: Option<&'a str>,
 ) -> NormalizedDocument {
     NormalizedDocument {
-        operation: match operation_ast {
-            query_ast::OperationDefinition::Query(query) => OperationDefinition {
-                name: mem::take(&mut query.name),
-                operation_kind: Some(OperationKind::Query),
-                variable_definitions: transform_variables(&query.variable_definitions),
-                selection_set: transform_selection_set(&mut query.selection_set),
-            },
-            query_ast::OperationDefinition::SelectionSet(s) => OperationDefinition {
-                name: None,
-                operation_kind: Some(OperationKind::Query),
-                variable_definitions: None,
-                selection_set: transform_selection_set(s),
-            },
-            query_ast::OperationDefinition::Mutation(mutation) => OperationDefinition {
-                name: mem::take(&mut mutation.name),
-                operation_kind: Some(OperationKind::Mutation),
-                variable_definitions: transform_variables(&mutation.variable_definitions),
-                selection_set: transform_selection_set(&mut mutation.selection_set),
-            },
-            query_ast::OperationDefinition::Subscription(subscription) => OperationDefinition {
-                name: mem::take(&mut subscription.name),
-                operation_kind: Some(OperationKind::Subscription),
-                variable_definitions: transform_variables(&subscription.variable_definitions),
-                selection_set: transform_selection_set(&mut subscription.selection_set),
-            },
-        },
+        operation: operation_ast.into(),
         operation_name: operation_name.map(|n| n.to_string()),
-    }
-}
-
-fn transform_selection_set<'a, 'd>(
-    selection_set: &'a mut query_ast::SelectionSet<'d, String>,
-) -> SelectionSet {
-    let mut transformed_selection_set = SelectionSet {
-        items: Vec::with_capacity(selection_set.items.len()),
-    };
-
-    for selection in &mut selection_set.items {
-        match selection {
-            query_ast::Selection::Field(field) => {
-                let mut skip_if: Option<String> = None;
-                let mut include_if: Option<String> = None;
-                for directive in &field.directives {
-                    match directive.name.as_str() {
-                        "skip" => {
-                            let if_arg = directive
-                                .arguments
-                                .iter()
-                                .find(|(name, _value)| name == "if")
-                                .map(|(_name, value)| value);
-                            match if_arg {
-                                Some(query_ast::Value::Boolean(true)) => {
-                                    continue;
-                                }
-                                Some(query_ast::Value::Variable(var_name)) => {
-                                    skip_if = Some(var_name.to_string());
-                                }
-                                _ => {}
-                            }
-                        }
-                        "include" => {
-                            let if_arg = directive
-                                .arguments
-                                .iter()
-                                .find(|(name, _value)| name == "if")
-                                .map(|(_name, value)| value);
-                            match if_arg {
-                                Some(query_ast::Value::Boolean(false)) => {
-                                    continue;
-                                }
-                                Some(query_ast::Value::Variable(var_name)) => {
-                                    include_if = Some(var_name.to_string());
-                                }
-                                _ => {}
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                transformed_selection_set
-                    .items
-                    .push(SelectionItem::Field(FieldSelection {
-                        name: mem::take(&mut field.name),
-                        alias: mem::take(&mut field.alias),
-                        arguments: transform_arguments(&mut field.arguments),
-                        selections: transform_selection_set(&mut field.selection_set),
-                        skip_if,
-                        include_if,
-                    }));
-            }
-            query_ast::Selection::InlineFragment(inline_fragment) => {
-                transformed_selection_set
-                    .items
-                    .push(SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: inline_fragment
-                            .type_condition
-                            .as_ref()
-                            .map(extract_type_condition)
-                            .expect(
-                                "Inline fragment in normalized query must have a type condition",
-                            ),
-                        selections: transform_selection_set(&mut inline_fragment.selection_set),
-                    }));
-            }
-            query_ast::Selection::FragmentSpread(_) => {
-                panic!("Normalized query document should not have fragment spreads")
-            }
-        }
-    }
-
-    transformed_selection_set
-}
-
-fn transform_variables(
-    parser_variables: &Vec<query_ast::VariableDefinition<'_, String>>,
-) -> Option<Vec<VariableDefinition>> {
-    match parser_variables.len() {
-        0 => None,
-        _ => {
-            let mut variables: Vec<VariableDefinition> = Vec::with_capacity(parser_variables.len());
-            for variable in parser_variables {
-                variables.push(variable.into())
-            }
-
-            Some(variables)
-        }
-    }
-}
-
-fn transform_arguments<'a, 'd>(
-    arguments: &'a mut Vec<(String, Value<'d, String>)>,
-) -> Option<ArgumentsMap> {
-    if arguments.is_empty() {
-        None
-    } else {
-        Some((arguments).into())
     }
 }
 

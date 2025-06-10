@@ -217,17 +217,63 @@ impl From<query_ast::Selection<'_, String>> for SelectionItem {
 }
 
 impl From<query_ast::Field<'_, String>> for FieldSelection {
-    fn from(value: query_ast::Field<'_, String>) -> Self {
+    fn from(field: query_ast::Field<'_, String>) -> Self {
+        let mut skip_if: Option<String> = None;
+        let mut include_if: Option<String> = None;
+        for directive in &field.directives {
+            match directive.name.as_str() {
+                "skip" => {
+                    let if_arg =
+                        directive
+                            .arguments
+                            .iter()
+                            .find_map(|(name, value)| match name == "if" {
+                                true => Some(value),
+                                false => None,
+                            });
+                    match if_arg {
+                        Some(query_ast::Value::Boolean(true)) => {
+                            continue;
+                        }
+                        Some(query_ast::Value::Variable(var_name)) => {
+                            skip_if = Some(var_name.to_string());
+                        }
+                        _ => {}
+                    }
+                }
+                "include" => {
+                    let if_arg =
+                        directive
+                            .arguments
+                            .iter()
+                            .find_map(|(name, value)| match name == "if" {
+                                true => Some(value),
+                                false => None,
+                            });
+                    match if_arg {
+                        Some(query_ast::Value::Boolean(false)) => {
+                            continue;
+                        }
+                        Some(query_ast::Value::Variable(var_name)) => {
+                            include_if = Some(var_name.to_string());
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+
         Self {
-            name: value.name,
-            alias: value.alias,
-            arguments: match value.arguments.len() {
+            name: field.name,
+            alias: field.alias,
+            arguments: match field.arguments.len() {
                 0 => None,
-                _ => Some(value.arguments.into()),
+                _ => Some(field.arguments.into()),
             },
-            selections: value.selection_set.into(),
-            skip_if: None,    // TODO: ?
-            include_if: None, // TODO: ?
+            selections: field.selection_set.into(),
+            skip_if,
+            include_if,
         }
     }
 }

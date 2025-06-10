@@ -858,15 +858,18 @@ impl Graph {
                                     view_id, def_name, field_name, join_type.graph_id, return_type_name
                                 );
 
-                                let requirements = join_field.requires.as_ref().map(|requires_str| TypeAwareSelection {
-                                        type_name: def_name.to_string(),
-                                        selection_set: FederationRules::parse_requires(
-                                            state,
-                                            join_field.graph_id.as_ref().unwrap(),
-                                            def_name,
-                                            requires_str,
-                                        )
-                                        .into(),
+                                let requirements =
+                                    join_field.requires.as_ref().map(|requires_str| {
+                                        TypeAwareSelection {
+                                            type_name: def_name.to_string(),
+                                            selection_set: FederationRules::parse_requires(
+                                                state,
+                                                join_field.graph_id.as_ref().unwrap(),
+                                                def_name,
+                                                requires_str,
+                                            )
+                                            .into(),
+                                        }
                                     });
 
                                 self.upsert_edge(
