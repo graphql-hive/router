@@ -42,11 +42,9 @@ impl SubgraphName {
 }
 
 #[derive(Debug)]
-pub struct SupergraphState<'a> {
+pub struct SupergraphState {
     /// A map all of definitions (def_name, def) that exists in the schema.
-    pub definitions: HashMap<String, SupergraphDefinition<'a>>,
-    /// The original schema document passed to the state processor
-    pub document: &'a input::Document<'static, String>,
+    pub definitions: HashMap<String, SupergraphDefinition>,
     /// A map of (SUBGRAPH_ID, subgraph_name) to make it easy to resolve
     pub known_subgraphs: HashMap<String, String>,
     /// A set of all known scalars in this schema, including built-ins
@@ -55,20 +53,26 @@ pub struct SupergraphState<'a> {
     pub subgraphs_state: HashMap<String, SelectionResolver>,
     /// A map of (subgraph_name, endpoint) to make it easy to resolve
     pub subgraph_endpoint_map: HashMap<String, String>,
+    /// The root entrypoints
+    pub query_type: String,
+    pub mutation_type: Option<String>,
+    pub subscription_type: Option<String>,
 }
 
-impl<'a> SupergraphState<'a> {
+impl SupergraphState {
     #[instrument(skip(schema), name = "new_supergraph_state")]
-    pub fn new(schema: &'a SchemaDocument) -> Self {
+    pub fn new(schema: &SchemaDocument) -> Self {
         let (known_subgraphs, subgraph_endpoint_map) =
             Self::extract_subgraph_names_and_endpoints(schema);
         let mut instance = Self {
-            document: schema,
             definitions: Self::build_map(schema),
             known_subgraphs,
             subgraph_endpoint_map,
             known_scalars: Self::extract_known_scalars(schema),
             subgraphs_state: HashMap::new(),
+            query_type: schema.query_type().name.to_string(),
+            mutation_type: schema.mutation_type().map(|t| t.name.to_string()),
+            subscription_type: schema.subscription_type().map(|t| t.name.to_string()),
         };
 
         for subgraph_id in instance.known_subgraphs.keys() {
@@ -114,16 +118,10 @@ impl<'a> SupergraphState<'a> {
             return true;
         }
 
-        self.document.definitions.iter().any(|def| {
-            if let input::Definition::TypeDefinition(input::TypeDefinition::Scalar(scalar)) = def {
-                scalar.name == type_name
-            } else {
-                false
-            }
-        })
+        self.known_scalars.contains(type_name)
     }
 
-    fn extract_known_scalars(schema: &'a SchemaDocument) -> HashSet<String> {
+    fn extract_known_scalars(schema: &SchemaDocument) -> HashSet<String> {
         let mut set = HashSet::new();
 
         for def in schema.definitions.iter() {
@@ -142,7 +140,7 @@ impl<'a> SupergraphState<'a> {
     }
 
     fn extract_subgraph_names_and_endpoints(
-        schema: &'a SchemaDocument,
+        schema: &SchemaDocument,
     ) -> (HashMap<String, String>, HashMap<String, String>) {
         let mut subgraph_names_map = HashMap::new();
         let mut subgraph_endpoints_map = HashMap::new();
@@ -177,7 +175,7 @@ impl<'a> SupergraphState<'a> {
     }
 
     #[instrument(skip(schema))]
-    fn build_map(schema: &'a SchemaDocument) -> HashMap<String, SupergraphDefinition<'a>> {
+    fn build_map(schema: &SchemaDocument) -> HashMap<String, SupergraphDefinition> {
         schema
             .definitions
             .iter()
@@ -227,30 +225,27 @@ impl<'a> SupergraphState<'a> {
 
     #[instrument(skip(input_object_type), fields(name = input_object_type.name))]
     fn build_input_object_type(
-        input_object_type: &'a input::InputObjectType<'static, String>,
-    ) -> SupergraphInputObjectType<'a> {
+        input_object_type: &input::InputObjectType<'static, String>,
+    ) -> SupergraphInputObjectType {
         SupergraphInputObjectType {
-            source: input_object_type,
+            name: input_object_type.name.to_string(),
+            fields: Self::build_input_fields(&input_object_type.fields),
             join_type: Self::extract_directives::<JoinTypeDirective>(&input_object_type.directives),
         }
     }
 
     #[instrument(skip(scalar_type), fields(name = scalar_type.name))]
-    fn build_scalar_type(
-        scalar_type: &'a input::ScalarType<'static, String>,
-    ) -> SupergraphScalarType<'a> {
+    fn build_scalar_type(scalar_type: &input::ScalarType<'static, String>) -> SupergraphScalarType {
         SupergraphScalarType {
-            source: scalar_type,
+            name: scalar_type.name.to_string(),
             join_type: Self::extract_directives::<JoinTypeDirective>(&scalar_type.directives),
         }
     }
 
     #[instrument(skip(union_type), fields(name = union_type.name))]
-    fn build_union_type(
-        union_type: &'a input::UnionType<'static, String>,
-    ) -> SupergraphUnionType<'a> {
+    fn build_union_type(union_type: &input::UnionType<'static, String>) -> SupergraphUnionType {
         SupergraphUnionType {
-            source: union_type,
+            name: union_type.name.to_string(),
             join_type: Self::extract_directives::<JoinTypeDirective>(&union_type.directives),
             types: union_type.types.clone(),
             union_members: Self::extract_directives::<JoinUnionMemberDirective>(
@@ -260,15 +255,15 @@ impl<'a> SupergraphState<'a> {
     }
 
     #[instrument(skip(enum_type), fields(name = enum_type.name))]
-    fn build_enum_type(enum_type: &'a input::EnumType<'static, String>) -> SupergraphEnumType<'a> {
+    fn build_enum_type(enum_type: &input::EnumType<'static, String>) -> SupergraphEnumType {
         SupergraphEnumType {
-            source: enum_type,
+            name: enum_type.name.to_string(),
             join_type: Self::extract_directives::<JoinTypeDirective>(&enum_type.directives),
             values: enum_type
                 .values
                 .iter()
                 .map(|value| SupergraphEnumValueType {
-                    source: value,
+                    name: value.name.to_string(),
                     join_enum_value: Self::extract_directives::<JoinEnumValueDirective>(
                         &value.directives,
                     ),
@@ -276,17 +271,42 @@ impl<'a> SupergraphState<'a> {
                 .collect(),
         }
     }
+
     #[instrument(skip(fields), fields(fields_count = fields.len()))]
-    fn build_fields(
-        fields: &'a [input::Field<'static, String>],
-    ) -> HashMap<String, SupergraphField<'a>> {
+    fn build_fields(fields: &[input::Field<'static, String>]) -> HashMap<String, SupergraphField> {
         fields
             .iter()
             .map(|field| {
                 (
                     field.name.to_string(),
                     SupergraphField {
-                        source: field,
+                        name: field.name.to_string(),
+                        field_type: (&field.field_type).into(),
+                        join_field: Self::extract_directives::<JoinFieldDirective>(
+                            &field.directives,
+                        ),
+                        inaccessible: !Self::extract_directives::<InaccessibleDirective>(
+                            &field.directives,
+                        )
+                        .is_empty(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[instrument(skip(fields), fields(fields_count = fields.len()))]
+    fn build_input_fields(
+        fields: &[input::InputValue<'static, String>],
+    ) -> HashMap<String, SupergraphField> {
+        fields
+            .iter()
+            .map(|field| {
+                (
+                    field.name.to_string(),
+                    SupergraphField {
+                        name: field.name.to_string(),
+                        field_type: (&field.value_type).into(),
                         join_field: Self::extract_directives::<JoinFieldDirective>(
                             &field.directives,
                         ),
@@ -302,13 +322,13 @@ impl<'a> SupergraphState<'a> {
 
     #[instrument(skip(interface_type), fields(name = interface_type.name))]
     fn build_interface_type(
-        interface_type: &'a input::InterfaceType<'static, String>,
-    ) -> SupergraphInterfaceType<'a> {
+        interface_type: &input::InterfaceType<'static, String>,
+    ) -> SupergraphInterfaceType {
         let fields = Self::build_fields(&interface_type.fields);
         let used_in_subgraphs = Self::build_subgraph_usage_from_fields(&fields);
 
         SupergraphInterfaceType {
-            source: interface_type,
+            name: interface_type.name.to_string(),
             fields,
             join_type: Self::extract_directives::<JoinTypeDirective>(&interface_type.directives),
             join_implements: Self::extract_directives::<JoinImplementsDirective>(
@@ -320,9 +340,9 @@ impl<'a> SupergraphState<'a> {
 
     #[instrument(skip(object_type, schema), fields(name = object_type.name))]
     fn build_object_type(
-        object_type: &'a input::ObjectType<'static, String>,
-        schema: &'a SchemaDocument,
-    ) -> SupergraphObjectType<'a> {
+        object_type: &input::ObjectType<'static, String>,
+        schema: &SchemaDocument,
+    ) -> SupergraphObjectType {
         let fields = Self::build_fields(&object_type.fields);
 
         let root_type = if object_type.name == schema.query_type().name {
@@ -344,7 +364,7 @@ impl<'a> SupergraphState<'a> {
         let used_in_subgraphs = Self::build_subgraph_usage_from_fields(&fields);
 
         SupergraphObjectType {
-            source: object_type,
+            name: object_type.name.to_string(),
             fields,
             join_type: Self::extract_directives::<JoinTypeDirective>(&object_type.directives),
             join_implements: Self::extract_directives::<JoinImplementsDirective>(
@@ -372,7 +392,7 @@ impl<'a> SupergraphState<'a> {
         subgraphs
     }
 
-    fn extract_directives<D: FederationDirective<'a>>(
+    fn extract_directives<D: FederationDirective>(
         directives: &[Directive<'static, String>],
     ) -> Vec<D> {
         let mut result = directives
@@ -413,30 +433,30 @@ impl Display for OperationKind {
 }
 
 #[derive(Debug)]
-pub enum SupergraphDefinition<'a> {
-    Object(SupergraphObjectType<'a>),
-    Interface(SupergraphInterfaceType<'a>),
-    Union(SupergraphUnionType<'a>),
-    Enum(SupergraphEnumType<'a>),
-    Scalar(SupergraphScalarType<'a>),
-    InputObject(SupergraphInputObjectType<'a>),
+pub enum SupergraphDefinition {
+    Object(SupergraphObjectType),
+    Interface(SupergraphInterfaceType),
+    Union(SupergraphUnionType),
+    Enum(SupergraphEnumType),
+    Scalar(SupergraphScalarType),
+    InputObject(SupergraphInputObjectType),
 }
 
 #[derive(Debug)]
-pub struct SupergraphObjectType<'a> {
-    pub source: &'a input::ObjectType<'static, String>,
-    pub fields: HashMap<String, SupergraphField<'a>>,
+pub struct SupergraphObjectType {
+    pub name: String,
+    pub fields: HashMap<String, SupergraphField>,
     pub join_type: Vec<JoinTypeDirective>,
     pub join_implements: Vec<JoinImplementsDirective>,
     pub root_type: Option<OperationKind>,
     pub used_in_subgraphs: HashSet<String>,
 }
 
-impl SupergraphObjectType<'_> {
+impl SupergraphObjectType {
     pub fn fields_of_subgraph(
         &self,
         graph_id: &str,
-    ) -> HashMap<&String, (&SupergraphField<'_>, Option<JoinFieldDirective>)> {
+    ) -> HashMap<&String, (&SupergraphField, Option<JoinFieldDirective>)> {
         self.fields
             .iter()
             .filter_map(|(_field_name, field_def)| {
@@ -458,11 +478,11 @@ impl SupergraphObjectType<'_> {
     }
 }
 
-impl SupergraphInterfaceType<'_> {
+impl SupergraphInterfaceType {
     pub fn fields_of_subgraph(
         &self,
         graph_id: &str,
-    ) -> HashMap<&String, (&SupergraphField<'_>, Option<JoinFieldDirective>)> {
+    ) -> HashMap<&String, (&SupergraphField, Option<JoinFieldDirective>)> {
         self.fields
             .iter()
             .filter_map(|(_field_name, field_def)| {
@@ -484,41 +504,42 @@ impl SupergraphInterfaceType<'_> {
 }
 
 #[derive(Debug)]
-pub struct SupergraphInterfaceType<'a> {
-    pub source: &'a input::InterfaceType<'static, String>,
-    pub fields: HashMap<String, SupergraphField<'a>>,
+pub struct SupergraphInterfaceType {
+    pub name: String,
+    pub fields: HashMap<String, SupergraphField>,
     pub join_type: Vec<JoinTypeDirective>,
     pub join_implements: Vec<JoinImplementsDirective>,
     pub used_in_subgraphs: HashSet<String>,
 }
 
 #[derive(Debug)]
-pub struct SupergraphEnumValueType<'a> {
-    pub source: &'a input::EnumValue<'static, String>,
+pub struct SupergraphEnumValueType {
+    pub name: String,
     pub join_enum_value: Vec<JoinEnumValueDirective>,
 }
 
 #[derive(Debug)]
-pub struct SupergraphInputObjectType<'a> {
-    pub source: &'a input::InputObjectType<'static, String>,
+pub struct SupergraphInputObjectType {
+    pub name: String,
+    pub fields: HashMap<String, SupergraphField>,
     pub join_type: Vec<JoinTypeDirective>,
 }
 
 #[derive(Debug)]
-pub struct SupergraphScalarType<'a> {
-    pub source: &'a input::ScalarType<'static, String>,
+pub struct SupergraphScalarType {
+    pub name: String,
     pub join_type: Vec<JoinTypeDirective>,
 }
 
 #[derive(Debug)]
-pub struct SupergraphEnumType<'a> {
-    pub source: &'a input::EnumType<'static, String>,
-    pub values: Vec<SupergraphEnumValueType<'a>>,
+pub struct SupergraphEnumType {
+    pub name: String,
+    pub values: Vec<SupergraphEnumValueType>,
     pub join_type: Vec<JoinTypeDirective>,
 }
 
-impl SupergraphEnumType<'_> {
-    pub fn values_of_subgraph(&self, graph_id: &str) -> Vec<&SupergraphEnumValueType<'_>> {
+impl SupergraphEnumType {
+    pub fn values_of_subgraph(&self, graph_id: &str) -> Vec<&SupergraphEnumValueType> {
         self.values
             .iter()
             .filter(|value| value.join_enum_value.iter().any(|je| je.graph == graph_id))
@@ -527,14 +548,14 @@ impl SupergraphEnumType<'_> {
 }
 
 #[derive(Debug)]
-pub struct SupergraphUnionType<'a> {
-    pub source: &'a input::UnionType<'static, String>,
+pub struct SupergraphUnionType {
+    pub name: String,
     pub types: Vec<String>,
     pub join_type: Vec<JoinTypeDirective>,
     pub union_members: Vec<JoinUnionMemberDirective>,
 }
 
-impl SupergraphUnionType<'_> {
+impl SupergraphUnionType {
     pub fn relevant_types(&self, graph_id: &str) -> HashSet<&String> {
         self.union_members
             .iter()
@@ -549,15 +570,15 @@ impl SupergraphUnionType<'_> {
     }
 }
 
-impl SupergraphDefinition<'_> {
+impl SupergraphDefinition {
     pub fn name(&self) -> &str {
         match self {
-            SupergraphDefinition::Object(object_type) => &object_type.source.name,
-            SupergraphDefinition::Interface(interface_type) => &interface_type.source.name,
-            SupergraphDefinition::Union(union_type) => &union_type.source.name,
-            SupergraphDefinition::Enum(enum_type) => &enum_type.source.name,
-            SupergraphDefinition::Scalar(scalar_type) => &scalar_type.source.name,
-            SupergraphDefinition::InputObject(input_type) => &input_type.source.name,
+            SupergraphDefinition::Object(object_type) => &object_type.name,
+            SupergraphDefinition::Interface(interface_type) => &interface_type.name,
+            SupergraphDefinition::Union(union_type) => &union_type.name,
+            SupergraphDefinition::Enum(enum_type) => &enum_type.name,
+            SupergraphDefinition::Scalar(scalar_type) => &scalar_type.name,
+            SupergraphDefinition::InputObject(input_type) => &input_type.name,
         }
     }
 
@@ -642,8 +663,58 @@ impl SupergraphDefinition<'_> {
 }
 
 #[derive(Debug)]
-pub struct SupergraphField<'a> {
-    pub source: &'a input::Field<'static, String>,
+pub struct SupergraphField {
+    pub name: String,
+    pub field_type: TypeNode,
     pub inaccessible: bool,
     pub join_field: Vec<JoinFieldDirective>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TypeNode {
+    List(Box<TypeNode>),
+    NonNull(Box<TypeNode>),
+    Named(String),
+}
+
+impl TypeNode {
+    pub fn is_non_null(&self) -> bool {
+        matches!(self, TypeNode::NonNull(_))
+    }
+
+    pub fn is_list(&self) -> bool {
+        match self {
+            TypeNode::List(_) => true,
+            TypeNode::NonNull(inner) => inner.as_ref().is_list(),
+            TypeNode::Named(_) => false,
+        }
+    }
+
+    pub fn inner_type(&self) -> &str {
+        match self {
+            TypeNode::List(inner) => inner.as_ref().inner_type(),
+            TypeNode::NonNull(inner) => inner.as_ref().inner_type(),
+            TypeNode::Named(name) => name,
+        }
+    }
+}
+
+impl Display for TypeNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeNode::List(inner) => write!(f, "[{}]", inner),
+            TypeNode::NonNull(inner) => write!(f, "{}!", inner),
+            TypeNode::Named(name) => write!(f, "{}", name),
+        }
+    }
+}
+
+impl From<&input::Type<'_, String>> for TypeNode {
+    fn from(input_type: &input::Type<'_, String>) -> Self {
+        match input_type {
+            input::Type::ListType(inner) => TypeNode::List(Box::new(inner.as_ref().into())),
+            input::Type::NonNullType(inner) => TypeNode::NonNull(Box::new(inner.as_ref().into())),
+            input::Type::NamedType(name) => TypeNode::Named(name.to_string()),
+        }
+    }
 }

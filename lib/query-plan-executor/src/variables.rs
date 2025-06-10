@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use query_planner::ast::operation::TypeNode;
+use query_planner::state::supergraph_state::TypeNode;
 use serde_json::Value;
 
 use crate::schema_metadata::SchemaMetadata;

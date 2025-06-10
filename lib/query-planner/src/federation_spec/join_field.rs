@@ -34,8 +34,8 @@ impl JoinFieldDirective {
     pub const NAME: &str = "join__field";
 }
 
-impl<'a> FederationDirective<'a> for JoinFieldDirective {
-    fn directive_name() -> &'a str {
+impl FederationDirective for JoinFieldDirective {
+    fn directive_name() -> &'static str {
         Self::NAME
     }
 

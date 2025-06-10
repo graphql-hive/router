@@ -178,8 +178,8 @@ fn transform_selection_set<'a, 'd>(
     transformed_selection_set
 }
 
-fn transform_variables<'a, 'd>(
-    parser_variables: &'a Vec<query_ast::VariableDefinition<'d, String>>,
+fn transform_variables(
+    parser_variables: &Vec<query_ast::VariableDefinition<'_, String>>,
 ) -> Option<Vec<VariableDefinition>> {
     match parser_variables.len() {
         0 => None,

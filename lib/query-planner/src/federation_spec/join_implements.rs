@@ -12,8 +12,8 @@ impl JoinImplementsDirective {
     pub const NAME: &str = "join__implements";
 }
 
-impl<'a> FederationDirective<'a> for JoinImplementsDirective {
-    fn directive_name() -> &'a str {
+impl FederationDirective for JoinImplementsDirective {
+    fn directive_name() -> &'static str {
         Self::NAME
     }
 

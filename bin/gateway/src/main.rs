@@ -44,8 +44,7 @@ async fn main() {
         std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
     let supergraph_state = SupergraphState::new(&parsed_schema);
-    let planner =
-        Planner::new_from_supergraph_state(&supergraph_state).expect("failed to create planner");
+    let planner = Planner::new_from_supergraph(&parsed_schema).expect("failed to create planner");
     let schema_metadata = planner.consumer_schema.schema_metadata();
     let serve_data = ServeData {
         supergraph_source: supergraph_path.to_string(),

@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use graphql_tools::ast::TypeExtension;
 use tracing::instrument;
 
 use crate::federation_spec::{directives::JoinFieldDirective, join_type::JoinTypeDirective};
@@ -77,7 +76,7 @@ impl SubgraphState {
     fn process_object_type(
         graph_id: &str,
         graph_join_types: &[JoinTypeDirective],
-        supergraph_object_type: &SupergraphObjectType<'_>,
+        supergraph_object_type: &SupergraphObjectType,
     ) -> Option<SubgraphDefinition> {
         let relevant_fields: Vec<SubgraphField> = supergraph_object_type
             .fields_of_subgraph(graph_id)
@@ -86,8 +85,8 @@ impl SubgraphState {
                 |(field_name, (field_def, maybe_join_field))| SubgraphField {
                     name: field_name.to_string(),
                     join_field: maybe_join_field.clone(),
-                    return_type_name: field_def.source.field_type.inner_type().to_string(),
-                    is_list: field_def.source.field_type.is_list_type(),
+                    return_type_name: field_def.field_type.inner_type().to_string(),
+                    is_list: field_def.field_type.is_list(),
                 },
             )
             .collect();
@@ -97,7 +96,7 @@ impl SubgraphState {
         }
 
         let subgraph_obj_type = SubgraphDefinition::Object(SubgraphObjectType {
-            name: supergraph_object_type.source.name.to_string(),
+            name: supergraph_object_type.name.to_string(),
             fields: relevant_fields,
             join_types: graph_join_types.to_owned(),
         });
@@ -113,7 +112,7 @@ impl SubgraphState {
     fn process_interface_type(
         graph_id: &str,
         graph_join_types: &[JoinTypeDirective],
-        supergraph_interface_type: &SupergraphInterfaceType<'_>,
+        supergraph_interface_type: &SupergraphInterfaceType,
     ) -> Option<SubgraphDefinition> {
         let relevant_fields: Vec<SubgraphField> = supergraph_interface_type
             .fields_of_subgraph(graph_id)
@@ -122,8 +121,8 @@ impl SubgraphState {
                 |(field_name, (field_def, maybe_join_field))| SubgraphField {
                     name: field_name.to_string(),
                     join_field: maybe_join_field.clone(),
-                    return_type_name: field_def.source.field_type.inner_type().to_string(),
-                    is_list: field_def.source.field_type.is_list_type(),
+                    return_type_name: field_def.field_type.inner_type().to_string(),
+                    is_list: field_def.field_type.is_list(),
                 },
             )
             .collect();
@@ -133,7 +132,7 @@ impl SubgraphState {
         }
 
         let subgraph_interface_type = SubgraphDefinition::Interface(SubgraphInterfaceType {
-            name: supergraph_interface_type.source.name.to_string(),
+            name: supergraph_interface_type.name.to_string(),
             fields: relevant_fields,
             join_types: graph_join_types.to_owned(),
         });
@@ -144,7 +143,7 @@ impl SubgraphState {
     fn process_enum_type(
         graph_id: &str,
         graph_join_types: &[JoinTypeDirective],
-        enum_type: &super::supergraph_state::SupergraphEnumType<'_>,
+        enum_type: &super::supergraph_state::SupergraphEnumType,
     ) -> Option<SubgraphDefinition> {
         let relevant_values = enum_type.values_of_subgraph(graph_id);
 
@@ -155,12 +154,12 @@ impl SubgraphState {
         let values = relevant_values
             .iter()
             .map(|value| SubgraphEnumValueType {
-                name: value.source.name.to_string(),
+                name: value.name.to_string(),
             })
             .collect();
 
         Some(SubgraphDefinition::Enum(SubgraphEnumType {
-            name: enum_type.source.name.to_string(),
+            name: enum_type.name.to_string(),
             values,
             join_types: graph_join_types.to_owned(),
         }))
@@ -169,7 +168,7 @@ impl SubgraphState {
     fn process_union_type(
         graph_id: &str,
         graph_join_types: &[JoinTypeDirective],
-        union_type: &super::supergraph_state::SupergraphUnionType<'_>,
+        union_type: &super::supergraph_state::SupergraphUnionType,
     ) -> Option<SubgraphDefinition> {
         let relevant_types = union_type.relevant_types(graph_id);
 
@@ -178,17 +177,17 @@ impl SubgraphState {
         }
 
         Some(SubgraphDefinition::Union(SubgraphUnionType {
-            name: union_type.source.name.to_string(),
+            name: union_type.name.to_string(),
             types: relevant_types.iter().map(|v| v.to_string()).collect(),
             join_types: graph_join_types.to_owned(),
         }))
     }
 
     fn process_scalar_type(
-        scalar_type: &super::supergraph_state::SupergraphScalarType<'_>,
+        scalar_type: &super::supergraph_state::SupergraphScalarType,
     ) -> Option<SubgraphDefinition> {
         Some(SubgraphDefinition::Scalar(SubgraphScalarType {
-            name: scalar_type.source.name.to_string(),
+            name: scalar_type.name.to_string(),
         }))
     }
 
@@ -197,7 +196,7 @@ impl SubgraphState {
     fn process_input_object_type(
         _graph_id: &str,
         _graph_join_types: &[JoinTypeDirective],
-        _scalar_type: &super::supergraph_state::SupergraphInputObjectType<'_>,
+        _scalar_type: &super::supergraph_state::SupergraphInputObjectType,
     ) -> Option<SubgraphDefinition> {
         // TODO: unimplemented!("not there yet")
         None

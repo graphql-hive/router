@@ -12,8 +12,8 @@ impl JoinUnionMemberDirective {
     pub const NAME: &str = "join__unionMember";
 }
 
-impl<'a> FederationDirective<'a> for JoinUnionMemberDirective {
-    fn directive_name() -> &'a str {
+impl FederationDirective for JoinUnionMemberDirective {
+    fn directive_name() -> &'static str {
         Self::NAME
     }
 
