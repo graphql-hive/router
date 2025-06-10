@@ -12,8 +12,8 @@ impl JoinGraphDirective {
     pub const NAME: &str = "join__graph";
 }
 
-impl<'a> FederationDirective<'a> for JoinGraphDirective {
-    fn directive_name() -> &'a str {
+impl FederationDirective for JoinGraphDirective {
+    fn directive_name() -> &'static str {
         Self::NAME
     }
 

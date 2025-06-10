@@ -1,13 +1,13 @@
 use super::fetch::fetch_graph::FetchStepData;
 use crate::{
     ast::{
-        operation::{OperationDefinition, SubgraphFetchOperation, TypeNode, VariableDefinition},
+        operation::{OperationDefinition, SubgraphFetchOperation, VariableDefinition},
         selection_item::SelectionItem,
         selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
         type_aware_selection::TypeAwareSelection,
         value::Value,
     },
-    state::supergraph_state::OperationKind,
+    state::supergraph_state::{OperationKind, TypeNode},
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
 use serde::{Deserialize, Serialize};

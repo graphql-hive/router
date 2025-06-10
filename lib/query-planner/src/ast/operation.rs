@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::ast::hash::ast_hash;
+use crate::{ast::hash::ast_hash, state::supergraph_state::TypeNode};
 use graphql_parser::query as parser;
 use serde::{Deserialize, Serialize};
 
@@ -103,52 +103,15 @@ impl Display for OperationDefinition {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TypeNode {
-    List(Box<TypeNode>),
-    NonNull(Box<TypeNode>),
-    Named(String),
-}
-
-impl Display for TypeNode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TypeNode::List(inner) => write!(f, "[{}]", inner),
-            TypeNode::NonNull(inner) => write!(f, "{}!", inner),
-            TypeNode::Named(name) => write!(f, "{}", name),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VariableDefinition {
     pub name: String,
     pub variable_type: TypeNode,
     pub default_value: Option<crate::ast::value::Value>,
 }
 
-impl TypeNode {
-    pub fn is_non_null(&self) -> bool {
-        matches!(self, TypeNode::NonNull(_))
-    }
-
-    pub fn is_list(&self) -> bool {
-        matches!(self, TypeNode::List(_))
-    }
-}
-
 impl Display for VariableDefinition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "${}:{}", self.name, self.variable_type)
-    }
-}
-
-impl From<&parser::Type<'_, String>> for TypeNode {
-    fn from(value: &parser::Type<'_, String>) -> Self {
-        match value {
-            parser::Type::ListType(inner) => TypeNode::List(Box::new(inner.as_ref().into())),
-            parser::Type::NonNullType(inner) => TypeNode::NonNull(Box::new(inner.as_ref().into())),
-            parser::Type::NamedType(name) => TypeNode::Named(name.clone()),
-        }
     }
 }
 

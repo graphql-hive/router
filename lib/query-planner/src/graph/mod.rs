@@ -19,8 +19,7 @@ use crate::{
     utils::ast::strip_modifiers_from_type_string,
 };
 use error::GraphError;
-use graphql_parser::query::{Selection, SelectionSet, Type};
-use graphql_tools::ast::{SchemaDocumentExtension, TypeExtension};
+use graphql_parser::query::{Selection, SelectionSet};
 use petgraph::{
     dot::Dot,
     graph::{EdgeIndex, Edges, NodeIndex},
@@ -33,20 +32,6 @@ use super::graph::{edge::Edge, node::Node};
 
 type InnerGraph = Petgraph<Node, Edge, Directed>;
 
-pub trait TypeHelpers {
-    fn is_list_like_type(&self) -> bool;
-}
-
-impl TypeHelpers for Type<'static, String> {
-    fn is_list_like_type(&self) -> bool {
-        match self {
-            Type::NamedType(_) => false,
-            Type::ListType(_) => true,
-            Type::NonNullType(child) => child.is_list_like_type(),
-        }
-    }
-}
-
 type UnionRegistyHashMap<'a> = HashMap<&'a str, HashMap<&'a str, HashSet<&'a str>>>;
 
 #[derive(Debug, Default)]
@@ -55,7 +40,7 @@ struct UnionDefinitions<'a> {
 }
 
 impl<'a> UnionDefinitions<'a> {
-    pub fn new(state: &'a SupergraphState<'a>) -> Self {
+    pub fn new(state: &'a SupergraphState) -> Self {
         let mut registry: UnionRegistyHashMap<'a> = UnionRegistyHashMap::new();
 
         for (def_name, definition) in state
@@ -97,8 +82,8 @@ impl<'a> UnionDefinitions<'a> {
     /// Produces a list of names of the object types.
     pub fn intersections(
         &self,
-        type_def: &'a SupergraphDefinition<'_>,
-        field_def: &'a SupergraphField<'_>,
+        type_def: &'a SupergraphDefinition,
+        field_def: &'a SupergraphField,
         field_type: &str,
     ) -> HashSet<String> {
         // Collect subgraphs the field was defined in.
@@ -207,7 +192,7 @@ impl Graph {
     fn build_graph(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
         debug!(
             "Building graph for supergraph with {} definitions",
-            state.document.definitions.len()
+            state.definitions.len()
         );
 
         self.build_root_nodes(state)?;
@@ -238,23 +223,16 @@ impl Graph {
     }
 
     #[instrument(skip(self, state))]
-    fn build_root_nodes(&mut self, state: &SupergraphState<'_>) -> Result<(), GraphError> {
-        self.query_root =
-            self.upsert_node(Node::QueryRoot(state.document.query_type().name.clone()));
-        debug!(
-            "added root type for queries: {}",
-            state.document.query_type().name
-        );
-        self.mutation_root = state.document.mutation_type().map(|mutation_type| {
-            debug!("added root type for mutations: {}", mutation_type.name);
-            self.upsert_node(Node::MutationRoot(mutation_type.name.clone()))
+    fn build_root_nodes(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
+        self.query_root = self.upsert_node(Node::QueryRoot(state.query_type.clone()));
+        debug!("added root type for queries: {}", state.query_type);
+        self.mutation_root = state.mutation_type.as_ref().map(|mutation_type| {
+            debug!("added root type for mutations: {}", mutation_type);
+            self.upsert_node(Node::MutationRoot(mutation_type.clone()))
         });
-        self.subscription_root = state.document.subscription_type().map(|subscription_type| {
-            debug!(
-                "added root type for subscriptions: {}",
-                subscription_type.name
-            );
-            self.upsert_node(Node::SubscriptionRoot(subscription_type.name.clone()))
+        self.subscription_root = state.subscription_type.as_ref().map(|subscription_type| {
+            debug!("added root type for subscriptions: {}", subscription_type);
+            self.upsert_node(Node::SubscriptionRoot(subscription_type.clone()))
         });
 
         Ok(())
@@ -296,10 +274,7 @@ impl Graph {
     }
 
     #[instrument(skip(self, state))]
-    fn build_entity_reference_edges(
-        &mut self,
-        state: &SupergraphState<'_>,
-    ) -> Result<(), GraphError> {
+    fn build_entity_reference_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
             for join_type1 in definition.join_types() {
                 for join_type2 in definition.join_types() {
@@ -347,7 +322,7 @@ impl Graph {
     #[instrument(skip(self, state))]
     fn build_interface_implementation_edges(
         &mut self,
-        state: &SupergraphState<'_>,
+        state: &SupergraphState,
     ) -> Result<(), GraphError> {
         for (def_name, definition) in state
             .definitions
@@ -412,7 +387,7 @@ impl Graph {
     }
 
     #[instrument(skip(self, state))]
-    fn link_root_edges(&mut self, state: &SupergraphState<'_>) -> Result<(), GraphError> {
+    fn link_root_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
             if let Some(root_type) = definition.try_into_root_type() {
                 for graph_id in definition.subgraphs().iter() {
@@ -465,7 +440,7 @@ impl Graph {
     }
 
     #[instrument(skip(self, state))]
-    fn build_field_edges(&mut self, state: &SupergraphState<'_>) -> Result<(), GraphError> {
+    fn build_field_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
         let unions = UnionDefinitions::new(state);
 
         for (def_name, definition) in state.definitions.iter() {
@@ -514,7 +489,7 @@ impl Graph {
                             definition,
                         );
 
-                    let target_type = field_definition.source.field_type.inner_type();
+                    let target_type = field_definition.field_type.inner_type();
 
                     if !is_available {
                         // The field is not available in the current subgraph
@@ -694,7 +669,7 @@ impl Graph {
                             field_name.clone(),
                             def_name.clone(),
                             state.is_scalar_type(target_type),
-                            field_definition.source.field_type.is_list_like_type(),
+                            field_definition.field_type.is_list(),
                             maybe_join_field.map(|join_field| match join_field.provides {
                                 Some(_) => {
                                     // This is done in order to "reset" the provided field info, we can probably
@@ -723,7 +698,7 @@ impl Graph {
         state: &SupergraphState,
         selection_set: &SelectionSet<'static, String>,
         graph_id: &str,
-        parent_type_def: &SupergraphDefinition<'_>,
+        parent_type_def: &SupergraphDefinition,
         head: NodeIndex,
         view_id: u64,
     ) -> Result<(), GraphError> {
@@ -738,7 +713,7 @@ impl Graph {
                                 parent_type_def.name().to_string(),
                             )
                         })?;
-                    let return_type_name = field_in_parent.source.field_type.inner_type();
+                    let return_type_name = field_in_parent.field_type.inner_type();
 
                     info!(
                         "Upserting graph viewed node for '{}.{}'",
@@ -766,7 +741,7 @@ impl Graph {
                             field.name.to_string(),
                             parent_type_def.name().to_string(),
                             state.is_scalar_type(parent_type_def.name()),
-                            field_in_parent.source.field_type.is_list_like_type(),
+                            field_in_parent.field_type.is_list(),
                             None,
                             None,
                         ),
@@ -818,8 +793,7 @@ impl Graph {
                                     state.resolve_graph_id(&join_type.graph_id)?,
                                 ));
 
-                                let return_type_name =
-                                    field_definition.source.field_type.inner_type();
+                                let return_type_name = field_definition.field_type.inner_type();
 
                                 let tail = self.upsert_node(Node::new_specialized_node(
                                     return_type_name,
@@ -851,9 +825,9 @@ impl Graph {
                                         field_name.to_string(),
                                         def_name.clone(),
                                         state.is_scalar_type(
-                                            field_definition.source.field_type.inner_type(),
+                                            field_definition.field_type.inner_type(),
                                         ),
-                                        field_definition.source.field_type.is_list_like_type(),
+                                        field_definition.field_type.is_list(),
                                         Some(join_field.clone()),
                                         requirements,
                                     ),

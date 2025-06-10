@@ -9,8 +9,8 @@ impl InaccessibleDirective {
     pub const NAME: &str = "inaccessible";
 }
 
-impl<'a> FederationDirective<'a> for InaccessibleDirective {
-    fn directive_name() -> &'a str {
+impl FederationDirective for InaccessibleDirective {
+    fn directive_name() -> &'static str {
         Self::NAME
     }
 

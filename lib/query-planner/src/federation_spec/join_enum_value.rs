@@ -11,8 +11,8 @@ impl JoinEnumValueDirective {
     pub const NAME: &str = "join__enumValue";
 }
 
-impl<'a> FederationDirective<'a> for JoinEnumValueDirective {
-    fn directive_name() -> &'a str {
+impl FederationDirective for JoinEnumValueDirective {
+    fn directive_name() -> &'static str {
         Self::NAME
     }
 

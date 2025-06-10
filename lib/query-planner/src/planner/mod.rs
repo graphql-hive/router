@@ -68,14 +68,15 @@ impl Planner {
         parsed_supergraph: &schema::Document<'static, String>,
     ) -> Result<Self, PlannerError> {
         let supergraph_state = SupergraphState::new(parsed_supergraph);
-        Self::new_from_supergraph_state(&supergraph_state)
+        Self::new_from_supergraph_state(&supergraph_state, parsed_supergraph)
     }
 
     pub fn new_from_supergraph_state(
         supergraph_state: &SupergraphState,
+        parsed_supergraph: &schema::Document<'static, String>,
     ) -> Result<Self, PlannerError> {
         let graph = Graph::graph_from_supergraph_state(supergraph_state)?;
-        let consumer_schema = ConsumerSchema::new_from_supergraph(supergraph_state.document);
+        let consumer_schema = ConsumerSchema::new_from_supergraph(parsed_supergraph);
 
         Ok(Planner {
             graph,

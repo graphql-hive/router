@@ -27,8 +27,8 @@ impl JoinTypeDirective {
     pub const NAME: &str = "join__type";
 }
 
-impl<'a> FederationDirective<'a> for JoinTypeDirective {
-    fn directive_name() -> &'a str {
+impl FederationDirective for JoinTypeDirective {
+    fn directive_name() -> &'static str {
         Self::NAME
     }
 
