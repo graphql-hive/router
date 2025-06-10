@@ -7,3 +7,4 @@ logs
 federation-audit-results.txt
 *.junit.xml
 .DS_Store
+supergraph.graphql
