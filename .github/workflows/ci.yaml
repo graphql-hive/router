@@ -94,6 +94,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: audits/.node-version
+      - run: npm install
+        working-directory: audits
       - run: npm run ci:test:graphql-over-http
         working-directory: audits
       - name: Publish Test Results
@@ -114,6 +116,8 @@ jobs:
         with:
           node-version-file: audits/.node-version
       - run: cargo build --package gateway
+      - run: npm install
+        working-directory: audits
       - run: npm run test:federation-all
         working-directory: audits
         continue-on-error: true # continue even if the test fails
