@@ -50,9 +50,9 @@ pub struct FetchNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requires: Option<SelectionSet>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub input_rewrites: Option<Vec<InputRewrite>>,
+    pub input_rewrites: Option<Vec<FetchRewrite>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_rewrites: Option<Vec<OutputRewrite>>,
+    pub output_rewrites: Option<Vec<FetchRewrite>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,22 +81,20 @@ pub struct ConditionNode {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum OutputRewrite {
-    KeyRenamer(KeyRenamer),
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct KeyRenamer {
     pub path: Vec<String>,
     pub rename_key_to: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum InputRewrite {
+pub enum FetchRewrite {
     ValueSetter(ValueSetter),
+    KeyRenamer(KeyRenamer),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ValueSetter {
     pub path: Vec<String>,
     // Use serde_json::Value for the 'any' type
