@@ -125,7 +125,7 @@ jobs:
           group_suite: true
           comment: true
           updateComment: true
-          exclude_sources: /lib/,/node_modules/
+          exclude_sources: /lib/,/audits/node_modules/
 
   federation-audit:
     runs-on: ubuntu-latest
