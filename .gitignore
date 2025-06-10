@@ -8,3 +8,4 @@ federation-audit-results.txt
 *.junit.xml
 .DS_Store
 supergraph.graphql
+audits/fed-audit-supergraph.graphql
