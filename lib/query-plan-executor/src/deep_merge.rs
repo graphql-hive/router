@@ -8,11 +8,7 @@ pub fn deep_merge(target: &mut Value, source: Value) {
 
         // 2. Both are Objects: Merge recursively
         (Value::Object(target_map), Value::Object(source_map)) => {
-            for (key, source_val) in source_map {
-                // Optimization: If source_val is Null, we could skip, but deep_merge handles it.
-                let target_entry = target_map.entry(key).or_insert(Value::Null);
-                deep_merge(target_entry, source_val);
-            }
+            deep_merge_objects(target_map, source_map);
         }
 
         // 3. Both are Arrays of same length: Merge elements
