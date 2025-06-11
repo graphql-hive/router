@@ -840,6 +840,7 @@ fn traverse_and_collect<'a>(
     remaining_path: &[&str],
 ) -> Vec<&'a mut Value> {
     match (current_data, remaining_path) {
+        (Value::Array(arr), []) => arr.iter_mut().collect(), // Base case: No more path segments, return all items in the array
         (current_data, []) => vec![current_data], // Base case: No more path segments,
         (Value::Object(obj), [next_segment, next_remaining_path @ ..]) => {
             if let Some(next_value) = obj.get_mut(*next_segment) {
