@@ -12,8 +12,9 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
-use tracing::{debug, instrument, warn};
+use std::{collections::HashMap, sync::Arc, vec};
+use tokio::sync::Mutex;
+use tracing::{debug, instrument, warn}; // For reading file in main
 
 use crate::schema_metadata::SchemaMetadata;
 pub mod introspection;
@@ -26,36 +27,29 @@ pub mod variables;
 trait ExecutablePlanNode {
     async fn execute(
         &self,
-        execution_context: &QueryPlanExecutionContext,
-        data: Value,
-        representations: Vec<Value>,
-    ) -> (Value, Vec<Value>, Vec<GraphQLError>);
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+        representations: Arc<Vec<&mut Value>>,
+    );
 }
 
+#[async_trait]
 trait ExecutableQueryPlan {
-    async fn execute(&self, execution_context: QueryPlanExecutionContext) -> ExecutionResult;
+    async fn execute(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>);
 }
 
 #[async_trait]
 impl ExecutablePlanNode for PlanNode {
     async fn execute(
         &self,
-        execution_context: &QueryPlanExecutionContext,
-        data: Value,
-        representations: Vec<Value>,
-    ) -> (Value, Vec<Value>, Vec<GraphQLError>) {
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+        representations: Arc<Vec<&mut Value>>,
+    ) {
         match self {
-            PlanNode::Fetch(node) => node.execute(execution_context, data, representations).await,
-            PlanNode::Sequence(node) => {
-                node.execute(execution_context, data, representations).await
-            }
-            PlanNode::Parallel(node) => {
-                node.execute(execution_context, data, representations).await
-            }
-            PlanNode::Flatten(node) => node.execute(execution_context, data, representations).await,
-            PlanNode::Condition(node) => {
-                node.execute(execution_context, data, representations).await
-            }
+            PlanNode::Fetch(node) => node.execute(execution_context_arc, representations).await,
+            PlanNode::Sequence(node) => node.execute(execution_context_arc, representations).await,
+            PlanNode::Parallel(node) => node.execute(execution_context_arc, representations).await,
+            PlanNode::Flatten(node) => node.execute(execution_context_arc, representations).await,
+            PlanNode::Condition(node) => node.execute(execution_context_arc, representations).await,
             PlanNode::Subscription(node) => {
                 // Subscriptions typically use a different protocol.
                 // Execute the primary node for now.
@@ -63,28 +57,25 @@ impl ExecutablePlanNode for PlanNode {
             "Executing SubscriptionNode's primary as a normal node. Real subscription handling requires a different mechanism."
         );
                 node.primary
-                    .execute(execution_context, data, representations)
+                    .execute(execution_context_arc, representations)
                     .await
             }
             PlanNode::Defer(_) => {
                 // Defer/Deferred execution is complex.
                 warn!("DeferNode execution is not fully implemented.");
-                (data, representations, Vec::new()) // Return empty for now
             }
         }
     }
 }
 
+#[async_trait]
 trait ExecutableFetchNode {
-    async fn execute_for_root(
-        &self,
-        execution_context: &QueryPlanExecutionContext,
-    ) -> (Value, Vec<GraphQLError>);
+    async fn execute_for_root(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>);
     async fn execute_for_representations(
         &self,
-        execution_context: &QueryPlanExecutionContext,
-        representations: Vec<Value>,
-    ) -> (Vec<Value>, Vec<GraphQLError>);
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+        representations: Arc<Vec<&mut Value>>,
+    );
     fn apply_output_rewrites(
         &self,
         possible_types: &HashMap<String, Vec<String>>,
@@ -98,34 +89,29 @@ trait ExecutableFetchNode {
 
 #[async_trait]
 impl ExecutablePlanNode for FetchNode {
-    #[instrument(skip(self, execution_context), name = "FetchNode::execute")]
+    #[instrument(skip(self, execution_context_arc), name = "FetchNode::execute")]
     async fn execute(
         &self,
-        execution_context: &QueryPlanExecutionContext,
-        data: Value,
-        representations: Vec<Value>,
-    ) -> (Value, Vec<Value>, Vec<GraphQLError>) {
-        // 1. Check if the operation is a root operation
-        if self.requires.is_none() {
-            let (data, errors) = self.execute_for_root(execution_context).await;
-            return (data, representations, errors);
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+        representations: Arc<Vec<&mut Value>>,
+    ) {
+        match &self.requires {
+            Some(_) => {
+                self.execute_for_representations(execution_context_arc, representations)
+                    .await
+            }
+            None => self.execute_for_root(execution_context_arc).await,
         }
-        // 2. Execute the fetch for representations
-        let (representations, errors) = self
-            .execute_for_representations(execution_context, representations)
-            .await;
-        (data, representations, errors)
     }
 }
 
+#[async_trait]
 impl ExecutableFetchNode for FetchNode {
-    async fn execute_for_root(
-        &self,
-        execution_context: &QueryPlanExecutionContext<'_>,
-    ) -> (Value, Vec<GraphQLError>) {
-        let variables = self.prepare_variables_for_fetch_node(execution_context.variable_values);
+    async fn execute_for_root(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>) {
+        let variables =
+            self.prepare_variables_for_fetch_node(execution_context_arc.variable_values);
 
-        let fetch_result = execution_context
+        let fetch_result = execution_context_arc
             .execute(
                 &self.service_name,
                 ExecutionRequest {
@@ -138,59 +124,53 @@ impl ExecutableFetchNode for FetchNode {
             .await;
 
         // 5. Process the response
-        let errors: Vec<GraphQLError> = fetch_result.errors.unwrap_or_default();
+        match fetch_result.errors {
+            Some(errors) if !errors.is_empty() => {
+                execution_context_arc.add_errors(errors).await;
+            }
+            _ => {}
+        }
 
-        // Process data
-        let data: Value = match fetch_result.data {
+        match fetch_result.data {
             Some(mut data) => {
                 self.apply_output_rewrites(
-                    &execution_context.schema_metadata.possible_types,
+                    &execution_context_arc.schema_metadata.possible_types,
                     &mut data,
                 );
-                data
+                execution_context_arc.merge_data(data).await;
             }
-            _ => Value::Null,
-        };
-        (data, errors)
+            _ => {}
+        }
+
+        match fetch_result.extensions {
+            Some(extensions) if !extensions.is_empty() => {
+                execution_context_arc.merge_extensions(extensions).await;
+            }
+            _ => {}
+        }
     }
 
     async fn execute_for_representations(
         &self,
-        execution_context: &QueryPlanExecutionContext<'_>,
-        representations: Vec<Value>,
-    ) -> (Vec<Value>, Vec<GraphQLError>) {
-        let mut filtered_repr_indexes;
-        let representations_length = representations.len();
-        let mut final_representations: Vec<Value> = vec![Value::Null; representations_length]; // Initialize with the same length as representations
-                                                                                               // 1. Filter representations based on requires (if present)
-        let mut filtered_representations: Vec<Value>;
-        match &self.requires {
-            Some(requires_nodes) => {
-                filtered_repr_indexes = Vec::new();
-                filtered_representations = Vec::new();
-                for (index, entity) in representations.into_iter().enumerate() {
-                    let entity_projected =
-                        execution_context.project_requires(&requires_nodes.items, &entity);
-                    if !entity_projected.is_null() {
-                        filtered_representations.push(entity_projected);
-                        filtered_repr_indexes.push(index);
-                    }
-                }
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+        mut representations: Arc<Vec<&mut Value>>,
+    ) {
+        let representations = Arc::get_mut(&mut representations).unwrap();
+        let mut filtered_repr_indexes = Vec::new();
+        // 1. Filter representations based on requires (if present)
+        let mut filtered_representations: Vec<Value> = Vec::new();
+        let requires_nodes = self.requires.as_ref().unwrap();
+        for (index, entity) in representations.iter().enumerate() {
+            let entity_projected =
+                execution_context_arc.project_requires(&requires_nodes.items, &entity);
+            if !entity_projected.is_null() {
+                filtered_representations.push(entity_projected);
+                filtered_repr_indexes.push(index);
             }
-            _ => {
-                // No requires, use all representations.
-                filtered_representations = representations; // Use the owned Vec directly
-                let representation_length = filtered_representations.len();
-                if representation_length > 0 {
-                    filtered_repr_indexes = (0..(representation_length - 1)).collect();
-                } else {
-                    filtered_repr_indexes = Vec::new(); // No indexes to filter
-                }
-            }
-        };
+        }
         // No representations to fetch, do not call the subgraph
         if filtered_representations.is_empty() {
-            return (final_representations, Vec::new());
+            return;
         }
 
         if let Some(input_rewrites) = &self.input_rewrites {
@@ -198,7 +178,7 @@ impl ExecutableFetchNode for FetchNode {
                 for input_rewrite in input_rewrites {
                     // Apply input rewrites to each representation
                     input_rewrite.apply(
-                        &execution_context.schema_metadata.possible_types,
+                        &execution_context_arc.schema_metadata.possible_types,
                         representation,
                     );
                 }
@@ -207,7 +187,7 @@ impl ExecutableFetchNode for FetchNode {
 
         // 2. Prepare variables for fetch
         let mut variables = self
-            .prepare_variables_for_fetch_node(execution_context.variable_values)
+            .prepare_variables_for_fetch_node(execution_context_arc.variable_values)
             .unwrap_or_default();
 
         variables.insert(
@@ -215,7 +195,7 @@ impl ExecutableFetchNode for FetchNode {
             Value::Array(filtered_representations),
         );
 
-        let fetch_result = execution_context
+        let fetch_result = execution_context_arc
             .execute(
                 &self.service_name,
                 ExecutionRequest {
@@ -228,12 +208,11 @@ impl ExecutableFetchNode for FetchNode {
             .await;
 
         // 5. Process the response
-        let errors: Vec<GraphQLError> = fetch_result.errors.unwrap_or_default();
 
         // Process data
         if let Some(mut data) = fetch_result.data {
             self.apply_output_rewrites(
-                &execution_context.schema_metadata.possible_types,
+                &execution_context_arc.schema_metadata.possible_types,
                 &mut data,
             );
             // Attempt to extract the _entities array mutably or take ownership
@@ -248,7 +227,9 @@ impl ExecutableFetchNode for FetchNode {
                     for (entity, representation_index) in
                         entities.into_iter().zip(filtered_repr_indexes.iter_mut())
                     {
-                        final_representations[*representation_index] = entity;
+                        let representation =
+                            representations.get_mut(*representation_index).unwrap();
+                        deep_merge(representation, entity);
                     }
                 }
                 _ => {
@@ -259,8 +240,6 @@ impl ExecutableFetchNode for FetchNode {
                 }
             }
         }
-
-        (final_representations, errors)
     }
 
     fn apply_output_rewrites(
@@ -425,98 +404,48 @@ impl ApplyFetchRewrite for ValueSetter {
 
 #[async_trait]
 impl ExecutablePlanNode for SequenceNode {
-    #[instrument(skip(self, execution_context), name = "SequenceNode::execute")]
+    #[instrument(skip(self, execution_context_arc), name = "SequenceNode::execute")]
     async fn execute(
         &self,
-        execution_context: &QueryPlanExecutionContext,
-        mut data: Value,
-        mut representations: Vec<Value>,
-    ) -> (Value, Vec<Value>, Vec<GraphQLError>) {
-        let mut errors: Vec<GraphQLError> = Vec::new();
-        let is_data_merge = representations.is_empty();
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+        representations: Arc<Vec<&mut Value>>,
+    ) {
         for node in &self.nodes {
-            // Avoid extra cloning of data if not needed
-            let data_clone = if is_data_merge {
-                data.clone()
-            } else {
-                Value::Null // Placeholder for data
-            };
-            // Exit with ? if an inner execution fails
-            let (result_data, result_representations, result_errors) = node
-                .execute(execution_context, data_clone, representations.clone()) // No representations passed to child nodes
+            node.execute(execution_context_arc.clone(), representations.clone()) // No representations passed to child nodes
                 .await;
-            if is_data_merge {
-                deep_merge(&mut data, result_data);
-            } else {
-                for (result_representation, current_repr) in result_representations
-                    .into_iter()
-                    .zip(representations.iter_mut())
-                {
-                    deep_merge(current_repr, result_representation);
-                }
-            }
-
-            errors.extend(result_errors);
         }
-        (data, representations, errors)
     }
 }
 
 #[async_trait]
 impl ExecutablePlanNode for ParallelNode {
-    #[instrument(skip(self, execution_context), name = "ParallelNode::execute")]
+    #[instrument(skip(self, execution_context_arc), name = "ParallelNode::execute")]
     async fn execute(
         &self,
-        execution_context: &QueryPlanExecutionContext,
-        mut data: Value,
-        mut representations: Vec<Value>,
-    ) -> (Value, Vec<Value>, Vec<GraphQLError>) {
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+        representations: Arc<Vec<&mut Value>>,
+    ) {
         let mut jobs = Vec::new();
-        let mut errors: Vec<GraphQLError> = Vec::new();
-        let is_data_merge = representations.is_empty();
         for node in &self.nodes {
-            let data_clone = if is_data_merge {
-                data.clone()
-            } else {
-                Value::Null // Placeholder for data
-            };
-            let job = node.execute(execution_context, data_clone, representations.clone());
+            let job = node.execute(execution_context_arc.clone(), representations.clone());
             jobs.push(job);
         }
-        let results = join_all(jobs).await;
-        for (result_data, result_representations, result_errors) in results {
-            if is_data_merge {
-                deep_merge(&mut data, result_data);
-            } else {
-                for (current_repr, result_repr) in representations
-                    .iter_mut()
-                    .zip(result_representations.into_iter())
-                {
-                    // Merge the result representation into the current representation
-                    deep_merge(current_repr, result_repr);
-                }
-            }
-            errors.extend(result_errors);
-        }
-        // Return the merged representations
-        (data, representations, errors)
+        join_all(jobs).await;
     }
 }
 
 #[async_trait]
 impl ExecutablePlanNode for FlattenNode {
-    #[instrument(skip(self, execution_context), name = "FlattenNode::execute")]
+    #[instrument(skip(self, execution_context_arc), name = "FlattenNode::execute")]
     async fn execute(
         &self,
-        execution_context: &QueryPlanExecutionContext,
-        mut data: Value,
-        representations: Vec<Value>,
-    ) -> (Value, Vec<Value>, Vec<GraphQLError>) {
-        let errors: Vec<GraphQLError>;
-
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+        _representations: Arc<Vec<&mut Value>>,
+    ) {
+        let mut data_for_flatten = execution_context_arc.data_mutex.lock().await;
         // Use the recursive traversal function on the temporarily owned data
-        let collected_representations = traverse_and_collect(
-            &mut data, // Operate on the separated data
+        let representations = traverse_and_collect(
+            &mut data_for_flatten, // Operate on the separated data
             self.path
                 .iter()
                 .map(|s| s.as_str())
@@ -524,55 +453,28 @@ impl ExecutablePlanNode for FlattenNode {
                 .as_slice(),
         );
 
-        if !collected_representations.is_empty() {
-            let representations: Vec<Value> = collected_representations
-                .iter()
-                .map(|v| (**v).clone())
-                .collect();
-            // Execute the child node. `execution_context` can be borrowed mutably
-            // because `collected_representations` borrows `data_for_flatten`, not `execution_context.data`.
-            let (_result_data, result_representations, result_errors) = self
-                .node
-                .execute(
-                    execution_context,
-                    Value::Null,     // Pass Null as data to the child node
-                    representations, // Pass representations borrowing data_for_flatten
-                )
-                .await;
-            errors = result_errors;
-            // Merge the results back into the data
-            for (result_representation, current_repr) in result_representations
-                .into_iter()
-                .zip(collected_representations)
-            {
-                // Merge the entity into the current representation
-                deep_merge(current_repr, result_representation);
-            }
-            // Borrows held by collected_representations end here
-        } else {
-            // Log if no representations were found for the path.
-            warn!(
-                "Flatten node produced no representations for path {:?}. Skipping child node execution.",
-                self.path
-            );
-            errors = Vec::new();
-        };
-
-        (data, representations, errors)
+        // Execute the child node. `execution_context` can be borrowed mutably
+        // because `collected_representations` borrows `data_for_flatten`, not `execution_context.data`.
+        let execution_context_arc = execution_context_arc.clone();
+        self.node
+            .execute(
+                execution_context_arc,
+                Arc::new(representations), // Pass representations borrowing data_for_flatten
+            )
+            .await
     }
 }
 
 #[async_trait]
 impl ExecutablePlanNode for ConditionNode {
-    #[instrument(skip(self, execution_context), name = "ConditionNode::execute")]
+    #[instrument(skip(self, execution_context_arc), name = "ConditionNode::execute")]
     async fn execute(
         &self,
-        execution_context: &QueryPlanExecutionContext,
-        data: Value,
-        representations: Vec<Value>,
-    ) -> (Value, Vec<Value>, Vec<GraphQLError>) {
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+        representations: Arc<Vec<&mut Value>>,
+    ) {
         // Get the condition variable from the context
-        let condition_value: bool = match execution_context.variable_values {
+        let condition_value: bool = match execution_context_arc.variable_values {
             Some(ref variable_values) => {
                 match variable_values.get(&self.condition) {
                     Some(value) => {
@@ -597,66 +499,38 @@ impl ExecutablePlanNode for ConditionNode {
             match &self.if_clause {
                 Some(if_clause) => {
                     if_clause
-                        .execute(execution_context, data, representations)
+                        .execute(execution_context_arc, representations)
                         .await
                 }
-                None => {
-                    // If no if clause, return the original representations
-                    let errors = Vec::new();
-                    (data, representations, errors)
-                }
+                None => {}
             }
         } else {
             match &self.else_clause {
                 Some(else_clause) => {
                     else_clause
-                        .execute(execution_context, data, representations)
+                        .execute(execution_context_arc, representations)
                         .await
                 }
-                None => {
-                    // If no else clause, do nothing
-                    let errors = Vec::new();
-                    (data, representations, errors)
-                }
+                None => {}
             }
         }
     }
 }
 
+#[async_trait]
 impl ExecutableQueryPlan for QueryPlan {
-    #[instrument(skip(self, execution_context))]
-    async fn execute(&self, execution_context: QueryPlanExecutionContext<'_>) -> ExecutionResult {
+    #[instrument(skip(self, execution_context_arc))]
+    async fn execute(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>) {
         match &self.node {
             Some(root_node) => {
-                let data = Value::Null; // Placeholder for data
-                let representations = Vec::new(); // Placeholder for representations
-                                                  // Execute the root node
-                                                  // The ? operator will propagate errors upwards
-                let (data, _representations, errors) = root_node
+                root_node
                     .execute(
-                        &execution_context,
-                        data,
-                        representations, // No initial representations
+                        execution_context_arc.clone(),
+                        Arc::new(vec![]), // No representations passed to the root node
                     )
-                    .await;
-                ExecutionResult {
-                    data: Some(data),
-                    errors: if errors.is_empty() {
-                        None
-                    } else {
-                        Some(errors)
-                    },
-                    extensions: None,
-                }
+                    .await
             }
-            None => {
-                // Handle case where QueryPlan has no node (though checked earlier)
-                ExecutionResult {
-                    data: None,
-                    errors: None,
-                    extensions: None,
-                }
-            }
+            None => {}
         }
     }
 }
@@ -737,6 +611,10 @@ pub struct QueryPlanExecutionContext<'a> {
     pub variable_values: &'a Option<HashMap<String, Value>>,
     schema_metadata: &'a SchemaMetadata,
     executor: HTTPSubgraphExecutor<'a>,
+    // Using `Value` as the main data structure, usually will be a JSON object
+    pub data_mutex: Mutex<Value>,
+    pub errors_mutex: Mutex<Vec<GraphQLError>>,
+    pub extensions_mutex: Mutex<HashMap<String, Value>>,
 }
 
 impl QueryPlanExecutionContext<'_> {
@@ -755,11 +633,36 @@ impl QueryPlanExecutionContext<'_> {
             .await
     }
 
+    async fn merge_extensions(&self, new_extensions: HashMap<String, Value>) {
+        let mut extensions_lock = self.extensions_mutex.lock().await;
+        if extensions_lock.is_empty() {
+            *extensions_lock = new_extensions;
+            return;
+        }
+        extensions_lock.extend(new_extensions);
+    }
+
+    async fn add_errors(&self, errors: Vec<GraphQLError>) {
+        let mut errors_lock = self.errors_mutex.lock().await;
+        if (*errors_lock).is_empty() {
+            *errors_lock = errors;
+            return;
+        }
+        // Add new errors to the existing list
+        errors_lock.extend(errors);
+    }
+    async fn merge_data(&self, new_data: Value) {
+        let mut data_lock = self.data_mutex.lock().await;
+        if *data_lock == Value::Null {
+            *data_lock = new_data;
+            return;
+        }
+        // Merge new data into existing data
+        deep_merge(&mut data_lock, new_data);
+    }
+
     #[instrument(skip(self))]
     fn project_requires(&self, requires_selections: &Vec<SelectionItem>, entity: &Value) -> Value {
-        if requires_selections.is_empty() {
-            return entity.clone();
-        }
         match entity {
             Value::Null => Value::Null,
             Value::Array(entity_array) => Value::Array(
@@ -811,7 +714,9 @@ impl QueryPlanExecutionContext<'_> {
                     result
                 }
             }
-            _ => entity.clone(),
+            Value::Bool(bool) => Value::Bool(*bool),
+            Value::Number(num) => Value::Number(num.clone()),
+            Value::String(string) => Value::String(string.to_string()),
         }
     }
 }
@@ -948,166 +853,159 @@ impl HTTPSubgraphExecutor<'_> {
 }
 
 fn project_selection_set(
-    data: &Value,
+    data: &mut Value,
+    errors: &mut Vec<GraphQLError>,
     selection_set: &SelectionSet,
     type_name: &str,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
-) -> (Value, Vec<GraphQLError>) {
-    let mut errors: Vec<GraphQLError> = Vec::new();
-    // If selection_set is empty, return the original data
-    let type_name = match data.get("__typename") {
-        Some(Value::String(type_name)) => type_name,
-        _ => type_name,
-    };
-    // Get the type fields for the current type
-    let field_map = schema_metadata.type_fields.get(type_name);
-    match (
-        selection_set,
-        // Get enum values for the current type
-        schema_metadata.enum_values.get(type_name),
-        data,
-    ) {
-        // In case of composite type
-        (selection_set, _, Value::Object(obj)) => {
-            // Type is not found in the schema
-            if field_map.is_none() {
-                if selection_set.items.is_empty() {
-                    return (data.clone(), errors); // No fields to project, return original data
-                }
-                return (Value::Null, errors); // No fields found for the type
-            }
-            let field_map = field_map.unwrap();
-            let mut result = Value::Object(serde_json::Map::new());
-            for selection in &selection_set.items {
-                match selection {
-                    SelectionItem::Field(field) => {
-                        if let Some(ref skip_variable) = field.skip_if {
-                            let variable_value = variable_values
-                                .as_ref()
-                                .and_then(|vars| vars.get(skip_variable));
-                            if variable_value == Some(&Value::Bool(true)) {
-                                continue; // Skip this field if the variable is true
-                            }
-                        }
-                        if let Some(ref include_variable) = field.include_if {
-                            let variable_value = variable_values
-                                .as_ref()
-                                .and_then(|vars| vars.get(include_variable));
-                            if variable_value != Some(&Value::Bool(true)) {
-                                continue; // Skip this field if the variable is not true
-                            }
-                        }
-                        let response_key = field.alias.as_ref().unwrap_or(&field.name).to_string();
-                        let result_map = result.as_object_mut().unwrap();
-                        if field.name == "__typename" {
-                            result_map.insert(response_key, Value::String(type_name.to_string()));
-                            continue;
-                        }
-                        let field_type = field_map.get(&field.name);
-                        let field_val = if field.name == "__schema" && type_name == "Query" {
-                            // Special case for introspection query
-                            Some(&schema_metadata.introspection_schema_root_json)
-                        } else {
-                            obj.get(&response_key)
-                        };
-                        match (field_type, field_val) {
-                            (Some(field_type), Some(field_val)) => {
-                                let (projected, projected_errs) = project_selection_set(
-                                    field_val,
-                                    &field.selections,
-                                    field_type,
-                                    schema_metadata,
-                                    variable_values,
-                                );
-                                errors.extend(projected_errs);
-                                result_map.insert(response_key, projected);
-                            }
-                            (Some(_field_type), None) => {
-                                // If the field is not found in the object, set it to Null
-                                result_map.insert(response_key, Value::Null);
-                            }
-                            (None, _) => {
-                                warn!(
-                                    "Field {} not found in type {}. Skipping projection.",
-                                    field.name, type_name
-                                );
-                            }
-                        }
-                    }
-                    SelectionItem::InlineFragment(inline_fragment) => {
-                        if entity_satisfies_type_condition(
-                            &schema_metadata.possible_types,
-                            type_name,
-                            &inline_fragment.type_condition,
-                        ) {
-                            let type_name = obj
-                                .get("__typename")
-                                .map(|v| v.to_string())
-                                .unwrap_or(inline_fragment.type_condition.to_string());
-
-                            let (projected, projected_errs) = project_selection_set(
-                                data,
-                                &inline_fragment.selections,
-                                &type_name,
-                                schema_metadata,
-                                variable_values,
-                            );
-                            errors.extend(projected_errs);
-                            deep_merge(&mut result, projected);
-                        }
-                    }
-                }
-            }
-            (result, errors)
-        }
-        // In case of an array
-        (_, _, Value::Array(arr)) => {
-            let data = Value::Array(
-                arr.iter()
-                    .map(|item| {
-                        let (item_projected, item_errors) = project_selection_set(
-                            item,
-                            selection_set,
-                            type_name,
-                            schema_metadata,
-                            variable_values,
-                        );
-                        errors.extend(item_errors);
-                        item_projected
-                    })
-                    .collect(),
-            );
-            (data, errors)
-        }
-        // In case of enum type with a string
-        (_, Some(enum_values), Value::String(value)) => {
-            // Check if the value is in the enum values
-            if enum_values.contains(value) {
-                (Value::String(value.to_string()), errors) // Return the value as is
-            } else {
+) {
+    if selection_set.is_empty() {
+        // If selection set is empty, no need to project further
+        return;
+    }
+    if data.is_null() {
+        // If data is Null, no need to project further
+        return;
+    }
+    
+    if data.is_string() {
+        if let Some(enum_values) = schema_metadata.enum_values.get(type_name) {
+            let value = data.as_str().unwrap();
+            let value_str = value.to_string();
+            if !enum_values.contains(&value_str) {
+                // If the value is not a valid enum value, add an error
+                // and set data to Null
+                *data = Value::Null; // Set data to Null if the value is not valid
                 errors.push(GraphQLError {
                     message: format!(
-                        "Value '{}' is not a valid enum value for type '{}'",
-                        value, type_name
+                        "Value is not a valid enum value for type '{}'",
+                        type_name
                     ),
                     locations: None,
                     path: None,
                     extensions: None,
                 });
-                (Value::Null, errors) // If not found, return Null
             }
         }
-        (_, _, value) => (value.clone(), errors), // No fields found for the type
+        return; // No further processing needed for strings
+    }
+    
+    if data.is_array() {
+        // If data is an array, project each item in the array
+        for item in data.as_array_mut().unwrap() {
+            project_selection_set(
+                item,
+                errors,
+                selection_set,
+                type_name,
+                schema_metadata,
+                variable_values,
+            );
+        }
+        return; // No further processing needed for arrays
+    }
+    // Get the type fields for the current type
+    let field_map = schema_metadata.type_fields.get(type_name);
+
+    // Type is not found in the schema
+    if field_map.is_none() {
+        *data = Value::Null; // If no fields found, set data to Null
+        return; // No fields found for the type
+    }
+    let field_map = field_map.unwrap();
+    for selection in &selection_set.items {
+        match selection {
+            SelectionItem::Field(field) => {
+                let obj = data.as_object_mut().unwrap();
+                if let Some(ref skip_variable) = field.skip_if {
+                    let variable_value = variable_values
+                        .as_ref()
+                        .and_then(|vars| vars.get(skip_variable));
+                    if variable_value == Some(&Value::Bool(true)) {
+                        continue; // Skip this field if the variable is true
+                    }
+                }
+                if let Some(ref include_variable) = field.include_if {
+                    let variable_value = variable_values
+                        .as_ref()
+                        .and_then(|vars| vars.get(include_variable));
+                    if variable_value != Some(&Value::Bool(true)) {
+                        continue; // Skip this field if the variable is not true
+                    }
+                }
+                let response_key = field.alias.as_ref().unwrap_or(&field.name).to_string();
+                if field.name == "__typename" {
+                    let type_name = match obj.get("__typename") {
+                        Some(Value::String(type_name)) => type_name,
+                        _ => type_name,
+                    };
+                    obj.insert(response_key, Value::String(type_name.to_string()));
+                    continue;
+                }
+                let field_type = field_map.get(&field.name);
+                if field.name == "__schema" && type_name == "Query" {
+                    obj.insert(
+                        "__schema".to_string(),
+                        schema_metadata.introspection_schema_root_json.clone(),
+                    );
+                }
+                let field_val = obj.get_mut(&response_key);
+                match (field_type, field_val) {
+                    (Some(field_type), Some(field_val)) => {
+                        project_selection_set(
+                            field_val,
+                            errors,
+                            &field.selections,
+                            field_type,
+                            schema_metadata,
+                            variable_values,
+                        );
+                    }
+                    (Some(_field_type), None) => {
+                        // If the field is not found in the object, set it to Null
+                        obj.insert(response_key, Value::Null);
+                    }
+                    (None, _) => {
+                        warn!(
+                            "Field {} not found in type {}. Skipping projection.",
+                            field.name, type_name
+                        );
+                    }
+                }
+            }
+            SelectionItem::InlineFragment(inline_fragment) => {
+                if entity_satisfies_type_condition(
+                    &schema_metadata.possible_types,
+                    type_name,
+                    &inline_fragment.type_condition,
+                ) {
+                    let type_name = data
+                        .get("__typename")
+                        .map(|v| v.to_string())
+                        .unwrap_or(inline_fragment.type_condition.to_string());
+
+                    project_selection_set(
+                        data,
+                        errors,
+                        &inline_fragment.selections,
+                        &type_name,
+                        schema_metadata,
+                        variable_values,
+                    );
+                }
+            }
+        }
     }
 }
 
 fn project_data_by_operation(
-    data: &Value,
+    data: &mut Value,
+    errors: &mut Vec<GraphQLError>,
     operation: &OperationDefinition,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
-) -> (Value, Vec<GraphQLError>) {
+) {
     let root_type_name = match operation.operation_kind {
         Some(OperationKind::Query) => "Query",
         Some(OperationKind::Mutation) => "Mutation",
@@ -1117,6 +1015,7 @@ fn project_data_by_operation(
     // Project the data based on the selection set
     project_selection_set(
         data,
+        errors,
         &operation.selection_set,
         root_type_name,
         schema_metadata,
@@ -1138,40 +1037,55 @@ pub async fn execute_query_plan(
         subgraph_endpoint_map,
         http_client,
     };
+    let result_data = Value::Null; // Initial data is Null
+    let result_errors = vec![]; // Initial errors are empty
+    let result_extensions = HashMap::new(); // Initial extensions are empty
     let execution_context = QueryPlanExecutionContext {
         variable_values,
         executor: http_executor,
         schema_metadata,
+        data_mutex: Mutex::new(result_data),
+        errors_mutex: Mutex::new(result_errors),
+        extensions_mutex: Mutex::new(result_extensions),
     };
-    let mut result = query_plan.execute(execution_context).await;
-    if result.data.as_ref().is_some() || has_introspection {
-        let (data, errors) = project_data_by_operation(
-            &result.data.unwrap_or(Value::Object(serde_json::Map::new())),
+    let execution_context_arc = Arc::new(execution_context);
+    query_plan.execute(execution_context_arc.clone()).await;
+    let execution_context = Arc::into_inner(execution_context_arc).unwrap();
+    let mut result_data = execution_context.data_mutex.into_inner();
+    let mut result_errors = execution_context.errors_mutex.into_inner();
+    let mut result_extensions = execution_context.extensions_mutex.into_inner();
+    if !result_data.is_null() || has_introspection {
+        if result_data.is_null() {
+            result_data = Value::Object(serde_json::Map::new()); // Initialize as empty object if Null
+        }
+        project_data_by_operation(
+            &mut result_data,
+            &mut result_errors,
             operation,
             schema_metadata,
             variable_values,
         );
-        result.data = Some(data);
-        result.errors = match result.errors {
-            Some(mut existing_errors) => {
-                existing_errors.extend(errors);
-                Some(existing_errors)
-            }
-            None => {
-                if errors.is_empty() {
-                    None
-                } else {
-                    Some(errors)
-                }
-            }
-        }
     }
 
     #[cfg(debug_assertions)] // Only log in debug builds
     {
-        let mut extensions = HashMap::new();
-        extensions.insert("queryPlan".to_string(), serde_json::json!(query_plan));
-        result.extensions = Some(extensions);
+        result_extensions.insert("queryPlan".to_string(), serde_json::json!(query_plan));
     }
-    result
+    ExecutionResult {
+        data: if result_data.is_null() {
+            None
+        } else {
+            Some(result_data)
+        },
+        errors: if result_errors.is_empty() {
+            None
+        } else {
+            Some(result_errors)
+        },
+        extensions: if result_extensions.is_empty() {
+            None
+        } else {
+            Some(result_extensions)
+        },
+    }
 }
