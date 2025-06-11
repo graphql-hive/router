@@ -48,10 +48,8 @@ pub fn init_logger() {
 
 pub fn read_supergraph(fixture_path: &str) -> String {
     let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(fixture_path);
-    let supergraph_sdl =
-        std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
 
-    supergraph_sdl
+    std::fs::read_to_string(supergraph_path).expect("Unable to read input file")
 }
 
 pub fn build_query_plan(
