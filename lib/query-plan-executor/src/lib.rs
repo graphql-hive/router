@@ -653,10 +653,12 @@ impl QueryPlanExecutionContext<'_> {
             (Value::Object(data_map), Value::Object(new_map)) => {
                 deep_merge::deep_merge_objects(data_map, new_map);
             }
-            (Value::Null, Value::Object(new_map)) => {
-                *data_lock = Value::Object(new_map);
+            (Value::Null, new_data) => {
+                *data_lock = new_data;
             }
-            _ => {}
+            (_, new_data) => {
+                deep_merge::deep_merge(&mut data_lock, new_data);
+            }
         }
     }
 
