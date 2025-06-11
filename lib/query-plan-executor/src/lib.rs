@@ -1073,6 +1073,7 @@ pub async fn execute_query_plan(
     let execution_context = Arc::into_inner(execution_context_arc).unwrap();
     let mut result_data = execution_context.data_mutex.into_inner();
     let mut result_errors = execution_context.errors_mutex.into_inner();
+    #[allow(unused_mut)]
     let mut result_extensions = execution_context.extensions_mutex.into_inner();
     if !result_data.is_null() || has_introspection {
         if result_data.is_null() {
