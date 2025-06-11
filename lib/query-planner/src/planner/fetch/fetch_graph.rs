@@ -1593,7 +1593,7 @@ fn find_satisfiable_key<'a>(
             &Default::default(),
             true,
         )
-        .map_err(FetchGraphError::SatisfiableKeyFailure)?
+        .map_err(|err| FetchGraphError::SatisfiableKeyFailure(Box::new(err)))?
         .is_some()
         {
             return edge_ref

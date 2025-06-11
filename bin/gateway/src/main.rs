@@ -10,7 +10,7 @@ use query_plan_executor::{execute_query_plan, ExecutionResult};
 use query_plan_executor::{ExecutionRequest, GraphQLError};
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::planner::Planner;
-use query_planner::state::supergraph_state::{OperationKind, SupergraphState};
+use query_planner::state::supergraph_state::OperationKind;
 use query_planner::utils::parsing::parse_schema;
 use query_planner::utils::parsing::safe_parse_operation;
 use serde_json::json;
@@ -43,15 +43,15 @@ async fn main() {
     let supergraph_sdl =
         std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
-    let supergraph_state = SupergraphState::new(&parsed_schema);
     let planner = Planner::new_from_supergraph(&parsed_schema).expect("failed to create planner");
+    let subgraph_endpoint_map = planner.supergraph.subgraph_endpoint_map.clone();
     let schema_metadata = planner.consumer_schema.schema_metadata();
     let serve_data = ServeData {
         supergraph_source: supergraph_path.to_string(),
         planner,
         schema_metadata,
         validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
-        subgraph_endpoint_map: supergraph_state.subgraph_endpoint_map,
+        subgraph_endpoint_map,
         http_client: reqwest::Client::new(),
         plan_cache: moka::future::Cache::new(1000),
         validate_cache: moka::future::Cache::new(1000),
@@ -186,7 +186,7 @@ async fn handle_execution_request(
     debug!("original document: {}", original_document);
 
     let normalized_document = match normalize_operation(
-        &serve_data.planner.consumer_schema,
+        &serve_data.planner.supergraph,
         &original_document,
         execution_request.operation_name.as_deref(),
     ) {

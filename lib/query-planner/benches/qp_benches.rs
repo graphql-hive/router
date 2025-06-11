@@ -3,7 +3,6 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use graphql_parser::query::Document;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
-use query_planner::consumer_schema::ConsumerSchema;
 use query_planner::graph::Graph;
 use query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
 use query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
@@ -20,29 +19,25 @@ fn get_operation(operation_path: &str) -> Document<'static, String> {
 
 fn get_executable_operation(
     parsed_document: &Document<'static, String>,
-    consumer_schema: &ConsumerSchema,
+    supergraph_state: &SupergraphState,
     operation_name: Option<&str>,
 ) -> OperationDefinition {
-    normalize_operation(consumer_schema, parsed_document, operation_name)
+    normalize_operation(supergraph_state, parsed_document, operation_name)
         .unwrap()
         .operation
 }
 
-fn get_supergraph(path: &str) -> (Graph, ConsumerSchema) {
-    let supergraph_sdl = std::fs::read_to_string(path).expect("Unable to read input file");
+fn query_plan_pipeline(c: &mut Criterion) {
+    let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
+        .expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
     let supergraph_state = SupergraphState::new(&parsed_schema);
+    let graph =
+        Graph::graph_from_supergraph_state(&supergraph_state).expect("failed to create graph");
 
-    (
-        Graph::graph_from_supergraph_state(&supergraph_state).expect("failed to create graph"),
-        ConsumerSchema::new_from_supergraph(&parsed_schema),
-    )
-}
-
-fn query_plan_pipeline(c: &mut Criterion) {
-    let (graph, consumer_schema) = get_supergraph("../../bench/supergraph.graphql");
     let parsed_document = get_operation("../../bench/operation.graphql");
-    let operation = get_executable_operation(&parsed_document, &consumer_schema, Some("TestQuery"));
+    let operation =
+        get_executable_operation(&parsed_document, &supergraph_state, Some("TestQuery"));
 
     c.bench_function("query_plan", |b| {
         b.iter(|| {
@@ -61,7 +56,7 @@ fn query_plan_pipeline(c: &mut Criterion) {
     c.bench_function("normalization", |b| {
         b.iter(|| {
             let op =
-                get_executable_operation(&parsed_document, &consumer_schema, Some("TestQuery"));
+                get_executable_operation(&parsed_document, &supergraph_state, Some("TestQuery"));
             black_box(op);
         })
     });

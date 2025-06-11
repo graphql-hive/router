@@ -1,3 +1,4 @@
+use graphql_parser::query as query_ast;
 use serde::{ser::SerializeSeq, Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -12,6 +13,18 @@ use super::{arguments::ArgumentsMap, selection_item::SelectionItem};
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SelectionSet {
     pub items: Vec<SelectionItem>,
+}
+
+impl From<query_ast::SelectionSet<'_, String>> for SelectionSet {
+    fn from(selection_set: query_ast::SelectionSet<'_, String>) -> Self {
+        Self {
+            items: selection_set
+                .items
+                .into_iter()
+                .map(|item| item.into())
+                .collect::<Vec<SelectionItem>>(),
+        }
+    }
 }
 
 impl PartialEq for SelectionSet {

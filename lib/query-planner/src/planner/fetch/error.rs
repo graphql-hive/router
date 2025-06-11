@@ -8,7 +8,7 @@ pub enum FetchGraphError {
     #[error("Internal Error: {0}")]
     Internal(String),
     #[error("Graph error: {0}")]
-    GraphFailure(GraphError),
+    GraphFailure(Box<GraphError>),
     #[error("Missing FetchStep: {0} {1}")]
     MissingStep(usize, String),
     #[error("Missing parent of FetchStep: {0}")]
@@ -18,7 +18,7 @@ pub enum FetchGraphError {
     #[error("Expected a single parent")]
     NonSingleParent,
     #[error("Subgraph name: {0}")]
-    MissingSubgraphName(Node),
+    MissingSubgraphName(Box<Node>),
     #[error("Missing requirement tree for @requires")]
     MissingRequirement,
     #[error("Expected a single children of the @requires query tree node")]
@@ -28,11 +28,11 @@ pub enum FetchGraphError {
     #[error("Expected different indexes: {0}")]
     SameNodeIndex(usize),
     #[error("Failed ot find satisfiable key for @requires: {0}")]
-    SatisfiableKeyFailure(WalkOperationError),
+    SatisfiableKeyFailure(Box<WalkOperationError>),
 }
 
 impl From<GraphError> for FetchGraphError {
     fn from(error: GraphError) -> Self {
-        FetchGraphError::GraphFailure(error)
+        FetchGraphError::GraphFailure(Box::new(error))
     }
 }

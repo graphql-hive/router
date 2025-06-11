@@ -1,6 +1,10 @@
-use crate::utils::pretty_display::PrettyDisplay;
+use crate::{
+    ast::normalization::utils::extract_type_condition, utils::pretty_display::PrettyDisplay,
+};
+use graphql_parser::query as query_ast;
 
 use super::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
+use core::panic;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -197,3 +201,92 @@ impl PartialEq for SelectionItem {
 }
 
 impl Eq for SelectionItem {}
+
+impl From<query_ast::Selection<'_, String>> for SelectionItem {
+    fn from(value: query_ast::Selection<'_, String>) -> Self {
+        match value {
+            query_ast::Selection::Field(field) => SelectionItem::Field(field.into()),
+            query_ast::Selection::InlineFragment(fragment) => {
+                SelectionItem::InlineFragment(fragment.into())
+            }
+            query_ast::Selection::FragmentSpread(_) => {
+                panic!("Received a fragment spread, but it should be inlined after normalization");
+            }
+        }
+    }
+}
+
+impl From<query_ast::Field<'_, String>> for FieldSelection {
+    fn from(field: query_ast::Field<'_, String>) -> Self {
+        let mut skip_if: Option<String> = None;
+        let mut include_if: Option<String> = None;
+        for directive in &field.directives {
+            match directive.name.as_str() {
+                "skip" => {
+                    let if_arg =
+                        directive
+                            .arguments
+                            .iter()
+                            .find_map(|(name, value)| match name == "if" {
+                                true => Some(value),
+                                false => None,
+                            });
+                    match if_arg {
+                        Some(query_ast::Value::Boolean(true)) => {
+                            continue;
+                        }
+                        Some(query_ast::Value::Variable(var_name)) => {
+                            skip_if = Some(var_name.to_string());
+                        }
+                        _ => {}
+                    }
+                }
+                "include" => {
+                    let if_arg =
+                        directive
+                            .arguments
+                            .iter()
+                            .find_map(|(name, value)| match name == "if" {
+                                true => Some(value),
+                                false => None,
+                            });
+                    match if_arg {
+                        Some(query_ast::Value::Boolean(false)) => {
+                            continue;
+                        }
+                        Some(query_ast::Value::Variable(var_name)) => {
+                            include_if = Some(var_name.to_string());
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Self {
+            name: field.name,
+            alias: field.alias,
+            arguments: match field.arguments.len() {
+                0 => None,
+                _ => Some(field.arguments.into()),
+            },
+            selections: field.selection_set.into(),
+            skip_if,
+            include_if,
+        }
+    }
+}
+
+impl From<query_ast::InlineFragment<'_, String>> for InlineFragmentSelection {
+    fn from(value: query_ast::InlineFragment<'_, String>) -> Self {
+        Self {
+            type_condition: extract_type_condition(
+                &value
+                    .type_condition
+                    .expect("expected a type condition after normalization"),
+            ),
+            selections: value.selection_set.into(),
+        }
+    }
+}

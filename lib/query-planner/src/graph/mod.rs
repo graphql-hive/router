@@ -10,7 +10,9 @@ use std::{
     hash::Hash,
 };
 
+use super::ast::normalization::utils::extract_type_condition;
 use crate::{
+    ast::type_aware_selection::TypeAwareSelection,
     federation_spec::FederationRules,
     graph::node::{SubgraphTypeSpecialization, UnionSubsetData},
     state::supergraph_state::{
@@ -289,28 +291,34 @@ impl Graph {
                                 def_name,
                                 state.resolve_graph_id(&join_type2.graph_id)?,
                             ));
-                            let selection_resolver =
-                                state.selection_resolvers_for_subgraph(&join_type2.graph_id)?;
-                            let selection = selection_resolver.resolve(def_name, key)?;
+                            let key_selection = FederationRules::parse_key(
+                                state,
+                                &join_type2.graph_id,
+                                def_name,
+                                key,
+                            );
 
                             info!(
                                 "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
                                 def_name, join_type1.graph_id, def_name, join_type2.graph_id, key
                             );
 
-                            self.upsert_edge(head, tail, Edge::create_entity_move(key, selection));
+                            self.upsert_edge(
+                                head,
+                                tail,
+                                Edge::create_entity_move(key, key_selection),
+                            );
                         }
                     } else if let (true, Some(key)) = (&join_type1.resolvable, &join_type1.key) {
-                        let selection_resolver =
-                            state.selection_resolvers_for_subgraph(&join_type1.graph_id)?;
-                        let selection = selection_resolver.resolve(def_name, key)?;
+                        let key_selection =
+                            FederationRules::parse_key(state, &join_type1.graph_id, def_name, key);
 
                         info!(
                             "Creating self-referencing entity move edge in '{}/{}' via key '{}'",
                             def_name, join_type1.graph_id, key
                         );
 
-                        self.upsert_edge(head, head, Edge::create_entity_move(key, selection));
+                        self.upsert_edge(head, head, Edge::create_entity_move(key, key_selection));
                     }
                 }
             }
@@ -513,19 +521,20 @@ impl Graph {
                         continue;
                     }
 
-                    let requirements = match maybe_join_field.and_then(|join_field| {
+                    let requirements = maybe_join_field.and_then(|join_field| {
                         join_field.requires.as_ref().map(|requires_str| {
                           (requires_str, join_field.graph_id.as_ref().expect("join__field(graph:) should exist when join__field(requires:) exists"))
                         })
-                    }) {
-                        Some((requires_str, graph_id)) => {
-                            let selection_resolver = state
-                                .selection_resolvers_for_subgraph(graph_id)?;
-
-                            Some(selection_resolver.resolve(def_name, requires_str)?)
-                        }
-                        None => None,
-                    };
+                    }).map(|(requires_str, graph_id)| TypeAwareSelection {
+                              type_name: def_name.to_string(),
+                              selection_set: FederationRules::parse_requires(
+                                state,
+                                graph_id,
+                                def_name,
+                                requires_str,
+                              )
+                              .into(),
+                          });
 
                     // If a field points to a union type:
                     //
@@ -585,6 +594,7 @@ impl Graph {
                                     type_name: def_name.clone(),
                                     field_name: field_name.clone(),
                                     object_type_name: member.clone(),
+                                    provides: None,
                                 }),
                             ));
                             let abstract_tail = self.upsert_node(Node::new_node(
@@ -763,7 +773,45 @@ impl Graph {
                         )?;
                     }
                 }
-                _ => unimplemented!("fragments are not supported in provides yet"),
+                Selection::InlineFragment(fragment) => {
+                    let type_name_from_cond = extract_type_condition(
+                        fragment.type_condition.as_ref().unwrap_or_else(|| {
+                            // Inline fragments without type condition should have been normalized and converted into selection set
+                            panic!("Inline fragment without type condition detected");
+                        }),
+                    );
+                    let type_def_from_cond =
+                        state.definitions.get(&type_name_from_cond).ok_or_else(|| {
+                            GraphError::DefinitionNotFound(type_name_from_cond.to_string())
+                        })?;
+
+                    // head is either an interface or a union
+                    // tail is a type from a type condition (it's an object type - after normalization)
+                    let tail = self.upsert_node(Node::new_specialized_node(
+                        &type_name_from_cond,
+                        state.resolve_graph_id(graph_id)?,
+                        SubgraphTypeSpecialization::Provides(view_id),
+                    ));
+
+                    // because it's abstract -> object move, add an abstract move edge
+                    self.upsert_edge(head, tail, Edge::AbstractMove(type_name_from_cond.clone()));
+
+                    // use object type (tail) when handling selection sets
+                    self.handle_viewed_selection_set(
+                        state,
+                        &fragment.selection_set,
+                        graph_id,
+                        type_def_from_cond,
+                        tail,
+                        view_id,
+                    )?;
+                }
+                Selection::FragmentSpread(_) => {
+                    // Fragment spreads should have been normalized (converted into inline fragments) at this point
+                    panic!(
+                        "Fragment spread detected. Expected either a Field or an Inline Fragment"
+                    )
+                }
             };
         }
 
@@ -784,8 +832,12 @@ impl Graph {
                             .is_some_and(|v| v == &join_type.graph_id)
                             && join_field.provides.is_some()
                         {
-                            if let Some(selection_set) = FederationRules::parse_provides(join_field)
-                            {
+                            if let Some(selection_set) = FederationRules::parse_provides(
+                                state,
+                                join_field,
+                                &join_type.graph_id,
+                                field_definition.field_type.inner_type(),
+                            ) {
                                 view_id += 1;
 
                                 let head = self.upsert_node(Node::new_node(
@@ -806,17 +858,19 @@ impl Graph {
                                     view_id, def_name, field_name, join_type.graph_id, return_type_name
                                 );
 
-                                let requirements = match join_field.requires.as_ref() {
-                                    Some(requires_str) => {
-                                        let selection_resolver = state
-                                            .selection_resolvers_for_subgraph(
+                                let requirements =
+                                    join_field.requires.as_ref().map(|requires_str| {
+                                        TypeAwareSelection {
+                                            type_name: def_name.to_string(),
+                                            selection_set: FederationRules::parse_requires(
+                                                state,
                                                 join_field.graph_id.as_ref().unwrap(),
-                                            )?;
-
-                                        Some(selection_resolver.resolve(def_name, requires_str)?)
-                                    }
-                                    None => None,
-                                };
+                                                def_name,
+                                                requires_str,
+                                            )
+                                            .into(),
+                                        }
+                                    });
 
                                 self.upsert_edge(
                                     head,

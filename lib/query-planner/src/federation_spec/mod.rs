@@ -4,7 +4,13 @@ use graphql_parser::{
     query::{Definition, OperationDefinition, SelectionSet},
 };
 
-use crate::state::supergraph_state::{SupergraphDefinition, SupergraphField};
+use crate::{
+    ast::{
+        normalization::{context::RootTypes, normalize_operation_mut},
+        type_aware_selection::TypeAwareSelection,
+    },
+    state::supergraph_state::{SupergraphDefinition, SupergraphField, SupergraphState},
+};
 
 pub(crate) mod definitions;
 pub(crate) mod directives;
@@ -18,33 +24,87 @@ pub(crate) mod join_implements;
 pub(crate) mod join_type;
 pub(crate) mod join_union;
 
+fn normalize_fields_argument_value_mut(
+    supergraph: &SupergraphState,
+    type_name: &str,
+    subgraph_name: &String,
+    fields_str: &String,
+) -> SelectionSet<'static, String> {
+    let selection_set_str = format!("{{{fields_str}}}");
+    // TODO: Far from ideal, but we can use the graphql_parser here to get it parsed for us
+    let mut parsed_doc = parse_query(&selection_set_str).unwrap().into_static();
+
+    normalize_operation_mut(
+        supergraph,
+        &mut parsed_doc,
+        None,
+        Some(RootTypes {
+            query: Some(type_name),
+            mutation: None,
+            subscription: None,
+        }),
+        Some(subgraph_name),
+    )
+    .unwrap_or_else(|err| panic!("Normalization error: {err}"));
+
+    match parsed_doc
+        .definitions
+        .first()
+        .expect("failed to parse selection set")
+    {
+        Definition::Operation(OperationDefinition::SelectionSet(selection_set)) => {
+            selection_set.to_owned()
+        }
+        _ => {
+            unreachable!(
+                "Internal error: 'fields' string '{{...}}' did not result in a SelectionSet"
+            )
+        }
+    }
+}
+
 pub struct FederationRules;
 
 impl FederationRules {
+    pub fn parse_key(
+        supergraph: &SupergraphState,
+        subgraph_name: &String,
+        type_name: &str,
+        key: &String,
+    ) -> TypeAwareSelection {
+        let selection_set =
+            normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, key);
+        TypeAwareSelection {
+            type_name: type_name.to_string(),
+            selection_set: selection_set.into(),
+        }
+    }
+
     pub fn parse_provides(
+        supergraph: &SupergraphState,
         join_field: &JoinFieldDirective,
+        subgraph_name: &String,
+        type_name: &str,
     ) -> Option<SelectionSet<'static, String>> {
         if let Some(provides) = &join_field.provides {
-            let selection_set_str = format!("{{{provides}}}");
-            // TODO: Far from ideal, but we can use the graphql_parser here to get it parsed for us
-            let parsed_doc = parse_query(&selection_set_str).unwrap().into_static();
-            let parsed_definition = parsed_doc
-                .definitions
-                .first()
-                .expect("failed to parse selection set for provides")
-                .clone();
-
-            let maybe_selection_set = match parsed_definition {
-                Definition::Operation(OperationDefinition::SelectionSet(selection_set)) => {
-                    Some(selection_set)
-                }
-                _ => return None,
-            };
-
-            return maybe_selection_set;
+            return Some(normalize_fields_argument_value_mut(
+                supergraph,
+                type_name,
+                subgraph_name,
+                provides,
+            ));
         }
 
         None
+    }
+
+    pub fn parse_requires(
+        supergraph: &SupergraphState,
+        subgraph_name: &String,
+        type_name: &str,
+        requires: &String,
+    ) -> SelectionSet<'static, String> {
+        normalize_fields_argument_value_mut(supergraph, type_name, subgraph_name, requires)
     }
 
     pub fn check_field_subgraph_availability<'a>(

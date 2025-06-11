@@ -14,7 +14,7 @@ use crate::federation_spec::directives::{
     JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective, JoinUnionMemberDirective,
 };
 
-use super::{selection_resolver::SelectionResolver, subgraph_state::SubgraphState};
+use super::subgraph_state::SubgraphState;
 
 static BUILDIB_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
 
@@ -50,7 +50,7 @@ pub struct SupergraphState {
     /// A set of all known scalars in this schema, including built-ins
     pub known_scalars: HashSet<String>,
     /// A map from subgraph id to a subgraph state
-    pub subgraphs_state: HashMap<String, SelectionResolver>,
+    pub subgraphs_state: HashMap<String, SubgraphState>,
     /// A map of (subgraph_name, endpoint) to make it easy to resolve
     pub subgraph_endpoint_map: HashMap<String, String>,
     /// The root entrypoints
@@ -77,11 +77,7 @@ impl SupergraphState {
 
         for subgraph_id in instance.known_subgraphs.keys() {
             let state = SubgraphState::decompose_from_supergraph(subgraph_id, &instance);
-            let resolver = SelectionResolver::new_from_state(state);
-
-            instance
-                .subgraphs_state
-                .insert(subgraph_id.clone(), resolver);
+            instance.subgraphs_state.insert(subgraph_id.clone(), state);
         }
 
         instance
@@ -98,16 +94,6 @@ impl SupergraphState {
         &self,
         subgraph_id: &str,
     ) -> Result<&SubgraphState, SupergraphStateError> {
-        self.subgraphs_state
-            .get(subgraph_id)
-            .ok_or_else(|| SupergraphStateError::SubgraphNotFound(subgraph_id.to_string()))
-            .map(|v| &v.subgraph_state)
-    }
-
-    pub fn selection_resolvers_for_subgraph(
-        &self,
-        subgraph_id: &str,
-    ) -> Result<&SelectionResolver, SupergraphStateError> {
         self.subgraphs_state
             .get(subgraph_id)
             .ok_or_else(|| SupergraphStateError::SubgraphNotFound(subgraph_id.to_string()))
