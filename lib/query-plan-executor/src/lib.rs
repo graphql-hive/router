@@ -21,6 +21,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, instrument, warn}; // For reading file in main
 
 use crate::schema_metadata::SchemaMetadata;
+mod deep_merge;
 pub mod introspection;
 pub mod schema_metadata;
 pub mod validation;
@@ -234,7 +235,7 @@ impl ExecutableFetchNode for FetchNode {
                             .as_object_mut()
                             .unwrap();
                         if let Value::Object(entity_obj) = entity {
-                            representation_obj.extend(entity_obj);
+                            deep_merge::deep_merge_objects(representation_obj, entity_obj);
                         }
                     }
                 }
@@ -650,7 +651,7 @@ impl QueryPlanExecutionContext<'_> {
         let mut data_lock = self.data_mutex.lock().await;
         match (&mut *data_lock, new_data) {
             (Value::Object(data_map), Value::Object(new_map)) => {
-                data_map.extend(new_map);
+                deep_merge::deep_merge_objects(data_map, new_map);
             }
             (Value::Null, Value::Object(new_map)) => {
                 *data_lock = Value::Object(new_map);
