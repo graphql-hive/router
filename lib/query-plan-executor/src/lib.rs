@@ -859,19 +859,6 @@ fn project_selection_set_with_map(
     for selection in &selection_set.items {
         match selection {
             SelectionItem::Field(field) => {
-                let response_key = field.alias.as_ref().unwrap_or(&field.name).to_string();
-                response_keys.insert(response_key.to_string());
-                if field.name == "__typename" {
-                    obj.insert(response_key, Value::String(type_name.to_string()));
-                    continue;
-                }
-                // Get the type fields for the current type
-                let field_map = schema_metadata.type_fields.get(&type_name);
-                // Type is not found in the schema
-                if field_map.is_none() {
-                    continue;
-                }
-                let field_map = field_map.unwrap();
                 if let Some(ref skip_variable) = field.skip_if {
                     let variable_value = variable_values
                         .as_ref()
@@ -888,6 +875,19 @@ fn project_selection_set_with_map(
                         continue; // Skip this field if the variable is not true
                     }
                 }
+                let response_key = field.alias.as_ref().unwrap_or(&field.name).to_string();
+                response_keys.insert(response_key.to_string());
+                if field.name == "__typename" {
+                    obj.insert(response_key, Value::String(type_name.to_string()));
+                    continue;
+                }
+                // Get the type fields for the current type
+                let field_map = schema_metadata.type_fields.get(&type_name);
+                // Type is not found in the schema
+                if field_map.is_none() {
+                    continue;
+                }
+                let field_map = field_map.unwrap();
                 let field_type = field_map.get(&field.name);
                 if field.name == "__schema" && type_name == "Query" {
                     obj.insert(
