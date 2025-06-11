@@ -11,7 +11,7 @@ use query_planner::{
     state::supergraph_state::OperationKind,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::{collections::HashMap, sync::Arc, vec};
 use tokio::sync::Mutex;
 use tracing::{debug, instrument, warn}; // For reading file in main
@@ -131,15 +131,12 @@ impl ExecutableFetchNode for FetchNode {
             _ => {}
         }
 
-        match fetch_result.data {
-            Some(mut data) => {
-                self.apply_output_rewrites(
-                    &execution_context_arc.schema_metadata.possible_types,
-                    &mut data,
-                );
-                execution_context_arc.merge_data(data).await;
-            }
-            _ => {}
+        if let Some(mut data) = fetch_result.data {
+            self.apply_output_rewrites(
+                &execution_context_arc.schema_metadata.possible_types,
+                &mut data,
+            );
+            execution_context_arc.merge_data(data).await;
         }
 
         match fetch_result.extensions {
@@ -162,7 +159,7 @@ impl ExecutableFetchNode for FetchNode {
         let requires_nodes = self.requires.as_ref().unwrap();
         for (index, entity) in representations.iter().enumerate() {
             let entity_projected =
-                execution_context_arc.project_requires(&requires_nodes.items, &entity);
+                execution_context_arc.project_requires(&requires_nodes.items, entity);
             if !entity_projected.is_null() {
                 filtered_representations.push(entity_projected);
                 filtered_repr_indexes.push(index);
@@ -496,23 +493,15 @@ impl ExecutablePlanNode for ConditionNode {
             }
         };
         if condition_value {
-            match &self.if_clause {
-                Some(if_clause) => {
-                    if_clause
-                        .execute(execution_context_arc, representations)
-                        .await
-                }
-                None => {}
+            if let Some(if_clause) = &self.if_clause {
+                if_clause
+                    .execute(execution_context_arc, representations)
+                    .await
             }
-        } else {
-            match &self.else_clause {
-                Some(else_clause) => {
-                    else_clause
-                        .execute(execution_context_arc, representations)
-                        .await
-                }
-                None => {}
-            }
+        } else if let Some(else_clause) = &self.else_clause {
+            else_clause
+                .execute(execution_context_arc, representations)
+                .await
         }
     }
 }
@@ -521,16 +510,13 @@ impl ExecutablePlanNode for ConditionNode {
 impl ExecutableQueryPlan for QueryPlan {
     #[instrument(skip(self, execution_context_arc))]
     async fn execute(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>) {
-        match &self.node {
-            Some(root_node) => {
-                root_node
-                    .execute(
-                        execution_context_arc.clone(),
-                        Arc::new(vec![]), // No representations passed to the root node
-                    )
-                    .await
-            }
-            None => {}
+        if let Some(root_node) = &self.node {
+            root_node
+                .execute(
+                    execution_context_arc.clone(),
+                    Arc::new(vec![]), // No representations passed to the root node
+                )
+                .await
         }
     }
 }
@@ -852,72 +838,27 @@ impl HTTPSubgraphExecutor<'_> {
     }
 }
 
-fn project_selection_set(
-    data: &mut Value,
+fn project_selection_set_with_map(
+    obj: &mut Map<String, Value>,
     errors: &mut Vec<GraphQLError>,
     selection_set: &SelectionSet,
     type_name: &str,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
 ) {
-    if selection_set.is_empty() {
-        // If selection set is empty, no need to project further
-        return;
-    }
-    if data.is_null() {
-        // If data is Null, no need to project further
-        return;
-    }
-    
-    if data.is_string() {
-        if let Some(enum_values) = schema_metadata.enum_values.get(type_name) {
-            let value = data.as_str().unwrap();
-            let value_str = value.to_string();
-            if !enum_values.contains(&value_str) {
-                // If the value is not a valid enum value, add an error
-                // and set data to Null
-                *data = Value::Null; // Set data to Null if the value is not valid
-                errors.push(GraphQLError {
-                    message: format!(
-                        "Value is not a valid enum value for type '{}'",
-                        type_name
-                    ),
-                    locations: None,
-                    path: None,
-                    extensions: None,
-                });
-            }
-        }
-        return; // No further processing needed for strings
-    }
-    
-    if data.is_array() {
-        // If data is an array, project each item in the array
-        for item in data.as_array_mut().unwrap() {
-            project_selection_set(
-                item,
-                errors,
-                selection_set,
-                type_name,
-                schema_metadata,
-                variable_values,
-            );
-        }
-        return; // No further processing needed for arrays
-    }
     // Get the type fields for the current type
     let field_map = schema_metadata.type_fields.get(type_name);
 
     // Type is not found in the schema
     if field_map.is_none() {
-        *data = Value::Null; // If no fields found, set data to Null
+        *obj = Map::new(); // If no fields found, set data to Null
         return; // No fields found for the type
     }
     let field_map = field_map.unwrap();
+    let mut projected_obj = Map::new();
     for selection in &selection_set.items {
         match selection {
             SelectionItem::Field(field) => {
-                let obj = data.as_object_mut().unwrap();
                 if let Some(ref skip_variable) = field.skip_if {
                     let variable_value = variable_values
                         .as_ref()
@@ -940,31 +881,32 @@ fn project_selection_set(
                         Some(Value::String(type_name)) => type_name,
                         _ => type_name,
                     };
-                    obj.insert(response_key, Value::String(type_name.to_string()));
+                    projected_obj.insert(response_key, Value::String(type_name.to_string()));
                     continue;
                 }
                 let field_type = field_map.get(&field.name);
                 if field.name == "__schema" && type_name == "Query" {
-                    obj.insert(
+                    projected_obj.insert(
                         "__schema".to_string(),
                         schema_metadata.introspection_schema_root_json.clone(),
                     );
                 }
-                let field_val = obj.get_mut(&response_key);
+                let field_val = obj.remove(&response_key);
                 match (field_type, field_val) {
-                    (Some(field_type), Some(field_val)) => {
+                    (Some(field_type), Some(mut field_val)) => {
                         project_selection_set(
-                            field_val,
+                            &mut field_val,
                             errors,
                             &field.selections,
                             field_type,
                             schema_metadata,
                             variable_values,
                         );
+                        projected_obj.insert(response_key, field_val);
                     }
                     (Some(_field_type), None) => {
                         // If the field is not found in the object, set it to Null
-                        obj.insert(response_key, Value::Null);
+                        projected_obj.insert(response_key, Value::Null);
                     }
                     (None, _) => {
                         warn!(
@@ -980,13 +922,13 @@ fn project_selection_set(
                     type_name,
                     &inline_fragment.type_condition,
                 ) {
-                    let type_name = data
+                    let type_name = obj
                         .get("__typename")
                         .map(|v| v.to_string())
                         .unwrap_or(inline_fragment.type_condition.to_string());
 
-                    project_selection_set(
-                        data,
+                    project_selection_set_with_map(
+                        obj,
                         errors,
                         &inline_fragment.selections,
                         &type_name,
@@ -996,6 +938,67 @@ fn project_selection_set(
                 }
             }
         }
+    }
+    *obj = projected_obj; // Update the original object with the projected object
+}
+
+fn project_selection_set(
+    data: &mut Value,
+    errors: &mut Vec<GraphQLError>,
+    selection_set: &SelectionSet,
+    type_name: &str,
+    schema_metadata: &SchemaMetadata,
+    variable_values: &Option<HashMap<String, Value>>,
+) {
+    if selection_set.is_empty() {
+        // If selection set is empty, no need to project further
+        return;
+    }
+
+    match data {
+        Value::Null => {
+            // If data is Null, no need to project further
+        }
+        Value::String(value) => {
+            if let Some(enum_values) = schema_metadata.enum_values.get(type_name) {
+                if !enum_values.contains(value) {
+                    // If the value is not a valid enum value, add an error
+                    // and set data to Null
+                    *data = Value::Null; // Set data to Null if the value is not valid
+                    errors.push(GraphQLError {
+                        message: format!(
+                            "Value is not a valid enum value for type '{}'",
+                            type_name
+                        ),
+                        locations: None,
+                        path: None,
+                        extensions: None,
+                    });
+                }
+            } // No further processing needed for strings
+        }
+        Value::Array(arr) => {
+            // If data is an array, project each item in the array
+            for item in arr {
+                project_selection_set(
+                    item,
+                    errors,
+                    selection_set,
+                    type_name,
+                    schema_metadata,
+                    variable_values,
+                );
+            } // No further processing needed for arrays
+        }
+        Value::Object(obj) => project_selection_set_with_map(
+            obj,
+            errors,
+            selection_set,
+            type_name,
+            schema_metadata,
+            variable_values,
+        ),
+        _ => {}
     }
 }
 
