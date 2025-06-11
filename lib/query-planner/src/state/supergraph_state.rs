@@ -20,7 +20,7 @@ static BUILDIB_SCALARS: [&str; 5] = ["String", "Int", "Float", "Boolean", "ID"];
 
 pub type SchemaDocument = input::Document<'static, String>;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone)]
 pub enum SupergraphStateError {
     #[error("Subgraph not found: '{0}'")]
     SubgraphNotFound(String),

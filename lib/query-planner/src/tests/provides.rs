@@ -173,36 +173,21 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    // TODO: once we figure out evaluation of plans based on best paths
-    //       it should be a single call.
-    //       Right now we take the best for `Book.title` (b) and best for `Movie/Book { id }` (a)
-    //       even though (b) has the same cost (but we take first by A-Z orded).
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
-      Parallel {
-        Fetch(service: "b") {
-          {
-            media {
-              __typename
-              ... on Book {
-                title
-              }
+      Fetch(service: "b") {
+        {
+          media {
+            __typename
+            ... on Book {
+              title
+              id
+            }
+            ... on Movie {
+              id
             }
           }
-        },
-        Fetch(service: "a") {
-          {
-            media {
-              __typename
-              ... on Movie {
-                id
-              }
-              ... on Book {
-                id
-              }
-            }
-          }
-        },
+        }
       },
     },
     "#);
@@ -210,21 +195,10 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
     {
       "kind": "QueryPlan",
       "node": {
-        "kind": "Parallel",
-        "nodes": [
-          {
-            "kind": "Fetch",
-            "serviceName": "b",
-            "operationKind": "query",
-            "operation": "{media{__typename ...on Book{title}}}"
-          },
-          {
-            "kind": "Fetch",
-            "serviceName": "a",
-            "operationKind": "query",
-            "operation": "{media{__typename ...on Movie{id} ...on Book{id}}}"
-          }
-        ]
+        "kind": "Fetch",
+        "serviceName": "b",
+        "operationKind": "query",
+        "operation": "{media{__typename ...on Book{title id} ...on Movie{id}}}"
       }
     }
     "#);
@@ -245,6 +219,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
+    println!("second");
     let query_plan = build_query_plan(
         "fixture/tests/provides-on-union.supergraph.graphql",
         document,
@@ -253,31 +228,20 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
-        Parallel {
-          Fetch(service: "b") {
-            {
-              media {
+        Fetch(service: "b") {
+          {
+            media {
+              __typename
+              ... on Book {
+                title
+                id
+              }
+              ... on Movie {
                 __typename
-                ... on Book {
-                  title
-                }
+                id
               }
             }
-          },
-          Fetch(service: "a") {
-            {
-              media {
-                __typename
-                ... on Movie {
-                  __typename
-                  id
-                }
-                ... on Book {
-                  id
-                }
-              }
-            }
-          },
+          }
         },
         Flatten(path: "media") {
           Fetch(service: "c") {
@@ -303,21 +267,10 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         "kind": "Sequence",
         "nodes": [
           {
-            "kind": "Parallel",
-            "nodes": [
-              {
-                "kind": "Fetch",
-                "serviceName": "b",
-                "operationKind": "query",
-                "operation": "{media{__typename ...on Book{title}}}"
-              },
-              {
-                "kind": "Fetch",
-                "serviceName": "a",
-                "operationKind": "query",
-                "operation": "{media{__typename ...on Movie{__typename id} ...on Book{id}}}"
-              }
-            ]
+            "kind": "Fetch",
+            "serviceName": "b",
+            "operationKind": "query",
+            "operation": "{media{__typename ...on Book{title id} ...on Movie{__typename id}}}"
           },
           {
             "kind": "Flatten",
