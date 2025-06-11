@@ -219,7 +219,6 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         }
         "#,
     );
-    println!("second");
     let query_plan = build_query_plan(
         "fixture/tests/provides-on-union.supergraph.graphql",
         document,
