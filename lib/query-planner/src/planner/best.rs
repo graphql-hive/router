@@ -81,14 +81,6 @@ fn explore_tree_combinations(
         let current_tree = tree_candidate
             .get_or_create(|path| QueryTree::from_path(graph, &path))
             .clone()?;
-        // let current_tree_result =
-        //     tree_candidate.get_or_create(|path| QueryTree::from_path(graph, &path));
-
-        // if let Err(err) = &current_tree_result {
-        //     return Err(QueryPlanError::GraphFailure(err.to_string()));
-        // }
-
-        // let current_tree = current_tree_result.unwrap();
 
         // Merges the current tree with the tree we built so far
         let next_tree = match tree_so_far {
