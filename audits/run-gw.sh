@@ -9,4 +9,5 @@ export RUST_LOG=debug
 
 echo "running gateway..."
 
-../target/release/gateway fed-audit-supergraph.graphql
+cd ..
+cargo gateway audits/fed-audit-supergraph.graphql
