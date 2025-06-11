@@ -228,9 +228,14 @@ impl ExecutableFetchNode for FetchNode {
                     for (entity, representation_index) in
                         entities.into_iter().zip(filtered_repr_indexes.iter_mut())
                     {
-                        let representation =
-                            representations.get_mut(*representation_index).unwrap();
-                        deep_merge(representation, entity);
+                        let representation_obj = representations
+                            .get_mut(*representation_index)
+                            .unwrap()
+                            .as_object_mut()
+                            .unwrap();
+                        if let Value::Object(entity_obj) = entity {
+                            representation_obj.extend(entity_obj);
+                        }
                     }
                 }
                 _ => {
@@ -643,12 +648,15 @@ impl QueryPlanExecutionContext<'_> {
     }
     async fn merge_data(&self, new_data: Value) {
         let mut data_lock = self.data_mutex.lock().await;
-        if *data_lock == Value::Null {
-            *data_lock = new_data;
-            return;
+        match (&mut *data_lock, new_data) {
+            (Value::Object(data_map), Value::Object(new_map)) => {
+                data_map.extend(new_map);
+            }
+            (Value::Null, Value::Object(new_map)) => {
+                *data_lock = Value::Object(new_map);
+            }
+            _ => {}
         }
-        // Merge new data into existing data
-        deep_merge(&mut data_lock, new_data);
     }
 
     #[instrument(skip(self))]
@@ -662,7 +670,7 @@ impl QueryPlanExecutionContext<'_> {
                     .collect(),
             ),
             Value::Object(entity_obj) => {
-                let mut result = Value::Object(serde_json::Map::new());
+                let mut result_map = Map::new();
                 for requires_selection in requires_selections {
                     match &requires_selection {
                         SelectionItem::Field(requires_selection) => {
@@ -674,7 +682,6 @@ impl QueryPlanExecutionContext<'_> {
                             let projected_value: Value = self
                                 .project_requires(&requires_selection.selections.items, original);
                             if !projected_value.is_null() {
-                                let result_map = result.as_object_mut().unwrap();
                                 result_map.insert(response_key.to_string(), projected_value);
                             }
                         }
@@ -690,18 +697,21 @@ impl QueryPlanExecutionContext<'_> {
                             ) {
                                 let projected = self
                                     .project_requires(&requires_selection.selections.items, entity);
-                                deep_merge(&mut result, projected);
+                                // Merge the projected value into the result
+                                if let Value::Object(projected_map) = projected {
+                                    result_map.extend(projected_map);
+                                }
+                                // If the projected value is not an object, it will be ignored
                             }
                         }
                     }
                 }
-                let result_map = result.as_object_mut().unwrap();
                 if (result_map.is_empty())
                     || (result_map.len() == 1 && result_map.contains_key("__typename"))
                 {
                     Value::Null
                 } else {
-                    result
+                    Value::Object(result_map)
                 }
             }
             Value::Bool(bool) => Value::Bool(*bool),
@@ -760,39 +770,6 @@ fn traverse_and_collect<'a>(
 }
 
 // --- Helper Functions ---
-
-// Deeply merges two serde_json::Values (mutates target in place)
-fn deep_merge(target: &mut Value, source: Value) {
-    match (target, source) {
-        // 1. Source is Null: Do nothing
-        (_, Value::Null) => {} // Keep target as is
-
-        // 2. Both are Objects: Merge recursively
-        (Value::Object(target_map), Value::Object(source_map)) => {
-            for (key, source_val) in source_map {
-                // Optimization: If source_val is Null, we could skip, but deep_merge handles it.
-                let target_entry = target_map.entry(key).or_insert(Value::Null);
-                deep_merge(target_entry, source_val);
-            }
-        }
-
-        // 3. Both are Arrays of same length: Merge elements
-        (Value::Array(target_arr), Value::Array(source_arr))
-            if target_arr.len() == source_arr.len() =>
-        {
-            for (t, s) in target_arr.iter_mut().zip(source_arr.into_iter()) {
-                // Recurse for elements. If s is Null, the recursive call handles it.
-                deep_merge(t, s);
-            }
-        }
-
-        // 4. Fallback: Source is not Null, and cases 2 & 3 didn't match. Replace target with source.
-        (target_val, source) => {
-            // source is guaranteed not Null here due to arm 1
-            *target_val = source;
-        }
-    }
-}
 
 // --- Main Function (for testing) ---
 
