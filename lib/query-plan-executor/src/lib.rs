@@ -12,15 +12,11 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-    vec,
-};
+use std::{collections::HashMap, sync::Arc, vec};
 use tokio::sync::Mutex;
 use tracing::{debug, instrument, warn}; // For reading file in main
 
-use crate::schema_metadata::SchemaMetadata;
+use crate::{deep_merge::deep_merge_objects, schema_metadata::SchemaMetadata};
 mod deep_merge;
 pub mod introspection;
 pub mod schema_metadata;
@@ -702,7 +698,7 @@ impl QueryPlanExecutionContext<'_> {
                                     .project_requires(&requires_selection.selections.items, entity);
                                 // Merge the projected value into the result
                                 if let Value::Object(projected_map) = projected {
-                                    result_map.extend(projected_map);
+                                    deep_merge::deep_merge_objects(&mut result_map, projected_map);
                                 }
                                 // If the projected value is not an object, it will be ignored
                             }
@@ -829,13 +825,13 @@ fn project_selection_set_with_map(
     type_name: &str,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
-) -> HashSet<String> {
+) -> Map<String, Value> {
     let type_name = match obj.get("__typename") {
         Some(Value::String(type_name)) => type_name,
         _ => type_name,
     }
     .to_string();
-    let mut response_keys: HashSet<String> = HashSet::new();
+    let mut new_obj = Map::new();
     for selection in &selection_set.items {
         match selection {
             SelectionItem::Field(field) => {
@@ -856,9 +852,8 @@ fn project_selection_set_with_map(
                     }
                 }
                 let response_key = field.alias.as_ref().unwrap_or(&field.name).to_string();
-                response_keys.insert(response_key.to_string());
                 if field.name == "__typename" {
-                    obj.insert(response_key, Value::String(type_name.to_string()));
+                    new_obj.insert(response_key, Value::String(type_name.to_string()));
                     continue;
                 }
                 // Get the type fields for the current type
@@ -870,7 +865,7 @@ fn project_selection_set_with_map(
                 let field_map = field_map.unwrap();
                 let field_type = field_map.get(&field.name);
                 if field.name == "__schema" && type_name == "Query" {
-                    obj.insert(
+                    new_obj.insert(
                         "__schema".to_string(),
                         schema_metadata.introspection_schema_root_json.clone(),
                     );
@@ -878,18 +873,38 @@ fn project_selection_set_with_map(
                 let field_val = obj.get_mut(&response_key);
                 match (field_type, field_val) {
                     (Some(field_type), Some(field_val)) => {
-                        project_selection_set(
-                            field_val,
-                            errors,
-                            &field.selections,
-                            field_type,
-                            schema_metadata,
-                            variable_values,
-                        );
+                        match field_val {
+                            Value::Object(field_val_map) => {
+                                let new_field_val_map = project_selection_set_with_map(
+                                    field_val_map,
+                                    errors,
+                                    &field.selections,
+                                    field_type,
+                                    schema_metadata,
+                                    variable_values,
+                                );
+                                new_obj.insert(response_key, Value::Object(new_field_val_map));
+                            }
+                            field_val => {
+                                project_selection_set(
+                                    field_val,
+                                    errors,
+                                    &field.selections,
+                                    field_type,
+                                    schema_metadata,
+                                    variable_values,
+                                );
+                                let field_val = std::mem::take(field_val);
+                                new_obj.insert(
+                                    response_key,
+                                    field_val, // Clone the value to insert
+                                );
+                            }
+                        }
                     }
                     (Some(_field_type), None) => {
                         // If the field is not found in the object, set it to Null
-                        obj.insert(response_key, Value::Null);
+                        new_obj.insert(response_key, Value::Null);
                     }
                     (None, _) => {
                         warn!(
@@ -905,7 +920,7 @@ fn project_selection_set_with_map(
                     &type_name,
                     &inline_fragment.type_condition,
                 ) {
-                    let response_keys_from_fragment = project_selection_set_with_map(
+                    let sub_new_obj = project_selection_set_with_map(
                         obj,
                         errors,
                         &inline_fragment.selections,
@@ -913,12 +928,12 @@ fn project_selection_set_with_map(
                         schema_metadata,
                         variable_values,
                     );
-                    response_keys.extend(response_keys_from_fragment);
+                    deep_merge_objects(&mut new_obj, sub_new_obj);
                 }
             }
         }
     }
-    response_keys
+    new_obj
 }
 
 fn project_selection_set(
@@ -966,7 +981,7 @@ fn project_selection_set(
         }
         Value::Object(obj) => {
             // If data is an object, project the selection set with the object
-            let response_keys = project_selection_set_with_map(
+            *obj = project_selection_set_with_map(
                 obj,
                 errors,
                 selection_set,
@@ -974,17 +989,6 @@ fn project_selection_set(
                 schema_metadata,
                 variable_values,
             );
-
-            // Replace the original object with the filtered object
-            *obj = response_keys
-                .iter()
-                .map(|response_key| {
-                    (
-                        response_key.to_string(),
-                        obj.remove(response_key).unwrap_or(Value::Null),
-                    )
-                })
-                .collect();
         }
         _ => {}
     }
