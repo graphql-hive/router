@@ -746,6 +746,7 @@ fn entity_satisfies_type_condition(
 
 /// Recursively traverses the data according to the path segments,
 /// handling '@' for array iteration, and collects the final values.
+#[instrument]
 fn traverse_and_collect<'a>(
     current_data: &'a mut Value,
     remaining_path: &[&str],
@@ -818,6 +819,7 @@ impl HTTPSubgraphExecutor<'_> {
     }
 }
 
+#[instrument(skip(selection_set, schema_metadata, variable_values))]
 fn project_selection_set_with_map(
     obj: &mut Map<String, Value>,
     errors: &mut Vec<GraphQLError>,
@@ -825,7 +827,7 @@ fn project_selection_set_with_map(
     type_name: &str,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
-) -> Map<String, Value> {
+) -> Option<Map<String, Value>> {
     let type_name = match obj.get("__typename") {
         Some(Value::String(type_name)) => type_name,
         _ => type_name,
@@ -835,6 +837,10 @@ fn project_selection_set_with_map(
     for selection in &selection_set.items {
         match selection {
             SelectionItem::Field(field) => {
+                // Get the type fields for the current type
+                let field_map = schema_metadata.type_fields.get(&type_name);
+                // Type is not found in the schema
+                field_map?;
                 if let Some(ref skip_variable) = field.skip_if {
                     let variable_value = variable_values
                         .as_ref()
@@ -856,17 +862,11 @@ fn project_selection_set_with_map(
                     new_obj.insert(response_key, Value::String(type_name.to_string()));
                     continue;
                 }
-                // Get the type fields for the current type
-                let field_map = schema_metadata.type_fields.get(&type_name);
-                // Type is not found in the schema
-                if field_map.is_none() {
-                    continue;
-                }
                 let field_map = field_map.unwrap();
                 let field_type = field_map.get(&field.name);
                 if field.name == "__schema" && type_name == "Query" {
-                    new_obj.insert(
-                        "__schema".to_string(),
+                    obj.insert(
+                        response_key.to_string(),
                         schema_metadata.introspection_schema_root_json.clone(),
                     );
                 }
@@ -883,7 +883,16 @@ fn project_selection_set_with_map(
                                     schema_metadata,
                                     variable_values,
                                 );
-                                new_obj.insert(response_key, Value::Object(new_field_val_map));
+                                match new_field_val_map {
+                                    Some(new_field_val_map) => {
+                                        // If the field is an object, merge the projected values
+                                        new_obj
+                                            .insert(response_key, Value::Object(new_field_val_map));
+                                    }
+                                    None => {
+                                        new_obj.insert(response_key, Value::Null);
+                                    }
+                                }
                             }
                             field_val => {
                                 project_selection_set(
@@ -928,14 +937,21 @@ fn project_selection_set_with_map(
                         schema_metadata,
                         variable_values,
                     );
-                    deep_merge_objects(&mut new_obj, sub_new_obj);
+                    if let Some(sub_new_obj) = sub_new_obj {
+                        // If the inline fragment projection returns a new object, merge it
+                        deep_merge_objects(&mut new_obj, sub_new_obj)
+                    } else {
+                        // If the inline fragment projection returns None, skip it
+                        continue;
+                    }
                 }
             }
         }
     }
-    new_obj
+    Some(new_obj)
 }
 
+#[instrument(skip(selection_set, schema_metadata, variable_values))]
 fn project_selection_set(
     data: &mut Value,
     errors: &mut Vec<GraphQLError>,
@@ -980,20 +996,29 @@ fn project_selection_set(
             } // No further processing needed for arrays
         }
         Value::Object(obj) => {
-            // If data is an object, project the selection set with the object
-            *obj = project_selection_set_with_map(
+            match project_selection_set_with_map(
                 obj,
                 errors,
                 selection_set,
                 type_name,
                 schema_metadata,
                 variable_values,
-            );
+            ) {
+                Some(new_obj) => {
+                    // If the projection returns a new object, replace the old one
+                    *obj = new_obj;
+                }
+                None => {
+                    // If the projection returns None, set data to Null
+                    *data = Value::Null;
+                }
+            }
         }
         _ => {}
     }
 }
 
+#[instrument(skip(operation, schema_metadata, variable_values))]
 fn project_data_by_operation(
     data: &mut Value,
     errors: &mut Vec<GraphQLError>,
