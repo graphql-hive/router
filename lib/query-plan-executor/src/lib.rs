@@ -949,11 +949,6 @@ fn project_selection_set(
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
 ) {
-    if selection_set.is_empty() {
-        // If selection set is empty, no need to project further
-        return;
-    }
-
     match data {
         Value::Null => {
             // If data is Null, no need to project further
