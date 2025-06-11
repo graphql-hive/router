@@ -129,10 +129,12 @@ impl ExecutableFetchNode for FetchNode {
         // 1. Filter representations based on requires (if present)
         let mut filtered_representations: Vec<Value> = Vec::new();
         let requires_nodes = self.requires.as_ref().unwrap();
+        println!("representations: {:?}", representations);
         for (index, entity) in representations.iter().enumerate() {
             let entity_projected =
                 execution_context_arc.project_requires(&requires_nodes.items, entity);
             if !entity_projected.is_null() {
+                println!("Entity projected: {:?}", entity_projected);
                 filtered_representations.push(entity_projected);
                 filtered_repr_indexes.push(index);
             }
@@ -159,6 +161,7 @@ impl ExecutableFetchNode for FetchNode {
         let mut variables = self
             .prepare_variables_for_fetch_node(execution_context_arc.variable_values)
             .unwrap_or_default();
+        println!("filtered_representations: {:?}", filtered_representations);
 
         variables.insert(
             "representations".to_string(),
@@ -700,12 +703,12 @@ fn entity_satisfies_type_condition(
 // --- Helper Function for Flatten ---
 
 /// Recursively traverses the data according to the path segments,
-/// handling '@' for array iteration, and collects the final values.
+/// handling '@' for array iteration, and collects the final values.current_data.to_vec()
 #[instrument]
 fn traverse_and_collect<'a>(current_data: &'a Value, remaining_path: &[&str]) -> Vec<&'a Value> {
     match (current_data, remaining_path) {
-        (Value::Array(arr), []) => arr.iter_mut().collect(), // Base case: No more path segments, return all items in the array
-        (current_data, []) => vec![current_data],            // Base case: No more path segments,
+        (Value::Array(arr), []) => arr.iter().flat_map(|item| vec![item]).collect(), // Base case: No more path segments,
+        (current_data, []) => vec![current_data], // Base case: No more path segments,
         (Value::Object(obj), [next_segment, next_remaining_path @ ..]) => {
             if let Some(next_value) = obj.get(*next_segment) {
                 traverse_and_collect(next_value, next_remaining_path)
@@ -727,6 +730,13 @@ fn traverse_and_put(
     representations: &mut Vec<Value>,
 ) {
     match (current_data, remaining_path) {
+        (Value::Array(arr), []) => {
+            // Base case: No more path segments, do nothing
+            for item in arr.iter_mut().rev() {
+                traverse_and_put(item, &[], representations);
+            }
+        }
+        // Base case: No more path segments,
         (current_data, []) => {
             let current_to_set = representations.pop();
             if let Some(current_to_set) = current_to_set {
