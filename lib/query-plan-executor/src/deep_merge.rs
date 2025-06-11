@@ -33,10 +33,6 @@ pub fn deep_merge_objects(
     target: &mut serde_json::Map<String, Value>,
     source: serde_json::Map<String, Value>,
 ) {
-    println!(
-        "Merging objects: target = {:?}, source = {:?}",
-        target, source
-    );
     if target.is_empty() {
         // If target is empty, just replace it with source
         *target = source;

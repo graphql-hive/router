@@ -24,10 +24,10 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 #[derive(Clone)]
 struct AppState {
     supergraph_source: String,
-    schema_metadata: Arc<SchemaMetadata>,
-    planner: Arc<Planner>,
-    validation_plan: Arc<graphql_tools::validation::validate::ValidationPlan>,
-    subgraph_endpoint_map: Arc<HashMap<String, String>>,
+    schema_metadata: SchemaMetadata,
+    planner: Planner,
+    validation_plan: graphql_tools::validation::validate::ValidationPlan,
+    subgraph_endpoint_map: HashMap<String, String>,
     http_client: reqwest::Client,
     plan_cache: moka::future::Cache<u64, Arc<query_planner::planner::plan_nodes::QueryPlan>>,
     validate_cache:
@@ -69,11 +69,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_state = Arc::new(AppState {
         supergraph_source: supergraph_path.to_string(),
         schema_metadata: Arc::new(schema_metadata),
-        planner: Arc::new(planner),
-        validation_plan: Arc::new(
-            graphql_tools::validation::rules::default_rules_validation_plan(),
-        ),
-        subgraph_endpoint_map: Arc::new(supergraph_state.subgraph_endpoint_map),
+        planner,
+        validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
+        subgraph_endpoint_map: supergraph_state.subgraph_endpoint_map,
         http_client: reqwest::Client::new(),
         plan_cache: moka::future::Cache::new(1000),
         validate_cache: moka::future::Cache::new(1000),
@@ -99,11 +97,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let app = Router::new()
-        .route("/", get(landing_page_handler))
         .route(
             "/graphql",
             get(universal_graphql_get_handler).post(graphql_post_handler),
         )
+        .fallback(get(landing_page_handler))
         .with_state(app_state)
         .layer(
             CorsLayer::new()

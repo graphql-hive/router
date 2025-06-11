@@ -60,7 +60,7 @@ pub struct FetchNode {
 #[serde(rename_all = "camelCase")]
 pub struct FlattenNode {
     pub path: Vec<String>,
-    pub node: Box<PlanNode>,
+    pub node: FetchNode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -272,7 +272,7 @@ impl From<&FetchStepData> for PlanNode {
             PlanNode::Flatten(FlattenNode {
                 // it's cheaper to clone response_path (Arc etc), rather then cloning the step
                 path: step.response_path.clone().into(),
-                node: Box::new(PlanNode::Fetch(step.into())),
+                node: step.into(),
             })
         }
     }
