@@ -160,12 +160,10 @@ fn process_inline_fragment<'a>(
         let path_span = span!(Level::INFO, "explore_path", path = path.pretty_print(graph));
         let _enter = path_span.enter();
 
-        let excluded = ExcludedFromLookup::new();
         let mut direct_paths = find_direct_paths(
             graph,
             path,
             &NavigationTarget::ConcreteType(&fragment.type_condition),
-            &excluded,
         )?;
 
         debug!("Direct paths found: {}", direct_paths.len());
@@ -191,12 +189,10 @@ fn process_inline_fragment<'a>(
         for path in paths {
             let path_span = span!(Level::INFO, "explore_path", path = path.pretty_print(graph));
             let _enter = path_span.enter();
-            let excluded = ExcludedFromLookup::new();
             let direct_paths = find_direct_paths(
                 graph,
                 path,
                 &NavigationTarget::Field(&FieldSelection::new_typename()),
-                &excluded,
             )?;
 
             debug!("Direct paths found: {}", direct_paths.len());
@@ -248,8 +244,7 @@ fn process_field<'a>(
         let mut advanced = false;
 
         let excluded = ExcludedFromLookup::new();
-        let direct_paths =
-            find_direct_paths(graph, path, &NavigationTarget::Field(field), &excluded)?;
+        let direct_paths = find_direct_paths(graph, path, &NavigationTarget::Field(field))?;
 
         debug!("Direct paths found: {}", direct_paths.len());
 
