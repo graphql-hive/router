@@ -19,7 +19,7 @@ use error::WalkOperationError;
 use excluded::ExcludedFromLookup;
 use path::OperationPath;
 use pathfinder::{find_direct_paths, find_indirect_paths};
-use tracing::{debug, instrument, span, warn, Level};
+use tracing::{instrument, span, trace, Level};
 use utils::get_entrypoints;
 
 // TODO: Make a better struct
@@ -29,13 +29,13 @@ pub type BestPathsPerLeaf = Vec<Vec<OperationPath>>;
 // TODO: Consider to drop this IR layer and just go with QTP directly.
 type ResolutionStack<'a> = Vec<(&'a SelectionItem, Vec<OperationPath>)>;
 
-#[instrument(skip(graph, operation))]
+#[instrument(level = "trace", skip(graph, operation))]
 pub fn walk_operation(
     graph: &Graph,
     operation: &OperationDefinition,
 ) -> Result<BestPathsPerLeaf, WalkOperationError> {
     let (op_type, selection_set) = operation.parts();
-    debug!("operation is of type {:?}", op_type);
+    trace!("operation is of type {:?}", op_type);
 
     let root_entrypoints = get_entrypoints(graph, op_type)?;
     let initial_paths: Vec<OperationPath> = root_entrypoints
@@ -87,7 +87,7 @@ fn process_selection<'a>(
     Ok((stack_to_resolve, paths_per_leaf))
 }
 
-#[instrument(skip_all)]
+#[instrument(level = "trace", skip_all)]
 fn process_selection_set<'a>(
     graph: &Graph,
     selection_set: &'a SelectionSet,
@@ -105,7 +105,7 @@ fn process_selection_set<'a>(
     Ok((stack_to_resolve, paths_per_leaf))
 }
 
-#[instrument(skip(graph, fragment, paths), fields(
+#[instrument(level = "trace",skip(graph, fragment, paths), fields(
   type_condition = fragment.type_condition,
 ))]
 fn process_inline_fragment<'a>(
@@ -113,7 +113,7 @@ fn process_inline_fragment<'a>(
     fragment: &'a InlineFragmentSelection,
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
-    debug!(
+    trace!(
         "Processing inline fragment '{}' on type '{}' through {} possible paths",
         fragment.selections,
         fragment.type_condition,
@@ -149,7 +149,7 @@ fn process_inline_fragment<'a>(
         return process_selection_set(graph, &fragment.selections, paths);
     }
 
-    debug!(
+    trace!(
         "Trying to advance to: ... on {}, through {} possible paths",
         fragment.type_condition,
         paths.len()
@@ -157,7 +157,11 @@ fn process_inline_fragment<'a>(
 
     let mut next_paths: Vec<OperationPath> = Vec::with_capacity(paths.len());
     for path in paths {
-        let path_span = span!(Level::INFO, "explore_path", path = path.pretty_print(graph));
+        let path_span = span!(
+            Level::TRACE,
+            "explore_path",
+            path = path.pretty_print(graph)
+        );
         let _enter = path_span.enter();
 
         let mut direct_paths = find_direct_paths(
@@ -166,19 +170,20 @@ fn process_inline_fragment<'a>(
             &NavigationTarget::ConcreteType(&fragment.type_condition),
         )?;
 
-        debug!("Direct paths found: {}", direct_paths.len());
+        trace!("Direct paths found: {}", direct_paths.len());
 
         if !direct_paths.is_empty() {
-            debug!("advanced: {}", path.pretty_print(graph));
+            trace!("advanced: {}", path.pretty_print(graph));
             next_paths.push(direct_paths.remove(0));
         } else {
             // Looks like a union member or an interface implementation is not resolvable.
             // The fact the fragment for that object type passed GraphQL validations,
             // means that it's a child of the abstract type,
             // and it was probably eliminated from the Graph because of intersection.
-            warn!(
+            trace!(
                 "Object type '{}' is not resolvable by '{}', resolve only the __typename",
-                fragment.type_condition, tail_type_name
+                fragment.type_condition,
+                tail_type_name
             );
         }
     }
@@ -187,7 +192,11 @@ fn process_inline_fragment<'a>(
         let mut tracker = BestPathTracker::new(graph);
 
         for path in paths {
-            let path_span = span!(Level::INFO, "explore_path", path = path.pretty_print(graph));
+            let path_span = span!(
+                Level::TRACE,
+                "explore_path",
+                path = path.pretty_print(graph)
+            );
             let _enter = path_span.enter();
             let direct_paths = find_direct_paths(
                 graph,
@@ -195,7 +204,7 @@ fn process_inline_fragment<'a>(
                 &NavigationTarget::Field(&FieldSelection::new_typename()),
             )?;
 
-            debug!("Direct paths found: {}", direct_paths.len());
+            trace!("Direct paths found: {}", direct_paths.len());
 
             if !direct_paths.is_empty() {
                 for p in direct_paths {
@@ -218,7 +227,7 @@ fn process_inline_fragment<'a>(
     process_selection_set(graph, &fragment.selections, &next_paths)
 }
 
-#[instrument(skip(graph, field, paths), fields(
+#[instrument(level = "trace",skip(graph, field, paths), fields(
   field_name = &field.name,
   leaf = field.is_leaf()
 ))]
@@ -231,14 +240,18 @@ fn process_field<'a>(
     let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
     let mut tracker = BestPathTracker::new(graph);
 
-    debug!(
+    trace!(
         "Trying to advance to: {} through {} possible paths",
         field,
         paths.len()
     );
 
     for path in paths {
-        let path_span = span!(Level::INFO, "explore_path", path = path.pretty_print(graph));
+        let path_span = span!(
+            Level::TRACE,
+            "explore_path",
+            path = path.pretty_print(graph)
+        );
         let _enter = path_span.enter();
 
         let mut advanced = false;
@@ -246,7 +259,7 @@ fn process_field<'a>(
         let excluded = ExcludedFromLookup::new();
         let direct_paths = find_direct_paths(graph, path, &NavigationTarget::Field(field))?;
 
-        debug!("Direct paths found: {}", direct_paths.len());
+        trace!("Direct paths found: {}", direct_paths.len());
 
         if !direct_paths.is_empty() {
             advanced = true;
@@ -259,7 +272,7 @@ fn process_field<'a>(
         let indirect_paths =
             find_indirect_paths(graph, path, &NavigationTarget::Field(field), &excluded)?;
 
-        debug!("Indirect paths found: {}", indirect_paths.len());
+        trace!("Indirect paths found: {}", indirect_paths.len());
 
         if !indirect_paths.is_empty() {
             advanced = true;
@@ -270,8 +283,8 @@ fn process_field<'a>(
         }
 
         match advanced {
-            true => debug!("advanced: {}", path.pretty_print(graph)),
-            false => warn!("failed to advance: {}", path.pretty_print(graph)),
+            true => trace!("advanced: {}", path.pretty_print(graph)),
+            false => trace!("failed to advance: {}", path.pretty_print(graph)),
         };
     }
 
@@ -284,7 +297,7 @@ fn process_field<'a>(
     if field.is_leaf() {
         paths_per_leaf.push(find_best_paths(next_paths));
     } else {
-        debug!("Found {} paths", next_paths.len());
+        trace!("Found {} paths", next_paths.len());
 
         for next_selection_items in field.selections.items.iter() {
             next_stack_to_resolve.push((next_selection_items, next_paths.clone()));

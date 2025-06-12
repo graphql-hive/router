@@ -43,7 +43,6 @@ pub fn drop_unused_operations(ctx: &mut NormalizationContext) -> Result<(), Norm
     });
 
     if !already_found {
-        println!("error!");
         if let Some(name) = ctx.operation_name {
             return Err(NormalizationError::SpecifiedOperationNotFound {
                 operation_name: name.to_string(),

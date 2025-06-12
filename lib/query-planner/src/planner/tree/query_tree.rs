@@ -21,7 +21,7 @@ impl QueryTree {
         }
     }
 
-    #[instrument(skip(graph), fields(
+    #[instrument(level = "trace",skip(graph), fields(
         root_node = graph.pretty_print_node(&path.root_node)
     ))]
     pub fn from_path(graph: &Graph, path: &OperationPath) -> Result<Self, GraphError> {
@@ -33,7 +33,7 @@ impl QueryTree {
         Ok(QueryTree::new(root_node))
     }
 
-    #[instrument(skip_all, fields(
+    #[instrument(level = "trace",skip_all, fields(
       tree_count = trees.len()
     ))]
     pub fn merge_trees(trees: Vec<QueryTree>) -> QueryTree {

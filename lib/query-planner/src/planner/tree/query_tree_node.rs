@@ -1,7 +1,7 @@
 use petgraph::graph::{EdgeIndex, NodeIndex};
 use std::fmt::Write;
 use std::sync::Arc;
-use tracing::{debug, instrument};
+use tracing::{instrument, trace};
 
 use crate::{
     ast::arguments::ArgumentsMap,
@@ -118,7 +118,7 @@ impl QueryTreeNode {
         Ok(Some(QueryTree::merge_trees(trees).root))
     }
 
-    #[instrument(skip(graph, segments), fields(
+    #[instrument(level = "trace",skip(graph, segments), fields(
       total_segments = segments.len()
     ))]
     fn from_path_segment_sequences(
@@ -135,7 +135,7 @@ impl QueryTreeNode {
         let requirements_tree_at_index = &segment_at_index.requirement_tree;
         let selection_attributes_at_index = &segment_at_index.selection_attributes;
 
-        debug!(
+        trace!(
             "Processing edge: {}",
             graph.pretty_print_edge(*edge_at_index, false)
         );
@@ -159,17 +159,17 @@ impl QueryTreeNode {
 
         match subsequent_query_tree_node {
             Some(subsequent_query_tree_node) => {
-                debug!("Adding subsequent step as child");
+                trace!("Adding subsequent step as child");
                 tree_node.children.push(subsequent_query_tree_node);
             }
             None => {
-                debug!("No subsequent steps (leaf or end of path)");
+                trace!("No subsequent steps (leaf or end of path)");
             }
         }
         Ok(Some(Arc::new(tree_node)))
     }
 
-    #[instrument(skip_all, fields(
+    #[instrument(level = "trace",skip_all, fields(
       root_node = graph.pretty_print_node(root_node_index),
       segments_count = segments.len()
     ))]
@@ -178,7 +178,7 @@ impl QueryTreeNode {
         root_node_index: &NodeIndex,
         segments: &Vec<Arc<PathSegment>>,
     ) -> Result<QueryTreeNode, GraphError> {
-        debug!(
+        trace!(
             "Building root query tree node: {}",
             graph.pretty_print_node(root_node_index)
         );
@@ -186,7 +186,7 @@ impl QueryTreeNode {
         let mut root_tree_node = Self::new_root(root_node_index);
 
         if segments.is_empty() {
-            debug!("Path has no edges beyond the root.");
+            trace!("Path has no edges beyond the root.");
         } else {
             let subsequent_node =
                 QueryTreeNode::from_path_segment_sequences(graph, segments.as_slice(), 0)?;
