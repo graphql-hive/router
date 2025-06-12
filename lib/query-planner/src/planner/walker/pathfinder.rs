@@ -136,8 +136,7 @@ pub fn find_indirect_paths(
                 continue;
             }
 
-            let new_excluded =
-                excluded.next(edge_tail_graph_id, &visited_key_fields, &[edge_ref.id()]);
+            let new_excluded = excluded.next(edge_tail_graph_id, &visited_key_fields);
 
             let can_be_satisfied = can_satisfy_edge(graph, &edge_ref, &path, &new_excluded, false)?;
 
@@ -161,14 +160,7 @@ pub fn find_indirect_paths(
                         },
                     );
 
-                    let direct_paths_excluded =
-                        excluded.next(edge_tail_graph_id, &visited_key_fields, &[]);
-                    let direct_paths = find_direct_paths(
-                        graph,
-                        &next_resolution_path,
-                        target,
-                        &direct_paths_excluded,
-                    )?;
+                    let direct_paths = find_direct_paths(graph, &next_resolution_path, target)?;
 
                     if !direct_paths.is_empty() {
                         debug!(
@@ -219,7 +211,7 @@ pub fn find_indirect_paths(
     Ok(best_paths)
 }
 
-#[instrument(skip(graph, excluded), ret(), fields(
+#[instrument(skip(graph), ret(), fields(
     path = path.pretty_print(graph),
     current_cost = path.cost,
 ))]
@@ -227,7 +219,6 @@ pub fn find_direct_paths(
     graph: &Graph,
     path: &OperationPath,
     target: &NavigationTarget,
-    excluded: &ExcludedFromLookup,
 ) -> Result<Vec<OperationPath>, WalkOperationError> {
     let mut result: Vec<OperationPath> = vec![];
     let path_tail_index = path.tail();
@@ -243,10 +234,8 @@ pub fn find_direct_paths(
                     graph.pretty_print_edge(edge_ref.id(), false)
                 );
 
-                let node = graph.node(edge_ref.target())?;
-                let new_excluded = excluded.next_with_graph_id(node.graph_id().unwrap());
                 let can_be_satisfied =
-                    can_satisfy_edge(graph, &edge_ref, path, &new_excluded, false)?;
+                    can_satisfy_edge(graph, &edge_ref, path, &ExcludedFromLookup::new(), false)?;
 
                 match can_be_satisfied {
                     Some(paths) => {
@@ -408,7 +397,6 @@ fn validate_field_requirement(
             graph,
             path,
             &NavigationTarget::Field(field),
-            excluded,
         )?);
     }
 
