@@ -1486,7 +1486,7 @@ fn arguments_in_different_levels() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "spotify",
         "operationKind": "query",
-        "operation": "{album(id: \"5\"){tracks(limit: 5, offset: 10){edges{node{name}}} genres name albumType}}"
+        "operation": "query{album(id: \"5\"){tracks(limit: 5, offset: 10){edges{node{name}}} genres name albumType}}"
       }
     }
     "#);
@@ -1548,7 +1548,7 @@ fn arguments_and_variables() -> Result<(), Box<dyn Error>> {
           "limit"
         ],
         "operationKind": "query",
-        "operation": "{album(id: $id){tracks(limit: $limit, offset: 10){edges{node{name}}} genres name albumType}}"
+        "operation": "query{album(id: $id){tracks(limit: $limit, offset: 10){edges{node{name}}} genres name albumType}}"
       }
     }
     "#);
@@ -1870,7 +1870,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               "secondProductId"
             ],
             "operationKind": "query",
-            "operation": "{secondProduct: productFromD(id: $secondProductId){__typename id name} firstProduct: productFromD(id: \"1\"){__typename id name}}"
+            "operation": "query{secondProduct: productFromD(id: $secondProductId){__typename id name} firstProduct: productFromD(id: \"1\"){__typename id name}}"
           },
           {
             "kind": "Parallel",

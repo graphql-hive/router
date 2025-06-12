@@ -77,7 +77,7 @@ fn testing() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "store",
             "operationKind": "query",
-            "operation": "{products{__typename id}}"
+            "operation": "query{products{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -206,7 +206,7 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{products{__typename id pid}}"
+            "operation": "query{products{__typename id pid}}"
           },
           {
             "kind": "Flatten",
@@ -344,7 +344,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "d",
             "operationKind": "query",
-            "operation": "{productFromD(id: \"1\"){__typename id name}}"
+            "operation": "query{productFromD(id: \"1\"){__typename id name}}"
           },
           {
             "kind": "Parallel",
@@ -529,7 +529,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{topProducts{products{__typename id category{tag id}}}}"
+            "operation": "query{topProducts{products{__typename id category{tag id}}}}"
           },
           {
             "kind": "Flatten",
