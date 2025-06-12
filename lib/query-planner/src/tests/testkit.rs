@@ -10,11 +10,10 @@ use graphql_parser::query as query_ast;
 
 use crate::ast::normalization::normalize_operation;
 use crate::graph::Graph;
+use crate::planner::best::find_best_combination;
 use crate::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
 use crate::planner::plan_nodes::QueryPlan;
 use crate::planner::query_plan::build_query_plan_from_fetch_graph;
-use crate::planner::tree::paths_to_trees;
-use crate::planner::tree::query_tree::QueryTree;
 use crate::planner::walker::walk_operation;
 use crate::state::supergraph_state::SupergraphState;
 use crate::utils::parsing::parse_schema;
@@ -63,8 +62,7 @@ pub fn build_query_plan(
     let document = normalize_operation(&supergraph_state, &query, None).unwrap();
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
-    let qtps = paths_to_trees(&graph, &best_paths_per_leaf)?;
-    let query_tree = QueryTree::merge_trees(qtps);
+    let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
 
     Ok(build_query_plan_from_fetch_graph(fetch_graph)?)

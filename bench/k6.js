@@ -123,7 +123,7 @@ function handleBenchmarkSummary(data, additionalContext = {}) {
 
 function sendGraphQLRequest() {
   const res = http.post(
-    __ENV.GATEWAY_ENDPOINT || "http://localhost:4000/graphql",
+    __ENV.GATEWAY_ENDPOINT || "http://0.0.0.0:4000/graphql",
     graphqlRequest.payload,
     graphqlRequest.params,
   );

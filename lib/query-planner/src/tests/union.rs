@@ -360,15 +360,15 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
                 book {
                   __typename
                   ... on Book {
-                    title
                     aTitle
+                    title
                   }
                 }
                 media {
                   __typename
                   ... on Book {
-                    title
                     aTitle
+                    title
                   }
                 }
               }

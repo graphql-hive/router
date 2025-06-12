@@ -5,6 +5,7 @@ use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
 use query_planner::consumer_schema::ConsumerSchema;
 use query_planner::graph::Graph;
+use query_planner::planner::best::find_best_combination;
 use query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
 use query_planner::planner::fetch::fetch_graph::FetchGraph;
 use query_planner::planner::plan_nodes::QueryPlan;
@@ -126,15 +127,7 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
 
 fn process_merged_tree(supergraph_path: &str, operation_path: &str) -> (Graph, QueryTree) {
     let (graph, best_paths_per_leaf, _operation) = process_paths(supergraph_path, operation_path);
-
-    let qtps = best_paths_per_leaf
-        .iter()
-        .map(|paths| {
-            QueryTree::from_path(&graph, &paths[0])
-                .expect("expected tree to be built but it failed")
-        })
-        .collect::<Vec<_>>();
-    let query_tree = QueryTree::merge_trees(qtps);
+    let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
 
     (graph, query_tree)
 }

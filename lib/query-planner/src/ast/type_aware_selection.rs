@@ -121,18 +121,33 @@ fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_firs
     for source_item in source.items.iter() {
         let mut found = false;
         for target_item in target.items.iter_mut() {
-            if let (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) =
-                (source_item, target_item)
-            {
-                if source_field == target_field {
-                    found = true;
-                    merge_selection_set(
-                        &mut target_field.selections,
-                        &source_field.selections,
-                        as_first,
-                    );
-                    break;
+            match (source_item, target_item) {
+                (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) => {
+                    if source_field == target_field {
+                        found = true;
+                        merge_selection_set(
+                            &mut target_field.selections,
+                            &source_field.selections,
+                            as_first,
+                        );
+                        break;
+                    }
                 }
+                (
+                    SelectionItem::InlineFragment(source_fragment),
+                    SelectionItem::InlineFragment(target_fragment),
+                ) => {
+                    if source_fragment.type_condition == target_fragment.type_condition {
+                        found = true;
+                        merge_selection_set(
+                            &mut target_fragment.selections,
+                            &source_fragment.selections,
+                            as_first,
+                        );
+                        break;
+                    }
+                }
+                _ => {}
             }
         }
 

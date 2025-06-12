@@ -1,7 +1,7 @@
 use crate::state::supergraph_state::{OperationKind, SupergraphStateError};
 use petgraph::graph::{EdgeIndex, NodeIndex};
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub enum GraphError {
     #[error("Node with index '{0:?}' was not found")]
     NodeNotFound(NodeIndex),

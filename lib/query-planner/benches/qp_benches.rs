@@ -4,10 +4,9 @@ use graphql_parser::query::Document;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
 use query_planner::graph::Graph;
+use query_planner::planner::best::find_best_combination;
 use query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
 use query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
-use query_planner::planner::tree::paths_to_trees;
-use query_planner::planner::tree::query_tree::QueryTree;
 use query_planner::planner::walker::walk_operation;
 use query_planner::state::supergraph_state::SupergraphState;
 use query_planner::utils::parsing::{parse_operation, parse_schema};
@@ -41,22 +40,25 @@ fn query_plan_pipeline(c: &mut Criterion) {
 
     c.bench_function("query_plan", |b| {
         b.iter(|| {
-            let best_paths_per_leaf = walk_operation(black_box(&graph), black_box(&operation))
+            let bb_graph = black_box(&graph);
+            let bb_operation = black_box(&operation);
+
+            let best_paths_per_leaf = walk_operation(bb_graph, bb_operation)
                 .expect("walk_operation failed during benchmark");
-            let qtps = paths_to_trees(black_box(&graph), black_box(&best_paths_per_leaf)).unwrap();
-            let query_tree = QueryTree::merge_trees(black_box(qtps));
-            let fetch_graph =
-                build_fetch_graph_from_query_tree(black_box(&graph), black_box(query_tree))
-                    .unwrap();
-            let query_plan = build_query_plan_from_fetch_graph(black_box(fetch_graph)).unwrap();
+            let query_tree = find_best_combination(bb_graph, best_paths_per_leaf).unwrap();
+            let fetch_graph = build_fetch_graph_from_query_tree(bb_graph, query_tree).unwrap();
+            let query_plan = build_query_plan_from_fetch_graph(fetch_graph).unwrap();
             black_box(query_plan);
         })
     });
 
     c.bench_function("normalization", |b| {
         b.iter(|| {
-            let op =
-                get_executable_operation(&parsed_document, &supergraph_state, Some("TestQuery"));
+            let op = get_executable_operation(
+                black_box(&parsed_document),
+                black_box(&supergraph_state),
+                black_box(Some("TestQuery")),
+            );
             black_box(op);
         })
     });

@@ -3,16 +3,17 @@ use fetch::{error::FetchGraphError, fetch_graph::build_fetch_graph_from_query_tr
 use graphql_parser::schema;
 use plan_nodes::QueryPlan;
 use query_plan::build_query_plan_from_fetch_graph;
-use tree::{paths_to_trees, query_tree::QueryTree};
 use walker::{error::WalkOperationError, walk_operation};
 
 use crate::{
     ast::operation::OperationDefinition,
     consumer_schema::ConsumerSchema,
     graph::{error::GraphError, Graph},
+    planner::best::find_best_combination,
     state::supergraph_state::SupergraphState,
 };
 
+pub mod best;
 mod error;
 pub mod fetch;
 pub mod plan_nodes;
@@ -91,8 +92,7 @@ impl Planner {
         normalized_operation: &OperationDefinition,
     ) -> Result<QueryPlan, PlannerError> {
         let best_paths_per_leaf = walk_operation(&self.graph, normalized_operation)?;
-        let qtps = paths_to_trees(&self.graph, &best_paths_per_leaf)?;
-        let query_tree = QueryTree::merge_trees(qtps);
+        let query_tree = find_best_combination(&self.graph, best_paths_per_leaf).unwrap();
         let fetch_graph = build_fetch_graph_from_query_tree(&self.graph, query_tree)?;
         let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
 
