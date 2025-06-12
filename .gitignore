@@ -3,3 +3,4 @@
 *.pending-snap
 profile.json.gz
 .DS_Store
+./supergraph.graphql
