@@ -48,7 +48,7 @@ impl ExecutablePlanNode for PlanNode {
         data: &mut Value,
     ) {
         match self {
-            PlanNode::Fetch(node) => node.execute_for_root(execution_context, data).await,
+            PlanNode::Fetch(node) => node.execute(execution_context, data).await,
             PlanNode::Sequence(node) => node.execute(execution_context, data).await,
             PlanNode::Parallel(node) => node.execute(execution_context, data).await,
             PlanNode::Flatten(node) => node.execute(execution_context, data).await,
@@ -73,9 +73,8 @@ impl ExecutablePlanNode for PlanNode {
 trait ExecutableFetchNode {
     async fn execute_for_root(
         &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
-        data: &mut Value,
-    );
+        execution_context: &QueryPlanExecutionContext<'_>,
+    ) -> ExecutionResult;
     async fn execute_for_representations<'a>(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
@@ -93,15 +92,28 @@ trait ExecutableFetchNode {
 }
 
 #[async_trait]
-impl ExecutableFetchNode for FetchNode {
-    async fn execute_for_root(
+impl ExecutablePlanNode for FetchNode {
+    #[instrument(skip(self, execution_context), name = "FetchNode::execute")]
+    async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
         data: &mut Value,
     ) {
+        let fetch_result = self.execute_for_root(execution_context).await;
+
+        process_result(fetch_result, execution_context, data);
+    }
+}
+
+#[async_trait]
+impl ExecutableFetchNode for FetchNode {
+    async fn execute_for_root(
+        &self,
+        execution_context: &QueryPlanExecutionContext<'_>,
+    ) -> ExecutionResult {
         let variables = self.prepare_variables_for_fetch_node(execution_context.variable_values);
 
-        let fetch_result = execution_context
+        let mut fetch_result = execution_context
             .execute(
                 &self.service_name,
                 ExecutionRequest {
@@ -114,32 +126,12 @@ impl ExecutableFetchNode for FetchNode {
             .await;
 
         // 5. Process the response
-        match fetch_result.errors {
-            Some(errors) if !errors.is_empty() => {
-                execution_context.errors.extend(errors);
-            }
-            _ => {}
+
+        if let Some(new_data) = &mut fetch_result.data {
+            self.apply_output_rewrites(&execution_context.schema_metadata.possible_types, new_data);
         }
 
-        match fetch_result.extensions {
-            Some(extensions) if !extensions.is_empty() => {
-                execution_context.extensions.extend(extensions);
-            }
-            _ => {}
-        }
-
-        if let Some(mut new_data) = fetch_result.data {
-            self.apply_output_rewrites(
-                &execution_context.schema_metadata.possible_types,
-                &mut new_data,
-            );
-
-            if data.is_null() {
-                *data = new_data; // Initialize with new_data
-            } else {
-                deep_merge::deep_merge(data, new_data);
-            }
-        }
+        fetch_result
     }
 
     async fn execute_for_representations<'a>(
@@ -415,6 +407,29 @@ impl ExecutablePlanNode for SequenceNode {
     }
 }
 
+fn process_result(
+    fetch_result: ExecutionResult,
+    execution_context: &mut QueryPlanExecutionContext<'_>,
+    data: &mut Value,
+) {
+    // 4. Process the response
+    if let Some(new_data) = fetch_result.data {
+        if data.is_null() {
+            *data = new_data; // Initialize with new_data
+        } else {
+            deep_merge::deep_merge(data, new_data);
+        }
+    }
+    // 6. Handle errors
+    if let Some(errors) = fetch_result.errors {
+        execution_context.errors.extend(errors);
+    }
+    // 7. Handle extensions
+    if let Some(extensions) = fetch_result.extensions {
+        execution_context.extensions.extend(extensions);
+    }
+}
+
 #[async_trait]
 impl ExecutablePlanNode for ParallelNode {
     #[instrument(skip(self, execution_context), name = "ParallelNode::execute")]
@@ -423,8 +438,35 @@ impl ExecutablePlanNode for ParallelNode {
         execution_context: &mut QueryPlanExecutionContext<'_>,
         data: &mut Value,
     ) {
+        // Here we call fetch nodes in parallel and non-fetch nodes sequentially.
+        let mut jobs = vec![];
+        let mut non_fetch_nodes = vec![];
+
+        // Collect Fetch node results and non-fetch nodes for sequential execution
         for node in &self.nodes {
+            match node {
+                PlanNode::Fetch(fetch_node) => {
+                    // Execute FetchNode in parallel
+                    let job = fetch_node.execute_for_root(execution_context);
+                    jobs.push(job);
+                }
+                _ => {
+                    non_fetch_nodes.push(node);
+                }
+            }
+        }
+
+        // Wait for all jobs to complete
+        let results = futures::future::join_all(jobs).await;
+
+        for node in non_fetch_nodes {
+            // Execute non-Fetch nodes sequentially (TODO!: consider parallel execution)
             node.execute(execution_context, data).await;
+        }
+
+        // Process results
+        for fetch_result in results {
+            process_result(fetch_result, execution_context, data);
         }
     }
 }
