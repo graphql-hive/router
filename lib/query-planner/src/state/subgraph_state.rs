@@ -18,7 +18,7 @@ pub struct SubgraphState {
 }
 
 impl SubgraphState {
-    #[instrument(skip(supergraph_state))]
+    #[instrument(level = "trace", skip(supergraph_state))]
     pub fn decompose_from_supergraph(
         graph_id: &SubgraphId,
         supergraph_state: &SupergraphState,

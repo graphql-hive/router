@@ -60,7 +60,7 @@ pub struct SupergraphState {
 }
 
 impl SupergraphState {
-    #[instrument(skip(schema), name = "new_supergraph_state")]
+    #[instrument(level = "trace", skip(schema), name = "new_supergraph_state")]
     pub fn new(schema: &SchemaDocument) -> Self {
         let (known_subgraphs, subgraph_endpoint_map) =
             Self::extract_subgraph_names_and_endpoints(schema);
@@ -160,7 +160,7 @@ impl SupergraphState {
         (subgraph_names_map, subgraph_endpoints_map)
     }
 
-    #[instrument(skip(schema))]
+    #[instrument(level = "trace", skip(schema))]
     fn build_map(schema: &SchemaDocument) -> HashMap<String, SupergraphDefinition> {
         schema
             .definitions
@@ -209,7 +209,7 @@ impl SupergraphState {
             .collect()
     }
 
-    #[instrument(skip(input_object_type), fields(name = input_object_type.name))]
+    #[instrument(level = "trace",skip(input_object_type), fields(name = input_object_type.name))]
     fn build_input_object_type(
         input_object_type: &input::InputObjectType<'static, String>,
     ) -> SupergraphInputObjectType {
@@ -220,7 +220,7 @@ impl SupergraphState {
         }
     }
 
-    #[instrument(skip(scalar_type), fields(name = scalar_type.name))]
+    #[instrument(level = "trace",skip(scalar_type), fields(name = scalar_type.name))]
     fn build_scalar_type(scalar_type: &input::ScalarType<'static, String>) -> SupergraphScalarType {
         SupergraphScalarType {
             name: scalar_type.name.to_string(),
@@ -228,7 +228,7 @@ impl SupergraphState {
         }
     }
 
-    #[instrument(skip(union_type), fields(name = union_type.name))]
+    #[instrument(level = "trace",skip(union_type), fields(name = union_type.name))]
     fn build_union_type(union_type: &input::UnionType<'static, String>) -> SupergraphUnionType {
         SupergraphUnionType {
             name: union_type.name.to_string(),
@@ -240,7 +240,7 @@ impl SupergraphState {
         }
     }
 
-    #[instrument(skip(enum_type), fields(name = enum_type.name))]
+    #[instrument(level = "trace",skip(enum_type), fields(name = enum_type.name))]
     fn build_enum_type(enum_type: &input::EnumType<'static, String>) -> SupergraphEnumType {
         SupergraphEnumType {
             name: enum_type.name.to_string(),
@@ -258,7 +258,7 @@ impl SupergraphState {
         }
     }
 
-    #[instrument(skip(fields), fields(fields_count = fields.len()))]
+    #[instrument(level = "trace",skip(fields), fields(fields_count = fields.len()))]
     fn build_fields(fields: &[input::Field<'static, String>]) -> HashMap<String, SupergraphField> {
         fields
             .iter()
@@ -281,7 +281,7 @@ impl SupergraphState {
             .collect()
     }
 
-    #[instrument(skip(fields), fields(fields_count = fields.len()))]
+    #[instrument(level = "trace",skip(fields), fields(fields_count = fields.len()))]
     fn build_input_fields(
         fields: &[input::InputValue<'static, String>],
     ) -> HashMap<String, SupergraphField> {
@@ -306,7 +306,7 @@ impl SupergraphState {
             .collect()
     }
 
-    #[instrument(skip(interface_type), fields(name = interface_type.name))]
+    #[instrument(level = "trace",skip(interface_type), fields(name = interface_type.name))]
     fn build_interface_type(
         interface_type: &input::InterfaceType<'static, String>,
     ) -> SupergraphInterfaceType {
@@ -324,7 +324,7 @@ impl SupergraphState {
         }
     }
 
-    #[instrument(skip(object_type, schema), fields(name = object_type.name))]
+    #[instrument(level = "trace",skip(object_type, schema), fields(name = object_type.name))]
     fn build_object_type(
         object_type: &input::ObjectType<'static, String>,
         schema: &SchemaDocument,

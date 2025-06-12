@@ -2,7 +2,7 @@ use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
 
 use petgraph::visit::{EdgeRef, NodeRef};
-use tracing::{debug, instrument};
+use tracing::{instrument, trace};
 
 use crate::{
     ast::{
@@ -62,7 +62,7 @@ pub enum NavigationTarget<'a> {
     ConcreteType(&'a str),
 }
 
-#[instrument(skip(graph, excluded), ret(), fields(
+#[instrument(level = "trace",skip(graph, excluded), ret(), fields(
   path = path.pretty_print(graph),
   current_cost = path.cost
 ))]
@@ -89,7 +89,7 @@ pub fn find_indirect_paths(
             .filter(|e| matches!(e.weight(), Edge::EntityMove { .. }));
 
         for edge_ref in relevant_edges {
-            debug!(
+            trace!(
                 "Exploring edge {}",
                 graph.pretty_print_edge(edge_ref.id(), false)
             );
@@ -97,9 +97,10 @@ pub fn find_indirect_paths(
             let edge_tail_graph_id = graph.node(edge_ref.target().id())?.graph_id().unwrap();
 
             if visited_graphs.contains(edge_tail_graph_id) {
-                debug!(
+                trace!(
                     "Ignoring, graph is excluded and already visited (current: {}, visited: {:?})",
-                    edge_tail_graph_id, visited_graphs
+                    edge_tail_graph_id,
+                    visited_graphs
                 );
                 continue;
             }
@@ -109,7 +110,7 @@ pub fn find_indirect_paths(
             if edge_tail_graph_id == source_graph_id {
                 // Prevent a situation where we are going back to the same graph
                 // The only exception is when we are moving to an abstract type
-                debug!("Ignoring. We would go back to the same graph");
+                trace!("Ignoring. We would go back to the same graph");
                 continue;
             }
 
@@ -132,7 +133,7 @@ pub fn find_indirect_paths(
             };
 
             if requirements_already_checked {
-                debug!("Ignoring. Already visited similar edge");
+                trace!("Ignoring. Already visited similar edge");
                 continue;
             }
 
@@ -142,11 +143,11 @@ pub fn find_indirect_paths(
 
             match can_be_satisfied {
                 None => {
-                    debug!("Requirements not satisfied, continue look up...");
+                    trace!("Requirements not satisfied, continue look up...");
                     continue;
                 }
                 Some(paths) => {
-                    debug!(
+                    trace!(
                         "Advancing path to {}",
                         graph.pretty_print_edge(edge_ref.id(), false)
                     );
@@ -163,7 +164,7 @@ pub fn find_indirect_paths(
                     let direct_paths = find_direct_paths(graph, &next_resolution_path, target)?;
 
                     if !direct_paths.is_empty() {
-                        debug!(
+                        trace!(
                             "Found {} direct paths to {}",
                             direct_paths.len(),
                             graph.pretty_print_edge(edge_ref.id(), false)
@@ -175,7 +176,7 @@ pub fn find_indirect_paths(
 
                         continue;
                     } else {
-                        debug!("No direct paths found");
+                        trace!("No direct paths found");
 
                         let mut new_visited_graphs = visited_graphs.clone();
                         new_visited_graphs.insert(edge_tail_graph_id.to_string());
@@ -191,7 +192,7 @@ pub fn find_indirect_paths(
 
                         queue.add(new_visited_graphs, next_requirements, next_resolution_path);
 
-                        debug!("going deeper");
+                        trace!("going deeper");
                     }
                 }
             }
@@ -200,7 +201,7 @@ pub fn find_indirect_paths(
 
     let best_paths = tracker.get_best_paths();
 
-    debug!(
+    trace!(
         "Finished finding indirect paths, found total of {}",
         best_paths.len()
     );
@@ -211,7 +212,7 @@ pub fn find_indirect_paths(
     Ok(best_paths)
 }
 
-#[instrument(skip(graph), ret(), fields(
+#[instrument(level = "trace",skip(graph), ret(), fields(
     path = path.pretty_print(graph),
     current_cost = path.cost,
 ))]
@@ -229,7 +230,7 @@ pub fn find_direct_paths(
                 .edges_from(path_tail_index)
                 .filter(|e| matches!(e.weight(), Edge::FieldMove(f) if f.name == field.name));
             for edge_ref in edges_iter {
-                debug!(
+                trace!(
                     "checking edge {}",
                     graph.pretty_print_edge(edge_ref.id(), false)
                 );
@@ -239,7 +240,7 @@ pub fn find_direct_paths(
 
                 match can_be_satisfied {
                     Some(paths) => {
-                        debug!(
+                        trace!(
                             "Advancing path {} with edge {}",
                             path.pretty_print(graph),
                             graph.pretty_print_edge(edge_ref.id(), false)
@@ -254,7 +255,7 @@ pub fn find_direct_paths(
                         result.push(next_resolution_path);
                     }
                     None => {
-                        debug!("Edge not satisfied, continue look up...");
+                        trace!("Edge not satisfied, continue look up...");
                     }
                 }
             }
@@ -266,7 +267,7 @@ pub fn find_direct_paths(
                 .edges_from(path_tail_index)
                 .filter(|e| matches!(e.weight(), Edge::AbstractMove(t) if t == type_name));
             for edge_ref in edges_iter {
-                debug!(
+                trace!(
                     "Advancing path {} with edge {}",
                     path.pretty_print(graph),
                     graph.pretty_print_edge(edge_ref.id(), false)
@@ -282,7 +283,7 @@ pub fn find_direct_paths(
     }
 }
 
-#[instrument(skip_all, ret(), fields(
+#[instrument(level = "trace",skip_all, ret(), fields(
   path = path.pretty_print(graph),
   edge = edge_ref.weight().display_name(),
 ))]
@@ -298,7 +299,7 @@ pub fn can_satisfy_edge(
     match edge.requirements() {
         None => Ok(Some(vec![])),
         Some(selections) => {
-            debug!(
+            trace!(
                 "checking requirements {} for edge '{}'",
                 selections,
                 graph.pretty_print_edge(edge_ref.id(), false)
@@ -328,15 +329,15 @@ pub fn can_satisfy_edge(
 
                         match result {
                             Some((next_paths, next_requirements)) => {
-                                debug!("Paths for {}", selection_field_requirement);
+                                trace!("Paths for {}", selection_field_requirement);
 
                                 for next_path in next_paths.iter() {
-                                    debug!("  Path {} is valid", next_path.pretty_print(graph));
+                                    trace!("  Path {} is valid", next_path.pretty_print(graph));
                                 }
 
                                 if selection_field_requirement.is_leaf() {
                                     let best_paths = find_best_paths(next_paths);
-                                    debug!(
+                                    trace!(
                                         "Found {} best paths for this leaf requirement",
                                         best_paths.len()
                                     );
@@ -364,7 +365,7 @@ pub fn can_satisfy_edge(
             }
 
             for path in paths_to_requirements.iter() {
-                debug!("path {} is valid", path.pretty_print(graph));
+                trace!("path {} is valid", path.pretty_print(graph));
             }
 
             Ok(Some(paths_to_requirements))
@@ -380,8 +381,8 @@ pub struct MoveRequirement {
 
 type FieldRequirementsResult = Option<(Vec<OperationPath>, Vec<MoveRequirement>)>;
 
-#[instrument(skip_all, ret())]
-#[instrument(skip_all, ret())]
+#[instrument(level = "trace", skip_all, ret())]
+#[instrument(level = "trace", skip_all, ret())]
 fn validate_field_requirement(
     graph: &Graph,
     move_requirement: &MoveRequirement, // Contains Rc<Vec<OperationPath>>
