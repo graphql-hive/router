@@ -66,10 +66,10 @@ pub struct GraphQLQueryParams {
 /// To be complaint with GraphQL-Over-HTTP spec,
 /// we need to conditionally respond with either 200 or 400,
 /// depending on the Accept header value.
-fn build_accept_aware_graphql_error_response<'a>(
+fn build_accept_aware_graphql_error_response(
     message: String,
     code: &str,
-    accept_header: &'a str,
+    accept_header: &str,
 ) -> Response {
     let status_code = match accept_header.contains("application/json") {
         true => StatusCode::OK,
@@ -79,11 +79,7 @@ fn build_accept_aware_graphql_error_response<'a>(
     build_graphql_error_response(message, code, status_code)
 }
 
-fn build_graphql_error_response<'a>(
-    message: String,
-    code: &str,
-    status_code: StatusCode,
-) -> Response {
+fn build_graphql_error_response(message: String, code: &str, status_code: StatusCode) -> Response {
     let error_result = ExecutionResult {
         data: None,
         errors: Some(vec![GraphQLError {
@@ -119,7 +115,7 @@ fn build_validation_error_response(
 
 /// Gets the Accept header from the request's headers.
 /// If none, defaults to `application/json`
-fn get_accept_header<'a>(headers: &'a HeaderMap) -> &'a str {
+fn get_accept_header(headers: &HeaderMap) -> &str {
     headers
         .get("Accept")
         .and_then(|h| h.to_str().ok())
