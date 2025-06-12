@@ -1,4 +1,5 @@
 use serde_json::Value;
+use tracing::instrument;
 
 // Deeply merges two serde_json::Values (mutates target in place)
 pub fn deep_merge(target: &mut Value, source: Value) {
@@ -11,10 +12,8 @@ pub fn deep_merge(target: &mut Value, source: Value) {
             deep_merge_objects(target_map, source_map);
         }
 
-        // 3. Both are Arrays of same length: Merge elements
-        (Value::Array(target_arr), Value::Array(source_arr))
-            if target_arr.len() == source_arr.len() =>
-        {
+        // 3. Both are Arrays of same length(?): Merge elements
+        (Value::Array(target_arr), Value::Array(source_arr)) => {
             for (t, s) in target_arr.iter_mut().zip(source_arr.into_iter()) {
                 // Recurse for elements. If s is Null, the recursive call handles it.
                 deep_merge(t, s);
@@ -29,22 +28,34 @@ pub fn deep_merge(target: &mut Value, source: Value) {
     }
 }
 
+#[instrument(
+    name = "deep_merge_objects",
+    skip(target_map, source_map),
+    fields(
+        target_type = %target_map.get("__typename").map_or("unknown", |v| v.as_str().unwrap_or("unknown")),
+        source_type = %source_map.get("__typename").map_or("unknown", |v| v.as_str().unwrap_or("unknown"))
+    )
+)]
 pub fn deep_merge_objects(
-    target: &mut serde_json::Map<String, Value>,
-    source: serde_json::Map<String, Value>,
+    target_map: &mut serde_json::Map<String, Value>,
+    source_map: serde_json::Map<String, Value>,
 ) {
-    if target.is_empty() {
+    if target_map.is_empty() {
         // If target is empty, just replace it with source
-        *target = source;
+        *target_map = source_map;
         return;
     }
-    for (key, source_val) in source {
-        if let Some(target_val) = target.get_mut(&key) {
-            // If the key exists in target, merge it
+    if source_map.is_empty() {
+        // If source is empty, do nothing (target remains unchanged)
+        return;
+    }
+    for (key, source_val) in source_map {
+        if let Some(target_val) = target_map.get_mut(&key) {
+            // If key exists in target, merge recursively
             deep_merge(target_val, source_val);
         } else {
-            // If the key does not exist, insert it
-            target.insert(key, source_val);
+            // If key does not exist in target, insert it
+            target_map.insert(key, source_val);
         }
     }
 }

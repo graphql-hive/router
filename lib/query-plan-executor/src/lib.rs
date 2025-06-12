@@ -26,34 +26,43 @@ pub mod variables;
 
 #[async_trait]
 trait ExecutablePlanNode {
-    async fn execute(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>);
+    async fn execute(
+        &self,
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+        data: Arc<Value>,
+    ) -> Value;
 }
 
 #[async_trait]
 trait ExecutableQueryPlan {
-    async fn execute(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>);
+    async fn execute(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>) -> Value;
 }
 
 #[async_trait]
 impl ExecutablePlanNode for PlanNode {
-    async fn execute(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>) {
+    async fn execute(
+        &self,
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+        data: Arc<Value>,
+    ) -> Value {
         match self {
             PlanNode::Fetch(node) => node.execute_for_root(execution_context_arc).await,
-            PlanNode::Sequence(node) => node.execute(execution_context_arc).await,
-            PlanNode::Parallel(node) => node.execute(execution_context_arc).await,
-            PlanNode::Flatten(node) => node.execute(execution_context_arc).await,
-            PlanNode::Condition(node) => node.execute(execution_context_arc).await,
+            PlanNode::Sequence(node) => node.execute(execution_context_arc, data).await,
+            PlanNode::Parallel(node) => node.execute(execution_context_arc, data).await,
+            PlanNode::Flatten(node) => node.execute(execution_context_arc, data).await,
+            PlanNode::Condition(node) => node.execute(execution_context_arc, data).await,
             PlanNode::Subscription(node) => {
                 // Subscriptions typically use a different protocol.
                 // Execute the primary node for now.
                 warn!(
             "Executing SubscriptionNode's primary as a normal node. Real subscription handling requires a different mechanism."
         );
-                node.primary.execute(execution_context_arc).await
+                node.primary.execute(execution_context_arc, data).await
             }
             PlanNode::Defer(_) => {
                 // Defer/Deferred execution is complex.
                 warn!("DeferNode execution is not fully implemented.");
+                Value::Null // Placeholder for now
             }
         }
     }
@@ -61,11 +70,14 @@ impl ExecutablePlanNode for PlanNode {
 
 #[async_trait]
 trait ExecutableFetchNode {
-    async fn execute_for_root(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>);
+    async fn execute_for_root(
+        &self,
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+    ) -> Value;
     async fn execute_for_representations<'a>(
         &self,
         execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
-        representations: Vec<&'a Value>,
+        representations: &'a Vec<CollectedRepresentation<'a>>,
     ) -> Vec<Value>;
     fn apply_output_rewrites(
         &self,
@@ -80,7 +92,10 @@ trait ExecutableFetchNode {
 
 #[async_trait]
 impl ExecutableFetchNode for FetchNode {
-    async fn execute_for_root(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>) {
+    async fn execute_for_root(
+        &self,
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+    ) -> Value {
         let variables =
             self.prepare_variables_for_fetch_node(execution_context_arc.variable_values);
 
@@ -104,37 +119,37 @@ impl ExecutableFetchNode for FetchNode {
             _ => {}
         }
 
-        if let Some(mut data) = fetch_result.data {
-            self.apply_output_rewrites(
-                &execution_context_arc.schema_metadata.possible_types,
-                &mut data,
-            );
-            execution_context_arc.merge_data(data).await;
-        }
-
         match fetch_result.extensions {
             Some(extensions) if !extensions.is_empty() => {
                 execution_context_arc.merge_extensions(extensions).await;
             }
             _ => {}
         }
+
+        if let Some(mut data) = fetch_result.data {
+            self.apply_output_rewrites(
+                &execution_context_arc.schema_metadata.possible_types,
+                &mut data,
+            );
+            data
+        } else {
+            Value::Null // No data returned, return Null
+        }
     }
 
     async fn execute_for_representations<'a>(
         &self,
         execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
-        representations: Vec<&'a Value>,
+        representations: &'a Vec<CollectedRepresentation<'a>>,
     ) -> Vec<Value> {
         let mut filtered_repr_indexes = Vec::new();
         // 1. Filter representations based on requires (if present)
         let mut filtered_representations: Vec<Value> = Vec::new();
         let requires_nodes = self.requires.as_ref().unwrap();
-        println!("representations: {:?}", representations);
         for (index, entity) in representations.iter().enumerate() {
-            let entity_projected =
-                execution_context_arc.project_requires(&requires_nodes.items, entity);
+            let entity_projected = execution_context_arc
+                .project_requires(&requires_nodes.items, entity.representation);
             if !entity_projected.is_null() {
-                println!("Entity projected: {:?}", entity_projected);
                 filtered_representations.push(entity_projected);
                 filtered_repr_indexes.push(index);
             }
@@ -161,7 +176,6 @@ impl ExecutableFetchNode for FetchNode {
         let mut variables = self
             .prepare_variables_for_fetch_node(execution_context_arc.variable_values)
             .unwrap_or_default();
-        println!("filtered_representations: {:?}", filtered_representations);
 
         variables.insert(
             "representations".to_string(),
@@ -200,7 +214,10 @@ impl ExecutableFetchNode for FetchNode {
                     for (entity, representation_index) in
                         entities.into_iter().zip(filtered_repr_indexes.iter_mut())
                     {
-                        final_representations[*representation_index] = entity;
+                        let final_representation = final_representations
+                            .get_mut(*representation_index)
+                            .unwrap();
+                        *final_representation = entity; // Assign the entity to the final representation
                     }
                 }
                 _ => {
@@ -253,11 +270,10 @@ trait ApplyFetchRewrite {
     fn apply(&self, possible_types: &HashMap<String, Vec<String>>, value: &mut Value);
     fn apply_path(
         &self,
-        _possible_types: &HashMap<String, Vec<String>>,
-        _value: &mut Value,
-        _path: &[String],
-    ) {
-    }
+        possible_types: &HashMap<String, Vec<String>>,
+        value: &mut Value,
+        path: &[String],
+    );
 }
 
 impl ApplyFetchRewrite for FetchRewrite {
@@ -265,6 +281,17 @@ impl ApplyFetchRewrite for FetchRewrite {
         match self {
             FetchRewrite::KeyRenamer(renamer) => renamer.apply(possible_types, value),
             FetchRewrite::ValueSetter(setter) => setter.apply(possible_types, value),
+        }
+    }
+    fn apply_path(
+        &self,
+        possible_types: &HashMap<String, Vec<String>>,
+        value: &mut Value,
+        path: &[String],
+    ) {
+        match self {
+            FetchRewrite::KeyRenamer(renamer) => renamer.apply_path(possible_types, value, path),
+            FetchRewrite::ValueSetter(setter) => setter.apply_path(possible_types, value, path),
         }
     }
 }
@@ -377,72 +404,151 @@ impl ApplyFetchRewrite for ValueSetter {
 #[async_trait]
 impl ExecutablePlanNode for SequenceNode {
     #[instrument(skip(self, execution_context_arc), name = "SequenceNode::execute")]
-    async fn execute(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>) {
+    async fn execute(
+        &self,
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+        data_arc: Arc<Value>,
+    ) -> Value {
+        let mut data_arc = Arc::clone(&data_arc);
         for node in &self.nodes {
             let execution_context_arc = Arc::clone(&execution_context_arc);
-            node.execute(execution_context_arc) // No representations passed to child nodes
+            let data_arc_for_node = Arc::clone(&data_arc);
+            let new_data = node
+                .execute(execution_context_arc, data_arc_for_node) // No representations passed to child nodes
                 .await;
+            if new_data.is_null() {
+                continue; // Skip null results
+            }
+            if data_arc.is_null() {
+                // If data_arc is Null, replace it with new_data
+                data_arc = Arc::new(new_data);
+                continue; // Continue to the next node
+            }
+            let mut data = Arc::into_inner(data_arc).unwrap_or(Value::Null);
+            deep_merge::deep_merge(&mut data, new_data);
+            data_arc = Arc::new(data);
         }
+        Arc::try_unwrap(data_arc).unwrap_or_else(|_| Value::Null) // If Arc still has multiple references, return Null
     }
 }
 
 #[async_trait]
 impl ExecutablePlanNode for ParallelNode {
     #[instrument(skip(self, execution_context_arc), name = "ParallelNode::execute")]
-    async fn execute(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>) {
+    async fn execute(
+        &self,
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+        data: Arc<Value>,
+    ) -> Value {
         let mut jobs = Vec::new();
         for node in &self.nodes {
             let execution_context_arc = Arc::clone(&execution_context_arc);
-            let job = node.execute(execution_context_arc);
+            let data = Arc::clone(&data);
+            let job = node.execute(execution_context_arc, data);
             jobs.push(job);
         }
-        join_all(jobs).await;
+        let mut data = Value::Null;
+        for result in join_all(jobs).await {
+            if data.is_null() {
+                data = result; // Initialize data with the first result
+            } else if result.is_null() {
+                continue; // Skip null results
+            } else {
+                deep_merge::deep_merge(&mut data, result);
+            }
+        }
+        data
     }
 }
 
 #[async_trait]
 impl ExecutablePlanNode for FlattenNode {
     #[instrument(skip(self, execution_context_arc), name = "FlattenNode::execute")]
-    async fn execute(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>) {
-        let mut data_for_flatten = execution_context_arc.data_mutex.lock().await;
-
+    async fn execute(
+        &self,
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+        data: Arc<Value>,
+    ) -> Value {
+        let path = self.path.iter().map(|s| s.as_str()).collect::<Vec<_>>();
         // Use the recursive traversal function on the temporarily owned data
         let representations = traverse_and_collect(
-            &data_for_flatten, // Operate on the separated data
-            self.path
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .as_slice(),
+            &data, // Operate on the separated data
+            path.as_slice(),
+            vec![],
         );
 
         // Execute the child node. `execution_context` can be borrowed mutably
         // because `collected_representations` borrows `data_for_flatten`, not `execution_context.data`.
         let execution_context_arc = Arc::clone(&execution_context_arc);
-        let mut final_representations = self
+        let final_representations = self
             .node
             .execute_for_representations(
                 execution_context_arc,
-                representations, // Pass representations borrowing data_for_flatten
+                &representations, // Pass representations borrowing data_for_flatten
             )
             .await;
         // After execution, we need to put the final representations back into the data
-        traverse_and_put(
-            &mut data_for_flatten,
-            self.path
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .as_slice(),
-            &mut final_representations,
-        );
+        let mut final_data = Value::Null;
+        for (collected, representation) in representations
+            .into_iter()
+            .zip(final_representations.into_iter())
+        {
+            if representation.is_null() {
+                continue; // Skip null representations
+            }
+            // Add the representation to the final data at the collected path
+            add_value_to_path(&mut final_data, representation, &collected.path);
+        }
+
+        final_data
+    }
+}
+
+fn add_value_to_path(data: &mut Value, value: Value, path: &[String]) {
+    if path.is_empty() {
+        // If the path is empty, just set the value directly
+        *data = value;
+        return;
+    }
+
+    let current_key = &path[0];
+    let remaining_path = &path[1..];
+    // If current_key is number, put it in an array
+    if let Ok(index) = current_key.parse::<usize>() {
+        // If the data is not an array, convert it to an array
+        if !data.is_array() {
+            *data = Value::Array(vec![]);
+        }
+        if let Value::Array(arr) = data {
+            // Ensure the array is large enough
+            if index >= arr.len() {
+                arr.resize(index + 1, Value::Null);
+            }
+            // Recursively add the value to the next path segment
+            add_value_to_path(&mut arr[index], value, remaining_path);
+        }
+    } else {
+        if !data.is_object() {
+            // If the data is not an object, convert it to an object
+            *data = Value::Object(Map::new());
+        }
+        // If current_key is a string, treat it as an object key
+        if let Value::Object(map) = data {
+            // Recursively add the value to the next path segment
+            let entry = map.entry(current_key.clone()).or_insert(Value::Null);
+            add_value_to_path(entry, value, remaining_path);
+        }
     }
 }
 
 #[async_trait]
 impl ExecutablePlanNode for ConditionNode {
     #[instrument(skip(self, execution_context_arc), name = "ConditionNode::execute")]
-    async fn execute(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>) {
+    async fn execute(
+        &self,
+        execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
+        data: Arc<Value>,
+    ) -> Value {
         // Get the condition variable from the context
         let condition_value: bool = match execution_context_arc.variable_values {
             Some(ref variable_values) => {
@@ -467,20 +573,26 @@ impl ExecutablePlanNode for ConditionNode {
         };
         if condition_value {
             if let Some(if_clause) = &self.if_clause {
-                if_clause.execute(execution_context_arc).await
+                return if_clause.execute(execution_context_arc, data).await;
             }
         } else if let Some(else_clause) = &self.else_clause {
-            else_clause.execute(execution_context_arc).await
+            return else_clause.execute(execution_context_arc, data).await;
         }
+        // If no condition matched, return the original data
+        Value::Null
     }
 }
 
 #[async_trait]
 impl ExecutableQueryPlan for QueryPlan {
     #[instrument(skip(self, execution_context_arc))]
-    async fn execute(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>) {
+    async fn execute(&self, execution_context_arc: Arc<QueryPlanExecutionContext<'_>>) -> Value {
         if let Some(root_node) = &self.node {
-            root_node.execute(execution_context_arc).await
+            root_node
+                .execute(execution_context_arc, Arc::new(Value::Null))
+                .await
+        } else {
+            Value::Null // No root node, return Null
         }
     }
 }
@@ -562,7 +674,6 @@ pub struct QueryPlanExecutionContext<'a> {
     schema_metadata: &'a SchemaMetadata,
     executor: HTTPSubgraphExecutor<'a>,
     // Using `Value` as the main data structure, usually will be a JSON object
-    pub data_mutex: Mutex<Value>,
     pub errors_mutex: Mutex<Vec<GraphQLError>>,
     pub extensions_mutex: Mutex<HashMap<String, Value>>,
 }
@@ -601,22 +712,15 @@ impl QueryPlanExecutionContext<'_> {
         // Add new errors to the existing list
         errors_lock.extend(errors);
     }
-    async fn merge_data(&self, new_data: Value) {
-        let mut data_lock = self.data_mutex.lock().await;
-        match (&mut *data_lock, new_data) {
-            (Value::Object(data_map), Value::Object(new_map)) => {
-                deep_merge::deep_merge_objects(data_map, new_map);
-            }
-            (Value::Null, new_data) => {
-                *data_lock = new_data;
-            }
-            (_, new_data) => {
-                deep_merge::deep_merge(&mut data_lock, new_data);
-            }
-        }
-    }
 
-    #[instrument(skip(self))]
+    #[instrument(
+        name = "Project requires selections",
+        skip(self, requires_selections, entity)
+        fields(
+            requires_selections = ?requires_selections,
+            entity = ?entity
+        )
+    )]
     fn project_requires(&self, requires_selections: &Vec<SelectionItem>, entity: &Value) -> Value {
         match entity {
             Value::Null => Value::Null,
@@ -672,13 +776,16 @@ impl QueryPlanExecutionContext<'_> {
                 }
             }
             Value::Bool(bool) => Value::Bool(*bool),
-            Value::Number(num) => Value::Number(num.clone()),
+            Value::Number(num) => Value::Number(num.to_owned()),
             Value::String(string) => Value::String(string.to_string()),
         }
     }
 }
 
-#[instrument]
+#[instrument(
+    name = "Check if entity satisfies type condition",
+    skip(possible_types)
+)]
 fn entity_satisfies_type_condition(
     possible_types: &HashMap<String, Vec<String>>,
     type_name: &str,
@@ -702,58 +809,59 @@ fn entity_satisfies_type_condition(
 
 // --- Helper Function for Flatten ---
 
+#[derive(Debug)]
+struct CollectedRepresentation<'a> {
+    representation: &'a Value,
+    path: Vec<String>,
+}
+
 /// Recursively traverses the data according to the path segments,
 /// handling '@' for array iteration, and collects the final values.current_data.to_vec()
 #[instrument]
-fn traverse_and_collect<'a>(current_data: &'a Value, remaining_path: &[&str]) -> Vec<&'a Value> {
+fn traverse_and_collect<'a>(
+    current_data: &'a Value,
+    remaining_path: &'a [&str],
+    current_path: Vec<String>,
+) -> Vec<CollectedRepresentation<'a>> {
     match (current_data, remaining_path) {
-        (Value::Array(arr), []) => arr.iter().flat_map(|item| vec![item]).collect(), // Base case: No more path segments,
-        (current_data, []) => vec![current_data], // Base case: No more path segments,
+        (Value::Array(arr), []) => {
+            let mut index = 0;
+            arr.iter()
+                .flat_map(|item| {
+                    let current_index_str = index.to_string();
+                    let current_path = [current_path.to_vec(), vec![current_index_str]].concat();
+                    index += 1;
+                    vec![CollectedRepresentation {
+                        representation: item,
+                        path: current_path,
+                    }]
+                })
+                .collect()
+        } // Base case: No more path segments,
+        (current_data, []) => vec![CollectedRepresentation {
+            representation: current_data,
+            path: current_path.to_vec(),
+        }], // Base case: No more path segments,
         (Value::Object(obj), [next_segment, next_remaining_path @ ..]) => {
             if let Some(next_value) = obj.get(*next_segment) {
-                traverse_and_collect(next_value, next_remaining_path)
+                let current_path = [current_path.to_vec(), vec![next_segment.to_string()]].concat();
+                traverse_and_collect(next_value, next_remaining_path, current_path)
             } else {
                 vec![] // No valid path segment
             }
         }
-        (Value::Array(arr), ["@", next_remaining_path @ ..]) => arr
-            .iter()
-            .flat_map(|item| traverse_and_collect(item, next_remaining_path))
-            .collect(),
-        _ => vec![], // No valid path segment
-    }
-}
-
-fn traverse_and_put(
-    current_data: &mut Value,
-    remaining_path: &[&str],
-    representations: &mut Vec<Value>,
-) {
-    match (current_data, remaining_path) {
-        (Value::Array(arr), []) => {
-            // Base case: No more path segments, do nothing
-            for item in arr.iter_mut().rev() {
-                traverse_and_put(item, &[], representations);
-            }
-        }
-        // Base case: No more path segments,
-        (current_data, []) => {
-            let current_to_set = representations.pop();
-            if let Some(current_to_set) = current_to_set {
-                deep_merge::deep_merge(current_data, current_to_set);
-            }
-        }
-        (Value::Object(obj), [next_segment, next_remaining_path @ ..]) => {
-            if let Some(next_value) = obj.get_mut(*next_segment) {
-                traverse_and_put(next_value, next_remaining_path, representations)
-            }
-        }
         (Value::Array(arr), ["@", next_remaining_path @ ..]) => {
-            for item in arr {
-                traverse_and_put(item, next_remaining_path, representations);
-            }
+            let mut index = 0;
+            arr.iter()
+                .flat_map(|item| {
+                    let current_index_str = index.to_string();
+                    let current_path = [current_path.to_vec(), vec![current_index_str]].concat();
+                    index += 1;
+                    traverse_and_collect(item, next_remaining_path, current_path)
+                })
+                .collect()
         }
-        _ => {} // No valid path segment
+        _ => vec![], // No valid path segment
     }
 }
 
@@ -1045,21 +1153,18 @@ pub async fn execute_query_plan(
         subgraph_endpoint_map,
         http_client,
     };
-    let result_data = Value::Null; // Initial data is Null
     let result_errors = vec![]; // Initial errors are empty
     let result_extensions = HashMap::new(); // Initial extensions are empty
     let execution_context = QueryPlanExecutionContext {
         variable_values,
         executor: http_executor,
         schema_metadata,
-        data_mutex: Mutex::new(result_data),
         errors_mutex: Mutex::new(result_errors),
         extensions_mutex: Mutex::new(result_extensions),
     };
     let execution_context_arc = Arc::new(execution_context);
-    query_plan.execute(Arc::clone(&execution_context_arc)).await;
+    let mut result_data = query_plan.execute(Arc::clone(&execution_context_arc)).await;
     let execution_context = Arc::into_inner(execution_context_arc).unwrap();
-    let mut result_data = execution_context.data_mutex.into_inner();
     let mut result_errors = execution_context.errors_mutex.into_inner();
     #[allow(unused_mut)]
     let mut result_extensions = execution_context.extensions_mutex.into_inner();
