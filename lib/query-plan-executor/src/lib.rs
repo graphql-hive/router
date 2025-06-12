@@ -77,7 +77,7 @@ trait ExecutableFetchNode {
     async fn execute_for_representations<'a>(
         &self,
         execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
-        representations: &'a Vec<CollectedRepresentation<'a>>,
+        representations: &'a [CollectedRepresentation<'a>],
     ) -> Vec<Value>;
     fn apply_output_rewrites(
         &self,
@@ -140,7 +140,7 @@ impl ExecutableFetchNode for FetchNode {
     async fn execute_for_representations<'a>(
         &self,
         execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
-        representations: &'a Vec<CollectedRepresentation<'a>>,
+        representations: &'a [CollectedRepresentation<'a>],
     ) -> Vec<Value> {
         let mut filtered_repr_indexes = Vec::new();
         // 1. Filter representations based on requires (if present)
