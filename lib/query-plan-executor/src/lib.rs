@@ -480,27 +480,36 @@ impl ExecutablePlanNode for FlattenNode {
         // Execute the child node. `execution_context` can be borrowed mutably
         // because `collected_representations` borrows `data_for_flatten`, not `execution_context.data`.
         let execution_context_arc = Arc::clone(&execution_context_arc);
-        let final_representations = self
-            .node
-            .execute_for_representations(
-                execution_context_arc,
-                &representations, // Pass representations borrowing data_for_flatten
-            )
-            .await;
-        // After execution, we need to put the final representations back into the data
-        let mut final_data = Value::Null;
-        for (collected, representation) in representations
-            .into_iter()
-            .zip(final_representations.into_iter())
-        {
-            if representation.is_null() {
-                continue; // Skip null representations
-            }
-            // Add the representation to the final data at the collected path
-            add_value_to_path(&mut final_data, representation, &collected.path);
-        }
+        match self.node.as_ref() {
+            PlanNode::Fetch(fetch_node) => {
+                let final_representations = fetch_node
+                    .execute_for_representations(
+                        execution_context_arc,
+                        &representations, // Pass representations borrowing data_for_flatten
+                    )
+                    .await;
+                // After execution, we need to put the final representations back into the data
+                let mut final_data = Value::Null;
+                for (collected, representation) in representations
+                    .into_iter()
+                    .zip(final_representations.into_iter())
+                {
+                    if representation.is_null() {
+                        continue; // Skip null representations
+                    }
+                    // Add the representation to the final data at the collected path
+                    add_value_to_path(&mut final_data, representation, &collected.path);
+                }
 
-        final_data
+                final_data
+            }
+            _ => {
+                unimplemented!(
+                    "FlattenNode can only execute FetchNode as child node, found: {:?}",
+                    self.node
+                );
+            }
+        }
     }
 }
 
