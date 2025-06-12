@@ -195,6 +195,19 @@ impl ExecutableFetchNode for FetchNode {
             .await;
 
         // 5. Process the response
+        match fetch_result.errors {
+            Some(errors) if !errors.is_empty() => {
+                execution_context_arc.add_errors(errors).await;
+            }
+            _ => {}
+        }
+
+        match fetch_result.extensions {
+            Some(extensions) if !extensions.is_empty() => {
+                execution_context_arc.merge_extensions(extensions).await;
+            }
+            _ => {}
+        }
 
         // Process data
         if let Some(mut data) = fetch_result.data {
