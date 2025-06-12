@@ -492,4 +492,56 @@ mod tests {
         "###
         );
     }
+
+    #[test]
+    fn mutation() {
+        let schema = parse_schema(
+            r#"
+                  type Mutation {
+                    createProduct(name: String!): Product
+                  }
+
+                  type Query {
+                    products: [Product]
+                  }
+
+                  type Product {
+                    id: ID!
+                    name: String
+                  }
+                "#,
+        )
+        .expect("to parse");
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                              mutation NewProduct($name: String!) {
+                                createProduct(name: $name) {
+                                  id
+                                  name
+                                }
+                              }
+                            "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+            mutation NewProduct($name: String!) {
+              createProduct(name: $name) {
+                id
+                name
+              }
+            }
+            ",
+        );
+    }
 }

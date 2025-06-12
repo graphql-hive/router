@@ -18,19 +18,15 @@ pub struct NormalizationContext<'a> {
 
 impl<'a> NormalizationContext<'a> {
     pub fn query_type_name(&self) -> &'a str {
-        self.root_type_name("Query")
+        self.root_types.query.unwrap_or("Query")
     }
 
     pub fn mutation_type_name(&self) -> &'a str {
-        self.root_type_name("Mutation")
+        self.root_types.mutation.unwrap_or("Mutation")
     }
 
     pub fn subscription_type_name(&self) -> &'a str {
-        self.root_type_name("Subscription")
-    }
-
-    fn root_type_name(&self, fallback: &'a str) -> &'a str {
-        self.root_types.query.unwrap_or(fallback)
+        self.root_types.subscription.unwrap_or("Subscription")
     }
 }
 

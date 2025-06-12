@@ -780,6 +780,12 @@ impl FetchStepData {
         write!(writer, "[{}] {}", index.index(), self)
     }
 
+    pub fn is_entity_call(&self) -> bool {
+        self.input.type_name != "Query"
+            && self.input.type_name != "Mutation"
+            && self.input.type_name != "Subscription"
+    }
+
     /// see `perform_passthrough_child_merge`
     pub fn can_merge_passthrough_child(
         &self,

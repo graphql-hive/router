@@ -208,13 +208,29 @@ fn create_output_operation(step: &FetchStepData) -> SubgraphFetchOperation {
     }
 }
 
+impl From<&FetchStepData> for OperationKind {
+    fn from(step: &FetchStepData) -> Self {
+        let type_name = step.output.type_name.as_str();
+
+        if type_name == "Query" {
+            OperationKind::Query
+        } else if type_name == "Mutation" {
+            OperationKind::Mutation
+        } else if type_name == "Subscription" {
+            OperationKind::Subscription
+        } else {
+            OperationKind::Query
+        }
+    }
+}
+
 impl From<&FetchStepData> for FetchNode {
     fn from(step: &FetchStepData) -> Self {
-        match step.input.selection_set.is_empty() {
+        match !step.is_entity_call() {
             true => {
                 let operation_def = OperationDefinition {
                     name: None,
-                    operation_kind: None,
+                    operation_kind: Some(step.into()),
                     selection_set: step.output.selection_set.clone(),
                     variable_definitions: step.variable_definitions.clone(),
                 };
@@ -223,7 +239,7 @@ impl From<&FetchStepData> for FetchNode {
                 FetchNode {
                     service_name: step.service_name.0.clone(),
                     variable_usages: step.variable_usages.clone(),
-                    operation_kind: Some(OperationKind::Query),
+                    operation_kind: Some(step.into()),
                     operation_name: None,
                     operation: SubgraphFetchOperation {
                         operation_def,
