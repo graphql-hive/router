@@ -1,6 +1,7 @@
 import http from "k6/http";
 import { check } from "k6";
 import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.1/index.js";
+import { githubComment } from "https://raw.githubusercontent.com/dotansimha/k6-github-pr-comment/master/lib.js";
 
 const vus = __ENV.BENCH_VUS ? parseInt(__ENV.BENCH_VUS) : 50;
 const time = __ENV.BENCH_OVER_TIME || "30s";
@@ -21,6 +22,40 @@ export default function () {
 }
 
 export function handleSummary(data) {
+  if (__ENV.GITHUB_TOKEN) {
+    githubComment(data, {
+      token: __ENV.GITHUB_TOKEN,
+      commit: __ENV.GITHUB_SHA,
+      pr: __ENV.GITHUB_PR,
+      org: "graphql-hive",
+      repo: "gateway-rs",
+      commentKey: `k6-benchmark`,
+      renderTitle({ passes }) {
+        return passes
+          ? `✅ \`k6-benchmark\` results`
+          : `❌ \`k6-benchmark\` failed`;
+      },
+      renderMessage({ passes, checks, thresholds }) {
+        const result = [];
+
+        if (thresholds.failures) {
+          result.push(`**Performance regression detected**`);
+        }
+
+        if (checks.failures) {
+          result.push("**Failed assertions detected**");
+        }
+
+        if (!passes) {
+          result.push(
+            `> If the performance regression is expected, please increase the failing threshold.`
+          );
+        }
+
+        return result.join("\n");
+      },
+    });
+  }
   return handleBenchmarkSummary(data, { vus, time });
 }
 

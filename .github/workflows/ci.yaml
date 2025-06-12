@@ -70,7 +70,7 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all
 
-  benchmark:
+  unit-benchmark:
     name: cargo bench
     runs-on: ubuntu-latest
     steps:
@@ -85,6 +85,29 @@ jobs:
         with:
           name: benchmark-results
           path: lib/query-planner/target/criterion
+
+  k6-benchmark:
+    name: k6 benchmark
+    runs-on: ubuntu-latest
+    env:
+      NODE_NO_WARNINGS: true
+      NODE_ENV: production
+      GITHUB_PR: ${{ github.event.number }}
+      GITHUB_SHA: ${{ github.sha }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9 # v1
+      - name: Setup K6
+        run: |
+          wget https://github.com/grafana/k6/releases/download/v0.37.0/k6-v0.37.0-linux-amd64.deb
+          sudo apt-get update
+          sudo apt-get install ./k6-v0.37.0-linux-amd64.deb
+      - run: cargo build --release -p subgraphs
+      - run: cargo build --release -p gateway
+      - run: ./target/release/subgraphs & sleep 5
+      - run: ./target/release/gateway bench/supergraph.graphql & sleep 5
+      - run: k6 run bench/bench.js
 
   graphql-over-http:
     runs-on: ubuntu-latest
