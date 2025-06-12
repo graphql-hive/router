@@ -452,9 +452,8 @@ impl ExecutablePlanNode for SequenceNode {
                 data_arc = Arc::new(new_data);
                 continue; // Continue to the next node
             }
-            let mut data = Arc::into_inner(data_arc).unwrap_or(Value::Null);
-            deep_merge::deep_merge(&mut data, new_data);
-            data_arc = Arc::new(data);
+            let data = Arc::make_mut(&mut data_arc);
+            deep_merge::deep_merge(data, new_data);
         }
         Arc::try_unwrap(data_arc).unwrap_or_else(|_| Value::Null) // If Arc still has multiple references, return Null
     }
