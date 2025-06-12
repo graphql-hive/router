@@ -78,7 +78,7 @@ trait ExecutableFetchNode {
         &self,
         execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
         representations: &'a [CollectedRepresentation<'a>],
-    ) -> Vec<Value>;
+    ) -> Vec<ReturnedEntity>;
     fn apply_output_rewrites(
         &self,
         possible_types: &HashMap<String, Vec<String>>,
@@ -141,7 +141,7 @@ impl ExecutableFetchNode for FetchNode {
         &self,
         execution_context_arc: Arc<QueryPlanExecutionContext<'_>>,
         representations: &'a [CollectedRepresentation<'a>],
-    ) -> Vec<Value> {
+    ) -> Vec<ReturnedEntity> {
         let mut filtered_repr_indexes = Vec::new();
         // 1. Filter representations based on requires (if present)
         let mut filtered_representations: Vec<Value> = Vec::new();
@@ -153,11 +153,6 @@ impl ExecutableFetchNode for FetchNode {
                 filtered_representations.push(entity_projected);
                 filtered_repr_indexes.push(index);
             }
-        }
-        let mut final_representations = vec![Value::Null; representations.len()];
-        // No representations to fetch, do not call the subgraph
-        if filtered_representations.is_empty() {
-            return final_representations;
         }
 
         if let Some(input_rewrites) = &self.input_rewrites {
@@ -216,32 +211,47 @@ impl ExecutableFetchNode for FetchNode {
                 &mut data,
             );
             // Attempt to extract the _entities array mutably or take ownership
-            let entities_option = match &mut data {
-                Value::Object(map) => map.remove("_entities"), // Take ownership
-                _ => None,
-            };
+            let entities_option = data
+                .as_object_mut()
+                .and_then(|obj| obj.get_mut("_entities"));
 
             // Process _entities array
             match entities_option {
                 Some(Value::Array(entities)) => {
-                    for (entity, representation_index) in
-                        entities.into_iter().zip(filtered_repr_indexes.iter_mut())
-                    {
-                        let final_representation = final_representations
-                            .get_mut(*representation_index)
-                            .unwrap();
-                        *final_representation = entity; // Assign the entity to the final representation
-                    }
+                    entities
+                        .into_iter()
+                        .zip(filtered_repr_indexes.into_iter())
+                        .filter_map(|(entity, representation_index)| {
+                            if entity.is_null() {
+                                None // Skip null entities
+                            } else if let Some(representation) = representations.get(representation_index)
+                            {
+                                let entity = std::mem::take(entity); // Take ownership of the entity
+                                Some(ReturnedEntity {
+                                    entity,
+                                    path: representation.path.to_vec(),
+                                })
+                            } else {
+                                warn!(
+                                    "Representation index {} out of bounds for fetched entities.",
+                                    representation_index
+                                );
+                                None // Skip if index is out of bounds
+                            }
+                        })
+                        .collect()
                 }
                 _ => {
                     // Called with reps, but no _entities array found. Merge entire response as fallback.
                     warn!(
             "Fetch called with representations, but no '_entities' array found in response. Merging entire response data."
         );
+                    vec![]
                 }
             }
+        } else {
+            vec![] // No data returned, return empty vector
         }
-        final_representations
     }
 
     fn apply_output_rewrites(
@@ -277,6 +287,11 @@ impl ExecutableFetchNode for FetchNode {
                 .collect()
         })
     }
+}
+
+struct ReturnedEntity {
+    entity: Value,
+    path: Vec<String>,
 }
 
 trait ApplyFetchRewrite {
@@ -495,7 +510,7 @@ impl ExecutablePlanNode for FlattenNode {
         let execution_context_arc = Arc::clone(&execution_context_arc);
         match self.node.as_ref() {
             PlanNode::Fetch(fetch_node) => {
-                let final_representations = fetch_node
+                let returned_entities = fetch_node
                     .execute_for_representations(
                         execution_context_arc,
                         &representations, // Pass representations borrowing data_for_flatten
@@ -503,15 +518,13 @@ impl ExecutablePlanNode for FlattenNode {
                     .await;
                 // After execution, we need to put the final representations back into the data
                 let mut final_data = Value::Null;
-                for (collected, representation) in representations
-                    .into_iter()
-                    .zip(final_representations.into_iter())
-                {
-                    if representation.is_null() {
-                        continue; // Skip null representations
-                    }
+                for returned_entity in returned_entities {
                     // Add the representation to the final data at the collected path
-                    add_value_to_path(&mut final_data, representation, &collected.path);
+                    add_value_to_path(
+                        &mut final_data,
+                        returned_entity.entity,
+                        &returned_entity.path,
+                    );
                 }
 
                 final_data

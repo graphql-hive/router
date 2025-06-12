@@ -14,9 +14,8 @@ pub fn deep_merge(target: &mut Value, source: Value) {
 
         // 3. Both are Arrays of same length(?): Merge elements
         (Value::Array(target_arr), Value::Array(source_arr)) => {
-            for (t, s) in target_arr.iter_mut().zip(source_arr.into_iter()) {
-                // Recurse for elements. If s is Null, the recursive call handles it.
-                deep_merge(t, s);
+            for (target_val, source_val) in target_arr.iter_mut().zip(source_arr) {
+                deep_merge(target_val, source_val);
             }
         }
 
