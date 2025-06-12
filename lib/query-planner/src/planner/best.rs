@@ -30,14 +30,13 @@ pub fn find_best_combination(
     // prune away more complex options later in the search.
     best_paths_per_leaf.sort_by_key(|paths| paths.len());
 
-    let best_trees_per_leaf: Vec<Vec<LazyTransform<OperationPath, Result<QueryTree, GraphError>>>> =
-        best_paths_per_leaf
-            // One thing I did not know is that `Vec` when used with `.into_iter()`
-            // produces `ExactSizeIterator` so `map` preserves the exact size property.
-            // Meaning it's the same as a for loop + Vec::with_capacity(vec.len())`
-            .into_iter()
-            .map(|paths_vec| paths_vec.into_iter().map(LazyTransform::new).collect())
-            .collect();
+    let best_trees_per_leaf: Vec<_> = best_paths_per_leaf
+        // One thing I did not know is that `Vec` when used with `.into_iter()`
+        // produces `ExactSizeIterator` so `map` preserves the exact size property.
+        // Meaning it's the same as a for loop + Vec::with_capacity(vec.len())`
+        .into_iter()
+        .map(|paths_vec| paths_vec.into_iter().map(LazyTransform::new).collect())
+        .collect();
 
     let mut min_overall_cost = u64::MAX;
     let mut final_best_tree: Option<QueryTree> = None;
@@ -77,41 +76,41 @@ fn explore_tree_combinations(
         return Ok(());
     }
 
-    for tree_candidate in &best_trees_per_leaf[current_leaf_index] {
-        let current_tree = tree_candidate
-            .get_or_create(|path| QueryTree::from_path(graph, &path))
-            .clone()?;
+    best_trees_per_leaf[current_leaf_index]
+        .iter()
+        .try_fold((), |(), tree_candidate| {
+            let current_tree = tree_candidate
+                .get_or_create(|path| QueryTree::from_path(graph, &path))
+                .clone()?;
 
-        // Merges the current tree with the tree we built so far
-        let next_tree = match tree_so_far {
-            Some(ref tree) => {
-                let mut new_tree = tree.clone();
-                // `root` is Arc<QueryTreeNode`.
-                // We perform clone-on-write here
-                Arc::make_mut(&mut new_tree.root).merge_nodes(&current_tree.root);
-                new_tree
+            // Merges the current tree with the tree we built so far
+            let next_tree = match tree_so_far {
+                Some(ref tree) => {
+                    let mut new_tree = tree.clone();
+                    // `root` is Arc<QueryTreeNode`.
+                    // We perform clone-on-write here
+                    Arc::make_mut(&mut new_tree.root).merge_nodes(&current_tree.root);
+                    new_tree
+                }
+                None => current_tree.clone(),
+            };
+
+            // If the cost of the tree so far is already greater than or equal to
+            // the minimum cost found, skip exploring
+            if &calculate_cost_of_tree(graph, &next_tree.root) >= min_cost_so_far {
+                return Ok(());
             }
-            None => current_tree.clone(),
-        };
 
-        // If the cost of the tree so far is already greater than or equal to
-        // the minimum cost found, skip exploring
-        if &calculate_cost_of_tree(graph, &next_tree.root) >= min_cost_so_far {
-            continue;
-        }
-
-        // Go to the next leaf
-        explore_tree_combinations(
-            graph,
-            best_trees_per_leaf,
-            current_leaf_index + 1,
-            Some(next_tree),
-            min_cost_so_far,
-            best_tree_so_far,
-        )?;
-    }
-
-    Ok(())
+            // Go to the next leaf
+            explore_tree_combinations(
+                graph,
+                best_trees_per_leaf,
+                current_leaf_index + 1,
+                Some(next_tree),
+                min_cost_so_far,
+                best_tree_so_far,
+            )
+        })
 }
 
 fn calculate_cost_of_tree(graph: &Graph, node: &QueryTreeNode) -> u64 {
