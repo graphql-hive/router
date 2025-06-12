@@ -21,7 +21,6 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-#[derive(Clone)]
 struct AppState {
     supergraph_source: String,
     schema_metadata: SchemaMetadata,
@@ -68,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app_state = Arc::new(AppState {
         supergraph_source: supergraph_path.to_string(),
-        schema_metadata: Arc::new(schema_metadata),
+        schema_metadata: schema_metadata,
         planner,
         validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
         subgraph_endpoint_map: supergraph_state.subgraph_endpoint_map,
