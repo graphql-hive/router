@@ -103,11 +103,16 @@ jobs:
           wget https://github.com/grafana/k6/releases/download/v0.37.0/k6-v0.37.0-linux-amd64.deb
           sudo apt-get update
           sudo apt-get install ./k6-v0.37.0-linux-amd64.deb
-      - run: cargo build --release -p subgraphs
-      - run: cargo build --release -p gateway
-      - run: ./target/release/subgraphs & sleep 5
-      - run: ./target/release/gateway bench/supergraph.graphql & sleep 5
-      - run: k6 run bench/bench.js
+      - name: Build subgraphs
+        run: cargo build --release -p subgraphs
+      - name: Run subgraphs
+        run: ./target/release/subgraphs & sleep 5
+      - name: Build gateway
+        run: cargo build --release -p gateway
+      - name: Run gateway
+        run: ./target/release/gateway bench/supergraph.graphql & sleep 5
+      - name: Run k6 benchmark
+        run: k6 run bench/k6.js
 
   graphql-over-http:
     runs-on: ubuntu-latest
