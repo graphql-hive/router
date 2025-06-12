@@ -4,6 +4,8 @@ use crate::{
 };
 use std::error::Error;
 
+// TODO: try to reproduce shared_root for mutations
+
 #[test]
 fn mutations() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -26,11 +28,11 @@ fn mutations() -> Result<(), Box<dyn Error>> {
       Sequence {
         Fetch(service: "a") {
           mutation {
-            addProduct(input: {"name": "new", "price": 599.99}) {
+            addProduct(input: {name: "new", price: 599.99}) {
               __typename
-              id
-              price
               name
+              price
+              id
             }
           }
         },
@@ -64,7 +66,7 @@ fn mutations() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "mutation",
-            "operation": "mutation{addProduct(input: {\"name\": \"new\", \"price\": 599.99}){__typename id price name}}"
+            "operation": "mutation{addProduct(input: {name: \"new\", price: 599.99}){__typename name price id}}"
           },
           {
             "kind": "Flatten",
@@ -101,6 +103,91 @@ fn mutations() -> Result<(), Box<dyn Error>> {
         ]
       }
     }
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn many_fields_two_same_graph() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        mutation {
+          five: add(num: 5)
+          ten: multiply(by: 2)
+          twelve: add(num: 2)
+          final: delete
+        }
+        "#,
+    );
+    let query_plan = build_query_plan("fixture/tests/mutations.supergraph.graphql", document)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "c") {
+          mutation {
+            five: add(num: 5)
+          }
+        },
+        Fetch(service: "a") {
+          mutation {
+            ten: multiply(by: 2)
+          }
+        },
+        Fetch(service: "c") {
+          mutation {
+            twelve: add(num: 2)
+          }
+        },
+        Fetch(service: "b") {
+          mutation {
+            final: delete
+          }
+        },
+      },
+    },
+    "#);
+
+    let document = parse_operation(
+        r#"
+        mutation {
+          five: add(num: 5)
+          seven: add(num: 2)
+          fourteen: multiply(by: 2)
+          sixteen: add(num: 2)
+          final: delete
+        }
+        "#,
+    );
+    let query_plan = build_query_plan("fixture/tests/mutations.supergraph.graphql", document)?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "c") {
+          mutation {
+            five: add(num: 5)
+            seven: add(num: 2)
+          }
+        },
+        Fetch(service: "a") {
+          mutation {
+            fourteen: multiply(by: 2)
+          }
+        },
+        Fetch(service: "c") {
+          mutation {
+            sixteen: add(num: 2)
+          }
+        },
+        Fetch(service: "b") {
+          mutation {
+            final: delete
+          }
+        },
+      },
+    },
     "#);
 
     Ok(())

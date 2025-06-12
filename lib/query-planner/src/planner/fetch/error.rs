@@ -29,6 +29,8 @@ pub enum FetchGraphError {
     SameNodeIndex(usize),
     #[error("Failed ot find satisfiable key for @requires: {0}")]
     SatisfiableKeyFailure(Box<WalkOperationError>),
+    #[error("Expected a FetchStep with Mutation to have its order defined")]
+    MutationStepWithNoOrder,
 }
 
 impl From<GraphError> for FetchGraphError {

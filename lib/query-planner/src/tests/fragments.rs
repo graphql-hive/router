@@ -59,8 +59,8 @@ fn simple_inline_fragment() -> Result<(), Box<dyn Error>> {
             {
               ... on Product {
                 price {
-                  currency
                   amount
+                  currency
                 }
               }
             }
@@ -130,8 +130,8 @@ fn fragment_spread() -> Result<(), Box<dyn Error>> {
             {
               ... on Product {
                 price {
-                  currency
                   amount
+                  currency
                 }
               }
             }

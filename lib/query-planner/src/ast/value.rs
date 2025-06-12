@@ -163,8 +163,7 @@ impl Display for Value {
                 write!(f, "[{}]", values.join(", "))
             }
             Value::Object(o) => {
-                let entries: Vec<String> =
-                    o.iter().map(|(k, v)| format!("\"{}\": {}", k, v)).collect();
+                let entries: Vec<String> = o.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
                 write!(f, "{{{}}}", entries.join(", "))
             }
         }
@@ -208,7 +207,7 @@ mod tests {
             ("key1".to_string(), Value::Int(42)),
             ("key2".to_string(), Value::String("value".to_string())),
           ])),
-          @r#"{"key1": 42, "key2": "value"}"#);
+          @r#"{key1: 42, key2: "value"}"#);
 
         insta::assert_snapshot!(
           Value::List(vec![Value::Int(42), Value::Int(10)]),

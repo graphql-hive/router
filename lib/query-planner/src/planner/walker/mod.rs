@@ -5,6 +5,8 @@ pub(crate) mod path;
 pub(crate) mod pathfinder;
 mod utils;
 
+use std::collections::VecDeque;
+
 use crate::{
     ast::{
         operation::OperationDefinition,
@@ -13,6 +15,7 @@ use crate::{
     },
     graph::{node::Node, Graph},
     planner::walker::pathfinder::NavigationTarget,
+    state::supergraph_state::OperationKind,
 };
 use best_path::{find_best_paths, BestPathTracker};
 use error::WalkOperationError;
@@ -22,18 +25,28 @@ use pathfinder::{find_direct_paths, find_indirect_paths};
 use tracing::{instrument, span, trace, Level};
 use utils::get_entrypoints;
 
+pub struct ResolvedOperation {
+    pub operation_kind: OperationKind,
+    pub root_field_groups: Vec<BestPathsPerLeaf>,
+}
+
 // TODO: Make a better struct
 pub type BestPathsPerLeaf = Vec<Vec<OperationPath>>;
 
 // TODO: Consider to use VecDeque(fixed_size) if we can predict it?
 // TODO: Consider to drop this IR layer and just go with QTP directly.
-type ResolutionStack<'a> = Vec<(&'a SelectionItem, Vec<OperationPath>)>;
+type WorkItem<'a> = (&'a SelectionItem, Vec<OperationPath>);
+type ResolutionStack<'a> = Vec<WorkItem<'a>>;
 
 #[instrument(level = "trace", skip(graph, operation))]
 pub fn walk_operation(
     graph: &Graph,
     operation: &OperationDefinition,
-) -> Result<BestPathsPerLeaf, WalkOperationError> {
+) -> Result<ResolvedOperation, WalkOperationError> {
+    let operation_kind = operation
+        .operation_kind
+        .clone()
+        .unwrap_or(OperationKind::Query);
     let (op_type, selection_set) = operation.parts();
     trace!("operation is of type {:?}", op_type);
 
@@ -43,23 +56,34 @@ pub fn walk_operation(
         .map(|edge| OperationPath::new_entrypoint(edge))
         .collect();
 
-    let mut stack_to_resolve: ResolutionStack = vec![];
+    let mut paths_grouped_by_root_field: Vec<BestPathsPerLeaf> =
+        Vec::with_capacity(operation.selection_set.items.len());
 
+    // It's critical to iterate over root fiels and preserve their original order
     for selection_item in selection_set.items.iter() {
-        stack_to_resolve.push((selection_item, initial_paths.to_vec()));
+        let mut stack_to_resolve: VecDeque<WorkItem> = VecDeque::new();
+
+        stack_to_resolve.push_back((selection_item, initial_paths.to_vec()));
+
+        let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
+
+        while let Some((selection_item, paths)) = stack_to_resolve.pop_front() {
+            let (next_stack_to_resolve, new_paths_per_leaf) =
+                process_selection(graph, selection_item, &paths)?;
+
+            paths_per_leaf.extend(new_paths_per_leaf);
+            for item in next_stack_to_resolve.into_iter().rev() {
+                stack_to_resolve.push_front(item);
+            }
+        }
+
+        paths_grouped_by_root_field.push(paths_per_leaf);
     }
 
-    let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
-
-    while let Some((selection_item, paths)) = stack_to_resolve.pop() {
-        let (next_stack_to_resolve, new_paths_per_leaf) =
-            process_selection(graph, selection_item, &paths)?;
-
-        paths_per_leaf.extend(new_paths_per_leaf);
-        stack_to_resolve.extend(next_stack_to_resolve);
-    }
-
-    Ok(paths_per_leaf)
+    Ok(ResolvedOperation {
+        operation_kind,
+        root_field_groups: paths_grouped_by_root_field,
+    })
 }
 
 fn process_selection<'a>(

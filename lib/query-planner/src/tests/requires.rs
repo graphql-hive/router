@@ -41,8 +41,8 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                price(withDiscount: false)
-                _internal_qp_alias_0: price(withDiscount: true)
+                price(withDiscount: true)
+                _internal_qp_alias_0: price(withDiscount: false)
               }
             }
           },
@@ -58,7 +58,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
               } =>
               {
                 ... on Product {
-                  isExpensive
+                  reducedPrice
                 }
               }
             },
@@ -73,7 +73,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
               } =>
               {
                 ... on Product {
-                  reducedPrice
+                  isExpensive
                 }
               }
             },
@@ -104,7 +104,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "products",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price(withDiscount: false) _internal_qp_alias_0: price(withDiscount: true)}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price(withDiscount: true) _internal_qp_alias_0: price(withDiscount: false)}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -136,7 +136,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
                   "kind": "Fetch",
                   "serviceName": "inventory",
                   "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensive}}}",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reducedPrice}}}",
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -170,7 +170,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
                   "kind": "Fetch",
                   "serviceName": "inventory",
                   "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reducedPrice}}}",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensive}}}",
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -683,8 +683,8 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                shippingEstimate
                 shippingEstimate2
+                shippingEstimate
               }
             }
           },
@@ -714,7 +714,7 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "inventory",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate shippingEstimate2}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate2 shippingEstimate}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -880,6 +880,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
         Fetch(service: "b") {
           {
             b {
+              id
               a {
                 __typename
                 id
@@ -888,7 +889,6 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
                   three
                 }
               }
-              id
             }
           }
         },
@@ -938,7 +938,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{b{a{__typename id compositeId{two three}} id}}"
+            "operation": "query{b{id a{__typename id compositeId{two three}}}}"
           },
           {
             "kind": "Flatten",

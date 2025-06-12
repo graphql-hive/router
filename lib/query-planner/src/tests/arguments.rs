@@ -697,8 +697,8 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Test {
-                otherField(arg: 3)
-                _internal_qp_alias_0: otherField(arg: 2)
+                otherField(arg: 2)
+                _internal_qp_alias_0: otherField(arg: 3)
               }
             }
           },
@@ -714,7 +714,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
               } =>
               {
                 ... on Test {
-                  fieldWithRequiresAndArgs
+                  anotherWithRequiresAndArgs
                 }
               }
             },
@@ -729,7 +729,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
               } =>
               {
                 ... on Test {
-                  anotherWithRequiresAndArgs
+                  fieldWithRequiresAndArgs
                 }
               }
             },
@@ -760,7 +760,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{otherField(arg: 3) _internal_qp_alias_0: otherField(arg: 2)}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{otherField(arg: 2) _internal_qp_alias_0: otherField(arg: 3)}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -791,7 +791,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
                   "kind": "Fetch",
                   "serviceName": "a",
                   "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{fieldWithRequiresAndArgs}}}",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{anotherWithRequiresAndArgs}}}",
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -824,7 +824,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
                   "kind": "Fetch",
                   "serviceName": "a",
                   "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{anotherWithRequiresAndArgs}}}",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{fieldWithRequiresAndArgs}}}",
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -900,8 +900,8 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
             } =>
             {
               ... on Test {
-                _internal_qp_alias_1: otherField(arg: 3)
-                _internal_qp_alias_0: otherField(arg: 2)
+                _internal_qp_alias_1: otherField(arg: 2)
+                _internal_qp_alias_0: otherField(arg: 3)
                 otherField(arg: 1)
               }
             }
@@ -918,7 +918,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
               } =>
               {
                 ... on Test {
-                  fieldWithRequiresAndArgs
+                  anotherWithRequiresAndArgs
                 }
               }
             },
@@ -933,7 +933,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
               } =>
               {
                 ... on Test {
-                  anotherWithRequiresAndArgs
+                  fieldWithRequiresAndArgs
                 }
               }
             },
@@ -964,7 +964,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{_internal_qp_alias_1: otherField(arg: 3) _internal_qp_alias_0: otherField(arg: 2) otherField(arg: 1)}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{_internal_qp_alias_1: otherField(arg: 2) _internal_qp_alias_0: otherField(arg: 3) otherField(arg: 1)}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -995,7 +995,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
                   "kind": "Fetch",
                   "serviceName": "a",
                   "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{fieldWithRequiresAndArgs}}}",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{anotherWithRequiresAndArgs}}}",
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -1028,7 +1028,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
                   "kind": "Fetch",
                   "serviceName": "a",
                   "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{anotherWithRequiresAndArgs}}}",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{fieldWithRequiresAndArgs}}}",
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -1463,6 +1463,9 @@ fn arguments_in_different_levels() -> Result<(), Box<dyn Error>> {
       Fetch(service: "spotify") {
         {
           album(id: "5") {
+            albumType
+            name
+            genres
             tracks(limit: 5, offset: 10) {
               edges {
                 node {
@@ -1470,9 +1473,6 @@ fn arguments_in_different_levels() -> Result<(), Box<dyn Error>> {
                 }
               }
             }
-            genres
-            name
-            albumType
           }
         }
       },
@@ -1486,7 +1486,7 @@ fn arguments_in_different_levels() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "spotify",
         "operationKind": "query",
-        "operation": "query{album(id: \"5\"){tracks(limit: 5, offset: 10){edges{node{name}}} genres name albumType}}"
+        "operation": "query{album(id: \"5\"){albumType name genres tracks(limit: 5, offset: 10){edges{node{name}}}}}"
       }
     }
     "#);
@@ -1522,6 +1522,9 @@ fn arguments_and_variables() -> Result<(), Box<dyn Error>> {
       Fetch(service: "spotify") {
         {
           album(id: $id) {
+            albumType
+            name
+            genres
             tracks(limit: $limit, offset: 10) {
               edges {
                 node {
@@ -1529,9 +1532,6 @@ fn arguments_and_variables() -> Result<(), Box<dyn Error>> {
                 }
               }
             }
-            genres
-            name
-            albumType
           }
         }
       },
@@ -1548,7 +1548,7 @@ fn arguments_and_variables() -> Result<(), Box<dyn Error>> {
           "limit"
         ],
         "operationKind": "query",
-        "operation": "query{album(id: $id){tracks(limit: $limit, offset: 10){edges{node{name}}} genres name albumType}}"
+        "operation": "query{album(id: $id){albumType name genres tracks(limit: $limit, offset: 10){edges{node{name}}}}}"
       }
     }
     "#);
@@ -1591,12 +1591,12 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
       Sequence {
         Fetch(service: "d") {
           {
-            secondProduct: productFromD(id: "2") {
+            firstProduct: productFromD(id: "1") {
               __typename
               id
               name
             }
-            firstProduct: productFromD(id: "1") {
+            secondProduct: productFromD(id: "2") {
               __typename
               id
               name
@@ -1604,24 +1604,7 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
           }
         },
         Parallel {
-          Flatten(path: "firstProduct") {
-            Fetch(service: "b") {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  category {
-                    __typename
-                    id
-                  }
-                }
-              }
-            },
-          },
-          Flatten(path: "firstProduct") {
+          Flatten(path: "secondProduct") {
             Fetch(service: "a") {
                 ... on Product {
                   __typename
@@ -1654,7 +1637,7 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
               }
             },
           },
-          Flatten(path: "secondProduct") {
+          Flatten(path: "firstProduct") {
             Fetch(service: "a") {
                 ... on Product {
                   __typename
@@ -1665,6 +1648,23 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
                 ... on Product {
                   category {
                     details
+                  }
+                }
+              }
+            },
+          },
+          Flatten(path: "firstProduct") {
+            Fetch(service: "b") {
+                ... on Product {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Product {
+                  category {
+                    __typename
+                    id
                   }
                 }
               }
@@ -1672,7 +1672,7 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
           },
         },
         Parallel {
-          Flatten(path: "firstProduct.category") {
+          Flatten(path: "secondProduct.category") {
             Fetch(service: "c") {
                 ... on Category {
                   __typename
@@ -1686,7 +1686,7 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
               }
             },
           },
-          Flatten(path: "secondProduct.category") {
+          Flatten(path: "firstProduct.category") {
             Fetch(service: "c") {
                 ... on Category {
                   __typename
@@ -1743,12 +1743,12 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
       Sequence {
         Fetch(service: "d") {
           {
-            secondProduct: productFromD(id: $secondProductId) {
+            firstProduct: productFromD(id: "1") {
               __typename
               id
               name
             }
-            firstProduct: productFromD(id: "1") {
+            secondProduct: productFromD(id: $secondProductId) {
               __typename
               id
               name
@@ -1756,24 +1756,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
           }
         },
         Parallel {
-          Flatten(path: "firstProduct") {
-            Fetch(service: "b") {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  category {
-                    __typename
-                    id
-                  }
-                }
-              }
-            },
-          },
-          Flatten(path: "firstProduct") {
+          Flatten(path: "secondProduct") {
             Fetch(service: "a") {
                 ... on Product {
                   __typename
@@ -1806,7 +1789,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               }
             },
           },
-          Flatten(path: "secondProduct") {
+          Flatten(path: "firstProduct") {
             Fetch(service: "a") {
                 ... on Product {
                   __typename
@@ -1817,6 +1800,23 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
                 ... on Product {
                   category {
                     details
+                  }
+                }
+              }
+            },
+          },
+          Flatten(path: "firstProduct") {
+            Fetch(service: "b") {
+                ... on Product {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Product {
+                  category {
+                    __typename
+                    id
                   }
                 }
               }
@@ -1824,7 +1824,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
           },
         },
         Parallel {
-          Flatten(path: "firstProduct.category") {
+          Flatten(path: "secondProduct.category") {
             Fetch(service: "c") {
                 ... on Category {
                   __typename
@@ -1838,7 +1838,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               }
             },
           },
-          Flatten(path: "secondProduct.category") {
+          Flatten(path: "firstProduct.category") {
             Fetch(service: "c") {
                 ... on Category {
                   __typename
@@ -1870,7 +1870,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               "secondProductId"
             ],
             "operationKind": "query",
-            "operation": "query{secondProduct: productFromD(id: $secondProductId){__typename id name} firstProduct: productFromD(id: \"1\"){__typename id name}}"
+            "operation": "query{firstProduct: productFromD(id: \"1\"){__typename id name} secondProduct: productFromD(id: $secondProductId){__typename id name}}"
           },
           {
             "kind": "Parallel",
@@ -1878,35 +1878,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "firstProduct"
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "b",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{__typename id}}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Product",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  "firstProduct"
+                  "secondProduct"
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -1962,13 +1934,41 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "secondProduct"
+                  "firstProduct"
                 ],
                 "node": {
                   "kind": "Fetch",
                   "serviceName": "a",
                   "operationKind": "query",
                   "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{details}}}}",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Product",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "Flatten",
+                "path": [
+                  "firstProduct"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "b",
+                  "operationKind": "query",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{__typename id}}}}",
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -1995,7 +1995,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "firstProduct",
+                  "secondProduct",
                   "category"
                 ],
                 "node": {
@@ -2024,7 +2024,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "secondProduct",
+                  "firstProduct",
                   "category"
                 ],
                 "node": {
