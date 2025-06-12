@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app_state = Arc::new(AppState {
         supergraph_source: supergraph_path.to_string(),
-        schema_metadata: schema_metadata,
+        schema_metadata,
         planner,
         validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
         subgraph_endpoint_map: supergraph_state.subgraph_endpoint_map,
