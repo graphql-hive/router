@@ -157,7 +157,11 @@ fn process_inline_fragment<'a>(
 
     let mut next_paths: Vec<OperationPath> = Vec::with_capacity(paths.len());
     for path in paths {
-        let path_span = span!(Level::INFO, "explore_path", path = path.pretty_print(graph));
+        let path_span = span!(
+            Level::TRACE,
+            "explore_path",
+            path = path.pretty_print(graph)
+        );
         let _enter = path_span.enter();
 
         let mut direct_paths = find_direct_paths(
@@ -188,7 +192,11 @@ fn process_inline_fragment<'a>(
         let mut tracker = BestPathTracker::new(graph);
 
         for path in paths {
-            let path_span = span!(Level::INFO, "explore_path", path = path.pretty_print(graph));
+            let path_span = span!(
+                Level::TRACE,
+                "explore_path",
+                path = path.pretty_print(graph)
+            );
             let _enter = path_span.enter();
             let direct_paths = find_direct_paths(
                 graph,
@@ -239,7 +247,11 @@ fn process_field<'a>(
     );
 
     for path in paths {
-        let path_span = span!(Level::INFO, "explore_path", path = path.pretty_print(graph));
+        let path_span = span!(
+            Level::TRACE,
+            "explore_path",
+            path = path.pretty_print(graph)
+        );
         let _enter = path_span.enter();
 
         let mut advanced = false;
