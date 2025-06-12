@@ -68,7 +68,15 @@ impl Serialize for SubgraphFetchOperation {
 impl PrettyDisplay for SubgraphFetchOperation {
     fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
         let indent = get_indent(depth);
-        writeln!(f, "{indent}  {{")?;
+        let kind: &str = match &self.operation_def.operation_kind {
+            Some(kind) => match kind {
+                OperationKind::Query => "",
+                OperationKind::Mutation => "mutation ",
+                OperationKind::Subscription => "subscription ",
+            },
+            None => "",
+        };
+        writeln!(f, "{indent}  {kind}{{")?;
         self.get_inner_selection_set().pretty_fmt(f, depth + 2)?;
         writeln!(f, "{indent}  }}")
     }

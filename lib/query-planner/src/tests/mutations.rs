@@ -25,7 +25,7 @@ fn mutations() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
-          {
+          mutation {
             addProduct(input: {"name": "new", "price": 599.99}) {
               __typename
               id
