@@ -87,10 +87,10 @@ fn query_plan_execution_without_projection(c: &mut Criterion) {
             let http_client = black_box(&http_client);
             let mut execution_context = query_plan_executor::QueryPlanExecutionContext {
                 variable_values: &None,
-                schema_metadata: schema_metadata,
+                schema_metadata,
                 executor: HTTPSubgraphExecutor {
-                    subgraph_endpoint_map: subgraph_endpoint_map,
-                    http_client: http_client,
+                    subgraph_endpoint_map,
+                    http_client,
                 },
                 errors: Vec::new(),
                 extensions: HashMap::new(),
