@@ -1,4 +1,4 @@
-use axum::{extract::State, response::Html};
+use axum::{extract::State, http::Uri, response::Html};
 use std::sync::Arc;
 
 use crate::AppState;
@@ -6,7 +6,10 @@ use crate::AppState;
 static LANDING_PAGE_HTML: &str = include_str!("../../static/landing-page.html");
 static PRODUCT_LOGO_SVG: &str = include_str!("../../static/product_logo.svg");
 
-pub async fn landing_page_handler(State(app_state): State<Arc<AppState>>) -> Html<String> {
+pub async fn landing_page_handler(
+    State(app_state): State<Arc<AppState>>,
+    uri: Uri,
+) -> Html<String> {
     let mut subgraph_html = String::new();
     subgraph_html.push_str("<section class=\"supergraph-information\">");
     subgraph_html.push_str("<h3>Supergraph Status: Loaded ✅</h3>");
@@ -38,11 +41,11 @@ pub async fn landing_page_handler(State(app_state): State<Arc<AppState>>) -> Htm
 
     let rendered_html = LANDING_PAGE_HTML
         .replace("__GRAPHIQL_LINK__", "/graphql")
-        .replace("__REQUEST_PATH__", "/")
-        .replace("__PRODUCT_NAME__", "Hive Gateway RS (Axum)")
+        .replace("__REQUEST_PATH__", uri.path())
+        .replace("__PRODUCT_NAME__", "Hive Gateway RS")
         .replace(
             "__PRODUCT_DESCRIPTION__",
-            "A GraphQL Gateway written in Rust, powered by Axum",
+            "A GraphQL Gateway written in Rust",
         )
         .replace("__PRODUCT_PACKAGE_NAME__", "hive-gateway-rs")
         .replace(
