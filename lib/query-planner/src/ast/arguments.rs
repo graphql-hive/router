@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, fmt::Display};
+use std::{
+    collections::BTreeMap,
+    fmt::Display,
+    hash::{DefaultHasher, Hash, Hasher},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +13,12 @@ use graphql_parser::query::Value as ParserValue;
 pub struct ArgumentsMap {
     #[serde(flatten)]
     arguments_map: BTreeMap<String, Value>,
+}
+
+impl Hash for ArgumentsMap {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.arguments_map.hash(state);
+    }
 }
 
 impl<'a> IntoIterator for &'a ArgumentsMap {
@@ -71,6 +81,12 @@ impl From<&mut Vec<(String, ParserValue<'_, String>)>> for ArgumentsMap {
 impl ArgumentsMap {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn hash_u64(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
     }
 
     pub fn add_argument(&mut self, key: String, value: Value) {

@@ -13,7 +13,7 @@ use query_planner::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use tracing::{instrument, warn};
+use tracing::{debug, instrument, warn};
 
 use crate::schema_metadata::SchemaMetadata;
 pub mod introspection;
@@ -279,22 +279,22 @@ impl ExecutableFetchNode for FetchNode {
         &self,
         variable_values: &Option<HashMap<String, Value>>,
     ) -> Option<HashMap<String, Value>> {
-        if self.variable_usages.is_empty() {
-            None
-        } else {
-            variable_values.as_ref().map(|variable_values| {
-                variable_values
-                    .iter()
-                    .filter_map(|(variable_name, value)| {
-                        if self.variable_usages.contains(variable_name) {
-                            Some((variable_name.to_string(), value.clone()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-            })
-        }
+        variable_values.as_ref().map(|variable_values| {
+            variable_values
+                .iter()
+                .filter_map(|(variable_name, value)| {
+                    if self
+                        .variable_usages
+                        .as_ref()
+                        .is_some_and(|variable_usages| variable_usages.contains(variable_name))
+                    {
+                        Some((variable_name.to_string(), value.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
     }
 }
 
@@ -376,6 +376,7 @@ impl ApplyFetchRewrite for ValueSetter {
     fn apply(&self, possible_types: &HashMap<String, Vec<String>>, data: &mut Value) {
         self.apply_path(possible_types, data, &self.path)
     }
+
     // Applies value setting on a Value (returns a new Value)
     fn apply_path(
         &self,
@@ -745,6 +746,10 @@ impl QueryPlanExecutionContext<'_> {
         subgraph_name: &str,
         execution_request: ExecutionRequest,
     ) -> ExecutionResult {
+        debug!(
+            "ExecutionRequest; Subgraph: {} Query:{} Variables: {:?}",
+            subgraph_name, execution_request.query, execution_request.variables
+        );
         self.executor
             .execute(subgraph_name, execution_request)
             .await
@@ -768,14 +773,16 @@ impl QueryPlanExecutionContext<'_> {
                 for requires_selection in requires_selections {
                     match &requires_selection {
                         SelectionItem::Field(requires_selection) => {
-                            let field_name = requires_selection.name.to_string();
-                            let original = entity_obj.get(&field_name).unwrap_or(&Value::Null);
+                            let field_name = &requires_selection.name;
+                            let response_key = requires_selection.selection_identifier();
+                            let original = entity_obj
+                                .get(field_name)
+                                .unwrap_or(entity_obj.get(response_key).unwrap_or(&Value::Null));
                             let projected_value: Value = self
                                 .project_requires(&requires_selection.selections.items, original);
                             if !projected_value.is_null() {
-                                let field_name = requires_selection.name.to_string();
                                 let result_map = result.as_object_mut().unwrap();
-                                result_map.insert(field_name, projected_value);
+                                result_map.insert(response_key.to_string(), projected_value);
                             }
                         }
                         SelectionItem::InlineFragment(requires_selection) => {
@@ -1126,6 +1133,7 @@ pub async fn execute_query_plan(
     has_introspection: bool,
     http_client: &reqwest::Client,
 ) -> ExecutionResult {
+    debug!("executing the query plan: {:?}", query_plan);
     let http_executor = HTTPSubgraphExecutor {
         subgraph_endpoint_map,
         http_client,

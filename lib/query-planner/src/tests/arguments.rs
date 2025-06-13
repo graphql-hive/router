@@ -4,6 +4,1210 @@ use crate::{
 };
 use std::error::Error;
 
+// In this test, `comments(arg: 3)` conflicts with `comments(arg: 1)` in the `feed` field.
+// But unlike the other cases in this file, the `comments` field is being queried only after a few other fetches
+// are executed, so `comments(arg: 3)` is deeply nested inside the fetch-steps and not a direct descendant of the field that was aliased.
+#[test]
+fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          feed {
+            author {
+              id
+            }
+            comments(limit: 1) {
+              id
+            }
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/audit-requires-arguments.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "c") {
+          {
+            feed {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "feed.@") {
+          Fetch(service: "d") {
+              ... on Post {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Post {
+                _internal_qp_alias_0: comments(limit: 3) {
+                  __typename
+                  id
+                }
+                comments(limit: 1) {
+                  id
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "feed.@._internal_qp_alias_0.@") {
+          Fetch(service: "c") {
+              ... on Comment {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Comment {
+                authorId
+              }
+            }
+          },
+        },
+        Flatten(path: "feed.@") {
+          Fetch(service: "d") {
+              ... on Post {
+                __typename
+                comments: _internal_qp_alias_0 {
+                  authorId
+                }
+                id
+              }
+            } =>
+            {
+              ... on Post {
+                author {
+                  id
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "c",
+            "operationKind": "query",
+            "operation": "{feed{__typename id}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "feed",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "d",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){__typename id} comments(limit: 1){id}}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Post",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "feed",
+              "@",
+              "_internal_qp_alias_0",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "c",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Comment{authorId}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Comment",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "feed",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "d",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{author{id}}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Post",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "_internal_qp_alias_0",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "authorId"
+                        }
+                      ],
+                      "alias": "comments"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+
+    Ok(())
+}
+
+// Same as "requires_arguments_deeply_nested_requires" but this time with a variable.
+// In this one we also make sure that the variable is used in the fetchstep ("variableUsages"). And we ensure it's not merged with other steps.
+#[test]
+fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($limit: Int = 1) {
+          feed {
+            author {
+              id
+            }
+            comments(limit: $limit) {
+              id
+            }
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/audit-requires-arguments.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "c") {
+          {
+            feed {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "feed.@") {
+          Fetch(service: "d") {
+              ... on Post {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Post {
+                _internal_qp_alias_0: comments(limit: 3) {
+                  __typename
+                  id
+                }
+                comments(limit: $limit) {
+                  id
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "feed.@._internal_qp_alias_0.@") {
+          Fetch(service: "c") {
+              ... on Comment {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Comment {
+                authorId
+              }
+            }
+          },
+        },
+        Flatten(path: "feed.@") {
+          Fetch(service: "d") {
+              ... on Post {
+                __typename
+                comments: _internal_qp_alias_0 {
+                  authorId
+                }
+                id
+              }
+            } =>
+            {
+              ... on Post {
+                author {
+                  id
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "c",
+            "operationKind": "query",
+            "operation": "{feed{__typename id}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "feed",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "d",
+              "variableUsages": [
+                "limit"
+              ],
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){__typename id} comments(limit: $limit){id}}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Post",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "feed",
+              "@",
+              "_internal_qp_alias_0",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "c",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Comment{authorId}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Comment",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "feed",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "d",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{author{id}}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Post",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "_internal_qp_alias_0",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "authorId"
+                        }
+                      ],
+                      "alias": "comments"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+
+    Ok(())
+}
+
+// Same as "requires_arguments_deeply_nested_requires" but this time with a variables and fragments.
+#[test]
+fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($limit: Int = 1) {
+          feed {
+            author {
+              id
+            }
+            ...Foo
+            ...Bar
+          }
+        }
+
+        fragment Foo on Post {
+          comments(limit: $limit) {
+            id
+          }
+        }
+
+        fragment Bar on Post {
+          comments(limit: $limit) {
+            id
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/audit-requires-arguments.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "c") {
+          {
+            feed {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "feed.@") {
+          Fetch(service: "d") {
+              ... on Post {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Post {
+                _internal_qp_alias_0: comments(limit: 3) {
+                  __typename
+                  id
+                }
+                comments(limit: $limit) {
+                  id
+                }
+              }
+            }
+          },
+        },
+        Flatten(path: "feed.@._internal_qp_alias_0.@") {
+          Fetch(service: "c") {
+              ... on Comment {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Comment {
+                authorId
+              }
+            }
+          },
+        },
+        Flatten(path: "feed.@") {
+          Fetch(service: "d") {
+              ... on Post {
+                __typename
+                comments: _internal_qp_alias_0 {
+                  authorId
+                }
+                id
+              }
+            } =>
+            {
+              ... on Post {
+                author {
+                  id
+                }
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "c",
+            "operationKind": "query",
+            "operation": "{feed{__typename id}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "feed",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "d",
+              "variableUsages": [
+                "limit"
+              ],
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){__typename id} comments(limit: $limit){id}}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Post",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "feed",
+              "@",
+              "_internal_qp_alias_0",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "c",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Comment{authorId}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Comment",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "feed",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "d",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{author{id}}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Post",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "_internal_qp_alias_0",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "authorId"
+                        }
+                      ],
+                      "alias": "comments"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+
+    Ok(())
+}
+
+// In this test, each one of the queries fields has a requirement with different arguments.
+// This leads to a conflict when the fetch steps are built.
+// The parent fetch can be grouped, but only if we alias the the output fields.
+// Aliasing means that the child fetches cannot be grouped, and they need input_rewrite in order to be executed correctly.
+#[test]
+fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          test {
+            id
+            fieldWithRequiresAndArgs # requires(fields: "otherField(arg: 2)")
+            anotherWithRequiresAndArgs # requires(fields: "otherField(arg: 3)")
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/simple-requires-args.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            test {
+              id
+              __typename
+            }
+          }
+        },
+        Flatten(path: "test") {
+          Fetch(service: "b") {
+              ... on Test {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Test {
+                otherField(arg: 3)
+                _internal_qp_alias_0: otherField(arg: 2)
+              }
+            }
+          },
+        },
+        Parallel {
+          Flatten(path: "test") {
+            Fetch(service: "a") {
+                ... on Test {
+                  __typename
+                  otherField: _internal_qp_alias_0
+                  id
+                }
+              } =>
+              {
+                ... on Test {
+                  fieldWithRequiresAndArgs
+                }
+              }
+            },
+          },
+          Flatten(path: "test") {
+            Fetch(service: "a") {
+                ... on Test {
+                  __typename
+                  otherField
+                  id
+                }
+              } =>
+              {
+                ... on Test {
+                  anotherWithRequiresAndArgs
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "operationKind": "query",
+            "operation": "{test{id __typename}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "test"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "b",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{otherField(arg: 3) _internal_qp_alias_0: otherField(arg: 2)}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Test",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Parallel",
+            "nodes": [
+              {
+                "kind": "Flatten",
+                "path": [
+                  "test"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "a",
+                  "operationKind": "query",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{fieldWithRequiresAndArgs}}}",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Test",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "_internal_qp_alias_0",
+                          "alias": "otherField"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "Flatten",
+                "path": [
+                  "test"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "a",
+                  "operationKind": "query",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{anotherWithRequiresAndArgs}}}",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Test",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "otherField"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+    "#);
+
+    Ok(())
+}
+
+// In this test, we have a user-request field, along with fields that have requirements.
+// All use the same "otherField" to get the actual data, and they conflict if tried to be grouped.
+// We make sure that "otherField(arg: 1)" remains as-is, while other conflicting fields (otherField(arg: 2) and otherField(arg: 3)) are being aliased.
+// Each alias yields a input-rewrite, to make sure following fetchsteps can use it correctly.
+#[test]
+fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          test {
+            id
+            fieldWithRequiresAndArgs # requires(fields: "otherField(arg: 2)")
+            anotherWithRequiresAndArgs # requires(fields: "otherField(arg: 3)")
+            otherField(arg: 1)
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/simple-requires-args.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            test {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "test") {
+          Fetch(service: "b") {
+              ... on Test {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Test {
+                _internal_qp_alias_1: otherField(arg: 3)
+                _internal_qp_alias_0: otherField(arg: 2)
+                otherField(arg: 1)
+              }
+            }
+          },
+        },
+        Parallel {
+          Flatten(path: "test") {
+            Fetch(service: "a") {
+                ... on Test {
+                  __typename
+                  otherField: _internal_qp_alias_0
+                  id
+                }
+              } =>
+              {
+                ... on Test {
+                  fieldWithRequiresAndArgs
+                }
+              }
+            },
+          },
+          Flatten(path: "test") {
+            Fetch(service: "a") {
+                ... on Test {
+                  __typename
+                  otherField: _internal_qp_alias_1
+                  id
+                }
+              } =>
+              {
+                ... on Test {
+                  anotherWithRequiresAndArgs
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "operationKind": "query",
+            "operation": "{test{__typename id}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "test"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "b",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{_internal_qp_alias_1: otherField(arg: 3) _internal_qp_alias_0: otherField(arg: 2) otherField(arg: 1)}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Test",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Parallel",
+            "nodes": [
+              {
+                "kind": "Flatten",
+                "path": [
+                  "test"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "a",
+                  "operationKind": "query",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{fieldWithRequiresAndArgs}}}",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Test",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "_internal_qp_alias_0",
+                          "alias": "otherField"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "Flatten",
+                "path": [
+                  "test"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "a",
+                  "operationKind": "query",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{anotherWithRequiresAndArgs}}}",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Test",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "_internal_qp_alias_1",
+                          "alias": "otherField"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+    "#);
+
+    Ok(())
+}
+
+// In this test, we have a user-request field, along with fields that have requirements.
+// All use the same "otherField" arguments, to get the actual data, so there is no conflict.
+// Result is expected to be a single "otherField" field with the correct arguments, no aliases or rewrites are needed.
+#[test]
+fn multiple_plain_field_and_requires_with_args_that_does_not_conflicts_should_merge(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          test {
+            id
+            fieldWithRequiresAndArgs # requires(fields: "otherField(arg: 2)")
+            otherField(arg: 2)
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/simple-requires-args.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            test {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "test") {
+          Fetch(service: "b") {
+              ... on Test {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Test {
+                otherField(arg: 2)
+              }
+            }
+          },
+        },
+        Flatten(path: "test") {
+          Fetch(service: "a") {
+              ... on Test {
+                __typename
+                otherField
+                id
+              }
+            } =>
+            {
+              ... on Test {
+                fieldWithRequiresAndArgs
+              }
+            }
+          },
+        },
+      },
+    },
+    "###);
+
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "operationKind": "query",
+            "operation": "{test{__typename id}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "test"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "b",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{otherField(arg: 2)}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Test",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "test"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{fieldWithRequiresAndArgs}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Test",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "otherField"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "#);
+
+    Ok(())
+}
+
 #[test]
 fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -63,6 +1267,83 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
         },
       },
     },
+    "#);
+
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "a",
+            "operationKind": "query",
+            "operation": "{test{id __typename}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "test"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "b",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{otherField(arg: 2)}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Test",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "test"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{fieldWithRequiresAndArgs}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Test",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "otherField"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
     "#);
 
     Ok(())
@@ -209,6 +1490,7 @@ fn arguments_in_different_levels() -> Result<(), Box<dyn Error>> {
       }
     }
     "#);
+
     Ok(())
 }
 

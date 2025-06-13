@@ -1,15 +1,16 @@
 use error::QueryPlanError;
 use fetch::{error::FetchGraphError, fetch_graph::build_fetch_graph_from_query_tree};
 use graphql_parser::schema;
+use petgraph::graph::NodeIndex;
 use plan_nodes::QueryPlan;
 use query_plan::build_query_plan_from_fetch_graph;
 use walker::{error::WalkOperationError, walk_operation};
 
 use crate::{
-    ast::operation::OperationDefinition,
+    ast::operation::{OperationDefinition, VariableDefinition},
     consumer_schema::ConsumerSchema,
     graph::{error::GraphError, Graph},
-    planner::best::find_best_combination,
+    planner::{best::find_best_combination, fetch::fetch_graph::FetchGraph},
     state::supergraph_state::SupergraphState,
 };
 
@@ -93,9 +94,42 @@ impl Planner {
     ) -> Result<QueryPlan, PlannerError> {
         let best_paths_per_leaf = walk_operation(&self.graph, normalized_operation)?;
         let query_tree = find_best_combination(&self.graph, best_paths_per_leaf).unwrap();
-        let fetch_graph = build_fetch_graph_from_query_tree(&self.graph, query_tree)?;
+        let mut fetch_graph = build_fetch_graph_from_query_tree(&self.graph, query_tree)?;
+        add_variables_to_fetch_steps(&mut fetch_graph, &normalized_operation.variable_definitions)?;
         let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
 
         Ok(query_plan)
     }
+}
+
+fn add_variables_to_fetch_steps(
+    graph: &mut FetchGraph,
+    variables: &Option<Vec<VariableDefinition>>,
+) -> Result<(), PlannerError> {
+    if let Some(variables) = variables {
+        let mut nodes_to_patch: Vec<(NodeIndex, Vec<VariableDefinition>)> = Vec::new();
+
+        for (node_index, node_weight) in graph.all_nodes() {
+            if let Some(usage) = &node_weight.variable_usages {
+                let relevant_variables = usage
+                    .iter()
+                    .filter_map(|used_var_name| {
+                        variables
+                            .iter()
+                            .find(|op_var| op_var.name == *used_var_name)
+                    })
+                    .cloned()
+                    .collect::<Vec<VariableDefinition>>();
+
+                nodes_to_patch.push((node_index, relevant_variables));
+            }
+        }
+
+        for (node_index, relevant_variables) in nodes_to_patch {
+            let step = graph.get_step_data_mut(node_index)?;
+            step.variable_definitions = Some(relevant_variables);
+        }
+    }
+
+    Ok(())
 }

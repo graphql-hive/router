@@ -3,9 +3,14 @@ use std::{
     sync::Arc,
 };
 
+// Can be either the alias or the name of the field. This will be used to identify the field in the selection set.
+type SelectionIdentifier = String;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Segment {
-    Field(String),
+    // A field with a unique identifier and the arguments hash
+    // We used this to uniquely identify the field in the selection set.
+    Field(SelectionIdentifier, u64),
     List,
     Cast(String),
 }
@@ -15,7 +20,7 @@ impl Display for Segment {
         match self {
             Self::List => write!(f, "@"),
             Self::Cast(type_name) => write!(f, "... on {}", type_name),
-            Self::Field(field_name) => write!(f, "{}", field_name),
+            Self::Field(field_name, _) => write!(f, "{}", field_name),
         }
     }
 }
@@ -122,6 +127,12 @@ impl Display for MergePath {
 
 impl From<MergePath> for Vec<String> {
     fn from(path: MergePath) -> Self {
+        (&path).into()
+    }
+}
+
+impl From<&MergePath> for Vec<String> {
+    fn from(path: &MergePath) -> Self {
         path.inner
             .iter()
             .filter(|segment| !matches!(segment, Segment::Cast(_)))

@@ -5,6 +5,204 @@ use crate::{
 use std::error::Error;
 
 #[test]
+fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          products {
+            isExpensive # price(withDiscount: false)
+            reducedPrice # price(withDiscount: true)
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/two-same-service-calls.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "inventory") {
+          {
+            products {
+              upc
+              __typename
+            }
+          }
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "products") {
+              ... on Product {
+                __typename
+                upc
+              }
+            } =>
+            {
+              ... on Product {
+                price(withDiscount: false)
+                _internal_qp_alias_0: price(withDiscount: true)
+              }
+            }
+          },
+        },
+        Parallel {
+          Flatten(path: "products.@") {
+            Fetch(service: "inventory") {
+                ... on Product {
+                  __typename
+                  price: _internal_qp_alias_0
+                  upc
+                }
+              } =>
+              {
+                ... on Product {
+                  isExpensive
+                }
+              }
+            },
+          },
+          Flatten(path: "products.@") {
+            Fetch(service: "inventory") {
+                ... on Product {
+                  __typename
+                  price
+                  upc
+                }
+              } =>
+              {
+                ... on Product {
+                  reducedPrice
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+    "#);
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "inventory",
+            "operationKind": "query",
+            "operation": "{products{upc __typename}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "products",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "products",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price(withDiscount: false) _internal_qp_alias_0: price(withDiscount: true)}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "upc"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Parallel",
+            "nodes": [
+              {
+                "kind": "Flatten",
+                "path": [
+                  "products",
+                  "@"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "inventory",
+                  "operationKind": "query",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensive}}}",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Product",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "_internal_qp_alias_0",
+                          "alias": "price"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "upc"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "Flatten",
+                "path": [
+                  "products",
+                  "@"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "inventory",
+                  "operationKind": "query",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reducedPrice}}}",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Product",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "price"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "upc"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+    "#);
+    Ok(())
+}
+
+#[test]
 fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
     init_logger();
     let document = parse_operation(
@@ -40,7 +238,7 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                price
+                price(withDiscount: true)
               }
             }
           },
@@ -85,7 +283,7 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "products",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price(withDiscount: true)}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",

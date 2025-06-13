@@ -114,7 +114,16 @@ pub struct FieldSelection {
 impl Hash for FieldSelection {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.name.hash(state);
+
+        if let Some(alias) = &self.alias {
+            alias.hash(state);
+        }
+
         self.selections.hash(state);
+
+        if let Some(arguments) = &self.arguments {
+            arguments.hash(state);
+        }
     }
 }
 
@@ -127,6 +136,26 @@ impl PartialEq for FieldSelection {
 }
 
 impl FieldSelection {
+    /// Returns the unique identifier of the field within the selection set.
+    /// This means, the alias or the field name if no alias is present.
+    pub fn selection_identifier(&self) -> &str {
+        match &self.alias {
+            Some(alias) => alias,
+            None => &self.name,
+        }
+    }
+
+    /// Calculates a hash value based on the arguments of the field selection.
+    /// If no arguments are present, returns 0.
+    /// This is used to determine if two field selections are equal, and to avoid conflicts in the selection sets we produce.
+    pub fn arguments_hash(&self) -> u64 {
+        if let Some(arguments) = &self.arguments {
+            return arguments.hash_u64();
+        }
+
+        0
+    }
+
     pub fn is_leaf(&self) -> bool {
         self.selections.is_empty()
     }
