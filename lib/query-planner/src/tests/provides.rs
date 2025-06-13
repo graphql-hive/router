@@ -64,7 +64,7 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{products{__typename upc}}"
+            "operation": "query{products{__typename upc}}"
           },
           {
             "kind": "Flatten",
@@ -142,7 +142,7 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "category",
         "operationKind": "query",
-        "operation": "{products{categories{name id} id}}"
+        "operation": "query{products{categories{name id} id}}"
       }
     }
     "#);
@@ -198,7 +198,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "b",
         "operationKind": "query",
-        "operation": "{media{__typename ...on Book{title id} ...on Movie{id}}}"
+        "operation": "query{media{__typename ...on Book{title id} ...on Movie{id}}}"
       }
     }
     "#);
@@ -269,7 +269,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "{media{__typename ...on Book{title id} ...on Movie{__typename id}}}"
+            "operation": "query{media{__typename ...on Book{title id} ...on Movie{__typename id}}}"
           },
           {
             "kind": "Flatten",

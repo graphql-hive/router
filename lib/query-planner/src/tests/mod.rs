@@ -1,6 +1,7 @@
 mod alias;
 mod arguments;
 mod fragments;
+mod mutations;
 mod object_entities;
 mod override_requires;
 mod overrides;

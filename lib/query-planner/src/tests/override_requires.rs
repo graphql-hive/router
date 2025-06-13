@@ -203,19 +203,19 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                 "kind": "Fetch",
                 "serviceName": "a",
                 "operationKind": "query",
-                "operation": "{userInA{__typename id}}"
+                "operation": "query{userInA{__typename id}}"
               },
               {
                 "kind": "Fetch",
                 "serviceName": "b",
                 "operationKind": "query",
-                "operation": "{userInB{__typename id name}}"
+                "operation": "query{userInB{__typename id name}}"
               },
               {
                 "kind": "Fetch",
                 "serviceName": "c",
                 "operationKind": "query",
-                "operation": "{userInC{__typename id}}"
+                "operation": "query{userInC{__typename id}}"
               }
             ]
           },
@@ -553,7 +553,7 @@ fn override_with_requires_cname_in_c() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "c",
             "operationKind": "query",
-            "operation": "{userInC{id __typename}}"
+            "operation": "query{userInC{id __typename}}"
           },
           {
             "kind": "Flatten",
@@ -691,7 +691,7 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{userInA{__typename id}}"
+            "operation": "query{userInA{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -829,7 +829,7 @@ fn override_with_requires_aname_in_a() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{userInA{id __typename}}"
+            "operation": "query{userInA{id __typename}}"
           },
           {
             "kind": "Flatten",

@@ -91,7 +91,7 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "accounts",
             "operationKind": "query",
-            "operation": "{me{__typename id}}"
+            "operation": "query{me{__typename id}}"
           },
           {
             "kind": "Flatten",

@@ -92,7 +92,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "inventory",
             "operationKind": "query",
-            "operation": "{products{upc __typename}}"
+            "operation": "query{products{upc __typename}}"
           },
           {
             "kind": "Flatten",
@@ -271,7 +271,7 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "inventory",
             "operationKind": "query",
-            "operation": "{products{upc __typename}}"
+            "operation": "query{products{upc __typename}}"
           },
           {
             "kind": "Flatten",
@@ -398,7 +398,7 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{products{__typename upc price}}"
+            "operation": "query{products{__typename upc price}}"
           },
           {
             "kind": "Flatten",
@@ -498,7 +498,7 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{products{__typename upc price}}"
+            "operation": "query{products{__typename upc price}}"
           },
           {
             "kind": "Flatten",
@@ -596,7 +596,7 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{products{__typename upc price weight}}"
+            "operation": "query{products{__typename upc price weight}}"
           },
           {
             "kind": "Flatten",
@@ -702,7 +702,7 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{products{__typename upc price weight}}"
+            "operation": "query{products{__typename upc price weight}}"
           },
           {
             "kind": "Flatten",
@@ -810,7 +810,7 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "{products{__typename upc price weight}}"
+            "operation": "query{products{__typename upc price weight}}"
           },
           {
             "kind": "Flatten",
@@ -938,7 +938,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "{b{a{__typename id compositeId{two three}} id}}"
+            "operation": "query{b{a{__typename id compositeId{two three}} id}}"
           },
           {
             "kind": "Flatten",

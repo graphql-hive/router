@@ -259,6 +259,12 @@ type Query
   review(id: Int!): Review @join__field(graph: REVIEWS)
 }
 
+type Mutation
+  @join__type(graph: REVIEWS)
+{
+  newRandomReview: Review
+}
+
 type Panda @join__type(graph: PANDAS) {
   name: ID!
   favoriteFood: String @tag(name: "nom-nom-nom")
