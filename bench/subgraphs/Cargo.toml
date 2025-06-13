@@ -7,6 +7,10 @@ edition = "2021"
 name = "subgraphs"
 path = "main.rs"
 
+[lib]
+name = "subgraphs"
+path = "lib.rs"
+
 [dependencies]
 async-graphql = "7.0.17"
 async-graphql-axum = "7.0.17"

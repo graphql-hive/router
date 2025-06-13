@@ -11,16 +11,17 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::{collections::HashMap, vec};
+use std::{collections::HashMap, sync::Arc, vec};
 use tracing::{debug, instrument, warn}; // For reading file in main
 
-use crate::{deep_merge::deep_merge_objects, schema_metadata::SchemaMetadata};
+use crate::{deep_merge::deep_merge_objects, executors::http::HTTPSubgraphExecutor, executors::common::SubgraphExecutor, schema_metadata::SchemaMetadata};
 mod deep_merge;
 pub mod introspection;
 pub mod schema_metadata;
 pub mod validation;
 mod value_from_ast;
 pub mod variables;
+pub mod executors;
 
 #[async_trait]
 trait ExecutablePlanNode {
@@ -610,7 +611,7 @@ impl ExecutableQueryPlan for QueryPlan {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ExecutionResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
@@ -680,12 +681,11 @@ pub struct HTTPErrorExtensions {
     headers: Option<HashMap<String, String>>,
 }
 
-#[derive(Debug)]
 pub struct QueryPlanExecutionContext<'a> {
     // Using `Value` provides flexibility
     pub variable_values: &'a Option<HashMap<String, Value>>,
     pub schema_metadata: &'a SchemaMetadata,
-    pub executor: HTTPSubgraphExecutor<'a>,
+    pub executor: SubgraphExecutorType<'a>,
     pub errors: Vec<GraphQLError>,
     pub extensions: HashMap<String, Value>,
 }
@@ -833,64 +833,6 @@ fn traverse_and_collect<'a>(
 // --- Helper Functions ---
 
 // --- Main Function (for testing) ---
-
-#[derive(Debug)]
-pub struct HTTPSubgraphExecutor<'a> {
-    pub subgraph_endpoint_map: &'a HashMap<String, String>,
-    pub http_client: &'a reqwest::Client,
-}
-
-#[async_trait]
-trait SubgraphExecutor<'a> {
-    async fn execute(
-        &self,
-        subgraph_name: &str,
-        execution_request: ExecutionRequest,
-    ) -> ExecutionResult;
-}
-
-impl HTTPSubgraphExecutor<'_> {
-    async fn _execute(
-        &self,
-        subgraph_name: &str,
-        execution_request: ExecutionRequest,
-    ) -> Result<ExecutionResult, reqwest::Error> {
-        match self.subgraph_endpoint_map.get(subgraph_name) {
-            Some(subgraph_endpoint) => {
-                self.http_client
-                    .post(subgraph_endpoint)
-                    .json(&execution_request)
-                    .send()
-                    .await?
-                    .json::<ExecutionResult>()
-                    .await
-            }
-            None => Ok(ExecutionResult::from_error_message(format!(
-                "Subgraph {} not found in endpoint map",
-                subgraph_name
-            ))),
-        }
-    }
-}
-
-#[async_trait]
-impl SubgraphExecutor<'_> for HTTPSubgraphExecutor<'_> {
-    #[instrument(skip(self, execution_request))]
-    async fn execute(
-        &self,
-        subgraph_name: &str,
-        execution_request: ExecutionRequest,
-    ) -> ExecutionResult {
-        self._execute(subgraph_name, execution_request)
-            .await
-            .unwrap_or_else(|e| {
-                ExecutionResult::from_error_message(format!(
-                    "Error executing subgraph {}: {}",
-                    subgraph_name, e
-                ))
-            })
-    }
-}
 
 #[instrument(skip(selection_set, schema_metadata, variable_values))]
 fn project_selection_set_with_map(
@@ -1116,27 +1058,48 @@ pub fn project_data_by_operation(
     )
 }
 
-pub async fn execute_query_plan(
+pub async fn execute_query_plan_with_http_executor<'a>(
     query_plan: &QueryPlan,
-    subgraph_endpoint_map: &HashMap<String, String>,
+    subgraph_endpoint_map: &'a HashMap<String, String>,
     variable_values: &Option<HashMap<String, Value>>,
     schema_metadata: &SchemaMetadata,
     operation: &OperationDefinition,
     has_introspection: bool,
-    http_client: &reqwest::Client,
+    http_client: &'a reqwest::Client,
 ) -> ExecutionResult {
     debug!("executing the query plan: {:?}", query_plan);
     let http_executor = HTTPSubgraphExecutor {
         subgraph_endpoint_map,
         http_client,
     };
+    let executor = Arc::new(http_executor);
+    execute_query_plan(
+        query_plan,
+        executor,
+        variable_values,
+        schema_metadata,
+        operation,
+        has_introspection,
+    ).await
+}
+
+type SubgraphExecutorType<'a> = Arc<dyn SubgraphExecutor + 'a + Send + Sync>;
+
+pub async fn execute_query_plan(
+    query_plan: &QueryPlan,
+    executor: SubgraphExecutorType<'_>,
+    variable_values: &Option<HashMap<String, Value>>,
+    schema_metadata: &SchemaMetadata,
+    operation: &OperationDefinition,
+    has_introspection: bool,
+) -> ExecutionResult {
     let mut result_data = Value::Null; // Initialize data as Null
     let mut result_errors = vec![]; // Initial errors are empty
     #[allow(unused_mut)]
     let mut result_extensions = HashMap::new(); // Initial extensions are empty
     let mut execution_context = QueryPlanExecutionContext {
         variable_values,
-        executor: http_executor,
+        executor,
         schema_metadata,
         errors: result_errors,
         extensions: result_extensions,
