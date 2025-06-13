@@ -284,22 +284,25 @@ impl ExecutableFetchNode for FetchNode {
         &self,
         variable_values: &Option<HashMap<String, Value>>,
     ) -> Option<HashMap<String, Value>> {
-        variable_values.as_ref().map(|variable_values| {
-            variable_values
-                .iter()
-                .filter_map(|(variable_name, value)| {
-                    if self
-                        .variable_usages
-                        .as_ref()
-                        .is_some_and(|variable_usages| variable_usages.contains(variable_name))
-                    {
-                        Some((variable_name.to_string(), value.clone()))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        })
+        match (&self.variable_usages, variable_values) {
+            (Some(ref variable_usages), Some(variable_values)) => {
+                if variable_usages.is_empty() || variable_values.is_empty() {
+                    None // No variables to prepare
+                } else {
+                    Some(
+                        variable_usages
+                            .iter()
+                            .filter_map(|variable_name| {
+                                variable_values
+                                    .get(variable_name)
+                                    .map(|v| (variable_name.to_string(), v.clone()))
+                            })
+                            .collect(),
+                    )
+                }
+            }
+            _ => None,
+        }
     }
 }
 
