@@ -8,9 +8,9 @@ use criterion::{criterion_group, criterion_main};
 
 use query_plan_executor::execute_query_plan;
 use query_plan_executor::execute_query_plan_with_http_executor;
+use query_plan_executor::executors::http::HTTPSubgraphExecutor;
 use query_plan_executor::schema_metadata::SchemaWithMetadata;
 use query_plan_executor::ExecutableQueryPlan;
-use query_plan_executor::executors::http::HTTPSubgraphExecutor;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::utils::parsing::parse_operation;
 use query_planner::utils::parsing::parse_schema;
@@ -88,8 +88,8 @@ fn query_plan_execution_without_projection_via_http(c: &mut Criterion) {
             let subgraph_endpoint_map = black_box(&subgraph_endpoint_map);
             let http_client = black_box(&http_client);
             let executor = HTTPSubgraphExecutor {
-                subgraph_endpoint_map: &subgraph_endpoint_map,
-                http_client: &http_client,
+                subgraph_endpoint_map,
+                http_client,
             };
             let executor = Arc::new(executor);
             let mut execution_context = query_plan_executor::QueryPlanExecutionContext {
@@ -110,10 +110,26 @@ fn query_plan_execution_without_projection_via_http(c: &mut Criterion) {
 
 // TODO: Use LocalExecutor later
 struct TestExecutor {
-    accounts: async_graphql::Schema<subgraphs::accounts::Query, async_graphql::EmptyMutation, async_graphql::EmptySubscription>,
-    inventory: async_graphql::Schema<subgraphs::inventory::Query, async_graphql::EmptyMutation, async_graphql::EmptySubscription>,
-    products: async_graphql::Schema<subgraphs::products::Query, async_graphql::EmptyMutation, async_graphql::EmptySubscription>,
-    reviews: async_graphql::Schema<subgraphs::reviews::Query, async_graphql::EmptyMutation, async_graphql::EmptySubscription>,
+    accounts: async_graphql::Schema<
+        subgraphs::accounts::Query,
+        async_graphql::EmptyMutation,
+        async_graphql::EmptySubscription,
+    >,
+    inventory: async_graphql::Schema<
+        subgraphs::inventory::Query,
+        async_graphql::EmptyMutation,
+        async_graphql::EmptySubscription,
+    >,
+    products: async_graphql::Schema<
+        subgraphs::products::Query,
+        async_graphql::EmptyMutation,
+        async_graphql::EmptySubscription,
+    >,
+    reviews: async_graphql::Schema<
+        subgraphs::reviews::Query,
+        async_graphql::EmptyMutation,
+        async_graphql::EmptySubscription,
+    >,
 }
 
 #[async_trait::async_trait]
@@ -135,7 +151,6 @@ impl query_plan_executor::executors::common::SubgraphExecutor for TestExecutor {
         }
     }
 }
-
 
 fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
     let rt = Runtime::new().expect("Failed to create Tokio runtime");
@@ -213,7 +228,7 @@ fn query_plan_executor_without_projection_locally(c: &mut Criterion) {
             let query_plan = black_box(&query_plan);
             let schema_metadata = black_box(&schema_metadata);
             let executor = black_box(executor.clone());
-            
+
             let mut execution_context = query_plan_executor::QueryPlanExecutionContext {
                 variable_values: &None,
                 schema_metadata,
@@ -251,14 +266,14 @@ fn project_data_by_operation(c: &mut Criterion) {
             let data = black_box(&mut data);
             let operation = black_box(&operation);
             let schema_metadata = black_box(&schema_metadata);
-            let result = query_plan_executor::project_data_by_operation(
+            query_plan_executor::project_data_by_operation(
                 data,
                 &mut vec![],
                 operation,
                 schema_metadata,
                 &None,
             );
-            black_box(result);
+            black_box(());
         });
     });
 }

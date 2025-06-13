@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
-use async_graphql::{dynamic::Schema, PathSegment, Response, ServerError
-};
+use async_graphql::{dynamic::Schema, PathSegment, Response, ServerError};
 use async_trait::async_trait;
 
 use crate::{
-    executors::common::SubgraphExecutor, ExecutionRequest, ExecutionResult, GraphQLError, GraphQLErrorLocation
+    executors::common::SubgraphExecutor, ExecutionRequest, ExecutionResult, GraphQLError,
+    GraphQLErrorLocation,
 };
 
 pub struct LocalSubgraphExecutor<'a> {
@@ -13,9 +13,7 @@ pub struct LocalSubgraphExecutor<'a> {
 }
 
 #[async_trait]
-impl SubgraphExecutor
-    for LocalSubgraphExecutor<'_>
-{
+impl SubgraphExecutor for LocalSubgraphExecutor<'_> {
     async fn execute(
         &self,
         subgraph_name: &str,
@@ -36,9 +34,7 @@ impl SubgraphExecutor
 
 impl From<ExecutionRequest> for async_graphql::Request {
     fn from(exec_request: ExecutionRequest) -> Self {
-        let req = async_graphql::Request::new(exec_request.query);
-
-        req
+        async_graphql::Request::new(exec_request.query)
     }
 }
 

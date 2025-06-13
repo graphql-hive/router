@@ -14,14 +14,17 @@ use serde_json::{Map, Value};
 use std::{collections::HashMap, sync::Arc, vec};
 use tracing::{debug, instrument, warn}; // For reading file in main
 
-use crate::{deep_merge::deep_merge_objects, executors::http::HTTPSubgraphExecutor, executors::common::SubgraphExecutor, schema_metadata::SchemaMetadata};
+use crate::{
+    deep_merge::deep_merge_objects, executors::common::SubgraphExecutor,
+    executors::http::HTTPSubgraphExecutor, schema_metadata::SchemaMetadata,
+};
 mod deep_merge;
+pub mod executors;
 pub mod introspection;
 pub mod schema_metadata;
 pub mod validation;
 mod value_from_ast;
 pub mod variables;
-pub mod executors;
 
 #[async_trait]
 trait ExecutablePlanNode {
@@ -1080,7 +1083,8 @@ pub async fn execute_query_plan_with_http_executor<'a>(
         schema_metadata,
         operation,
         has_introspection,
-    ).await
+    )
+    .await
 }
 
 type SubgraphExecutorType<'a> = Arc<dyn SubgraphExecutor + 'a + Send + Sync>;
