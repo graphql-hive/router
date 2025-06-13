@@ -526,7 +526,9 @@ dependencies = [
  "ciborium",
  "clap",
  "criterion-plot",
- "itertools 0.13.0",
+ "futures",
+ "is-terminal",
+ "itertools",
  "num-traits",
  "oorandom",
  "plotters",
@@ -535,6 +537,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tinytemplate",
+ "tokio",
  "walkdir",
 ]
 
@@ -1897,6 +1900,7 @@ name = "query-plan-executor"
 version = "0.0.1"
 dependencies = [
  "async-trait",
+ "criterion",
  "futures",
  "graphql-parser",
  "graphql-tools",
@@ -1904,6 +1908,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tokio",
  "tracing",
 ]
 

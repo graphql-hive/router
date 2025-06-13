@@ -32,7 +32,7 @@ trait ExecutablePlanNode {
 }
 
 #[async_trait]
-trait ExecutableQueryPlan {
+pub trait ExecutableQueryPlan {
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -69,17 +69,54 @@ impl ExecutablePlanNode for PlanNode {
     }
 }
 
+fn process_representations_result(
+    result: ExecuteForRepresentationsResult,
+    mut representations: Vec<&mut Value>,
+    execution_context: &mut QueryPlanExecutionContext<'_>,
+) {
+    if let Some(entities) = result.entities {
+        // 3. Process the entities
+        for (entity, index) in entities.into_iter().zip(result.indexes.into_iter()) {
+            if let Some(representation) = representations.get_mut(index) {
+                // Merge the entity into the representation
+                deep_merge::deep_merge(representation, entity);
+            }
+        }
+    }
+    if let Some(errors) = result.errors {
+        // 6. Handle errors
+        execution_context.errors.extend(errors);
+    }
+    if let Some(extensions) = result.extensions {
+        // 7. Handle extensions
+        execution_context.extensions.extend(extensions);
+    }
+}
+
+struct ExecuteForRepresentationsResult {
+    entities: Option<Vec<Value>>,
+    indexes: Vec<usize>,
+    errors: Option<Vec<GraphQLError>>,
+    extensions: Option<HashMap<String, Value>>,
+}
+
 #[async_trait]
 trait ExecutableFetchNode {
     async fn execute_for_root(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
     ) -> ExecutionResult;
-    async fn execute_for_representations<'a>(
+    fn project_representations(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
-        mut representations: Vec<&'a mut Value>,
-    ) -> (Option<Vec<GraphQLError>>, Option<HashMap<String, Value>>);
+        representations: Vec<&Value>,
+    ) -> ProjectRepresentationsResult;
+    async fn execute_for_projected_representations(
+        &self,
+        execution_context: &QueryPlanExecutionContext<'_>,
+        filtered_representations: Vec<Value>,
+        filtered_repr_indexes: Vec<usize>,
+    ) -> ExecuteForRepresentationsResult;
     fn apply_output_rewrites(
         &self,
         possible_types: &HashMap<String, Vec<String>>,
@@ -103,6 +140,11 @@ impl ExecutablePlanNode for FetchNode {
 
         process_result(fetch_result, execution_context, data);
     }
+}
+
+struct ProjectRepresentationsResult {
+    representations: Vec<Value>,
+    indexes: Vec<usize>,
 }
 
 #[async_trait]
@@ -134,11 +176,11 @@ impl ExecutableFetchNode for FetchNode {
         fetch_result
     }
 
-    async fn execute_for_representations<'a>(
+    fn project_representations(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
-        mut representations: Vec<&'a mut Value>,
-    ) -> (Option<Vec<GraphQLError>>, Option<HashMap<String, Value>>) {
+        representations: Vec<&Value>,
+    ) -> ProjectRepresentationsResult {
         let mut filtered_repr_indexes = Vec::new();
         // 1. Filter representations based on requires (if present)
         let mut filtered_representations: Vec<Value> = Vec::new();
@@ -163,6 +205,18 @@ impl ExecutableFetchNode for FetchNode {
             }
         }
 
+        ProjectRepresentationsResult {
+            representations: filtered_representations,
+            indexes: filtered_repr_indexes,
+        }
+    }
+
+    async fn execute_for_projected_representations(
+        &self,
+        execution_context: &QueryPlanExecutionContext<'_>,
+        filtered_representations: Vec<Value>,
+        filtered_repr_indexes: Vec<usize>,
+    ) -> ExecuteForRepresentationsResult {
         // 2. Prepare variables for fetch
         let mut variables = self
             .prepare_variables_for_fetch_node(execution_context.variable_values)
@@ -173,6 +227,7 @@ impl ExecutableFetchNode for FetchNode {
             Value::Array(filtered_representations),
         );
 
+        // 3. Execute the fetch operation
         let fetch_result = execution_context
             .execute(
                 &self.service_name,
@@ -186,40 +241,27 @@ impl ExecutableFetchNode for FetchNode {
             .await;
 
         // Process data
-        if let Some(mut data) = fetch_result.data {
+        let entities = if let Some(mut data) = fetch_result.data {
             self.apply_output_rewrites(
                 &execution_context.schema_metadata.possible_types,
                 &mut data,
             );
-            // Attempt to extract the _entities array mutably or take ownership
-            let entities_option = data.as_object_mut().and_then(|obj| obj.remove("_entities"));
-
-            // Process _entities array
-            match entities_option {
-                Some(Value::Array(entities)) => {
-                    for (entity, representation_index) in
-                        entities.into_iter().zip(filtered_repr_indexes.into_iter())
-                    {
-                        if let Some(representation) = representations.get_mut(representation_index)
-                        {
-                            deep_merge::deep_merge(representation, entity);
-                        } else {
-                            warn!(
-                                "Representation index {} not found for entity: {:?}",
-                                representation_index, entity
-                            );
-                        }
-                    }
-                }
-                _ => {
-                    // Called with reps, but no _entities array found. Merge entire response as fallback.
-                    warn!(
-            "Fetch called with representations, but no '_entities' array found in response. Merging entire response data."
-        );
-                }
+            match data {
+                Value::Object(mut obj) => match obj.remove("_entities") {
+                    Some(Value::Array(arr)) => Some(arr),
+                    _ => None, // If _entities is not found or not an array
+                },
+                _ => None, // If data is not an object
             }
+        } else {
+            None
+        };
+        ExecuteForRepresentationsResult {
+            entities,
+            indexes: filtered_repr_indexes,
+            errors: fetch_result.errors,
+            extensions: fetch_result.extensions,
         }
-        (fetch_result.errors, fetch_result.extensions)
     }
 
     fn apply_output_rewrites(
@@ -440,7 +482,7 @@ impl ExecutablePlanNode for ParallelNode {
     ) {
         // Here we call fetch nodes in parallel and non-fetch nodes sequentially.
         let mut jobs = vec![];
-        let mut non_fetch_nodes = vec![];
+        let mut other_nodes = vec![];
 
         // Collect Fetch node results and non-fetch nodes for sequential execution
         for node in &self.nodes {
@@ -451,7 +493,8 @@ impl ExecutablePlanNode for ParallelNode {
                     jobs.push(job);
                 }
                 _ => {
-                    non_fetch_nodes.push(node);
+                    // Execute non-Fetch nodes sequentially
+                    other_nodes.push(node);
                 }
             }
         }
@@ -459,7 +502,7 @@ impl ExecutablePlanNode for ParallelNode {
         // Wait for all jobs to complete
         let results = futures::future::join_all(jobs).await;
 
-        for node in non_fetch_nodes {
+        for node in other_nodes {
             // Execute non-Fetch nodes sequentially (TODO!: consider parallel execution)
             node.execute(execution_context, data).await;
         }
@@ -483,11 +526,25 @@ impl ExecutablePlanNode for FlattenNode {
         // because `collected_representations` borrows `data_for_flatten`, not `execution_context.data`.
         let normalized_path: Vec<&str> = self.path.iter().map(String::as_str).collect();
         let representations = traverse_and_collect(data, normalized_path.as_slice());
+        let representations_immutable: Vec<&Value> =
+            representations.iter().map(|v| v as &Value).collect();
         match self.node.as_ref() {
             PlanNode::Fetch(fetch_node) => {
-                fetch_node
-                    .execute_for_representations(execution_context, representations)
+                let ProjectRepresentationsResult {
+                    representations: filtered_representations,
+                    indexes: filtered_repr_indexes,
+                } = fetch_node
+                    .project_representations(execution_context, representations_immutable);
+
+                let result = fetch_node
+                    .execute_for_projected_representations(
+                        execution_context,
+                        filtered_representations,
+                        filtered_repr_indexes,
+                    )
                     .await;
+                // Process the result
+                process_representations_result(result, representations, execution_context);
             }
             _ => {
                 unimplemented!(
@@ -627,8 +684,8 @@ pub struct HTTPErrorExtensions {
 pub struct QueryPlanExecutionContext<'a> {
     // Using `Value` provides flexibility
     pub variable_values: &'a Option<HashMap<String, Value>>,
-    schema_metadata: &'a SchemaMetadata,
-    executor: HTTPSubgraphExecutor<'a>,
+    pub schema_metadata: &'a SchemaMetadata,
+    pub executor: HTTPSubgraphExecutor<'a>,
     pub errors: Vec<GraphQLError>,
     pub extensions: HashMap<String, Value>,
 }
@@ -658,6 +715,9 @@ impl QueryPlanExecutionContext<'_> {
         )
     )]
     fn project_requires(&self, requires_selections: &Vec<SelectionItem>, entity: &Value) -> Value {
+        if requires_selections.is_empty() {
+            return entity.clone(); // No selections to project, return the entity as is
+        }
         match entity {
             Value::Null => Value::Null,
             Value::Array(entity_array) => Value::Array(
@@ -775,9 +835,18 @@ fn traverse_and_collect<'a>(
 // --- Main Function (for testing) ---
 
 #[derive(Debug)]
-struct HTTPSubgraphExecutor<'a> {
-    subgraph_endpoint_map: &'a HashMap<String, String>,
-    http_client: &'a reqwest::Client,
+pub struct HTTPSubgraphExecutor<'a> {
+    pub subgraph_endpoint_map: &'a HashMap<String, String>,
+    pub http_client: &'a reqwest::Client,
+}
+
+#[async_trait]
+trait SubgraphExecutor<'a> {
+    async fn execute(
+        &self,
+        subgraph_name: &str,
+        execution_request: ExecutionRequest,
+    ) -> ExecutionResult;
 }
 
 impl HTTPSubgraphExecutor<'_> {
@@ -802,7 +871,10 @@ impl HTTPSubgraphExecutor<'_> {
             ))),
         }
     }
+}
 
+#[async_trait]
+impl SubgraphExecutor<'_> for HTTPSubgraphExecutor<'_> {
     #[instrument(skip(self, execution_request))]
     async fn execute(
         &self,
@@ -1020,7 +1092,7 @@ fn project_selection_set(
 }
 
 #[instrument(skip(operation, schema_metadata, variable_values))]
-fn project_data_by_operation(
+pub fn project_data_by_operation(
     data: &mut Value,
     errors: &mut Vec<GraphQLError>,
     operation: &OperationDefinition,

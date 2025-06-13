@@ -71,23 +71,31 @@ jobs:
         run: cargo clippy --all
 
   unit-benchmark:
-    name: cargo bench
+    strategy: 
+      matrix:
+        include:
+          - name: "Query Planner"
+            package: "./lib/query-planner"
+          - name: "Query Plan Executor"
+            package: "./lib/query-plan-executor"
+    name: ${{ matrix.name }} Benchmark
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@9d7e65c320fdb52dcd45ffaa68deb6c02c8754d9 # v1
       - name: Run benchmarks
         run: cargo bench
-        working-directory: ./lib/query-planner
+        working-directory: ${{ matrix.package }}
       - name: Upload benchmark results
         if: always() # Upload results even if benchmarks fail
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: benchmark-results
-          path: lib/query-planner/target/criterion
+          name: ${{matrix.package}}-benchmark-results
+          path: ${{matrix.package}}/target/criterion
+
 
   k6-benchmark:
-    name: k6 benchmark
+    name: Overall K6 Benchmark
     runs-on: ubuntu-latest
     env:
       NODE_NO_WARNINGS: true
