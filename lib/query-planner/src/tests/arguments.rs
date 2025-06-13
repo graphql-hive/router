@@ -106,7 +106,7 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "c",
             "operationKind": "query",
-            "operation": "{feed{__typename id}}"
+            "operation": "query{feed{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -317,7 +317,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
             "kind": "Fetch",
             "serviceName": "c",
             "operationKind": "query",
-            "operation": "{feed{__typename id}}"
+            "operation": "query{feed{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -542,7 +542,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
             "kind": "Fetch",
             "serviceName": "c",
             "operationKind": "query",
-            "operation": "{feed{__typename id}}"
+            "operation": "query{feed{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -749,7 +749,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{test{id __typename}}"
+            "operation": "query{test{id __typename}}"
           },
           {
             "kind": "Flatten",
@@ -953,7 +953,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{test{__typename id}}"
+            "operation": "query{test{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -1138,7 +1138,7 @@ fn multiple_plain_field_and_requires_with_args_that_does_not_conflicts_should_me
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{test{__typename id}}"
+            "operation": "query{test{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -1279,7 +1279,7 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "{test{id __typename}}"
+            "operation": "query{test{id __typename}}"
           },
           {
             "kind": "Flatten",

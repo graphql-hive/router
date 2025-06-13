@@ -92,7 +92,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "inventory",
             "operationKind": "query",
-            "operation": "{products{upc __typename}}"
+            "operation": "query{products{upc __typename}}"
           },
           {
             "kind": "Flatten",
