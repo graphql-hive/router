@@ -81,6 +81,7 @@ mod tests {
     use graphql_parser::parse_schema;
 
     use crate::ast::normalization::normalize_operation;
+    use crate::ast::selection_item::SelectionItem;
     use crate::state::supergraph_state::SupergraphState;
 
     fn pretty_query(query_str: String) -> String {
@@ -440,6 +441,55 @@ mod tests {
           }
         }
         ",
+        );
+    }
+
+    // Makes sure that fields arguments are normalized and sorted correctly, because hashing relies on the order of arguments.
+    #[test]
+    fn normalize_fields_args() {
+        let schema = parse_schema(
+            r#"
+              type Query {
+                words(len: Int, sep: String): String
+              }
+            "#,
+        )
+        .expect("to parse");
+
+        let supergraph = SupergraphState::new(&schema);
+        let r = normalize_operation(
+            &supergraph,
+            &parse_query(
+                r#"
+            query {
+              one: words(sep: ".", len: 10)
+              two: words(len: 10, sep: ".")
+            }
+          "#,
+            )
+            .expect("to parse"),
+            None,
+        )
+        .unwrap();
+
+        match (
+            &r.operation.selection_set.items[0],
+            &r.operation.selection_set.items[1],
+        ) {
+            (SelectionItem::Field(f1), SelectionItem::Field(f2)) => {
+                assert_eq!(f1.arguments_hash(), f2.arguments_hash());
+            }
+            _ => panic!("Unexpected selection items"),
+        }
+
+        insta::assert_snapshot!(
+            pretty_query(r.to_string()),
+            @r###"
+        query {
+          one: words(len: 10, sep: ".")
+          two: words(len: 10, sep: ".")
+        }
+        "###
         );
     }
 }
