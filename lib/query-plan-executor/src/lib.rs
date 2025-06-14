@@ -73,6 +73,21 @@ impl ExecutablePlanNode for PlanNode {
     }
 }
 
+fn process_errors_and_extensions(
+    execution_context: &mut QueryPlanExecutionContext<'_>,
+    errors: Option<Vec<GraphQLError>>,
+    extensions: Option<HashMap<String, Value>>,
+) {
+    // 6. Handle errors
+    if let Some(errors) = errors {
+        execution_context.errors.extend(errors);
+    }
+    // 7. Handle extensions
+    if let Some(extensions) = extensions {
+        execution_context.extensions.extend(extensions);
+    }
+}
+
 fn process_representations_result(
     result: ExecuteForRepresentationsResult,
     mut representations: Vec<&mut Value>,
@@ -87,14 +102,7 @@ fn process_representations_result(
             }
         }
     }
-    if let Some(errors) = result.errors {
-        // 6. Handle errors
-        execution_context.errors.extend(errors);
-    }
-    if let Some(extensions) = result.extensions {
-        // 7. Handle extensions
-        execution_context.extensions.extend(extensions);
-    }
+    process_errors_and_extensions(execution_context, result.errors, result.extensions);
 }
 
 struct ExecuteForRepresentationsResult {
@@ -469,14 +477,12 @@ fn process_result(
             deep_merge::deep_merge(data, new_data);
         }
     }
-    // 6. Handle errors
-    if let Some(errors) = fetch_result.errors {
-        execution_context.errors.extend(errors);
-    }
-    // 7. Handle extensions
-    if let Some(extensions) = fetch_result.extensions {
-        execution_context.extensions.extend(extensions);
-    }
+
+    process_errors_and_extensions(
+        execution_context,
+        fetch_result.errors,
+        fetch_result.extensions,
+    );
 }
 
 #[async_trait]
@@ -488,8 +494,9 @@ impl ExecutablePlanNode for ParallelNode {
         data: &mut Value,
     ) {
         // Here we call fetch nodes in parallel and non-fetch nodes sequentially.
-        let mut jobs = vec![];
-        let mut other_nodes = vec![];
+        let mut fetch_jobs = vec![];
+        let mut flatten_jobs = vec![];
+        let mut flatten_paths = vec![];
 
         // Collect Fetch node results and non-fetch nodes for sequential execution
         for node in &self.nodes {
@@ -497,26 +504,70 @@ impl ExecutablePlanNode for ParallelNode {
                 PlanNode::Fetch(fetch_node) => {
                     // Execute FetchNode in parallel
                     let job = fetch_node.execute_for_root(execution_context);
-                    jobs.push(job);
+                    fetch_jobs.push(job);
                 }
-                _ => {
-                    // Execute non-Fetch nodes sequentially
-                    other_nodes.push(node);
+                PlanNode::Flatten(flatten_node) => {
+                    let normalized_path: Vec<&str> =
+                        flatten_node.path.iter().map(String::as_str).collect();
+                    let collected_representations =
+                        traverse_and_collect_immut(data, &normalized_path);
+                    let fetch_node = match flatten_node.node.as_ref() {
+                        PlanNode::Fetch(fetch_node) => fetch_node,
+                        _ => {
+                            warn!(
+                                "FlattenNode can only execute FetchNode as child node, found: {:?}",
+                                flatten_node.node
+                            );
+                            continue; // Skip if the child node is not a FetchNode
+                        }
+                    };
+                    let project_result = fetch_node
+                        .project_representations(execution_context, collected_representations);
+                    let job = fetch_node.execute_for_projected_representations(
+                        execution_context,
+                        project_result.representations,
+                        project_result.indexes,
+                    );
+                    flatten_jobs.push(job);
+                    flatten_paths.push(normalized_path);
                 }
+                _ => {}
             }
         }
 
-        // Wait for all jobs to complete
-        let results = futures::future::join_all(jobs).await;
-
-        for node in other_nodes {
-            // Execute non-Fetch nodes sequentially (TODO!: consider parallel execution)
-            node.execute(execution_context, data).await;
+        let mut all_errors = vec![];
+        let mut all_extensions = vec![];
+        let flatten_results = futures::future::join_all(flatten_jobs).await;
+        for (result, path) in flatten_results.into_iter().zip(flatten_paths) {
+            // Process FlattenNode results
+            if let Some(mut entities) = result.entities {
+                // Traverse and put the entities into the data structure
+                traverse_and_put(data, &path, &mut entities);
+            }
+            // Extend errors and extensions from the result
+            if let Some(errors) = result.errors {
+                all_errors.extend(errors);
+            }
+            if let Some(extensions) = result.extensions {
+                all_extensions.push(extensions);
+            }
         }
 
-        // Process results
-        for fetch_result in results {
+        let fetch_results = futures::future::join_all(fetch_jobs).await;
+
+        // Process results from FetchNode executions
+        for fetch_result in fetch_results {
             process_result(fetch_result, execution_context, data);
+        }
+
+        // Process errors and extensions from FlattenNode results
+        if !all_errors.is_empty() {
+            execution_context.errors.extend(all_errors);
+        }
+        if !all_extensions.is_empty() {
+            for extensions in all_extensions {
+                execution_context.extensions.extend(extensions);
+            }
         }
     }
 }
@@ -532,7 +583,7 @@ impl ExecutablePlanNode for FlattenNode {
         // Execute the child node. `execution_context` can be borrowed mutably
         // because `collected_representations` borrows `data_for_flatten`, not `execution_context.data`.
         let normalized_path: Vec<&str> = self.path.iter().map(String::as_str).collect();
-        let representations = traverse_and_collect(data, normalized_path.as_slice());
+        let representations = traverse_and_collect_mut(data, normalized_path.as_slice());
         let representations_immutable: Vec<&Value> =
             representations.iter().map(|v| v as &Value).collect();
         match self.node.as_ref() {
@@ -814,7 +865,7 @@ fn entity_satisfies_type_condition(
 /// Recursively traverses the data according to the path segments,
 /// handling '@' for array iteration, and collects the final values.current_data.to_vec()
 #[instrument]
-fn traverse_and_collect<'a>(
+fn traverse_and_collect_mut<'a>(
     current_data: &'a mut Value,
     remaining_path: &[&str],
 ) -> Vec<&'a mut Value> {
@@ -823,16 +874,71 @@ fn traverse_and_collect<'a>(
         (current_data, []) => vec![current_data],            // Base case: No more path segments,
         (Value::Object(obj), [next_segment, next_remaining_path @ ..]) => {
             if let Some(next_value) = obj.get_mut(*next_segment) {
-                traverse_and_collect(next_value, next_remaining_path)
+                traverse_and_collect_mut(next_value, next_remaining_path)
             } else {
                 vec![] // No valid path segment
             }
         }
         (Value::Array(arr), ["@", next_remaining_path @ ..]) => arr
             .iter_mut()
-            .flat_map(|item| traverse_and_collect(item, next_remaining_path))
+            .flat_map(|item| traverse_and_collect_mut(item, next_remaining_path))
             .collect(),
         _ => vec![], // No valid path segment
+    }
+}
+
+fn traverse_and_collect_immut<'a>(
+    current_data: &'a Value,
+    remaining_path: &[&str],
+) -> Vec<&'a Value> {
+    match (current_data, remaining_path) {
+        (Value::Array(arr), []) => arr.iter().collect(), // Base case: No more path segments, return all items in the array
+        (current_data, []) => vec![current_data],        // Base case: No more path segments,
+        (Value::Object(obj), [next_segment, next_remaining_path @ ..]) => {
+            if let Some(next_value) = obj.get(*next_segment) {
+                traverse_and_collect_immut(next_value, next_remaining_path)
+            } else {
+                vec![] // No valid path segment
+            }
+        }
+        (Value::Array(arr), ["@", next_remaining_path @ ..]) => arr
+            .iter()
+            .flat_map(|item| traverse_and_collect_immut(item, next_remaining_path))
+            .collect(),
+        _ => vec![], // No valid path segment
+    }
+}
+
+fn traverse_and_put(
+    current_data: &mut Value,
+    remaining_path: &[&str],
+    representations: &mut Vec<Value>,
+) {
+    match (current_data, remaining_path) {
+        (Value::Array(arr), []) => {
+            // Base case: No more path segments, do nothing
+            for item in arr.iter_mut().rev() {
+                traverse_and_put(item, &[], representations);
+            }
+        }
+        // Base case: No more path segments,
+        (current_data, []) => {
+            let current_to_set = representations.pop();
+            if let Some(current_to_set) = current_to_set {
+                deep_merge::deep_merge(current_data, current_to_set);
+            }
+        }
+        (Value::Object(obj), [next_segment, next_remaining_path @ ..]) => {
+            if let Some(next_value) = obj.get_mut(*next_segment) {
+                traverse_and_put(next_value, next_remaining_path, representations)
+            }
+        }
+        (Value::Array(arr), ["@", next_remaining_path @ ..]) => {
+            for item in arr {
+                traverse_and_put(item, next_remaining_path, representations);
+            }
+        }
+        _ => {} // No valid path segment
     }
 }
 
