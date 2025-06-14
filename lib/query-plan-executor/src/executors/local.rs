@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
-use async_graphql::{dynamic::Schema, PathSegment, Response, ServerError};
+use async_graphql::{dynamic::Schema, PathSegment, Response, ServerError, Variables};
 use async_trait::async_trait;
+use serde_json::json;
 
 use crate::{
     executors::common::SubgraphExecutor, ExecutionRequest, ExecutionResult, GraphQLError,
@@ -34,7 +35,12 @@ impl SubgraphExecutor for LocalSubgraphExecutor<'_> {
 
 impl From<ExecutionRequest> for async_graphql::Request {
     fn from(exec_request: ExecutionRequest) -> Self {
-        async_graphql::Request::new(exec_request.query)
+        let req = async_graphql::Request::new(exec_request.query);
+        if exec_request.variables.is_some() {
+            req.variables(Variables::from_json(json!(exec_request.variables.unwrap())))
+        } else {
+            req
+        }
     }
 }
 

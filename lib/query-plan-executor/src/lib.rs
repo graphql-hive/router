@@ -540,9 +540,14 @@ impl ExecutablePlanNode for ParallelNode {
         let flatten_results = futures::future::join_all(flatten_jobs).await;
         for (result, path) in flatten_results.into_iter().zip(flatten_paths) {
             // Process FlattenNode results
-            if let Some(mut entities) = result.entities {
-                // Traverse and put the entities into the data structure
-                traverse_and_put(data, &path, &mut entities);
+            if let Some(entities) = result.entities {
+                let mut collected_representations = traverse_and_collect_mut(data, &path);
+                for (entity, index) in entities.into_iter().zip(result.indexes.into_iter()) {
+                    if let Some(representation) = collected_representations.get_mut(index) {
+                        // Merge the entity into the representation
+                        deep_merge::deep_merge(representation, entity);
+                    }
+                }
             }
             // Extend errors and extensions from the result
             if let Some(errors) = result.errors {
@@ -906,39 +911,6 @@ fn traverse_and_collect_immut<'a>(
             .flat_map(|item| traverse_and_collect_immut(item, next_remaining_path))
             .collect(),
         _ => vec![], // No valid path segment
-    }
-}
-
-fn traverse_and_put(
-    current_data: &mut Value,
-    remaining_path: &[&str],
-    representations: &mut Vec<Value>,
-) {
-    match (current_data, remaining_path) {
-        (Value::Array(arr), []) => {
-            // Base case: No more path segments, do nothing
-            for item in arr.iter_mut().rev() {
-                traverse_and_put(item, &[], representations);
-            }
-        }
-        // Base case: No more path segments,
-        (current_data, []) => {
-            let current_to_set = representations.pop();
-            if let Some(current_to_set) = current_to_set {
-                deep_merge::deep_merge(current_data, current_to_set);
-            }
-        }
-        (Value::Object(obj), [next_segment, next_remaining_path @ ..]) => {
-            if let Some(next_value) = obj.get_mut(*next_segment) {
-                traverse_and_put(next_value, next_remaining_path, representations)
-            }
-        }
-        (Value::Array(arr), ["@", next_remaining_path @ ..]) => {
-            for item in arr {
-                traverse_and_put(item, next_remaining_path, representations);
-            }
-        }
-        _ => {} // No valid path segment
     }
 }
 
