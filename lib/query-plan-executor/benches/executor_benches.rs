@@ -264,11 +264,13 @@ fn project_data_by_operation(c: &mut Criterion) {
         b.iter(|| {
             let mut data = non_projected_result::get_result();
             let data = black_box(&mut data);
+            let mut errors = vec![];
+            let errors = black_box(&mut errors);
             let operation = black_box(&operation);
             let schema_metadata = black_box(&schema_metadata);
             query_plan_executor::project_data_by_operation(
                 data,
-                &mut vec![],
+                errors,
                 operation,
                 schema_metadata,
                 &None,
