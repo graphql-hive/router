@@ -1,5 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-
+use criterion::{criterion_group, criterion_main, Criterion};
 use graphql_parser::query::Document;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
@@ -10,6 +9,7 @@ use query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
 use query_planner::planner::walker::walk_operation;
 use query_planner::state::supergraph_state::SupergraphState;
 use query_planner::utils::parsing::{parse_operation, parse_schema};
+use std::hint::black_box;
 
 fn get_operation(operation_path: &str) -> Document<'static, String> {
     let document_text = std::fs::read_to_string(operation_path).expect("Unable to read input file");
