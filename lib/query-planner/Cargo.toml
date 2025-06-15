@@ -20,7 +20,7 @@ insta = { version = "1.42.1" }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing-tree = "0.4.0"
 lazy_static = "1.5.0"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.6", features = ["html_reports"] }
 
 [[bench]]
 name = "qp_benches"
