@@ -1,5 +1,5 @@
 ---
-source: lib/query-plan-executor/src/lib.rs
+source: lib/query-plan-executor/src/tests/mod.rs
 expression: "format!(\"{}\", serde_json::to_string_pretty(&result).unwrap_or_default())"
 ---
 {
