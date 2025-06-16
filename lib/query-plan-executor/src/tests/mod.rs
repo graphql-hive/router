@@ -1,4 +1,3 @@
-use std::sync::Arc;
 struct TestExecutor {
     accounts: async_graphql::Schema<
         subgraphs::accounts::Query,
@@ -74,7 +73,7 @@ fn query_executor_pipeline_locally() {
         };
         let result = crate::execute_query_plan(
             &query_plan,
-            Arc::new(executor),
+            &executor,
             &None,
             &schema_metadata,
             normalized_operation,

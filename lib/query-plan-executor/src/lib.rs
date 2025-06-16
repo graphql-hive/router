@@ -11,12 +11,12 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::{collections::HashMap, sync::Arc, vec};
+use std::{collections::HashMap, vec};
 use tracing::{debug, instrument, warn}; // For reading file in main
 
 use crate::{
     deep_merge::deep_merge_objects, executors::common::SubgraphExecutor,
-    executors::http::HTTPSubgraphExecutor, schema_metadata::SchemaMetadata,
+    schema_metadata::SchemaMetadata,
 };
 mod deep_merge;
 pub mod executors;
@@ -743,7 +743,7 @@ pub struct QueryPlanExecutionContext<'a> {
     // Using `Value` provides flexibility
     pub variable_values: &'a Option<HashMap<String, Value>>,
     pub schema_metadata: &'a SchemaMetadata,
-    pub executor: SubgraphExecutorType<'a>,
+    pub executor: &'a SubgraphExecutorType<'a>,
     pub errors: Vec<GraphQLError>,
     pub extensions: HashMap<String, Value>,
 }
@@ -1116,42 +1116,17 @@ pub fn project_data_by_operation(
     )
 }
 
-pub async fn execute_query_plan_with_http_executor<'a>(
-    query_plan: &QueryPlan,
-    subgraph_endpoint_map: &'a HashMap<String, String>,
-    variable_values: &Option<HashMap<String, Value>>,
-    schema_metadata: &SchemaMetadata,
-    operation: &OperationDefinition,
-    has_introspection: bool,
-    http_client: &'a reqwest::Client,
-) -> ExecutionResult {
-    debug!("executing the query plan: {:?}", query_plan);
-    let http_executor = HTTPSubgraphExecutor {
-        subgraph_endpoint_map,
-        http_client,
-    };
-    let executor = Arc::new(http_executor);
-    execute_query_plan(
-        query_plan,
-        executor,
-        variable_values,
-        schema_metadata,
-        operation,
-        has_introspection,
-    )
-    .await
-}
-
-type SubgraphExecutorType<'a> = Arc<dyn SubgraphExecutor + 'a + Send + Sync>;
+type SubgraphExecutorType<'a> = dyn SubgraphExecutor + 'a + Send + Sync;
 
 pub async fn execute_query_plan(
     query_plan: &QueryPlan,
-    executor: SubgraphExecutorType<'_>,
+    executor: &SubgraphExecutorType<'_>,
     variable_values: &Option<HashMap<String, Value>>,
     schema_metadata: &SchemaMetadata,
     operation: &OperationDefinition,
     has_introspection: bool,
 ) -> ExecutionResult {
+    debug!("executing the query plan: {:?}", query_plan);
     let mut result_data = Value::Null; // Initialize data as Null
     let mut result_errors = vec![]; // Initial errors are empty
     #[allow(unused_mut)]

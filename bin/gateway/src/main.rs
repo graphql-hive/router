@@ -15,7 +15,7 @@ use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
 use query_planner::planner::Planner;
 use query_planner::state::supergraph_state::SupergraphState;
 use query_planner::utils::parsing::parse_schema;
-use std::{collections::HashMap, env, net::SocketAddr, sync::Arc};
+use std::{env, net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
@@ -26,8 +26,7 @@ struct AppState {
     schema_metadata: SchemaMetadata,
     planner: Planner,
     validation_plan: graphql_tools::validation::validate::ValidationPlan,
-    subgraph_endpoint_map: HashMap<String, String>,
-    http_client: reqwest::Client,
+    executor: query_plan_executor::executors::http::HTTPSubgraphExecutor,
     plan_cache: moka::future::Cache<u64, Arc<query_planner::planner::plan_nodes::QueryPlan>>,
     validate_cache:
         moka::future::Cache<u64, Arc<Vec<graphql_tools::validation::utils::ValidationError>>>,
@@ -65,13 +64,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let planner = Planner::new_from_supergraph(&parsed_schema).expect("failed to create planner");
     let schema_metadata = planner.consumer_schema.schema_metadata();
 
+    let executor = query_plan_executor::executors::http::HTTPSubgraphExecutor::new(
+        supergraph_state.subgraph_endpoint_map,
+    );
+
     let app_state = Arc::new(AppState {
         supergraph_source: supergraph_path.to_string(),
         schema_metadata,
         planner,
         validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
-        subgraph_endpoint_map: supergraph_state.subgraph_endpoint_map,
-        http_client: reqwest::Client::new(),
+        executor,
         plan_cache: moka::future::Cache::new(1000),
         validate_cache: moka::future::Cache::new(1000),
     });

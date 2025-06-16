@@ -5,7 +5,7 @@ use axum::{
     response::Response,
 };
 use axum_extra::extract::WithRejection;
-use query_plan_executor::execute_query_plan_with_http_executor;
+use query_plan_executor::execute_query_plan;
 use query_plan_executor::{
     introspection::filter_introspection_fields_in_operation, variables::collect_variables,
     ExecutionRequest, ExecutionResult, GraphQLError,
@@ -339,14 +339,13 @@ async fn process_graphql_request(
     };
     tracing::debug!(query_plan = ?query_plan_arc, "Query plan obtained/generated");
 
-    let execution_result = execute_query_plan_with_http_executor(
+    let execution_result = execute_query_plan(
         &query_plan_arc,
-        &app_state.subgraph_endpoint_map,
+        &app_state.executor,
         &variable_values,
         &app_state.schema_metadata,
         &operation,
         has_introspection,
-        &app_state.http_client,
     )
     .await;
 

@@ -6,12 +6,18 @@ use tracing::instrument;
 use crate::{executors::common::SubgraphExecutor, ExecutionRequest, ExecutionResult};
 
 #[derive(Debug)]
-pub struct HTTPSubgraphExecutor<'a> {
-    pub subgraph_endpoint_map: &'a HashMap<String, String>,
-    pub http_client: &'a reqwest::Client,
+pub struct HTTPSubgraphExecutor {
+    pub subgraph_endpoint_map: HashMap<String, String>,
+    http_client: reqwest::Client,
 }
 
-impl HTTPSubgraphExecutor<'_> {
+impl HTTPSubgraphExecutor {
+    pub fn new(subgraph_endpoint_map: HashMap<String, String>) -> Self {
+        HTTPSubgraphExecutor {
+            subgraph_endpoint_map,
+            http_client: reqwest::Client::new(),
+        }
+    }
     async fn _execute(
         &self,
         subgraph_name: &str,
@@ -36,7 +42,7 @@ impl HTTPSubgraphExecutor<'_> {
 }
 
 #[async_trait]
-impl SubgraphExecutor for HTTPSubgraphExecutor<'_> {
+impl SubgraphExecutor for HTTPSubgraphExecutor {
     #[instrument(skip(self, execution_request))]
     async fn execute(
         &self,

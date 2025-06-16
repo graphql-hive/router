@@ -19,7 +19,7 @@ pub async fn landing_page_handler(
     ));
     subgraph_html.push_str("<table>");
     subgraph_html.push_str("<tr><th>Subgraph</th><th>Transport</th><th>Location</th></tr>");
-    for (subgraph_name, subgraph_endpoint) in app_state.subgraph_endpoint_map.iter() {
+    for (subgraph_name, subgraph_endpoint) in app_state.executor.subgraph_endpoint_map.iter() {
         subgraph_html.push_str("<tr>");
         subgraph_html.push_str(&format!("<td>{}</td>", subgraph_name));
         subgraph_html.push_str(&format!(

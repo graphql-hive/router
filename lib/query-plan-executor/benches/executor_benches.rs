@@ -1,13 +1,11 @@
 #![recursion_limit = "256"]
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use criterion::black_box;
 use criterion::Criterion;
 use criterion::{criterion_group, criterion_main};
 
 use query_plan_executor::execute_query_plan;
-use query_plan_executor::execute_query_plan_with_http_executor;
 use query_plan_executor::executors::http::HTTPSubgraphExecutor;
 use query_plan_executor::schema_metadata::SchemaWithMetadata;
 use query_plan_executor::ExecutableQueryPlan;
@@ -38,23 +36,21 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
         .expect("Failed to create query plan");
     let subgraph_endpoint_map = planner.supergraph.subgraph_endpoint_map;
     let schema_metadata = planner.consumer_schema.schema_metadata();
-    let http_client = reqwest::Client::new();
+    let executor = HTTPSubgraphExecutor::new(subgraph_endpoint_map);
     c.bench_function("query_plan_executor_pipeline_via_http", |b| {
         b.to_async(&rt).iter(|| async {
             let query_plan = black_box(&query_plan);
-            let subgraph_endpoint_map = black_box(&subgraph_endpoint_map);
             let schema_metadata = black_box(&schema_metadata);
             let operation = black_box(&normalized_operation);
+            let executor = black_box(&executor);
             let has_introspection = false;
-            let http_client = black_box(&http_client);
-            let result = execute_query_plan_with_http_executor(
+            let result = execute_query_plan(
                 query_plan,
-                subgraph_endpoint_map,
+                executor,
                 &None,
                 schema_metadata,
                 operation,
                 has_introspection,
-                http_client,
             )
             .await;
             black_box(result)
@@ -81,17 +77,11 @@ fn query_plan_execution_without_projection_via_http(c: &mut Criterion) {
         .expect("Failed to create query plan");
     let subgraph_endpoint_map = planner.supergraph.subgraph_endpoint_map;
     let schema_metadata = planner.consumer_schema.schema_metadata();
-    let http_client = reqwest::Client::new();
+    let executor = HTTPSubgraphExecutor::new(subgraph_endpoint_map);
     c.bench_function("query_plan_execution_without_projection_via_http", |b| {
         b.to_async(&rt).iter(|| async {
             let schema_metadata = black_box(&schema_metadata);
-            let subgraph_endpoint_map = black_box(&subgraph_endpoint_map);
-            let http_client = black_box(&http_client);
-            let executor = HTTPSubgraphExecutor {
-                subgraph_endpoint_map,
-                http_client,
-            };
-            let executor = Arc::new(executor);
+            let executor = black_box(&executor);
             let mut execution_context = query_plan_executor::QueryPlanExecutionContext {
                 variable_values: &None,
                 schema_metadata,
@@ -176,13 +166,12 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
         products: subgraphs::products::get_subgraph(),
         reviews: subgraphs::reviews::get_subgraph(),
     };
-    let executor = Arc::new(executor);
     c.bench_function("query_plan_executor_pipeline_locally", |b| {
         b.to_async(&rt).iter(|| async {
             let query_plan = black_box(&query_plan);
             let schema_metadata = black_box(&schema_metadata);
             let operation = black_box(&normalized_operation);
-            let executor = black_box(executor.clone());
+            let executor = black_box(&executor);
             let has_introspection = false;
             let result = execute_query_plan(
                 query_plan,
@@ -222,12 +211,11 @@ fn query_plan_executor_without_projection_locally(c: &mut Criterion) {
         products: subgraphs::products::get_subgraph(),
         reviews: subgraphs::reviews::get_subgraph(),
     };
-    let executor = Arc::new(executor);
     c.bench_function("query_plan_executor_without_projection_locally", |b| {
         b.to_async(&rt).iter(|| async {
             let query_plan = black_box(&query_plan);
             let schema_metadata = black_box(&schema_metadata);
-            let executor = black_box(executor.clone());
+            let executor = black_box(&executor);
 
             let mut execution_context = query_plan_executor::QueryPlanExecutionContext {
                 variable_values: &None,
