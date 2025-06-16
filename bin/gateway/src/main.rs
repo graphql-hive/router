@@ -15,20 +15,18 @@ use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
 use query_planner::planner::Planner;
 use query_planner::state::supergraph_state::SupergraphState;
 use query_planner::utils::parsing::parse_schema;
-use std::{collections::HashMap, env, net::SocketAddr, sync::Arc};
+use std::{env, net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-#[derive(Clone)]
 struct AppState {
     supergraph_source: String,
-    schema_metadata: Arc<SchemaMetadata>,
-    planner: Arc<Planner>,
-    validation_plan: Arc<graphql_tools::validation::validate::ValidationPlan>,
-    subgraph_endpoint_map: Arc<HashMap<String, String>>,
-    http_client: reqwest::Client,
+    schema_metadata: SchemaMetadata,
+    planner: Planner,
+    validation_plan: graphql_tools::validation::validate::ValidationPlan,
+    executor: query_plan_executor::executors::http::HTTPSubgraphExecutor,
     plan_cache: moka::future::Cache<u64, Arc<query_planner::planner::plan_nodes::QueryPlan>>,
     validate_cache:
         moka::future::Cache<u64, Arc<Vec<graphql_tools::validation::utils::ValidationError>>>,
@@ -66,15 +64,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let planner = Planner::new_from_supergraph(&parsed_schema).expect("failed to create planner");
     let schema_metadata = planner.consumer_schema.schema_metadata();
 
+    let executor = query_plan_executor::executors::http::HTTPSubgraphExecutor::new(
+        supergraph_state.subgraph_endpoint_map,
+    );
+
     let app_state = Arc::new(AppState {
         supergraph_source: supergraph_path.to_string(),
-        schema_metadata: Arc::new(schema_metadata),
-        planner: Arc::new(planner),
-        validation_plan: Arc::new(
-            graphql_tools::validation::rules::default_rules_validation_plan(),
-        ),
-        subgraph_endpoint_map: Arc::new(supergraph_state.subgraph_endpoint_map),
-        http_client: reqwest::Client::new(),
+        schema_metadata,
+        planner,
+        validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
+        executor,
         plan_cache: moka::future::Cache::new(1000),
         validate_cache: moka::future::Cache::new(1000),
     });
@@ -99,11 +98,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let app = Router::new()
-        .route("/", get(landing_page_handler))
         .route(
             "/graphql",
             get(universal_graphql_get_handler).post(graphql_post_handler),
         )
+        .fallback(get(landing_page_handler))
         .with_state(app_state)
         .layer(
             CorsLayer::new()

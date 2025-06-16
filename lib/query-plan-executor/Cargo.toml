@@ -15,3 +15,15 @@ query-planner = { path = "../query-planner" }
 graphql-parser = "0.4.1"
 graphql-tools = "0.4.0"
 tracing = "0.1.41"
+async-graphql = { version = "7.0.17", features = ["dynamic-schema"]}
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+tokio = { version = "1.35", features = ["full"] }
+tokio-test = "0.4.4"
+subgraphs = { path = "../../bench/subgraphs" }
+insta = { version = "1.42.1" }
+
+[[bench]]
+name = "executor_benches"
+harness = false

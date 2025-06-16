@@ -5,9 +5,10 @@ use axum::{
     response::Response,
 };
 use axum_extra::extract::WithRejection;
+use query_plan_executor::execute_query_plan;
 use query_plan_executor::{
-    execute_query_plan, introspection::filter_introspection_fields_in_operation,
-    variables::collect_variables, ExecutionRequest, ExecutionResult, GraphQLError,
+    introspection::filter_introspection_fields_in_operation, variables::collect_variables,
+    ExecutionRequest, ExecutionResult, GraphQLError,
 };
 use query_planner::{
     ast::normalization::normalize_operation, planner::plan_nodes::QueryPlan,
@@ -340,12 +341,11 @@ async fn process_graphql_request(
 
     let execution_result = execute_query_plan(
         &query_plan_arc,
-        &app_state.subgraph_endpoint_map,
+        &app_state.executor,
         &variable_values,
         &app_state.schema_metadata,
         &operation,
         has_introspection,
-        &app_state.http_client,
     )
     .await;
 
