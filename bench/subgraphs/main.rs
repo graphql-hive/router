@@ -1,12 +1,13 @@
 use async_graphql_axum::GraphQL;
 use axum::{
-    http::{Request, StatusCode},
+    extract::Request,
     middleware::{self, Next},
     response::Response,
     routing::post_service,
-    Router, Server,
+    Router,
 };
 use std::env::var;
+use tokio::net::TcpListener;
 
 mod accounts;
 mod inventory;
@@ -15,7 +16,7 @@ mod reviews;
 
 extern crate lazy_static;
 
-async fn delay_middleware<B>(req: Request<B>, next: Next<B>) -> Result<Response, StatusCode> {
+async fn delay_middleware(req: Request, next: Next) -> Response {
     let delay_ms: Option<u64> = std::env::var("SUBGRAPH_DELAY_MS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -25,7 +26,7 @@ async fn delay_middleware<B>(req: Request<B>, next: Next<B>) -> Result<Response,
         tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
     }
 
-    Ok(next.run(req).await)
+    next.run(req).await
 }
 
 #[tokio::main]
@@ -53,8 +54,13 @@ async fn main() {
         .route_layer(middleware::from_fn(delay_middleware));
 
     println!("Starting server on http://localhost:4200");
-    Server::bind(&format!("{}:{}", host, port).parse().unwrap())
-        .serve(app.into_make_service())
-        .await
-        .unwrap();
+
+    axum::serve(
+        TcpListener::bind(&format!("{}:{}", host, port))
+            .await
+            .unwrap(),
+        app,
+    )
+    .await
+    .unwrap();
 }
