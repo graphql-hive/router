@@ -15,7 +15,7 @@ query-planner = { path = "../query-planner" }
 graphql-parser = "0.4.1"
 graphql-tools = "0.4.0"
 tracing = "0.1.41"
-async-graphql = { version = "6.0.11", features = ["dynamic-schema"]}
+async-graphql = { version = "7.0.17", features = ["dynamic-schema"]}
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
