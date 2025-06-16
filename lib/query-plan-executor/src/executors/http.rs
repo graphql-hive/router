@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use tracing::instrument;
+use tracing::{error, instrument, trace};
 
 use crate::{executors::common::SubgraphExecutor, ExecutionRequest, ExecutionResult};
 
@@ -18,6 +18,7 @@ impl HTTPSubgraphExecutor {
             http_client: reqwest::Client::new(),
         }
     }
+
     async fn _execute(
         &self,
         subgraph_name: &str,
@@ -43,7 +44,11 @@ impl HTTPSubgraphExecutor {
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
-    #[instrument(skip(self, execution_request))]
+    #[instrument(
+        level = "trace",
+        skip(self, execution_request),
+        name = "HTTPSubgraphExecutor"
+    )]
     async fn execute(
         &self,
         subgraph_name: &str,
@@ -52,6 +57,9 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         self._execute(subgraph_name, execution_request)
             .await
             .unwrap_or_else(|e| {
+                error!("Failed to execute request to subgraph: {}", e);
+                trace!("network error: {:?}", e);
+
                 ExecutionResult::from_error_message(format!(
                     "Error executing subgraph {}: {}",
                     subgraph_name, e

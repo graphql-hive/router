@@ -28,12 +28,12 @@ pub fn deep_merge(target: &mut Value, source: Value) {
 }
 
 #[instrument(
-    name = "deep_merge_objects",
     skip(target_map, source_map),
     fields(
         target_type = %target_map.get("__typename").map_or("unknown", |v| v.as_str().unwrap_or("unknown")),
         source_type = %source_map.get("__typename").map_or("unknown", |v| v.as_str().unwrap_or("unknown"))
-    )
+    ),
+    level = "trace"
 )]
 pub fn deep_merge_objects(
     target_map: &mut serde_json::Map<String, Value>,

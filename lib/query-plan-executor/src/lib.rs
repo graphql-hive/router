@@ -142,7 +142,7 @@ trait ExecutableFetchNode {
 
 #[async_trait]
 impl ExecutablePlanNode for FetchNode {
-    #[instrument(skip(self, execution_context), name = "FetchNode::execute")]
+    #[instrument(level = "debug", skip(self, execution_context), name = "FetchNode")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -451,7 +451,7 @@ impl ApplyFetchRewrite for ValueSetter {
 
 #[async_trait]
 impl ExecutablePlanNode for SequenceNode {
-    #[instrument(skip(self, execution_context), name = "SequenceNode::execute")]
+    #[instrument(level = "trace", skip(self, execution_context), name = "SequenceNode")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -487,7 +487,7 @@ fn process_result(
 
 #[async_trait]
 impl ExecutablePlanNode for ParallelNode {
-    #[instrument(skip(self, execution_context), name = "ParallelNode::execute")]
+    #[instrument(level = "trace", skip(self, execution_context), name = "ParallelNode")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -578,7 +578,7 @@ impl ExecutablePlanNode for ParallelNode {
 
 #[async_trait]
 impl ExecutablePlanNode for FlattenNode {
-    #[instrument(skip(self, execution_context), name = "FlattenNode::execute")]
+    #[instrument(level = "trace", skip(self, execution_context), name = "FlattenNode")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -617,7 +617,7 @@ impl ExecutablePlanNode for FlattenNode {
 
 #[async_trait]
 impl ExecutablePlanNode for ConditionNode {
-    #[instrument(skip(self, execution_context), name = "ConditionNode::execute")]
+    #[instrument(level = "trace", skip(self, execution_context), name = "ConditionNode")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -657,7 +657,7 @@ impl ExecutablePlanNode for ConditionNode {
 
 #[async_trait]
 impl ExecutableQueryPlan for QueryPlan {
-    #[instrument(skip(self, execution_context))]
+    #[instrument(level = "trace", skip(self, execution_context))]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -749,7 +749,7 @@ pub struct QueryPlanExecutionContext<'a> {
 }
 
 impl QueryPlanExecutionContext<'_> {
-    #[instrument(skip(self, execution_request))]
+    #[instrument(level = "trace", skip(self, execution_request))]
     async fn execute(
         &self,
         subgraph_name: &str,
@@ -765,7 +765,7 @@ impl QueryPlanExecutionContext<'_> {
     }
 
     #[instrument(
-        name = "Project requires selections",
+        level = "trace",
         skip(self, requires_selections, entity)
         fields(
             requires_selections = ?requires_selections,
@@ -836,10 +836,7 @@ impl QueryPlanExecutionContext<'_> {
     }
 }
 
-#[instrument(
-    name = "Check if entity satisfies type condition",
-    skip(possible_types)
-)]
+#[instrument(level = "trace", skip(possible_types))]
 fn entity_satisfies_type_condition(
     possible_types: &HashMap<String, Vec<String>>,
     type_name: &str,
@@ -865,7 +862,7 @@ fn entity_satisfies_type_condition(
 
 /// Recursively traverses the data according to the path segments,
 /// handling '@' for array iteration, and collects the final values.current_data.to_vec()
-#[instrument]
+#[instrument(level = "trace")]
 fn traverse_and_collect<'a>(
     current_data: &'a mut Value,
     remaining_path: &[&str],
@@ -892,7 +889,10 @@ fn traverse_and_collect<'a>(
 
 // --- Main Function (for testing) ---
 
-#[instrument(skip(selection_set, schema_metadata, variable_values))]
+#[instrument(
+    level = "trace",
+    skip(selection_set, obj, schema_metadata, variable_values)
+)]
 fn project_selection_set_with_map(
     obj: &mut Map<String, Value>,
     errors: &mut Vec<GraphQLError>,
@@ -1024,7 +1024,7 @@ fn project_selection_set_with_map(
     Some(new_obj)
 }
 
-#[instrument(skip(selection_set, schema_metadata, variable_values))]
+#[instrument(level = "trace", skip(selection_set, schema_metadata, variable_values))]
 fn project_selection_set(
     data: &mut Value,
     errors: &mut Vec<GraphQLError>,
@@ -1091,7 +1091,7 @@ fn project_selection_set(
     }
 }
 
-#[instrument(skip(operation, schema_metadata, variable_values))]
+#[instrument(level = "trace", skip(operation, schema_metadata, variable_values))]
 pub fn project_data_by_operation(
     data: &mut Value,
     errors: &mut Vec<GraphQLError>,
@@ -1126,7 +1126,6 @@ pub async fn execute_query_plan(
     operation: &OperationDefinition,
     has_introspection: bool,
 ) -> ExecutionResult {
-    debug!("executing the query plan: {:?}", query_plan);
     let mut result_data = Value::Null; // Initialize data as Null
     let mut result_errors = vec![]; // Initial errors are empty
     #[allow(unused_mut)]
@@ -1156,10 +1155,6 @@ pub async fn execute_query_plan(
         );
     }
 
-    #[cfg(debug_assertions)] // Only log in debug builds
-    {
-        result_extensions.insert("queryPlan".to_string(), serde_json::json!(query_plan));
-    }
     ExecutionResult {
         data: if result_data.is_null() {
             None

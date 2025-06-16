@@ -1,7 +1,7 @@
 use graphql_parser::query::{self as query_ast, Definition};
 
 pub mod context;
-mod error;
+pub mod error;
 mod pipeline;
 pub mod utils;
 

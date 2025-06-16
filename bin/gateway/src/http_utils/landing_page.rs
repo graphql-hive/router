@@ -1,25 +1,23 @@
 use axum::{extract::State, http::Uri, response::Html};
 use std::sync::Arc;
 
-use crate::AppState;
+use crate::shared_state::GatewaySharedState;
 
 static LANDING_PAGE_HTML: &str = include_str!("../../static/landing-page.html");
 static PRODUCT_LOGO_SVG: &str = include_str!("../../static/product_logo.svg");
 
 pub async fn landing_page_handler(
-    State(app_state): State<Arc<AppState>>,
+    State(gateway_shared_state): State<Arc<GatewaySharedState>>,
     uri: Uri,
 ) -> Html<String> {
     let mut subgraph_html = String::new();
     subgraph_html.push_str("<section class=\"supergraph-information\">");
     subgraph_html.push_str("<h3>Supergraph Status: Loaded ✅</h3>");
-    subgraph_html.push_str(&format!(
-        "<p><strong>Source: </strong> <i>{}</i></p>",
-        app_state.supergraph_source
-    ));
     subgraph_html.push_str("<table>");
     subgraph_html.push_str("<tr><th>Subgraph</th><th>Transport</th><th>Location</th></tr>");
-    for (subgraph_name, subgraph_endpoint) in app_state.executor.subgraph_endpoint_map.iter() {
+    for (subgraph_name, subgraph_endpoint) in
+        gateway_shared_state.executor.subgraph_endpoint_map.iter()
+    {
         subgraph_html.push_str("<tr>");
         subgraph_html.push_str(&format!("<td>{}</td>", subgraph_name));
         subgraph_html.push_str(&format!(

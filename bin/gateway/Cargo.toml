@@ -28,16 +28,29 @@ moka = { version = "0.12.8", features = ["future"] }
 
 # Tracing
 tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.19", features = [
+  "env-filter",
+  "time",
+  "json",
+] }
 tracing-tree = "0.4.0"
 
 # HTTP
+ulid = "1.2.1"
 axum = "0.8.4"
 axum-extra = "0.10.1"
 axum-macros = "0.5.0"
-http = "1.1.0"
+http = "1.3.1"
 hyper = { version = "1.4.1", features = ["server", "http1"] }
-tower-http = { version = "0.6.6", features = ["fs", "trace", "cors"] }
+tower-http = { version = "0.6.6", features = [
+  "fs",
+  "trace",
+  "cors",
+  "request-id",
+] }
 
-# NEEDS A GROUP, FEELS LONELY
+# Utils
 thiserror = "2.0.12"
+lazy_static = "1.5.0"
+tower = "0.5.2"
+async-trait = "0.1.88"
