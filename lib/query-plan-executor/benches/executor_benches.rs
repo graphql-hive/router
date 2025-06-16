@@ -1,5 +1,6 @@
 #![recursion_limit = "256"]
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use criterion::black_box;
 use criterion::Criterion;
@@ -9,6 +10,7 @@ use query_plan_executor::execute_query_plan;
 use query_plan_executor::executors::http::HTTPSubgraphExecutor;
 use query_plan_executor::schema_metadata::SchemaWithMetadata;
 use query_plan_executor::ExecutableQueryPlan;
+use query_plan_executor::SubgraphExecutorMap;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::utils::parsing::parse_operation;
 use query_planner::utils::parsing::parse_schema;
@@ -36,26 +38,27 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
         .expect("Failed to create query plan");
     let subgraph_endpoint_map = planner.supergraph.subgraph_endpoint_map;
     let schema_metadata = planner.consumer_schema.schema_metadata();
-    let subgraph_executor_map = subgraph_endpoint_map
-        .iter()
-        .map(|(name, endpoint)| {
-            (
-                name.clone(),
-                HTTPSubgraphExecutor::new(&endpoint)
-            )
-        })
-        .collect::<HashMap<_, _>>();
-    let executor = query_plan_executor::executors::batch::BatchExecutor::new(subgraph_executor_map);
+    let mut subgraph_executor_map: SubgraphExecutorMap = HashMap::new();
+    let http_client = Arc::new(reqwest::Client::new());
+    for (name, endpoint) in subgraph_endpoint_map {
+        subgraph_executor_map.insert(
+            name.to_string(),
+            Arc::new(Box::new(HTTPSubgraphExecutor::new(
+                endpoint,
+                http_client.clone(),
+            ))),
+        );
+    }
     c.bench_function("query_plan_executor_pipeline_via_http", |b| {
         b.to_async(&rt).iter(|| async {
             let query_plan = black_box(&query_plan);
             let schema_metadata = black_box(&schema_metadata);
             let operation = black_box(&normalized_operation);
-            let executor = black_box(&executor);
+            let subgraph_executor_map = black_box(&subgraph_executor_map);
             let has_introspection = false;
             let result = execute_query_plan(
                 query_plan,
-                executor,
+                subgraph_executor_map,
                 &None,
                 schema_metadata,
                 operation,
@@ -86,24 +89,25 @@ fn query_plan_execution_without_projection_via_http(c: &mut Criterion) {
         .expect("Failed to create query plan");
     let subgraph_endpoint_map = planner.supergraph.subgraph_endpoint_map;
     let schema_metadata = planner.consumer_schema.schema_metadata();
-    let subgraph_executor_map = subgraph_endpoint_map
-        .iter()
-        .map(|(name, endpoint)| {
-            (
-                name.clone(),
-                HTTPSubgraphExecutor::new(endpoint)
-            )
-        })
-        .collect::<HashMap<_, _>>();
-    let executor = query_plan_executor::executors::batch::BatchExecutor::new(subgraph_executor_map);
+    let mut subgraph_executor_map: SubgraphExecutorMap = HashMap::new();
+    let http_client = Arc::new(reqwest::Client::new());
+    for (name, endpoint) in subgraph_endpoint_map {
+        subgraph_executor_map.insert(
+            name.to_string(),
+            Arc::new(Box::new(HTTPSubgraphExecutor::new(
+                endpoint,
+                http_client.clone(),
+            ))),
+        );
+    }
     c.bench_function("query_plan_execution_without_projection_via_http", |b| {
         b.to_async(&rt).iter(|| async {
             let schema_metadata = black_box(&schema_metadata);
-            let executor = black_box(&executor);
+            let subgraph_executor_map = black_box(&subgraph_executor_map);
             let mut execution_context = query_plan_executor::QueryPlanExecutionContext {
                 variable_values: &None,
                 schema_metadata,
-                executor,
+                subgraph_executor_map,
                 errors: Vec::new(),
                 extensions: HashMap::new(),
             };
@@ -115,49 +119,61 @@ fn query_plan_execution_without_projection_via_http(c: &mut Criterion) {
         });
     });
 }
-
-// TODO: Use LocalExecutor later
-struct TestExecutor {
-    accounts: async_graphql::Schema<
-        subgraphs::accounts::Query,
-        async_graphql::EmptyMutation,
-        async_graphql::EmptySubscription,
-    >,
-    inventory: async_graphql::Schema<
-        subgraphs::inventory::Query,
-        async_graphql::EmptyMutation,
-        async_graphql::EmptySubscription,
-    >,
-    products: async_graphql::Schema<
-        subgraphs::products::Query,
-        async_graphql::EmptyMutation,
-        async_graphql::EmptySubscription,
-    >,
-    reviews: async_graphql::Schema<
-        subgraphs::reviews::Query,
-        async_graphql::EmptyMutation,
-        async_graphql::EmptySubscription,
-    >,
-}
-
-#[async_trait::async_trait]
-impl query_plan_executor::executors::common::SubgraphExecutor for TestExecutor {
-    async fn execute(
-        &self,
-        subgraph_name: &str,
-        execution_request: query_plan_executor::ExecutionRequest,
-    ) -> query_plan_executor::ExecutionResult {
-        match subgraph_name {
-            "accounts" => self.accounts.execute(execution_request).await.into(),
-            "inventory" => self.inventory.execute(execution_request).await.into(),
-            "products" => self.products.execute(execution_request).await.into(),
-            "reviews" => self.reviews.execute(execution_request).await.into(),
-            _ => query_plan_executor::ExecutionResult::from_error_message(format!(
-                "Subgraph {} not found in schema map",
-                subgraph_name
-            )),
-        }
+fn query_plan_executor_pipeline_batched(c: &mut Criterion) {
+    let rt = Runtime::new().expect("Failed to create Tokio runtime");
+    let operation_path = "../../bench/operation.graphql";
+    let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
+        .expect("Unable to read input file");
+    let parsed_schema = parse_schema(&supergraph_sdl);
+    let planner = query_planner::planner::Planner::new_from_supergraph(&parsed_schema)
+        .expect("Failed to create planner from supergraph");
+    let parsed_document = parse_operation(
+        &std::fs::read_to_string(operation_path).expect("Unable to read input file"),
+    );
+    let normalized_document = normalize_operation(&planner.supergraph, &parsed_document, None)
+        .expect("Failed to normalize operation");
+    let normalized_operation = normalized_document.executable_operation();
+    let query_plan = planner
+        .plan_from_normalized_operation(normalized_operation)
+        .expect("Failed to create query plan");
+    let subgraph_endpoint_map = planner.supergraph.subgraph_endpoint_map;
+    let schema_metadata = planner.consumer_schema.schema_metadata();
+    let mut subgraph_executor_map: SubgraphExecutorMap = HashMap::new();
+    let http_client = Arc::new(reqwest::Client::new());
+    for (name, endpoint) in subgraph_endpoint_map {
+        subgraph_executor_map.insert(
+            name.to_string(),
+            Arc::new(Box::new(HTTPSubgraphExecutor::new(
+                endpoint,
+                http_client.clone(),
+            ))),
+        );
     }
+    let subgraph_executor_map_arc = &Arc::new(subgraph_executor_map);
+    c.bench_function("query_plan_executor_pipeline_batched", |b| {
+        b.to_async(&rt).iter(|| async {
+            let query_plan = black_box(&query_plan);
+            let schema_metadata = black_box(&schema_metadata);
+            let operation = black_box(&normalized_operation);
+            let subgraph_executor_map = black_box(subgraph_executor_map_arc);
+            let mut subgraph_batched_executor_map: SubgraphExecutorMap = HashMap::new(); // No subgraphs in this test for now
+            for (name, executor) in subgraph_executor_map.iter() {
+                let executor_arc = executor.clone();
+                subgraph_batched_executor_map.insert(name.to_string(), executor_arc);
+            }
+            let has_introspection = false;
+            let result = execute_query_plan(
+                query_plan,
+                &subgraph_batched_executor_map,
+                &None,
+                schema_metadata,
+                operation,
+                has_introspection,
+            )
+            .await;
+            black_box(result)
+        });
+    });
 }
 
 fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
@@ -178,22 +194,46 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
         .plan_from_normalized_operation(normalized_operation)
         .expect("Failed to create query plan");
     let schema_metadata = planner.consumer_schema.schema_metadata();
-    let executor = TestExecutor {
-        accounts: subgraphs::accounts::get_subgraph(),
-        inventory: subgraphs::inventory::get_subgraph(),
-        products: subgraphs::products::get_subgraph(),
-        reviews: subgraphs::reviews::get_subgraph(),
-    };
+    let mut subgraph_executor_map: SubgraphExecutorMap = HashMap::new(); // No subgraphs in this testlet mut subgraph_executor_map: SubgraphExecutorMap = HashMap::new(); // No subgraphs in this test
+    let accounts = subgraphs::accounts::get_subgraph();
+    let inventory = subgraphs::inventory::get_subgraph();
+    let products = subgraphs::products::get_subgraph();
+    let reviews = subgraphs::reviews::get_subgraph();
+    subgraph_executor_map.insert(
+        "accounts".to_string(),
+        Arc::new(Box::new(
+            query_plan_executor::executors::local::LocalSubgraphExecutor::new(accounts),
+        )),
+    );
+    subgraph_executor_map.insert(
+        "inventory".to_string(),
+        Arc::new(Box::new(
+            query_plan_executor::executors::local::LocalSubgraphExecutor::new(inventory),
+        )),
+    );
+    subgraph_executor_map.insert(
+        "products".to_string(),
+        Arc::new(Box::new(
+            query_plan_executor::executors::local::LocalSubgraphExecutor::new(products),
+        )),
+    );
+    subgraph_executor_map.insert(
+        "reviews".to_string(),
+        Arc::new(Box::new(
+            query_plan_executor::executors::local::LocalSubgraphExecutor::new(reviews),
+        )),
+    );
+
     c.bench_function("query_plan_executor_pipeline_locally", |b| {
         b.to_async(&rt).iter(|| async {
             let query_plan = black_box(&query_plan);
             let schema_metadata = black_box(&schema_metadata);
             let operation = black_box(&normalized_operation);
-            let executor = black_box(&executor);
+            let subgraph_executor_map = black_box(&subgraph_executor_map);
             let has_introspection = false;
             let result = execute_query_plan(
                 query_plan,
-                executor,
+                subgraph_executor_map,
                 &None,
                 schema_metadata,
                 operation,
@@ -223,22 +263,46 @@ fn query_plan_executor_without_projection_locally(c: &mut Criterion) {
         .plan_from_normalized_operation(normalized_operation)
         .expect("Failed to create query plan");
     let schema_metadata = planner.consumer_schema.schema_metadata();
-    let executor = TestExecutor {
-        accounts: subgraphs::accounts::get_subgraph(),
-        inventory: subgraphs::inventory::get_subgraph(),
-        products: subgraphs::products::get_subgraph(),
-        reviews: subgraphs::reviews::get_subgraph(),
-    };
+    let mut subgraph_executor_map: SubgraphExecutorMap = HashMap::new(); // No subgraphs in this testlet mut subgraph_executor_map: SubgraphExecutorMap = HashMap::new(); // No subgraphs in this test
+    let accounts = subgraphs::accounts::get_subgraph();
+    let inventory = subgraphs::inventory::get_subgraph();
+    let products = subgraphs::products::get_subgraph();
+    let reviews = subgraphs::reviews::get_subgraph();
+    subgraph_executor_map.insert(
+        "accounts".to_string(),
+        Arc::new(Box::new(
+            query_plan_executor::executors::local::LocalSubgraphExecutor::new(accounts),
+        )),
+    );
+    subgraph_executor_map.insert(
+        "inventory".to_string(),
+        Arc::new(Box::new(
+            query_plan_executor::executors::local::LocalSubgraphExecutor::new(inventory),
+        )),
+    );
+    subgraph_executor_map.insert(
+        "products".to_string(),
+        Arc::new(Box::new(
+            query_plan_executor::executors::local::LocalSubgraphExecutor::new(products),
+        )),
+    );
+    subgraph_executor_map.insert(
+        "reviews".to_string(),
+        Arc::new(Box::new(
+            query_plan_executor::executors::local::LocalSubgraphExecutor::new(reviews),
+        )),
+    );
+
     c.bench_function("query_plan_executor_without_projection_locally", |b| {
         b.to_async(&rt).iter(|| async {
             let query_plan = black_box(&query_plan);
             let schema_metadata = black_box(&schema_metadata);
-            let executor = black_box(&executor);
+            let subgraph_executor_map = black_box(&subgraph_executor_map);
 
             let mut execution_context = query_plan_executor::QueryPlanExecutionContext {
                 variable_values: &None,
                 schema_metadata,
-                executor,
+                subgraph_executor_map,
                 errors: Vec::new(),
                 extensions: HashMap::new(),
             };
@@ -289,6 +353,7 @@ fn project_data_by_operation(c: &mut Criterion) {
 fn all_benchmarks(c: &mut Criterion) {
     query_plan_execution_without_projection_via_http(c);
     query_plan_executor_pipeline_via_http(c);
+    query_plan_executor_pipeline_batched(c);
 
     query_plan_executor_without_projection_locally(c);
     query_plan_executor_pipeline_locally(c);

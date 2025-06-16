@@ -5,7 +5,8 @@ use axum::{
     response::Response,
 };
 use axum_extra::extract::WithRejection;
-use query_plan_executor::execute_query_plan;
+use query_plan_executor::executors::batch::BatchExecutor;
+use query_plan_executor::{execute_query_plan, SubgraphExecutorMap};
 use query_plan_executor::{
     introspection::filter_introspection_fields_in_operation, variables::collect_variables,
     ExecutionRequest, ExecutionResult, GraphQLError,
@@ -339,9 +340,18 @@ async fn process_graphql_request(
     };
     tracing::debug!(query_plan = ?query_plan_arc, "Query plan obtained/generated");
 
+    let mut subgraph_batched_executor_map: SubgraphExecutorMap = HashMap::new();
+
+    for (subgraph_name, subgraph_executor) in &app_state.subgraph_executor_map {
+        subgraph_batched_executor_map.insert(
+            subgraph_name.clone(),
+            Arc::new(Box::new(BatchExecutor::new(subgraph_executor.clone()))),
+        );
+    }
+
     let execution_result = execute_query_plan(
         &query_plan_arc,
-        &app_state.executor,
+        &subgraph_batched_executor_map,
         &variable_values,
         &app_state.schema_metadata,
         &operation,

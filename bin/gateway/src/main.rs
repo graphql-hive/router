@@ -27,7 +27,7 @@ struct AppState {
     planner: Planner,
     validation_plan: graphql_tools::validation::validate::ValidationPlan,
     subgraph_endpoint_map: HashMap<String, String>,
-    executor: query_plan_executor::executors::batch::BatchExecutor<query_plan_executor::executors::http::HTTPSubgraphExecutor>,
+    subgraph_executor_map: query_plan_executor::SubgraphExecutorMap<'static>,
     plan_cache: moka::future::Cache<u64, Arc<query_planner::planner::plan_nodes::QueryPlan>>,
     validate_cache:
         moka::future::Cache<u64, Arc<Vec<graphql_tools::validation::utils::ValidationError>>>,
@@ -65,28 +65,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let planner = Planner::new_from_supergraph(&parsed_schema).expect("failed to create planner");
     let schema_metadata = planner.consumer_schema.schema_metadata();
 
-    let subgraph_executor_map = supergraph_state
-        .subgraph_endpoint_map
-        .iter()
-        .map(|(name, endpoint)| {
-            (
-                name.clone(),
-                query_plan_executor::executors::http::HTTPSubgraphExecutor::new(endpoint)
-            )
-        })
-        .collect::<HashMap<_, _>>();
-
-    let executor = query_plan_executor::executors::batch::BatchExecutor::new(
-        subgraph_executor_map,
-    );
+    let mut subgraph_executor_map: query_plan_executor::SubgraphExecutorMap = HashMap::new();
+    let subgraph_endpoint_map_clone = supergraph_state.subgraph_endpoint_map.clone();
+    let http_client = Arc::new(reqwest::Client::new());
+    for (subgraph_name, subgraph_endpoint) in supergraph_state.subgraph_endpoint_map {
+        subgraph_executor_map.insert(
+            subgraph_name.to_string(),
+            Arc::new(Box::new(
+                query_plan_executor::executors::http::HTTPSubgraphExecutor::new(
+                    subgraph_endpoint,
+                    http_client.clone(),
+                ),
+            )),
+        );
+    }
 
     let app_state = Arc::new(AppState {
         supergraph_source: supergraph_path.to_string(),
         schema_metadata,
         planner,
         validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
-        subgraph_endpoint_map: supergraph_state.subgraph_endpoint_map.clone(),
-        executor,
+        subgraph_endpoint_map: subgraph_endpoint_map_clone,
+        subgraph_executor_map,
         plan_cache: moka::future::Cache::new(1000),
         validate_cache: moka::future::Cache::new(1000),
     });

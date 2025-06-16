@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use async_graphql::{dynamic::Schema, PathSegment, Response, ServerError, Variables};
+use async_graphql::{PathSegment, Response, Schema, ServerError, Variables};
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -9,27 +9,32 @@ use crate::{
     GraphQLErrorLocation,
 };
 
-pub struct LocalSubgraphExecutor<'a> {
-    pub subgraph_schema_map: &'a HashMap<String, Schema>,
+pub struct LocalSubgraphExecutor<Schema> {
+    pub schema: Schema,
+}
+
+impl<Query, Mutation, Subscription> LocalSubgraphExecutor<Schema<Query, Mutation, Subscription>>
+where
+    Query: async_graphql::ObjectType + 'static,
+    Mutation: async_graphql::ObjectType + 'static,
+    Subscription: async_graphql::SubscriptionType + 'static,
+{
+    pub fn new(schema: Schema<Query, Mutation, Subscription>) -> Self {
+        LocalSubgraphExecutor { schema }
+    }
 }
 
 #[async_trait]
-impl SubgraphExecutor for LocalSubgraphExecutor<'_> {
-    async fn execute(
-        &self,
-        subgraph_name: &str,
-        execution_request: crate::ExecutionRequest,
-    ) -> crate::ExecutionResult {
-        match self.subgraph_schema_map.get(subgraph_name) {
-            Some(schema) => {
-                let response: Response = schema.execute(execution_request).await;
-                response.into()
-            }
-            None => crate::ExecutionResult::from_error_message(format!(
-                "Subgraph {} not found in schema map",
-                subgraph_name
-            )),
-        }
+impl<Query, Mutation, Subscription> SubgraphExecutor
+    for LocalSubgraphExecutor<Schema<Query, Mutation, Subscription>>
+where
+    Query: async_graphql::ObjectType + 'static,
+    Mutation: async_graphql::ObjectType + 'static,
+    Subscription: async_graphql::SubscriptionType + 'static,
+{
+    async fn execute(&self, execution_request: crate::ExecutionRequest) -> crate::ExecutionResult {
+        let response: Response = self.schema.execute(execution_request).await;
+        response.into()
     }
 }
 

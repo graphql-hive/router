@@ -1,19 +1,16 @@
-use std::{collections::HashMap, hash::Hash};
+use std::{collections::HashMap, hash::Hash, sync::Arc};
 
+use async_trait::async_trait;
 use dataloader::{cached::Loader, BatchFn};
 use graphql_parser::{query, Pos};
-use graphql_tools::{
-    ast::OperationDefinitionExtension,
-    static_graphql::query::{Document, Value},
-};
+use graphql_tools::{ast::OperationDefinitionExtension, static_graphql::query::Document};
 use query_planner::utils::parsing::parse_operation;
 use serde_json::Map;
 
 use crate::{executors::common::SubgraphExecutor, ExecutionResult};
 
-struct BatchLoadFn<Executor> {
-    subgraph_name: String,
-    executor: Executor,
+struct BatchLoadFn<'a> {
+    executor: Arc<Box<dyn SubgraphExecutor + Send + Sync + 'a>>,
 }
 
 impl Hash for crate::ExecutionRequest {
@@ -39,29 +36,21 @@ impl PartialEq for crate::ExecutionRequest {
     }
 }
 
-impl<Executor> BatchFn<crate::ExecutionRequest, crate::ExecutionResult> for BatchLoadFn<Executor>
-    where Executor: SubgraphExecutor
-{
+impl BatchFn<crate::ExecutionRequest, crate::ExecutionResult> for BatchLoadFn<'_> {
     async fn load(
         &mut self,
         keys: &[crate::ExecutionRequest],
     ) -> HashMap<crate::ExecutionRequest, crate::ExecutionResult> {
         if keys.len() == 1 {
             let request = &keys[0];
-            let result = self
-                .executor
-                .execute(&self.subgraph_name, request.clone())
-                .await;
+            let result = self.executor.execute(request.clone()).await;
             let mut result_map: HashMap<crate::ExecutionRequest, crate::ExecutionResult> =
                 HashMap::new();
             result_map.insert(request.clone(), result);
             result_map
         } else {
             let merged_request = merge_requests(keys);
-            let result = self
-                .executor
-                .execute(&self.subgraph_name, merged_request.clone())
-                .await;
+            let result = self.executor.execute(merged_request.clone()).await;
             let splitted_results = split_result(&result, keys.len());
             let mut result_map: HashMap<crate::ExecutionRequest, crate::ExecutionResult> =
                 HashMap::new();
@@ -86,13 +75,12 @@ fn merge_requests(requests: &[crate::ExecutionRequest]) -> crate::ExecutionReque
     for (index, request) in requests.iter().enumerate() {
         let prefix = create_prefix(index);
         if let Some(variables) = &request.variables {
-            for (key, _value) in variables {
+            for key in variables.keys() {
                 let prefixed_key = format!("{}{}", prefix, key);
                 original_to_prefix_variable_names.insert(key.clone(), prefixed_key.clone());
             }
         }
-        let (prefixed_document, prefixed_variables) =
-            prefix_request(&prefix, request);
+        let (prefixed_document, prefixed_variables) = prefix_request(&prefix, request);
         for definition in prefixed_document.definitions {
             match definition {
                 graphql_tools::static_graphql::query::Definition::Operation(op) => {
@@ -127,11 +115,9 @@ fn merge_requests(requests: &[crate::ExecutionRequest]) -> crate::ExecutionReque
         position: Pos::default(), // Placeholder position, adjust as needed
     };
 
-    let mut merged_defs = vec![
-        graphql_tools::static_graphql::query::Definition::Operation(
-            graphql_parser::query::OperationDefinition::Query(merged_op)
-        ),
-    ];
+    let mut merged_defs = vec![graphql_tools::static_graphql::query::Definition::Operation(
+        graphql_parser::query::OperationDefinition::Query(merged_op),
+    )];
     if !merged_fragment_definitions.is_empty() {
         merged_defs.extend(
             merged_fragment_definitions
@@ -168,7 +154,7 @@ fn prefix_request(
     let mut renamed_variables: HashMap<String, String> = HashMap::new();
     let prefixed_variables: Option<HashMap<String, serde_json::Value>> =
         request.variables.as_ref().map(|vars| {
-            vars.into_iter()
+            vars.iter()
                 .map(|(k, v)| {
                     let prefixed_key = format!("{}{}", prefix, k);
                     renamed_variables.insert(k.clone(), prefixed_key.clone());
@@ -183,17 +169,20 @@ fn prefix_request(
             &format!("${}", prefixed_variable_name),
         );
     }
-    (parse_operation(&prefix_doc_str), prefixed_variables)
+    prefixed_document = parse_operation(&prefix_doc_str);
+    (prefixed_document, prefixed_variables)
 }
 
 fn alias_top_level_fields(
     prefix: &str,
     document: &Document,
 ) -> graphql_tools::static_graphql::query::Document {
-    let new_definitions: Vec<graphql_tools::static_graphql::query::Definition> = document
-        .definitions
-        .iter()
-        .map(|def| match def {
+    let new_definitions: Vec<graphql_tools::static_graphql::query::Definition> =
+        document
+            .definitions
+            .iter()
+            .map(|def| {
+                match def {
             graphql_tools::static_graphql::query::Definition::Operation(op) => match op {
                 graphql_parser::query::OperationDefinition::Query(query) => {
                     graphql_tools::static_graphql::query::Definition::Operation(
@@ -205,19 +194,19 @@ fn alias_top_level_fields(
                                         name: format!("{}{}", prefix, vd.name),
                                         var_type: vd.var_type.clone(),
                                         default_value: vd.default_value.clone(),
-                                        position: vd.position.clone(),
+                                        position: vd.position,
                                     }
                                 }).collect(),
                                 directives: query.directives.clone(),
                                 selection_set: graphql_tools::static_graphql::query::SelectionSet {
-                                    span: query.selection_set.span.clone(),
+                                    span: query.selection_set.span,
                                     items: alias_fields_in_selection(
                                         prefix,
                                         &query.selection_set.items,
                                         document,
                                     ),
                                 },
-                                position: query.position.clone(),
+                                position: query.position,
                             },
                         ),
                     )
@@ -230,14 +219,14 @@ fn alias_top_level_fields(
                                 variable_definitions: mutation.variable_definitions.clone(),
                                 directives: mutation.directives.clone(),
                                 selection_set: graphql_tools::static_graphql::query::SelectionSet {
-                                    span: mutation.selection_set.span.clone(),
+                                    span: mutation.selection_set.span,
                                     items: alias_fields_in_selection(
                                         prefix,
                                         &mutation.selection_set.items,
                                         document,
                                     ),
                                 },
-                                position: mutation.position.clone(),
+                                position: mutation.position,
                             },
                         ),
                     )
@@ -250,14 +239,14 @@ fn alias_top_level_fields(
                                 variable_definitions: subscription.variable_definitions.clone(),
                                 directives: subscription.directives.clone(),
                                 selection_set: graphql_tools::static_graphql::query::SelectionSet {
-                                    span: subscription.selection_set.span.clone(),
+                                    span: subscription.selection_set.span,
                                     items: alias_fields_in_selection(
                                         prefix,
                                         &subscription.selection_set.items,
                                         document,
                                     ),
                                 },
-                                position: subscription.position.clone(),
+                                position: subscription.position,
                             },
                         ),
                     )
@@ -266,7 +255,7 @@ fn alias_top_level_fields(
                     graphql_tools::static_graphql::query::Definition::Operation(
                         graphql_parser::query::OperationDefinition::SelectionSet(
                             graphql_tools::static_graphql::query::SelectionSet {
-                                span: selection_set.span.clone(),
+                                span: selection_set.span,
                                 items: alias_fields_in_selection(
                                     prefix,
                                     &selection_set.items,
@@ -284,12 +273,13 @@ fn alias_top_level_fields(
                         type_condition: fragment.type_condition.clone(),
                         directives: fragment.directives.clone(),
                         selection_set: fragment.selection_set.clone(),
-                        position: fragment.position.clone(),
+                        position: fragment.position,
                     },
                 )
             }
-        })
-        .collect();
+        }
+            })
+            .collect();
     graphql_tools::static_graphql::query::Document {
         definitions: new_definitions,
     }
@@ -334,7 +324,7 @@ fn alias_field(
         arguments: field.arguments.clone(),
         directives: field.directives.clone(),
         selection_set: field.selection_set.clone(),
-        position: field.position.clone(),
+        position: field.position,
     }
 }
 
@@ -347,10 +337,10 @@ fn alias_fields_in_inline_fragment(
     let new_selections = alias_fields_in_selection(prefix, selections, document);
     graphql_tools::static_graphql::query::InlineFragment {
         type_condition: inline_fragment.type_condition.clone(),
-        position: inline_fragment.position.clone(),
+        position: inline_fragment.position,
         directives: inline_fragment.directives.clone(),
         selection_set: graphql_tools::static_graphql::query::SelectionSet {
-            span: inline_fragment.selection_set.span.clone(),
+            span: inline_fragment.selection_set.span,
             items: new_selections,
         },
     }
@@ -383,10 +373,13 @@ fn inline_fragment_spread(
     }
 }
 
-fn split_result(result: &crate::ExecutionResult, num_results: usize) -> Vec<crate::ExecutionResult> {
+fn split_result(
+    result: &crate::ExecutionResult,
+    num_results: usize,
+) -> Vec<crate::ExecutionResult> {
     let mut split_results: Vec<ExecutionResult> = Vec::with_capacity(num_results);
 
-    for i in 0..num_results {
+    for _i in 0..num_results {
         split_results.push(ExecutionResult {
             data: Some(serde_json::Value::Object(Map::new())),
             errors: result.errors.clone(),
@@ -397,9 +390,8 @@ fn split_result(result: &crate::ExecutionResult, num_results: usize) -> Vec<crat
     if let Some(serde_json::Value::Object(data)) = &result.data {
         for (key, value) in data.iter() {
             let (index, original_key) = parse_key(key);
-            let result = split_results
-                .get_mut(index).unwrap();
-            let result_data= result.data.as_mut().unwrap();
+            let result = split_results.get_mut(index).unwrap();
+            let result_data = result.data.as_mut().unwrap();
             let data = result_data.as_object_mut().unwrap();
             data.insert(original_key, value.clone());
         }
@@ -416,63 +408,34 @@ fn parse_key(prefixed_key: &str) -> (usize, String) {
         panic!("Invalid prefixed key format: {}", prefixed_key);
     }
     //Remove the "_v" prefix and parse the index
-    let index = parts[1].strip_prefix("v").expect("Invalid prefix format").parse::<usize>().expect("Failed to parse index");
+    let index = parts[1]
+        .strip_prefix("v")
+        .expect("Invalid prefix format")
+        .parse::<usize>()
+        .expect("Failed to parse index");
     let original_key = parts[2..].join("_"); // Join the rest as the original key
     (index, original_key)
 }
 
-pub struct BatchExecutor<Executor> 
-    where Executor: SubgraphExecutor
-{
-    subgraph_loader_map: HashMap<
-        String,
-        dataloader::cached::Loader<
-            crate::ExecutionRequest,
-            crate::ExecutionResult,
-            BatchLoadFn<Executor>,
-            HashMap<crate::ExecutionRequest, crate::ExecutionResult>,
-        >,
+pub struct BatchExecutor<'a> {
+    loader: dataloader::cached::Loader<
+        crate::ExecutionRequest,
+        crate::ExecutionResult,
+        BatchLoadFn<'a>,
+        HashMap<crate::ExecutionRequest, crate::ExecutionResult>,
     >,
 }
 
-impl<Executor> BatchExecutor<Executor> 
-    where Executor: SubgraphExecutor + Send + Sync
-{
-    pub fn new(subgraph_executor_map: HashMap<String, Executor>) -> Self {
-        let subgraph_loader_map = subgraph_executor_map
-            .into_iter()
-            .map(|(name, executor)| {
-                let loader = Loader::new(BatchLoadFn {
-                    subgraph_name: name.clone(),
-                    executor,
-                });
-                (name, loader)
-            })
-            .collect();
-
-        BatchExecutor {
-            subgraph_loader_map,
-        }
+impl<'a> BatchExecutor<'a> {
+    pub fn new(executor: Arc<Box<dyn SubgraphExecutor + Send + Sync + 'a>>) -> Self {
+        let loader = Loader::new(BatchLoadFn { executor });
+        BatchExecutor { loader }
     }
 }
 
-#[async_trait::async_trait]
-impl<Executor> SubgraphExecutor for BatchExecutor<Executor> 
-    where Executor: SubgraphExecutor + Send + Sync
-{
-    async fn execute(
-        &self,
-        subgraph_name: &str,
-        execution_request: crate::ExecutionRequest,
-    ) -> crate::ExecutionResult {
-        match self.subgraph_loader_map.get(subgraph_name) {
-            Some(loader) => {
-                loader.load(execution_request).await
-            }
-            None => ExecutionResult::from_error_message(format!(
-                "Subgraph {} not found in loader map",
-                subgraph_name
-            )),
-        }
+#[async_trait]
+impl SubgraphExecutor for BatchExecutor<'_> {
+    async fn execute(&self, execution_request: crate::ExecutionRequest) -> crate::ExecutionResult {
+        self.loader.load(execution_request).await
     }
 }
