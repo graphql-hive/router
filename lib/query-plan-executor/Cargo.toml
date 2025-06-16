@@ -16,6 +16,7 @@ graphql-parser = "0.4.1"
 graphql-tools = "0.4.0"
 tracing = "0.1.41"
 async-graphql = { version = "7.0.17", features = ["dynamic-schema"]}
+dataloader = "0.18"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }

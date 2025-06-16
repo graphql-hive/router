@@ -15,7 +15,7 @@ use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
 use query_planner::planner::Planner;
 use query_planner::state::supergraph_state::SupergraphState;
 use query_planner::utils::parsing::parse_schema;
-use std::{env, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, env, net::SocketAddr, sync::Arc};
 use tokio::net::TcpListener;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
@@ -26,7 +26,8 @@ struct AppState {
     schema_metadata: SchemaMetadata,
     planner: Planner,
     validation_plan: graphql_tools::validation::validate::ValidationPlan,
-    executor: query_plan_executor::executors::http::HTTPSubgraphExecutor,
+    subgraph_endpoint_map: HashMap<String, String>,
+    executor: query_plan_executor::executors::batch::BatchExecutor<query_plan_executor::executors::http::HTTPSubgraphExecutor>,
     plan_cache: moka::future::Cache<u64, Arc<query_planner::planner::plan_nodes::QueryPlan>>,
     validate_cache:
         moka::future::Cache<u64, Arc<Vec<graphql_tools::validation::utils::ValidationError>>>,
@@ -64,8 +65,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let planner = Planner::new_from_supergraph(&parsed_schema).expect("failed to create planner");
     let schema_metadata = planner.consumer_schema.schema_metadata();
 
-    let executor = query_plan_executor::executors::http::HTTPSubgraphExecutor::new(
-        supergraph_state.subgraph_endpoint_map,
+    let subgraph_executor_map = supergraph_state
+        .subgraph_endpoint_map
+        .iter()
+        .map(|(name, endpoint)| {
+            (
+                name.clone(),
+                query_plan_executor::executors::http::HTTPSubgraphExecutor::new(endpoint)
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    let executor = query_plan_executor::executors::batch::BatchExecutor::new(
+        subgraph_executor_map,
     );
 
     let app_state = Arc::new(AppState {
@@ -73,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         schema_metadata,
         planner,
         validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
+        subgraph_endpoint_map: supergraph_state.subgraph_endpoint_map.clone(),
         executor,
         plan_cache: moka::future::Cache::new(1000),
         validate_cache: moka::future::Cache::new(1000),

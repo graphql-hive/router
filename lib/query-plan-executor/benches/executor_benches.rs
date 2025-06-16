@@ -36,7 +36,16 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
         .expect("Failed to create query plan");
     let subgraph_endpoint_map = planner.supergraph.subgraph_endpoint_map;
     let schema_metadata = planner.consumer_schema.schema_metadata();
-    let executor = HTTPSubgraphExecutor::new(subgraph_endpoint_map);
+    let subgraph_executor_map = subgraph_endpoint_map
+        .iter()
+        .map(|(name, endpoint)| {
+            (
+                name.clone(),
+                HTTPSubgraphExecutor::new(&endpoint)
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let executor = query_plan_executor::executors::batch::BatchExecutor::new(subgraph_executor_map);
     c.bench_function("query_plan_executor_pipeline_via_http", |b| {
         b.to_async(&rt).iter(|| async {
             let query_plan = black_box(&query_plan);
@@ -77,7 +86,16 @@ fn query_plan_execution_without_projection_via_http(c: &mut Criterion) {
         .expect("Failed to create query plan");
     let subgraph_endpoint_map = planner.supergraph.subgraph_endpoint_map;
     let schema_metadata = planner.consumer_schema.schema_metadata();
-    let executor = HTTPSubgraphExecutor::new(subgraph_endpoint_map);
+    let subgraph_executor_map = subgraph_endpoint_map
+        .iter()
+        .map(|(name, endpoint)| {
+            (
+                name.clone(),
+                HTTPSubgraphExecutor::new(endpoint)
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let executor = query_plan_executor::executors::batch::BatchExecutor::new(subgraph_executor_map);
     c.bench_function("query_plan_execution_without_projection_via_http", |b| {
         b.to_async(&rt).iter(|| async {
             let schema_metadata = black_box(&schema_metadata);
