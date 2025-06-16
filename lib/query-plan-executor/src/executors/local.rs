@@ -35,12 +35,22 @@ impl SubgraphExecutor for LocalSubgraphExecutor<'_> {
 
 impl From<ExecutionRequest> for async_graphql::Request {
     fn from(exec_request: ExecutionRequest) -> Self {
-        let req = async_graphql::Request::new(exec_request.query);
-        if exec_request.variables.is_some() {
-            req.variables(Variables::from_json(json!(exec_request.variables.unwrap())))
-        } else {
-            req
+        let mut req = async_graphql::Request::new(exec_request.query);
+        if let Some(variables) = exec_request.variables {
+            req = req.variables(Variables::from_json(json!(variables)));
         }
+        if let Some(operation_name) = exec_request.operation_name {
+            req = req.operation_name(operation_name);
+        }
+        if let Some(extensions) = exec_request.extensions {
+            for (key, value) in extensions {
+                req.extensions.insert(
+                    key,
+                    async_graphql::Value::from_json(value).unwrap_or_default(),
+                );
+            }
+        }
+        req
     }
 }
 
@@ -68,8 +78,15 @@ impl From<&ServerError> for GraphQLError {
                     })
                     .collect(),
             ),
-            // TODO: Extensions
-            extensions: None,
+            extensions: error.extensions.as_ref().map(|ext| {
+                let serialized = json!(ext);
+                serialized
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.clone()))
+                    .collect::<HashMap<String, serde_json::Value>>()
+            }),
         }
     }
 }
