@@ -12,10 +12,10 @@ use query_planner::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::{collections::HashMap, vec};
-use tracing::{instrument, warn};
+use tracing::{instrument, warn}; // For reading file in main
 
 use crate::{
-    deep_merge::deep_merge_objects, executors::common::SubgraphExecutor,
+    deep_merge::deep_merge_objects, executors::map::SubgraphExecutorMap,
     schema_metadata::SchemaMetadata,
 };
 pub mod deep_merge;
@@ -170,16 +170,14 @@ impl ExecutableFetchNode for FetchNode {
     ) -> ExecutionResult {
         let variables = self.prepare_variables_for_fetch_node(execution_context.variable_values);
 
+        let execution_request = ExecutionRequest {
+            query: self.operation.operation_str.clone(),
+            operation_name: self.operation_name.clone(),
+            variables,
+            extensions: None,
+        };
         let mut fetch_result = execution_context
-            .execute(
-                &self.service_name,
-                ExecutionRequest {
-                    query: self.operation.operation_str.clone(),
-                    operation_name: self.operation_name.clone(),
-                    variables,
-                    extensions: None,
-                },
-            )
+            .execute(&self.service_name, execution_request)
             .await;
 
         // 5. Process the response
@@ -236,23 +234,21 @@ impl ExecutableFetchNode for FetchNode {
         let mut variables = self
             .prepare_variables_for_fetch_node(execution_context.variable_values)
             .unwrap_or_default();
-
         variables.insert(
             "representations".to_string(),
             Value::Array(filtered_representations),
         );
 
+        let execution_request = ExecutionRequest {
+            query: self.operation.operation_str.clone(),
+            operation_name: self.operation_name.clone(),
+            variables: Some(variables),
+            extensions: None,
+        };
+
         // 3. Execute the fetch operation
         let fetch_result = execution_context
-            .execute(
-                &self.service_name,
-                ExecutionRequest {
-                    query: self.operation.operation_str.clone(),
-                    operation_name: self.operation_name.clone(),
-                    variables: Some(variables),
-                    extensions: None,
-                },
-            )
+            .execute(&self.service_name, execution_request)
             .await;
 
         // Process data
@@ -539,6 +535,7 @@ impl ExecutablePlanNode for ParallelNode {
 
         let mut all_errors = vec![];
         let mut all_extensions = vec![];
+
         let flatten_results = futures::future::join_all(flatten_jobs).await;
         for (result, path) in flatten_results.into_iter().zip(flatten_paths) {
             // Process FlattenNode results
@@ -746,19 +743,19 @@ pub struct QueryPlanExecutionContext<'a> {
     // Using `Value` provides flexibility
     pub variable_values: &'a Option<HashMap<String, Value>>,
     pub schema_metadata: &'a SchemaMetadata,
-    pub executor: &'a SubgraphExecutorType<'a>,
+    pub subgraph_executor_map: &'a SubgraphExecutorMap,
     pub errors: Vec<GraphQLError>,
     pub extensions: HashMap<String, Value>,
 }
 
 impl QueryPlanExecutionContext<'_> {
     #[instrument(level = "trace", skip_all)]
-    async fn execute(
+    pub async fn execute(
         &self,
         subgraph_name: &str,
         execution_request: ExecutionRequest,
     ) -> ExecutionResult {
-        self.executor
+        self.subgraph_executor_map
             .execute(subgraph_name, execution_request)
             .await
     }
@@ -1126,11 +1123,9 @@ pub fn project_data_by_operation(
     )
 }
 
-type SubgraphExecutorType<'a> = dyn SubgraphExecutor + 'a + Send + Sync;
-
 pub async fn execute_query_plan(
     query_plan: &QueryPlan,
-    executor: &SubgraphExecutorType<'_>,
+    subgraph_executor_map: &SubgraphExecutorMap,
     variable_values: &Option<HashMap<String, Value>>,
     schema_metadata: &SchemaMetadata,
     operation: &OperationDefinition,
@@ -1142,7 +1137,7 @@ pub async fn execute_query_plan(
     let mut result_extensions = HashMap::new(); // Initial extensions are empty
     let mut execution_context = QueryPlanExecutionContext {
         variable_values,
-        executor,
+        subgraph_executor_map,
         schema_metadata,
         errors: result_errors,
         extensions: result_extensions,

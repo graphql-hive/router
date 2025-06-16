@@ -68,7 +68,7 @@ impl Service<Request<Body>> for ExecutionService {
 
             let mut execution_result = execute_query_plan(
                 &query_plan_payload.query_plan,
-                &app_state.executor,
+                &app_state.subgraph_executor_map,
                 &variable_payload.variables_map,
                 &app_state.schema_metadata,
                 &normalized_payload.normalized_document.operation,

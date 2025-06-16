@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use async_graphql::{dynamic::Schema, PathSegment, Response, ServerError, Variables};
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -9,27 +8,14 @@ use crate::{
     GraphQLErrorLocation,
 };
 
-pub struct LocalSubgraphExecutor<'a> {
-    pub subgraph_schema_map: &'a HashMap<String, Schema>,
-}
-
 #[async_trait]
-impl SubgraphExecutor for LocalSubgraphExecutor<'_> {
-    async fn execute(
-        &self,
-        subgraph_name: &str,
-        execution_request: crate::ExecutionRequest,
-    ) -> crate::ExecutionResult {
-        match self.subgraph_schema_map.get(subgraph_name) {
-            Some(schema) => {
-                let response: Response = schema.execute(execution_request).await;
-                response.into()
-            }
-            None => crate::ExecutionResult::from_error_message(format!(
-                "Subgraph {} not found in schema map",
-                subgraph_name
-            )),
-        }
+impl<Executor> SubgraphExecutor for Executor
+where
+    Executor: async_graphql::Executor,
+{
+    async fn execute(&self, execution_request: ExecutionRequest) -> ExecutionResult {
+        let response: async_graphql::Response = self.execute(execution_request.into()).await;
+        response.into()
     }
 }
 
@@ -37,7 +23,7 @@ impl From<ExecutionRequest> for async_graphql::Request {
     fn from(exec_request: ExecutionRequest) -> Self {
         let mut req = async_graphql::Request::new(exec_request.query);
         if let Some(variables) = exec_request.variables {
-            req = req.variables(Variables::from_json(json!(variables)));
+            req = req.variables(async_graphql::Variables::from_json(json!(variables)));
         }
         if let Some(operation_name) = exec_request.operation_name {
             req = req.operation_name(operation_name);
@@ -54,8 +40,8 @@ impl From<ExecutionRequest> for async_graphql::Request {
     }
 }
 
-impl From<&ServerError> for GraphQLError {
-    fn from(error: &ServerError) -> Self {
+impl From<&async_graphql::ServerError> for GraphQLError {
+    fn from(error: &async_graphql::ServerError) -> Self {
         GraphQLError {
             message: error.message.to_string(),
             locations: Some(
@@ -73,8 +59,12 @@ impl From<&ServerError> for GraphQLError {
                     .path
                     .iter()
                     .map(|s| match s {
-                        PathSegment::Field(name) => serde_json::Value::String(name.to_string()),
-                        PathSegment::Index(index) => serde_json::Value::Number((*index).into()),
+                        async_graphql::PathSegment::Field(name) => {
+                            serde_json::Value::String(name.to_string())
+                        }
+                        async_graphql::PathSegment::Index(index) => {
+                            serde_json::Value::Number((*index).into())
+                        }
                     })
                     .collect(),
             ),
@@ -91,8 +81,8 @@ impl From<&ServerError> for GraphQLError {
     }
 }
 
-impl From<Response> for ExecutionResult {
-    fn from(response: Response) -> Self {
+impl From<async_graphql::Response> for ExecutionResult {
+    fn from(response: async_graphql::Response) -> Self {
         ExecutionResult {
             data: Some(response.data.into_json().unwrap()),
             errors: Some(
