@@ -11,7 +11,7 @@ pub struct HTTPSubgraphExecutor {
     pub http_client: Arc<reqwest::Client>,
 }
 
-impl<'a> HTTPSubgraphExecutor {
+impl HTTPSubgraphExecutor {
     pub fn new(endpoint: String, http_client: Arc<reqwest::Client>) -> Self {
         HTTPSubgraphExecutor {
             endpoint,

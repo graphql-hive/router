@@ -124,7 +124,8 @@ fn query_plan_executor_pipeline_batched(c: &mut Criterion) {
     let operation_path = "../../bench/operation.graphql";
     let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
         .expect("Unable to read input file");
-    let parsed_schema = parse_schema(&supergraph_sdl);
+    let parsed_schema: graphql_parser::schema::Document<'static, String> =
+        parse_schema(&supergraph_sdl);
     let planner = query_planner::planner::Planner::new_from_supergraph(&parsed_schema)
         .expect("Failed to create planner from supergraph");
     let parsed_document = parse_operation(
