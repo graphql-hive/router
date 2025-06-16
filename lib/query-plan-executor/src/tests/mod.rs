@@ -1,45 +1,8 @@
-struct TestExecutor {
-    accounts: async_graphql::Schema<
-        subgraphs::accounts::Query,
-        async_graphql::EmptyMutation,
-        async_graphql::EmptySubscription,
-    >,
-    inventory: async_graphql::Schema<
-        subgraphs::inventory::Query,
-        async_graphql::EmptyMutation,
-        async_graphql::EmptySubscription,
-    >,
-    products: async_graphql::Schema<
-        subgraphs::products::Query,
-        async_graphql::EmptyMutation,
-        async_graphql::EmptySubscription,
-    >,
-    reviews: async_graphql::Schema<
-        subgraphs::reviews::Query,
-        async_graphql::EmptyMutation,
-        async_graphql::EmptySubscription,
-    >,
-}
+use std::{collections::HashMap, sync::Arc};
 
-#[async_trait::async_trait]
-impl crate::executors::common::SubgraphExecutor for TestExecutor {
-    async fn execute(
-        &self,
-        subgraph_name: &str,
-        execution_request: crate::ExecutionRequest,
-    ) -> crate::ExecutionResult {
-        match subgraph_name {
-            "accounts" => self.accounts.execute(execution_request).await.into(),
-            "inventory" => self.inventory.execute(execution_request).await.into(),
-            "products" => self.products.execute(execution_request).await.into(),
-            "reviews" => self.reviews.execute(execution_request).await.into(),
-            _ => crate::ExecutionResult::from_error_message(format!(
-                "Subgraph {} not found in schema map",
-                subgraph_name
-            )),
-        }
-    }
-}
+use subgraphs::accounts;
+
+use crate::{executors::async_graphql::AsyncGraphQLExecutor, SubgraphExecutorMap};
 
 #[test]
 fn query_executor_pipeline_locally() {
@@ -65,15 +28,30 @@ fn query_executor_pipeline_locally() {
             .expect("Failed to create query plan");
         let schema_metadata =
             crate::schema_metadata::SchemaWithMetadata::schema_metadata(&planner.consumer_schema);
-        let executor = TestExecutor {
-            accounts: subgraphs::accounts::get_subgraph(),
-            inventory: subgraphs::inventory::get_subgraph(),
-            products: subgraphs::products::get_subgraph(),
-            reviews: subgraphs::reviews::get_subgraph(),
-        };
+        let mut subgraph_executor_map: SubgraphExecutorMap = HashMap::new(); // No subgraphs in this test
+        let accounts = accounts::get_subgraph();
+        let inventory = subgraphs::inventory::get_subgraph();
+        let products = subgraphs::products::get_subgraph();
+        let reviews = subgraphs::reviews::get_subgraph();
+        subgraph_executor_map.insert(
+            "accounts".to_string(),
+            Arc::new(Box::new(AsyncGraphQLExecutor::new(accounts))),
+        );
+        subgraph_executor_map.insert(
+            "inventory".to_string(),
+            Arc::new(Box::new(AsyncGraphQLExecutor::new(inventory))),
+        );
+        subgraph_executor_map.insert(
+            "products".to_string(),
+            Arc::new(Box::new(AsyncGraphQLExecutor::new(products))),
+        );
+        subgraph_executor_map.insert(
+            "reviews".to_string(),
+            Arc::new(Box::new(AsyncGraphQLExecutor::new(reviews))),
+        );
         let result = crate::execute_query_plan(
             &query_plan,
-            &executor,
+            &subgraph_executor_map,
             &None,
             &schema_metadata,
             normalized_operation,

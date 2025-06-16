@@ -11,13 +11,10 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::{collections::HashMap, vec};
+use std::{collections::HashMap, sync::Arc, vec};
 use tracing::{debug, instrument, warn}; // For reading file in main
 
-use crate::{
-    deep_merge::deep_merge_objects, executors::common::SubgraphExecutor,
-    schema_metadata::SchemaMetadata,
-};
+use crate::{deep_merge::deep_merge_objects, schema_metadata::SchemaMetadata};
 mod deep_merge;
 pub mod executors;
 pub mod introspection;
@@ -741,11 +738,14 @@ pub struct HTTPErrorExtensions {
     headers: Option<HashMap<String, String>>,
 }
 
+pub type SubgraphExecutorMap<'a> =
+    HashMap<String, Arc<Box<executors::common::SubgraphExecutorType<'a>>>>;
+
 pub struct QueryPlanExecutionContext<'a> {
     // Using `Value` provides flexibility
     pub variable_values: &'a Option<HashMap<String, Value>>,
     pub schema_metadata: &'a SchemaMetadata,
-    pub executor: &'a SubgraphExecutorType<'a>,
+    pub subgraph_executor_map: &'a SubgraphExecutorMap<'a>,
     pub errors: Vec<GraphQLError>,
     pub extensions: HashMap<String, Value>,
 }
@@ -761,9 +761,19 @@ impl QueryPlanExecutionContext<'_> {
             "ExecutionRequest; Subgraph: {} Query:{} Variables: {:?}",
             subgraph_name, execution_request.query, execution_request.variables
         );
-        self.executor
-            .execute(subgraph_name, execution_request)
-            .await
+        match self.subgraph_executor_map.get(subgraph_name) {
+            Some(executor) => executor.execute(execution_request).await,
+            None => {
+                warn!(
+                    "Subgraph executor not found for subgraph: {}",
+                    subgraph_name
+                );
+                ExecutionResult::from_error_message(format!(
+                    "Subgraph executor not found for subgraph: {}",
+                    subgraph_name
+                ))
+            }
+        }
     }
 
     #[instrument(
@@ -1130,11 +1140,9 @@ pub fn project_data_by_operation(
     )
 }
 
-type SubgraphExecutorType<'a> = dyn SubgraphExecutor + 'a + Send + Sync;
-
-pub async fn execute_query_plan(
+pub async fn execute_query_plan<'a>(
     query_plan: &QueryPlan,
-    executor: &SubgraphExecutorType<'_>,
+    subgraph_executor_map: &'a SubgraphExecutorMap<'a>,
     variable_values: &Option<HashMap<String, Value>>,
     schema_metadata: &SchemaMetadata,
     operation: &OperationDefinition,
@@ -1147,7 +1155,7 @@ pub async fn execute_query_plan(
     let mut result_extensions = HashMap::new(); // Initial extensions are empty
     let mut execution_context = QueryPlanExecutionContext {
         variable_values,
-        executor,
+        subgraph_executor_map,
         schema_metadata,
         errors: result_errors,
         extensions: result_extensions,

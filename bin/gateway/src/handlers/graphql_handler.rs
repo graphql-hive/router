@@ -341,7 +341,7 @@ async fn process_graphql_request(
 
     let execution_result = execute_query_plan(
         &query_plan_arc,
-        &app_state.executor,
+        &app_state.subgraph_executor_map,
         &variable_values,
         &app_state.schema_metadata,
         &operation,
