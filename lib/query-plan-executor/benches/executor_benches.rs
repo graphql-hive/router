@@ -1,9 +1,9 @@
 #![recursion_limit = "256"]
 use std::collections::HashMap;
 
-use criterion::black_box;
 use criterion::Criterion;
 use criterion::{criterion_group, criterion_main};
+use std::hint::black_box;
 
 use query_plan_executor::execute_query_plan;
 use query_plan_executor::executors::http::HTTPSubgraphExecutor;
