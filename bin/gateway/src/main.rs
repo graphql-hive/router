@@ -1,5 +1,7 @@
+mod executor;
 mod handlers;
 
+use crate::executor::GWExecutor;
 use axum::{
     extract::State,
     http::{HeaderMap, Method},
@@ -7,10 +9,7 @@ use axum::{
     routing::get,
     Router,
 };
-use handlers::{
-    graphiql_handler, graphql_get_handler, graphql_post_handler, landing_page_handler,
-    GraphQLQueryParams,
-};
+use handlers::{graphiql_handler, graphql_get_handler, landing_page_handler, GraphQLQueryParams};
 use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
 use query_planner::planner::Planner;
 use query_planner::state::supergraph_state::SupergraphState;
@@ -113,7 +112,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route(
             "/graphql",
-            get(universal_graphql_get_handler).post(graphql_post_handler),
+            get(universal_graphql_get_handler).post_service(async_graphql_axum::GraphQL::new(
+                GWExecutor {
+                    app_state: app_state.clone(),
+                },
+            )),
         )
         .fallback(get(landing_page_handler))
         .with_state(app_state)

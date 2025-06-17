@@ -5,7 +5,6 @@ use axum::{
     http::{HeaderMap, Method},
     response::Response,
 };
-use axum_extra::extract::WithRejection;
 use query_plan_executor::execute_query_plan;
 use query_plan_executor::validation::from_validation_error_to_server_error;
 use query_plan_executor::{
@@ -109,14 +108,6 @@ fn get_accept_header(headers: &HeaderMap) -> &str {
         .get("Accept")
         .and_then(|h| h.to_str().ok())
         .unwrap_or("application/json")
-}
-
-pub async fn graphql_post_handler(
-    State(app_state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    WithRejection(Json(execution_request), _): WithRejection<Json<Request>, GraphQLHandlerError>,
-) -> Response {
-    process_graphql_request(app_state, execution_request, headers, Method::POST).await
 }
 
 pub async fn graphql_get_handler(
