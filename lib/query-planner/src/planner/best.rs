@@ -15,8 +15,11 @@ use crate::{
     state::supergraph_state::OperationKind,
 };
 
-type BestLazyTreesPerLeaf =
-    Vec<Vec<LazyTransform<(OperationPath, MutationFieldPosition), Result<QueryTree, GraphError>>>>;
+type PathAndPosition = (OperationPath, MutationFieldPosition);
+type QueryTreeResult = Result<QueryTree, GraphError>;
+type LazyQueryTree = LazyTransform<PathAndPosition, QueryTreeResult>;
+type LazyQueryTreeList = Vec<LazyQueryTree>;
+type BestLazyTreesPerLeaf = Vec<LazyQueryTreeList>;
 
 /// Finds the best combination of paths to leafs.
 /// It compares all possible paths to one leaf, with all possible paths to another leaf.
