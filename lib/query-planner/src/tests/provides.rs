@@ -125,11 +125,11 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
       Fetch(service: "category") {
         {
           products {
-            categories {
-              name
-              id
-            }
             id
+            categories {
+              id
+              name
+            }
           }
         }
       },
@@ -142,7 +142,7 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "category",
         "operationKind": "query",
-        "operation": "query{products{categories{name id} id}}"
+        "operation": "query{products{id categories{id name}}}"
       }
     }
     "#);

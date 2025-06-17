@@ -393,7 +393,7 @@ mod tests {
 
         insta::assert_snapshot!(
           selection_set,
-          @r#"{field1(id: 1, list: [1, 2], name: "test", obj: {"key": "value"})}"#
+          @r#"{field1(id: 1, list: [1, 2], name: "test", obj: {key: "value"})}"#
         )
     }
 }

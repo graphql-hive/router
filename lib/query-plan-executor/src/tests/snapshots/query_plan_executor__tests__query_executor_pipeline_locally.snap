@@ -2344,50 +2344,21 @@ expression: "format!(\"{}\", serde_json::to_string_pretty(&result).unwrap_or_def
             "nodes": [
               {
                 "kind": "Fetch",
-                "serviceName": "accounts",
+                "serviceName": "products",
                 "operationKind": "query",
-                "operation": "query{users{__typename id name username}}"
+                "operation": "query{topProducts{__typename upc name price weight}}"
               },
               {
                 "kind": "Fetch",
-                "serviceName": "products",
+                "serviceName": "accounts",
                 "operationKind": "query",
-                "operation": "query{topProducts{__typename upc weight price name}}"
+                "operation": "query{users{__typename id username name}}"
               }
             ]
           },
           {
             "kind": "Parallel",
             "nodes": [
-              {
-                "kind": "Flatten",
-                "path": [
-                  "users",
-                  "@"
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "reviews",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{reviews{product{__typename reviews{author{__typename reviews{product{__typename upc} body id} id username} body id} upc} body id}}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "User",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
               {
                 "kind": "Flatten",
                 "path": [
@@ -2435,7 +2406,7 @@ expression: "format!(\"{}\", serde_json::to_string_pretty(&result).unwrap_or_def
                   "kind": "Fetch",
                   "serviceName": "reviews",
                   "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reviews{author{__typename reviews{product{__typename upc} body id} id username} body id}}}}",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reviews{id body author{__typename id reviews{id body product{__typename upc}} username}}}}}",
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -2453,12 +2424,175 @@ expression: "format!(\"{}\", serde_json::to_string_pretty(&result).unwrap_or_def
                     }
                   ]
                 }
+              },
+              {
+                "kind": "Flatten",
+                "path": [
+                  "users",
+                  "@"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "reviews",
+                  "operationKind": "query",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{reviews{id body product{__typename upc reviews{id body author{__typename id reviews{id body product{__typename upc}} username}}}}}}}",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "User",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ]
+                }
               }
             ]
           },
           {
             "kind": "Parallel",
             "nodes": [
+              {
+                "kind": "Flatten",
+                "path": [
+                  "topProducts",
+                  "@",
+                  "reviews",
+                  "@",
+                  "author",
+                  "reviews",
+                  "@",
+                  "product"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "products",
+                  "operationKind": "query",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price weight name}}}",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Product",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "upc"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "Flatten",
+                "path": [
+                  "topProducts",
+                  "@",
+                  "reviews",
+                  "@",
+                  "author",
+                  "reviews",
+                  "@",
+                  "product"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "inventory",
+                  "operationKind": "query",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{inStock}}}",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Product",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "upc"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "Flatten",
+                "path": [
+                  "topProducts",
+                  "@",
+                  "reviews",
+                  "@",
+                  "author"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "accounts",
+                  "operationKind": "query",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "User",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "id"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "Flatten",
+                "path": [
+                  "users",
+                  "@",
+                  "reviews",
+                  "@",
+                  "product"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "products",
+                  "operationKind": "query",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price weight name}}}",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Product",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "upc"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
               {
                 "kind": "Flatten",
                 "path": [
@@ -2504,36 +2638,10 @@ expression: "format!(\"{}\", serde_json::to_string_pretty(&result).unwrap_or_def
                   "@",
                   "reviews",
                   "@",
-                  "product"
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "products",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price weight name}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Product",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "upc"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  "users",
+                  "product",
+                  "reviews",
                   "@",
+                  "author",
                   "reviews",
                   "@",
                   "product"
@@ -2603,114 +2711,6 @@ expression: "format!(\"{}\", serde_json::to_string_pretty(&result).unwrap_or_def
                   "@",
                   "reviews",
                   "@",
-                  "product",
-                  "reviews",
-                  "@",
-                  "author",
-                  "reviews",
-                  "@",
-                  "product"
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "inventory",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{inStock}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Product",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "upc"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  "topProducts",
-                  "@",
-                  "reviews",
-                  "@",
-                  "author",
-                  "reviews",
-                  "@",
-                  "product"
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "products",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price weight name}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "Product",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "upc"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  "topProducts",
-                  "@",
-                  "reviews",
-                  "@",
-                  "author"
-                ],
-                "node": {
-                  "kind": "Fetch",
-                  "serviceName": "accounts",
-                  "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
-                  "requires": [
-                    {
-                      "kind": "InlineFragment",
-                      "typeCondition": "User",
-                      "selections": [
-                        {
-                          "kind": "Field",
-                          "name": "__typename"
-                        },
-                        {
-                          "kind": "Field",
-                          "name": "id"
-                        }
-                      ]
-                    }
-                  ]
-                }
-              },
-              {
-                "kind": "Flatten",
-                "path": [
-                  "topProducts",
-                  "@",
-                  "reviews",
-                  "@",
-                  "author",
-                  "reviews",
-                  "@",
                   "product"
                 ],
                 "node": {
@@ -2744,11 +2744,8 @@ expression: "format!(\"{}\", serde_json::to_string_pretty(&result).unwrap_or_def
               {
                 "kind": "Flatten",
                 "path": [
-                  "users",
+                  "topProducts",
                   "@",
-                  "reviews",
-                  "@",
-                  "product",
                   "reviews",
                   "@",
                   "author",
@@ -2830,8 +2827,11 @@ expression: "format!(\"{}\", serde_json::to_string_pretty(&result).unwrap_or_def
               {
                 "kind": "Flatten",
                 "path": [
-                  "topProducts",
+                  "users",
                   "@",
+                  "reviews",
+                  "@",
+                  "product",
                   "reviews",
                   "@",
                   "author",

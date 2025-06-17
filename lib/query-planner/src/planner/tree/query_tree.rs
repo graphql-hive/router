@@ -4,7 +4,7 @@ use tracing::instrument;
 
 use crate::{
     graph::{error::GraphError, Graph},
-    planner::walker::path::OperationPath,
+    planner::{tree::query_tree_node::MutationFieldPosition, walker::path::OperationPath},
 };
 
 use super::query_tree_node::QueryTreeNode;
@@ -24,11 +24,19 @@ impl QueryTree {
     #[instrument(level = "trace",skip(graph), fields(
         root_node = graph.pretty_print_node(&path.root_node)
     ))]
-    pub fn from_path(graph: &Graph, path: &OperationPath) -> Result<Self, GraphError> {
+    pub fn from_path(
+        graph: &Graph,
+        path: &OperationPath,
+        mutation_field_position: MutationFieldPosition,
+    ) -> Result<Self, GraphError> {
         let segments = path.get_segments();
 
-        let root_node =
-            QueryTreeNode::create_root_for_path_sequences(graph, &path.root_node, &segments)?;
+        let root_node = QueryTreeNode::create_root_for_path_sequences(
+            graph,
+            &path.root_node,
+            &segments,
+            mutation_field_position,
+        )?;
 
         Ok(QueryTree::new(root_node))
     }

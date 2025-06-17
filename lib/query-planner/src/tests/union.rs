@@ -219,15 +219,15 @@ fn union_member_entity_call_many_local() -> Result<(), Box<dyn Error>> {
             viewer {
               song {
                 __typename
+                ... on Song {
+                  title
+                  aTitle
+                }
                 ... on Book {
                   __typename
                   title
                   aTitle
                   id
-                }
-                ... on Song {
-                  title
-                  aTitle
                 }
               }
             }
@@ -326,13 +326,13 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
           Fetch(service: "b") {
             {
               viewer {
-                book {
+                media {
                   __typename
                   ... on Book {
                     bTitle
                   }
                 }
-                media {
+                book {
                   __typename
                   ... on Book {
                     bTitle
@@ -344,17 +344,11 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
           Fetch(service: "a") {
             {
               viewer {
-                song {
+                media {
                   __typename
                   ... on Book {
-                    __typename
-                    title
                     aTitle
-                    id
-                  }
-                  ... on Song {
                     title
-                    aTitle
                   }
                 }
                 book {
@@ -364,11 +358,17 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
                     title
                   }
                 }
-                media {
+                song {
                   __typename
-                  ... on Book {
-                    aTitle
+                  ... on Song {
                     title
+                    aTitle
+                  }
+                  ... on Book {
+                    __typename
+                    title
+                    aTitle
+                    id
                   }
                 }
               }

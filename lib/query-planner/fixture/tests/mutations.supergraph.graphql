@@ -76,9 +76,9 @@ type Mutation
   @join__type(graph: B)
   @join__type(graph: C) {
   addProduct(input: AddProductInput!): Product! @join__field(graph: A)
-  multiply(by: Int!, requestId: String!): Int! @join__field(graph: A)
-  delete(requestId: String!): Int! @join__field(graph: B)
-  add(num: Int!, requestId: String!): Int! @join__field(graph: C)
+  multiply(by: Int!): Int! @join__field(graph: A)
+  delete: Int! @join__field(graph: B)
+  add(num: Int!): Int! @join__field(graph: C)
 }
 
 type Product @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {

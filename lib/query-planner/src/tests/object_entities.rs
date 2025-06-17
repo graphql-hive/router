@@ -57,8 +57,8 @@ fn testing() -> Result<(), Box<dyn Error>> {
             {
               ... on Product {
                 price {
-                  currency
                   amount
+                  currency
                 }
               }
             }
@@ -116,7 +116,7 @@ fn testing() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "cost",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price{currency amount}}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price{amount currency}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -284,6 +284,22 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
         },
         Parallel {
           Flatten(path: "productFromD") {
+            Fetch(service: "a") {
+                ... on Product {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Product {
+                  category {
+                    details
+                  }
+                }
+              }
+            },
+          },
+          Flatten(path: "productFromD") {
             Fetch(service: "b") {
                 ... on Product {
                   __typename
@@ -295,22 +311,6 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
                   category {
                     __typename
                     id
-                  }
-                }
-              }
-            },
-          },
-          Flatten(path: "productFromD") {
-            Fetch(service: "a") {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  category {
-                    details
                   }
                 }
               }
@@ -356,9 +356,9 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
-                  "serviceName": "b",
+                  "serviceName": "a",
                   "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{__typename id}}}}",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{details}}}}",
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -384,9 +384,9 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
-                  "serviceName": "a",
+                  "serviceName": "b",
                   "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{details}}}}",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{category{__typename id}}}}",
                   "requires": [
                     {
                       "kind": "InlineFragment",

@@ -12,7 +12,7 @@ use query_planner::planner::plan_nodes::QueryPlan;
 use query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
 use query_planner::planner::tree::query_tree::QueryTree;
 use query_planner::planner::walker::walk_operation;
-use query_planner::planner::walker::BestPathsPerLeaf;
+use query_planner::planner::walker::ResolvedOperation;
 use query_planner::state::supergraph_state::SupergraphState;
 use query_planner::utils::parsing::parse_operation;
 use query_planner::utils::parsing::parse_schema;
@@ -55,7 +55,12 @@ fn main() {
         "paths" => {
             let (graph, best_paths_per_leaf, _operation) = process_paths(&args[2], &args[3]);
 
-            for (index, best_path) in best_paths_per_leaf.iter().enumerate() {
+            for (index, best_path) in best_paths_per_leaf
+                .root_field_groups
+                .iter()
+                .flatten()
+                .enumerate()
+            {
                 println!(
                     "Path at index {} has total of {} best paths:",
                     index,
@@ -144,7 +149,7 @@ fn get_operation(operation_path: &str, supergraph: &SupergraphState) -> Operatio
 fn process_paths(
     supergraph_path: &str,
     operation_path: &str,
-) -> (Graph, BestPathsPerLeaf, OperationDefinition) {
+) -> (Graph, ResolvedOperation, OperationDefinition) {
     let supergraph_sdl =
         std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);

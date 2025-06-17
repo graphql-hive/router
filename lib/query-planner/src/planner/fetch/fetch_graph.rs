@@ -7,7 +7,7 @@ use crate::graph::edge::{Edge, FieldMove};
 use crate::graph::node::Node;
 use crate::graph::Graph;
 use crate::planner::tree::query_tree::QueryTree;
-use crate::planner::tree::query_tree_node::QueryTreeNode;
+use crate::planner::tree::query_tree_node::{MutationFieldPosition, QueryTreeNode};
 use crate::planner::walker::path::OperationPath;
 use crate::planner::walker::pathfinder::can_satisfy_edge;
 use crate::state::supergraph_state::SubgraphName;
@@ -388,10 +388,23 @@ impl FetchGraph {
             // Key: original index, Value: potentially updated index after merges.
             let mut node_indexes: HashMap<NodeIndex, NodeIndex> = HashMap::new();
 
-            let siblings: Vec<_> = self
+            let mut siblings: Vec<_> = self
                 .graph
                 .neighbors_directed(parent_index, Direction::Outgoing)
                 .collect();
+
+            // Sort fetch steps by mutation's field position,
+            // to execute mutations in correct order.
+            siblings.sort_by(|a, b| {
+                // It's safe to panic as the indexes comes from the graph and not outside the function,
+                // we know they exist.
+                let a_step = self.get_step_data(a.id()).expect("Sibling to exist");
+                let b_step = self.get_step_data(b.id()).expect("Sibling to exist");
+
+                a_step
+                    .mutation_field_position
+                    .cmp(&b_step.mutation_field_position)
+            });
 
             for (i, sibling_index) in siblings.iter().enumerate() {
                 // Add the current node to the queue for further processing (BFS).
@@ -421,8 +434,9 @@ impl FetchGraph {
                         .is_some_and(|result| !result.has_input_conflicts());
 
                     if can_merge {
-                        let conflicting_output_fields =
-                            merge_siblings_result.map(|result| result.conflicting_output_fields);
+                        let conflicting_output_fields = merge_siblings_result
+                            .filter(|result| !result.conflicting_output_fields.is_empty())
+                            .map(|result| result.conflicting_output_fields);
 
                         trace!(
                             "Found siblings optimization: {} <- {}",
@@ -619,29 +633,45 @@ impl FetchGraph {
             return Ok(());
         }
 
-        let mut new_edges_pairs: Vec<(NodeIndex, NodeIndex)> = Vec::new();
+        let mut node_mutation_field_pos_pairs: Vec<(NodeIndex, usize)> = Vec::new();
         let mut edge_ids_to_remove: Vec<EdgeIndex> = Vec::new();
-        let mut iter = self.children_of(root_index);
-        let mut current = iter.next();
 
-        for next_edge in iter {
-            if let Some(curr_edge) = current {
-                let current_node_index = curr_edge.target().id();
-                let next_node_index = next_edge.target().id();
-
-                // no need to remove the initial edge (root -> Mutation)
-                edge_ids_to_remove.push(next_edge.id());
-                new_edges_pairs.push((current_node_index, next_node_index));
-            }
-            current = Some(next_edge);
+        for edge_ref in self.children_of(root_index) {
+            edge_ids_to_remove.push(edge_ref.id());
+            let node_index = edge_ref.target().id();
+            let mutation_field_pos = self
+                .get_step_data(node_index)?
+                .mutation_field_position
+                .ok_or(FetchGraphError::MutationStepWithNoOrder)?;
+            node_mutation_field_pos_pairs.push((node_index, mutation_field_pos));
         }
 
-        for (from_id, to_id) in new_edges_pairs {
-            self.connect(from_id, to_id);
+        node_mutation_field_pos_pairs.sort_by_key(|&(_, pos)| pos);
+
+        let mut new_edges_pairs: Vec<(NodeIndex, NodeIndex)> = Vec::new();
+        let mut iter = node_mutation_field_pos_pairs.iter();
+        let mut current = iter.next();
+
+        for next_sequence_child in iter {
+            if let Some((current_node_index, _pos)) = current {
+                let next_node_index = next_sequence_child.0;
+                new_edges_pairs.push((current_node_index.id(), next_node_index));
+            }
+            current = Some(next_sequence_child);
         }
 
         for edge_id in edge_ids_to_remove {
             self.remove_edge(edge_id);
+        }
+
+        // Bring back the root -> Mutation edge
+        let first_pair = node_mutation_field_pos_pairs
+            .first()
+            .expect("fetch steps weren't empty, expected to find a first step");
+        self.connect(root_index, first_pair.0);
+
+        for (from_id, to_id) in new_edges_pairs {
+            self.connect(from_id, to_id);
         }
 
         Ok(())
@@ -734,6 +764,7 @@ pub struct FetchStepData {
     pub used_for_requires: bool,
     pub variable_usages: Option<BTreeSet<String>>,
     pub variable_definitions: Option<Vec<VariableDefinition>>,
+    pub mutation_field_position: MutationFieldPosition,
 }
 
 impl Display for FetchStepData {
@@ -819,6 +850,19 @@ impl FetchStepData {
     ) -> Option<CanMergeSiblingsResult> {
         // First, check if the base conditions for merging are met.
         let can_merge_base = self.can_merge(self_index, other_index, other, fetch_graph);
+
+        if let (Some(self_mut_idx), Some(other_mut_index)) =
+            (self.mutation_field_position, other.mutation_field_position)
+        {
+            // If indexes are equal or one happens to be after the other,
+            // and we already know they belong to the same service,
+            // we shouldn't prevent merging.
+            if self_mut_idx != other_mut_index
+                && (self_mut_idx as i64 - other_mut_index as i64).abs() != 1
+            {
+                return None;
+            }
+        }
 
         // Now that we think it can be merged,
         // let's validate the selection sets and apply specific rules to avoid conflicts when merging siblings.
@@ -1108,6 +1152,7 @@ fn create_noop_fetch_step(fetch_graph: &mut FetchGraph, created_from_requires: b
         aliased_fields: HashMap::new(),
         variable_usages: None,
         variable_definitions: None,
+        mutation_field_position: None,
     })
 }
 
@@ -1136,6 +1181,7 @@ fn create_fetch_step_for_entity_move(
         aliased_fields: HashMap::new(),
         variable_usages: None,
         variable_definitions: None,
+        mutation_field_position: None,
     })
 }
 
@@ -1144,6 +1190,7 @@ fn create_fetch_step_for_root_move(
     root_step_index: NodeIndex,
     subgraph_name: &SubgraphName,
     type_name: &str,
+    mutation_field_position: MutationFieldPosition,
 ) -> NodeIndex {
     let idx = fetch_graph.add_step(FetchStepData {
         service_name: subgraph_name.clone(),
@@ -1161,6 +1208,7 @@ fn create_fetch_step_for_root_move(
         aliased_fields: HashMap::new(),
         variable_usages: None,
         variable_definitions: None,
+        mutation_field_position,
     });
 
     fetch_graph.connect(root_step_index, idx);
@@ -1180,7 +1228,9 @@ fn ensure_fetch_step_for_subgraph(
     requires: Option<&TypeAwareSelection>,
     created_from_requires: bool,
 ) -> Result<NodeIndex, FetchGraphError> {
-    let matching_child_index =
+    let matching_child_index = if requires.is_some() {
+        None
+    } else {
         fetch_graph
             .children_of(parent_fetch_step_index)
             .find_map(|to_child_edge_ref| {
@@ -1206,7 +1256,7 @@ fn ensure_fetch_step_for_subgraph(
 
                     // If there are requirements, then we do not re-use
                     // optimizations will try to re-use the existing step later, if possible.
-                    if requires.is_some() {
+                    if fetch_step.used_for_requires || requires.is_some() {
                         return None;
                     }
 
@@ -1214,7 +1264,8 @@ fn ensure_fetch_step_for_subgraph(
                 }
 
                 None
-            });
+            })
+    };
 
     match matching_child_index {
         Some(idx) => {
@@ -1563,6 +1614,7 @@ fn process_subgraph_entrypoint_edge(
         parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?,
         subgraph_name,
         type_name,
+        query_node.mutation_field_position,
     );
 
     fetch_graph.connect(

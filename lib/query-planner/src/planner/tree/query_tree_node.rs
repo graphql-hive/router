@@ -11,6 +11,10 @@ use crate::{
 
 use super::query_tree::QueryTree;
 
+/// Represents the position of a mutation root field,
+/// in the operation's selection set.
+pub type MutationFieldPosition = Option<usize>;
+
 #[derive(Debug, Clone)]
 pub struct QueryTreeNode {
     /// The underlying graph node this query tree node corresponds to
@@ -21,6 +25,8 @@ pub struct QueryTreeNode {
     pub requirements: Vec<Arc<QueryTreeNode>>,
     pub children: Vec<Arc<QueryTreeNode>>,
     pub selection_attributes: Option<SelectionAttributes>,
+    /// Distinguishes nodes originating from different top-level mutation fields.
+    pub mutation_field_position: MutationFieldPosition,
 }
 
 /// Implements the `PartialEq` trait for `QueryTreeNode` to allow comparison based on node index, edge from parent, and selection attributes.
@@ -31,6 +37,7 @@ impl PartialEq for QueryTreeNode {
         self.node_index == other.node_index
             && self.edge_from_parent == other.edge_from_parent
             && self.selection_attributes == other.selection_attributes
+            && self.mutation_field_position == other.mutation_field_position
     }
 }
 
@@ -72,6 +79,7 @@ impl QueryTreeNode {
             requirements: Vec::new(),
             children: Vec::new(),
             selection_attributes: selection_attributes.cloned(),
+            mutation_field_position: None,
         }
     }
 
@@ -99,6 +107,7 @@ impl QueryTreeNode {
     pub fn from_paths(
         graph: &Graph,
         paths: &[OperationPath],
+        mutation_field_position: MutationFieldPosition,
     ) -> Result<Option<Arc<Self>>, GraphError> {
         if paths.is_empty() {
             return Ok(None);
@@ -107,7 +116,9 @@ impl QueryTreeNode {
         let mut trees = paths
             .iter()
             .map(|path| {
-                QueryTree::from_path(graph, path).expect("expected tree to be built but it failed")
+                // TODO: cover with ?
+                QueryTree::from_path(graph, path, mutation_field_position)
+                    .expect("expected tree to be built but it failed")
             })
             .collect::<Vec<_>>();
 
@@ -125,6 +136,7 @@ impl QueryTreeNode {
         graph: &Graph,
         segments: &[Arc<PathSegment>],
         current_index: usize,
+        mutation_field_position: MutationFieldPosition,
     ) -> Result<Option<Arc<Self>>, GraphError> {
         if current_index >= segments.len() {
             return Ok(None);
@@ -148,6 +160,11 @@ impl QueryTreeNode {
             (*selection_attributes_at_index).as_ref(),
         );
 
+        // Only apply the position to the first node created from the segments
+        if current_index == 0 {
+            tree_node.mutation_field_position = mutation_field_position;
+        }
+
         if let Some(requirements_tree_arc) = requirements_tree_at_index {
             tree_node
                 .requirements
@@ -155,7 +172,7 @@ impl QueryTreeNode {
         }
 
         let subsequent_query_tree_node =
-            Self::from_path_segment_sequences(graph, segments, current_index + 1)?;
+            Self::from_path_segment_sequences(graph, segments, current_index + 1, None)?;
 
         match subsequent_query_tree_node {
             Some(subsequent_query_tree_node) => {
@@ -177,6 +194,7 @@ impl QueryTreeNode {
         graph: &Graph,
         root_node_index: &NodeIndex,
         segments: &Vec<Arc<PathSegment>>,
+        mutation_field_position: MutationFieldPosition,
     ) -> Result<QueryTreeNode, GraphError> {
         trace!(
             "Building root query tree node: {}",
@@ -188,8 +206,12 @@ impl QueryTreeNode {
         if segments.is_empty() {
             trace!("Path has no edges beyond the root.");
         } else {
-            let subsequent_node =
-                QueryTreeNode::from_path_segment_sequences(graph, segments.as_slice(), 0)?;
+            let subsequent_node = QueryTreeNode::from_path_segment_sequences(
+                graph,
+                segments.as_slice(),
+                0,
+                mutation_field_position,
+            )?;
 
             if let Some(subsequent_node) = subsequent_node {
                 root_tree_node.children.push(subsequent_node);

@@ -6,20 +6,58 @@ use crate::{
     graph::{edge::Edge, error::GraphError, Graph},
     planner::{
         error::QueryPlanError,
-        tree::{query_tree::QueryTree, query_tree_node::QueryTreeNode},
-        walker::path::OperationPath,
+        tree::{
+            query_tree::QueryTree,
+            query_tree_node::{MutationFieldPosition, QueryTreeNode},
+        },
+        walker::{path::OperationPath, ResolvedOperation},
     },
+    state::supergraph_state::OperationKind,
 };
+
+type PathAndPosition = (OperationPath, MutationFieldPosition);
+type QueryTreeResult = Result<QueryTree, GraphError>;
+type LazyQueryTree = LazyTransform<PathAndPosition, QueryTreeResult>;
+type LazyQueryTreeList = Vec<LazyQueryTree>;
+type BestLazyTreesPerLeaf = Vec<LazyQueryTreeList>;
 
 /// Finds the best combination of paths to leafs.
 /// It compares all possible paths to one leaf, with all possible paths to another leaf.
 /// It does not compare all, it tries to be smart, we will see in practice if it really is :)
 pub fn find_best_combination(
     graph: &Graph,
-    mut best_paths_per_leaf: Vec<Vec<OperationPath>>,
+    operation: ResolvedOperation,
 ) -> Result<QueryTree, QueryPlanError> {
-    if best_paths_per_leaf.is_empty() || best_paths_per_leaf.iter().any(Vec::is_empty) {
+    if operation.root_field_groups.is_empty()
+        || operation
+            .root_field_groups
+            .iter()
+            .any(|paths_to_leafs| paths_to_leafs.iter().any(Vec::is_empty))
+    {
         return Err(QueryPlanError::EmptyPlan);
+    }
+
+    let is_mutation = matches!(operation.operation_kind, OperationKind::Mutation);
+
+    let mut best_trees_per_leaf: BestLazyTreesPerLeaf = Vec::new();
+
+    for (index, root_field_options) in operation.root_field_groups.into_iter().enumerate() {
+        let mut mutation_field_position: MutationFieldPosition = None;
+        if is_mutation {
+            mutation_field_position = Some(index);
+        }
+
+        let leafs: BestLazyTreesPerLeaf = root_field_options
+            .into_iter()
+            .map(|paths_to_leaf| {
+                paths_to_leaf
+                    .into_iter()
+                    .map(|op| LazyTransform::new((op, mutation_field_position)))
+                    .collect()
+            })
+            .collect();
+
+        best_trees_per_leaf.extend(leafs);
     }
 
     // Sorts the groups of paths by how many alternative paths they have.
@@ -28,15 +66,7 @@ pub fn find_best_combination(
     // It can help find a good candidate faster, which then
     // allows the algorithm to more effectively
     // prune away more complex options later in the search.
-    best_paths_per_leaf.sort_by_key(|paths| paths.len());
-
-    let best_trees_per_leaf: Vec<_> = best_paths_per_leaf
-        // One thing I did not know is that `Vec` when used with `.into_iter()`
-        // produces `ExactSizeIterator` so `map` preserves the exact size property.
-        // Meaning it's the same as a for loop + Vec::with_capacity(vec.len())`
-        .into_iter()
-        .map(|paths_vec| paths_vec.into_iter().map(LazyTransform::new).collect())
-        .collect();
+    best_trees_per_leaf.sort_by_key(|paths| paths.len());
 
     let mut min_overall_cost = u64::MAX;
     let mut final_best_tree: Option<QueryTree> = None;
@@ -56,7 +86,7 @@ pub fn find_best_combination(
 
 fn explore_tree_combinations(
     graph: &Graph,
-    best_trees_per_leaf: &Vec<Vec<LazyTransform<OperationPath, Result<QueryTree, GraphError>>>>,
+    best_trees_per_leaf: &BestLazyTreesPerLeaf,
     // Index of the outer vec of best_trees_per_leaf
     current_leaf_index: usize,
     tree_so_far: Option<QueryTree>,
@@ -80,7 +110,9 @@ fn explore_tree_combinations(
         .iter()
         .try_fold((), |(), tree_candidate| {
             let current_tree = tree_candidate
-                .get_or_create(|path| QueryTree::from_path(graph, &path))
+                .get_or_create(|(path, mutation_index)| {
+                    QueryTree::from_path(graph, &path, mutation_index)
+                })
                 .clone()?;
 
             // Merges the current tree with the tree we built so far

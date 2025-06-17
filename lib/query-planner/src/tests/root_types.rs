@@ -34,13 +34,13 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Parallel {
-        Fetch(service: "name") {
+        Fetch(service: "price") {
           {
             product {
-              name {
-                model
-                brand
+              price {
                 id
+                amount
+                currency
               }
             }
           }
@@ -49,20 +49,20 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
           {
             product {
               category {
-                name
                 id
+                name
               }
               id
             }
           }
         },
-        Fetch(service: "price") {
+        Fetch(service: "name") {
           {
             product {
-              price {
-                currency
-                amount
+              name {
                 id
+                brand
+                model
               }
             }
           }
@@ -78,21 +78,21 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
         "nodes": [
           {
             "kind": "Fetch",
-            "serviceName": "name",
+            "serviceName": "price",
             "operationKind": "query",
-            "operation": "query{product{name{model brand id}}}"
+            "operation": "query{product{price{id amount currency}}}"
           },
           {
             "kind": "Fetch",
             "serviceName": "category",
             "operationKind": "query",
-            "operation": "query{product{category{name id} id}}"
+            "operation": "query{product{category{id name} id}}"
           },
           {
             "kind": "Fetch",
-            "serviceName": "price",
+            "serviceName": "name",
             "operationKind": "query",
-            "operation": "query{product{price{currency amount id}}}"
+            "operation": "query{product{name{id brand model}}}"
           }
         ]
       }

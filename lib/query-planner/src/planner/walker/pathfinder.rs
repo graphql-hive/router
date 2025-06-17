@@ -154,7 +154,7 @@ pub fn find_indirect_paths(
 
                     let next_resolution_path = path.advance(
                         &edge_ref,
-                        QueryTreeNode::from_paths(graph, &paths)?,
+                        QueryTreeNode::from_paths(graph, &paths, None)?,
                         match target {
                             NavigationTarget::Field(field) => Some(field),
                             NavigationTarget::ConcreteType(_) => None,
@@ -248,7 +248,7 @@ pub fn find_direct_paths(
 
                         let next_resolution_path = path.advance(
                             &edge_ref,
-                            QueryTreeNode::from_paths(graph, &paths)?,
+                            QueryTreeNode::from_paths(graph, &paths, None)?,
                             Some(field),
                         );
 

@@ -68,18 +68,18 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Parallel {
+          Fetch(service: "b") {
+            {
+              bFeed {
+                createdAt
+              }
+            }
+          },
           Fetch(service: "a") {
             {
               aFeed {
                 __typename
                 id
-              }
-            }
-          },
-          Fetch(service: "b") {
-            {
-              bFeed {
-                createdAt
               }
             }
           },
@@ -112,15 +112,15 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
             "nodes": [
               {
                 "kind": "Fetch",
-                "serviceName": "a",
-                "operationKind": "query",
-                "operation": "query{aFeed{__typename id}}"
-              },
-              {
-                "kind": "Fetch",
                 "serviceName": "b",
                 "operationKind": "query",
                 "operation": "query{bFeed{createdAt}}"
+              },
+              {
+                "kind": "Fetch",
+                "serviceName": "a",
+                "operationKind": "query",
+                "operation": "query{aFeed{__typename id}}"
               }
             ]
           },
