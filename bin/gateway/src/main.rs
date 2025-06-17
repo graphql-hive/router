@@ -1,53 +1,61 @@
-mod handlers;
+mod http_utils;
+mod logger;
+mod pipeline;
+mod shared_state;
 
+use crate::{
+    http_utils::{
+        landing_page::landing_page_handler,
+        request_id::{RequestIdGenerator, REQUEST_ID_HEADER_NAME},
+    },
+    logger::{configure_logging, LoggingFormat},
+    shared_state::GatewaySharedState,
+};
 use axum::{
-    extract::State,
-    http::{HeaderMap, Method},
-    response::{IntoResponse, Response},
-    routing::get,
+    body::Body,
+    http::Method,
+    routing::{any_service, get},
     Router,
 };
-use handlers::{
-    graphiql_handler, graphql_get_handler, graphql_post_handler, landing_page_handler,
-    GraphQLQueryParams,
-};
-use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
-use query_planner::planner::Planner;
-use query_planner::state::supergraph_state::SupergraphState;
-use query_planner::utils::parsing::parse_schema;
-use std::{env, net::SocketAddr, sync::Arc};
-use tokio::net::TcpListener;
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::info;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use http::Request;
 
-struct AppState {
-    supergraph_source: String,
-    schema_metadata: SchemaMetadata,
-    planner: Planner,
-    validation_plan: graphql_tools::validation::validate::ValidationPlan,
-    executor: query_plan_executor::executors::http::HTTPSubgraphExecutor,
-    plan_cache: moka::future::Cache<u64, Arc<query_planner::planner::plan_nodes::QueryPlan>>,
-    validate_cache:
-        moka::future::Cache<u64, Arc<Vec<graphql_tools::validation::utils::ValidationError>>>,
-}
+use axum::Extension;
+use tower::ServiceBuilder;
+use tracing::debug_span;
+
+use crate::pipeline::{
+    coerce_variables_service::CoerceVariablesService, execution_service::ExecutionService,
+    graphiql_service::GraphiQLResponderService,
+    graphql_request_params::GraphQLRequestParamsExtractor,
+    http_request_params::HttpRequestParamsExtractor,
+    normalize_service::GraphQLOperationNormalizationService, parser_service::GraphQLParserService,
+    query_plan_service::QueryPlanService, validation_service::GraphQLValidationService,
+};
+use query_planner::utils::parsing::parse_schema;
+use std::{env, net::SocketAddr};
+use tokio::net::TcpListener;
+use tower_http::{
+    cors::CorsLayer,
+    request_id::{PropagateRequestIdLayer, RequestId, SetRequestIdLayer},
+    trace::TraceLayer,
+};
+use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let tree_layer = tracing_tree::HierarchicalLayer::new(2)
-        .with_bracketed_fields(true)
-        .with_deferred_spans(false)
-        .with_wraparound(25)
-        .with_indent_lines(true)
-        .with_timer(tracing_tree::time::Uptime::default())
-        .with_thread_names(false)
-        .with_thread_ids(false)
-        .with_targets(false);
+    let log_format = env::var("LOG_FORMAT")
+        .map(|v| match v.as_str().to_lowercase() {
+            str if str == "json" => LoggingFormat::Json,
+            str if str == "tree" => LoggingFormat::PrettyTree,
+            str if str == "compact" => LoggingFormat::PrettyCompact,
+            _ => LoggingFormat::PrettyCompact,
+        })
+        .unwrap_or(LoggingFormat::PrettyCompact);
+    configure_logging(log_format);
 
-    tracing_subscriber::registry()
-        .with(tree_layer)
-        .with(EnvFilter::from_default_env())
-        .init();
+    let expose_query_plan = env::var("EXPOSE_QUERY_PLAN")
+        .map(|v| matches!(v.as_str().to_lowercase(), str if str == "true" || str == "1"))
+        .unwrap_or(false);
 
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
@@ -60,50 +68,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let supergraph_sdl =
         std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
-    let supergraph_state = SupergraphState::new(&parsed_schema);
-    let planner = Planner::new_from_supergraph(&parsed_schema).expect("failed to create planner");
-    let schema_metadata = planner.consumer_schema.schema_metadata();
+    let gateway_shared_state = GatewaySharedState::new(parsed_schema);
 
-    let executor = query_plan_executor::executors::http::HTTPSubgraphExecutor::new(
-        supergraph_state.subgraph_endpoint_map,
-    );
+    let pipeline = ServiceBuilder::new()
+        .layer(Extension(gateway_shared_state.clone()))
+        .layer(SetRequestIdLayer::new(
+            REQUEST_ID_HEADER_NAME.clone(),
+            RequestIdGenerator,
+        ))
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &Request<Body>| {
+                let request_id = request
+                    .extensions()
+                    .get::<RequestId>()
+                    .map(|v| v.header_value().to_str().unwrap())
+                    .unwrap_or_else(|| "");
 
-    let app_state = Arc::new(AppState {
-        supergraph_source: supergraph_path.to_string(),
-        schema_metadata,
-        planner,
-        validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
-        executor,
-        plan_cache: moka::future::Cache::new(1000),
-        validate_cache: moka::future::Cache::new(1000),
-    });
-
-    async fn universal_graphql_get_handler(
-        State(app_state): State<Arc<AppState>>,
-        headers: HeaderMap,
-        params: axum::extract::Query<GraphQLQueryParams>,
-    ) -> Response {
-        let accept_header = headers
-            .get(axum::http::header::ACCEPT)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("");
-
-        if accept_header.contains("text/html") {
-            graphiql_handler().await.into_response()
-        } else {
-            graphql_get_handler(State(app_state), headers, params)
-                .await
-                .into_response()
-        }
-    }
+                debug_span!(
+                    "http_request",
+                    request_id = %request_id,
+                    method = %request.method(),
+                    uri = %request.uri(),
+                )
+            }),
+        )
+        .layer(HttpRequestParamsExtractor::new_layer())
+        .layer(GraphiQLResponderService::new_layer())
+        .layer(GraphQLRequestParamsExtractor::new_layer())
+        .layer(GraphQLParserService::new_layer())
+        .layer(GraphQLOperationNormalizationService::new_layer())
+        .layer(CoerceVariablesService::new_layer())
+        .layer(GraphQLValidationService::new_layer())
+        .layer(QueryPlanService::new_layer())
+        .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER_NAME.clone()))
+        .service(ExecutionService::new(expose_query_plan));
 
     let app = Router::new()
-        .route(
-            "/graphql",
-            get(universal_graphql_get_handler).post(graphql_post_handler),
-        )
-        .fallback(get(landing_page_handler))
-        .with_state(app_state)
+        .route("/graphql", any_service(pipeline))
         .layer(
             CorsLayer::new()
                 .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
@@ -113,7 +114,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ])
                 .allow_origin(tower_http::cors::Any),
         )
-        .layer(TraceLayer::new_for_http());
+        .fallback(get(landing_page_handler))
+        .with_state(gateway_shared_state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 4000));
     info!("Starting server on {}", addr);
