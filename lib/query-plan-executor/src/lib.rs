@@ -26,6 +26,8 @@ pub mod validation;
 mod value_from_ast;
 pub mod variables;
 
+const TYPENAME_FIELD: &str = "__typename";
+
 #[async_trait]
 trait ExecutablePlanNode {
     async fn execute(
@@ -368,7 +370,7 @@ impl ApplyFetchRewrite for KeyRenamer {
                 let type_condition = current_segment.strip_prefix("... on ");
                 match type_condition {
                     Some(type_condition) => {
-                        let type_name = match obj.get("__typename") {
+                        let type_name = match obj.get(TYPENAME_FIELD) {
                             Some(Value::String(type_name)) => type_name,
                             _ => type_condition, // Default to type_condition if not found
                         };
@@ -427,7 +429,7 @@ impl ApplyFetchRewrite for ValueSetter {
                 let remaining_path = &path[1..];
 
                 if let Some(type_condition) = current_key.strip_prefix("... on ") {
-                    let type_name = match map.get("__typename") {
+                    let type_name = match map.get(TYPENAME_FIELD) {
                         Some(Value::String(type_name)) => type_name,
                         _ => type_condition, // Default to type_condition if not found
                     };
@@ -801,7 +803,7 @@ impl QueryPlanExecutionContext<'_> {
                             }
                         }
                         SelectionItem::InlineFragment(requires_selection) => {
-                            let type_name = match entity_obj.get("__typename") {
+                            let type_name = match entity_obj.get(TYPENAME_FIELD) {
                                 Some(Value::String(type_name)) => type_name,
                                 _ => requires_selection.type_condition.as_str(),
                             };
@@ -815,10 +817,16 @@ impl QueryPlanExecutionContext<'_> {
                                 // Merge the projected value into the result
                                 if let Value::Object(projected_map) = projected {
                                     deep_merge::deep_merge_objects(&mut result_map, projected_map);
-                                    // If this is the one subgraph needs,
-                                    // we should set the typename to this because we don't know if the subgraph knows the original typename
+                                    /*
+                                     * TLDR: Needed for interface objects
+                                     *
+                                     * There are cases where the entity has a `__typename` field,
+                                     * but the type name there might not exist in the subgraph.
+                                     * We know that the type name in the type condition exists,
+                                     * so we set the `__typename` field to the value from the type condition.
+                                     */
                                     result_map.insert(
-                                        "__typename".to_string(),
+                                        TYPENAME_FIELD.to_string(),
                                         json!(requires_selection.type_condition),
                                     );
                                 }
@@ -828,7 +836,7 @@ impl QueryPlanExecutionContext<'_> {
                     }
                 }
                 if (result_map.is_empty())
-                    || (result_map.len() == 1 && result_map.contains_key("__typename"))
+                    || (result_map.len() == 1 && result_map.contains_key(TYPENAME_FIELD))
                 {
                     Value::Null
                 } else {
@@ -907,7 +915,7 @@ fn project_selection_set_with_map(
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
 ) -> Option<Map<String, Value>> {
-    let type_name = match obj.get("__typename") {
+    let type_name = match obj.get(TYPENAME_FIELD) {
         Some(Value::String(type_name)) => type_name,
         _ => type_name,
     }
@@ -937,7 +945,7 @@ fn project_selection_set_with_map(
                     }
                 }
                 let response_key = field.alias.as_ref().unwrap_or(&field.name).to_string();
-                if field.name == "__typename" {
+                if field.name == TYPENAME_FIELD {
                     new_obj.insert(response_key, Value::String(type_name.to_string()));
                     continue;
                 }
