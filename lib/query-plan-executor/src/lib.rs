@@ -1,3 +1,4 @@
+use async_graphql::{Name, Request, Response, ServerError, Variables};
 use async_trait::async_trait;
 use query_planner::{
     ast::{
@@ -9,9 +10,8 @@ use query_planner::{
     },
     state::supergraph_state::OperationKind,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::{collections::HashMap, sync::Arc, vec};
+use std::{collections::{BTreeMap, HashMap}, sync::Arc, vec};
 use tracing::{debug, instrument, warn}; // For reading file in main
 
 use crate::{deep_merge::deep_merge_objects, schema_metadata::SchemaMetadata};
@@ -74,17 +74,13 @@ impl ExecutablePlanNode for PlanNode {
 
 fn process_errors_and_extensions(
     execution_context: &mut QueryPlanExecutionContext<'_>,
-    errors: Option<Vec<GraphQLError>>,
-    extensions: Option<HashMap<String, Value>>,
+    errors: Vec<ServerError>,
+    extensions: BTreeMap<String, Value>,
 ) {
     // 6. Handle errors
-    if let Some(errors) = errors {
-        execution_context.errors.extend(errors);
-    }
+    execution_context.errors.extend(errors);
     // 7. Handle extensions
-    if let Some(extensions) = extensions {
-        execution_context.extensions.extend(extensions);
-    }
+    execution_context.extensions.extend(extensions);
 }
 
 fn process_representations_result(
@@ -107,8 +103,8 @@ fn process_representations_result(
 struct ExecuteForRepresentationsResult {
     entities: Option<Vec<Value>>,
     indexes: Vec<usize>,
-    errors: Option<Vec<GraphQLError>>,
-    extensions: Option<HashMap<String, Value>>,
+    errors: Vec<ServerError>,
+    extensions: BTreeMap<String, Value>,
 }
 
 #[async_trait]
@@ -116,7 +112,7 @@ trait ExecutableFetchNode {
     async fn execute_for_root(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
-    ) -> ExecutionResult;
+    ) -> Response;
     fn project_representations(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
@@ -128,15 +124,15 @@ trait ExecutableFetchNode {
         filtered_representations: Vec<Value>,
         filtered_repr_indexes: Vec<usize>,
     ) -> ExecuteForRepresentationsResult;
-    fn apply_output_rewrites(
-        &self,
-        possible_types: &HashMap<String, Vec<String>>,
-        data: &mut Value,
-    );
+    // fn apply_output_rewrites(
+    //     &self,
+    //     possible_types: &HashMap<String, Vec<String>>,
+    //     data: &mut Value,
+    // );
     fn prepare_variables_for_fetch_node(
         &self,
-        variable_values: &Option<HashMap<String, Value>>,
-    ) -> Option<HashMap<String, Value>>;
+        variable_values: &Option<Variables>,
+    ) -> Option<Variables>;
 }
 
 #[async_trait]
@@ -163,26 +159,33 @@ impl ExecutableFetchNode for FetchNode {
     async fn execute_for_root(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
-    ) -> ExecutionResult {
+    ) -> Response {
         let variables = self.prepare_variables_for_fetch_node(execution_context.variable_values);
 
-        let mut fetch_result = execution_context
+        let mut request = Request::new(
+            self.operation.operation_str.clone(),
+        );
+
+        if let Some(operation_name) = &self.operation_name {
+            request = request.operation_name(operation_name.clone());
+        }
+
+        if let Some(vars) = variables {
+            request = request.variables(vars);
+        }
+
+        let fetch_result = execution_context
             .execute(
                 &self.service_name,
-                ExecutionRequest {
-                    query: self.operation.operation_str.clone(),
-                    operation_name: self.operation_name.clone(),
-                    variables,
-                    extensions: None,
-                },
+                request,
             )
             .await;
 
         // 5. Process the response
 
-        if let Some(new_data) = &mut fetch_result.data {
-            self.apply_output_rewrites(&execution_context.schema_metadata.possible_types, new_data);
-        }
+        // if let Some(new_data) = &mut fetch_result.data.into_json().unwrap() {
+        //     self.apply_output_rewrites(&execution_context.schema_metadata.possible_types, new_data);
+        // }
 
         fetch_result
     }
@@ -234,77 +237,83 @@ impl ExecutableFetchNode for FetchNode {
             .unwrap_or_default();
 
         variables.insert(
-            "representations".to_string(),
-            Value::Array(filtered_representations),
+            Name::new("representations"),
+            async_graphql::Value::from_json(Value::Array(filtered_representations)).unwrap()
         );
+
+        let mut request = Request::new(
+            self.operation.operation_str.clone(),
+        );
+
+        if let Some(operation_name) = &self.operation_name {
+            request = request.operation_name(operation_name.clone());
+        }
+
+        if !variables.is_empty() {
+            request = request.variables(variables.clone());
+        }
 
         // 3. Execute the fetch operation
         let fetch_result = execution_context
             .execute(
                 &self.service_name,
-                ExecutionRequest {
-                    query: self.operation.operation_str.clone(),
-                    operation_name: self.operation_name.clone(),
-                    variables: Some(variables),
-                    extensions: None,
-                },
+                request,
             )
             .await;
 
         // Process data
-        let entities = if let Some(mut data) = fetch_result.data {
-            self.apply_output_rewrites(
-                &execution_context.schema_metadata.possible_types,
-                &mut data,
-            );
-            match data {
+        // self.apply_output_rewrites(
+        //     &execution_context.schema_metadata.possible_types,
+        //     &mut data,
+        // );
+        let entities = {
+            match fetch_result.data.into_json().unwrap() {
                 Value::Object(mut obj) => match obj.remove("_entities") {
                     Some(Value::Array(arr)) => Some(arr),
                     _ => None, // If _entities is not found or not an array
                 },
                 _ => None, // If data is not an object
             }
-        } else {
-            None
         };
         ExecuteForRepresentationsResult {
             entities,
             indexes: filtered_repr_indexes,
             errors: fetch_result.errors,
-            extensions: fetch_result.extensions,
+            extensions: fetch_result.extensions.into_iter()
+                .map(|(k, v)| (k.clone(), v.into_json().unwrap()))
+                .collect(),
         }
     }
 
-    fn apply_output_rewrites(
-        &self,
-        possible_types: &HashMap<String, Vec<String>>,
-        data: &mut Value,
-    ) {
-        if let Some(output_rewrites) = &self.output_rewrites {
-            for rewrite in output_rewrites {
-                rewrite.apply(possible_types, data);
-            }
-        }
-    }
+    // fn apply_output_rewrites(
+    //     &self,
+    //     possible_types: &HashMap<String, Vec<String>>,
+    //     data: &mut Value,
+    // ) {
+    //     if let Some(output_rewrites) = &self.output_rewrites {
+    //         for rewrite in output_rewrites {
+    //             rewrite.apply(possible_types, data);
+    //         }
+    //     }
+    // }
 
     fn prepare_variables_for_fetch_node(
         &self,
-        variable_values: &Option<HashMap<String, Value>>,
-    ) -> Option<HashMap<String, Value>> {
+        variable_values: &Option<Variables>,
+    ) -> Option<Variables> {
         match (&self.variable_usages, variable_values) {
             (Some(ref variable_usages), Some(variable_values)) => {
                 if variable_usages.is_empty() || variable_values.is_empty() {
                     None // No variables to prepare
                 } else {
+                    let mut variables: Variables = Variables::default();
+                    for variable_name in variable_usages {
+                        if let Some(value) = variable_values.get(variable_name.as_str()) {
+                            variables.insert(Name::new(variable_name), value.clone());
+                        }
+                    }
                     Some(
-                        variable_usages
-                            .iter()
-                            .filter_map(|variable_name| {
-                                variable_values
-                                    .get(variable_name)
-                                    .map(|v| (variable_name.to_string(), v.clone()))
-                            })
-                            .collect(),
+                        variables,
                     )
                 }
             }
@@ -464,23 +473,24 @@ impl ExecutablePlanNode for SequenceNode {
 }
 
 fn process_result(
-    fetch_result: ExecutionResult,
+    fetch_result: Response,
     execution_context: &mut QueryPlanExecutionContext<'_>,
     data: &mut Value,
 ) {
+    let new_data = fetch_result.data.into_json().unwrap();
     // 4. Process the response
-    if let Some(new_data) = fetch_result.data {
-        if data.is_null() {
-            *data = new_data; // Initialize with new_data
-        } else {
-            deep_merge::deep_merge(data, new_data);
-        }
+    if data.is_null() {
+        *data = new_data; // Initialize with new_data
+    } else {
+        deep_merge::deep_merge(data, new_data);
     }
 
     process_errors_and_extensions(
         execution_context,
         fetch_result.errors,
-        fetch_result.extensions,
+        fetch_result.extensions.into_iter()
+            .map(|(k, v)| (k.clone(), v.into_json().unwrap()))
+            .collect::<BTreeMap<String, Value>>(),
     );
 }
 
@@ -548,12 +558,8 @@ impl ExecutablePlanNode for ParallelNode {
                 }
             }
             // Extend errors and extensions from the result
-            if let Some(errors) = result.errors {
-                all_errors.extend(errors);
-            }
-            if let Some(extensions) = result.extensions {
-                all_extensions.push(extensions);
-            }
+            all_errors.extend(result.errors);
+            all_extensions.push(result.extensions);
         }
 
         let fetch_results = futures::future::join_all(fetch_jobs).await;
@@ -625,11 +631,11 @@ impl ExecutablePlanNode for ConditionNode {
         // Get the condition variable from the context
         let condition_value: bool = match execution_context.variable_values {
             Some(ref variable_values) => {
-                match variable_values.get(&self.condition) {
+                match variable_values.get(self.condition.to_string().as_str()) {
                     Some(value) => {
                         // Check if the value is a boolean
                         match value {
-                            Value::Bool(b) => *b,
+                            async_graphql::Value::Boolean(b) => *b,
                             _ => true, // Default to true if not a boolean
                         }
                     }
@@ -668,85 +674,15 @@ impl ExecutableQueryPlan for QueryPlan {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct ExecutionResult {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub errors: Option<Vec<GraphQLError>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extensions: Option<HashMap<String, Value>>,
-}
-
-impl ExecutionResult {
-    pub fn from_error_message(message: String) -> ExecutionResult {
-        ExecutionResult {
-            data: None,
-            errors: Some(vec![GraphQLError {
-                message,
-                locations: None,
-                path: None,
-                extensions: None,
-            }]),
-            extensions: None,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GraphQLError {
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub locations: Option<Vec<GraphQLErrorLocation>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<Vec<Value>>, // Path can be string or number
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extensions: Option<HashMap<String, Value>>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct GraphQLErrorLocation {
-    pub line: usize,
-    pub column: usize,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecutionRequest {
-    pub query: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub operation_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub variables: Option<HashMap<String, Value>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extensions: Option<HashMap<String, Value>>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecutionResultExtensions {
-    code: Option<String>,
-    http: Option<HTTPErrorExtensions>,
-    service_name: Option<String>,
-    #[serde(flatten)]
-    extensions: Option<HashMap<String, Value>>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct HTTPErrorExtensions {
-    status: Option<u16>,
-    headers: Option<HashMap<String, String>>,
-}
-
 pub type SubgraphExecutorMap<'a> =
     HashMap<String, Arc<Box<executors::common::SubgraphExecutorType<'a>>>>;
 
 pub struct QueryPlanExecutionContext<'a> {
     // Using `Value` provides flexibility
-    pub variable_values: &'a Option<HashMap<String, Value>>,
+    pub variable_values: &'a Option<Variables>,
     pub schema_metadata: &'a SchemaMetadata,
     pub subgraph_executor_map: &'a SubgraphExecutorMap<'a>,
-    pub errors: Vec<GraphQLError>,
+    pub errors: Vec<ServerError>,
     pub extensions: HashMap<String, Value>,
 }
 
@@ -755,8 +691,8 @@ impl QueryPlanExecutionContext<'_> {
     async fn execute(
         &self,
         subgraph_name: &str,
-        execution_request: ExecutionRequest,
-    ) -> ExecutionResult {
+        execution_request: Request,
+    ) -> Response {
         debug!(
             "ExecutionRequest; Subgraph: {} Query:{} Variables: {:?}",
             subgraph_name, execution_request.query, execution_request.variables
@@ -764,14 +700,16 @@ impl QueryPlanExecutionContext<'_> {
         match self.subgraph_executor_map.get(subgraph_name) {
             Some(executor) => executor.execute(execution_request).await,
             None => {
-                warn!(
+                let error_message = format!(
                     "Subgraph executor not found for subgraph: {}",
                     subgraph_name
                 );
-                ExecutionResult::from_error_message(format!(
-                    "Subgraph executor not found for subgraph: {}",
-                    subgraph_name
-                ))
+                warn!(error_message);
+                Response::from_errors(
+                    vec![
+                        ServerError::new(error_message, None)
+                    ]
+                )
             }
         }
     }
@@ -919,11 +857,11 @@ fn traverse_and_collect<'a>(
 #[instrument(skip(selection_set, schema_metadata, variable_values))]
 fn project_selection_set_with_map(
     obj: &mut Map<String, Value>,
-    errors: &mut Vec<GraphQLError>,
+    errors: &mut Vec<ServerError>,
     selection_set: &SelectionSet,
     type_name: &str,
     schema_metadata: &SchemaMetadata,
-    variable_values: &Option<HashMap<String, Value>>,
+    variable_values: &Option<Variables>,
 ) -> Option<Map<String, Value>> {
     let type_name = match obj.get(TYPENAME_FIELD) {
         Some(Value::String(type_name)) => type_name,
@@ -941,16 +879,16 @@ fn project_selection_set_with_map(
                 if let Some(ref skip_variable) = field.skip_if {
                     let variable_value = variable_values
                         .as_ref()
-                        .and_then(|vars| vars.get(skip_variable));
-                    if variable_value == Some(&Value::Bool(true)) {
+                        .and_then(|vars| vars.get(skip_variable.as_str()));
+                    if variable_value == Some(&async_graphql::Value::Boolean(true)) {
                         continue; // Skip this field if the variable is true
                     }
                 }
                 if let Some(ref include_variable) = field.include_if {
                     let variable_value = variable_values
                         .as_ref()
-                        .and_then(|vars| vars.get(include_variable));
-                    if variable_value != Some(&Value::Bool(true)) {
+                        .and_then(|vars| vars.get(include_variable.as_str()));
+                    if variable_value != Some(&async_graphql::Value::Boolean(true)) {
                         continue; // Skip this field if the variable is not true
                     }
                 }
@@ -1051,11 +989,11 @@ fn project_selection_set_with_map(
 #[instrument(skip(selection_set, schema_metadata, variable_values))]
 fn project_selection_set(
     data: &mut Value,
-    errors: &mut Vec<GraphQLError>,
+    errors: &mut Vec<ServerError>,
     selection_set: &SelectionSet,
     type_name: &str,
     schema_metadata: &SchemaMetadata,
-    variable_values: &Option<HashMap<String, Value>>,
+    variable_values: &Option<Variables>,
 ) {
     match data {
         Value::Null => {
@@ -1064,18 +1002,15 @@ fn project_selection_set(
         Value::String(value) => {
             if let Some(enum_values) = schema_metadata.enum_values.get(type_name) {
                 if !enum_values.contains(value) {
+                    let error_message = format!(
+                        "Value '{}' is not a valid enum value for type '{}'",
+                        value.to_string(), type_name
+                    );
                     // If the value is not a valid enum value, add an error
                     // and set data to Null
                     *data = Value::Null; // Set data to Null if the value is not valid
-                    errors.push(GraphQLError {
-                        message: format!(
-                            "Value is not a valid enum value for type '{}'",
-                            type_name
-                        ),
-                        locations: None,
-                        path: None,
-                        extensions: None,
-                    });
+                    let error = ServerError::new(error_message, None);
+                    errors.push(error);
                 }
             } // No further processing needed for strings
         }
@@ -1118,10 +1053,10 @@ fn project_selection_set(
 #[instrument(skip(operation, schema_metadata, variable_values))]
 pub fn project_data_by_operation(
     data: &mut Value,
-    errors: &mut Vec<GraphQLError>,
+    errors: &mut Vec<ServerError>,
     operation: &OperationDefinition,
     schema_metadata: &SchemaMetadata,
-    variable_values: &Option<HashMap<String, Value>>,
+    variable_values: &Option<Variables>,
 ) {
     let root_type_name = match operation.operation_kind {
         Some(OperationKind::Query) => "Query",
@@ -1143,11 +1078,11 @@ pub fn project_data_by_operation(
 pub async fn execute_query_plan<'a>(
     query_plan: &QueryPlan,
     subgraph_executor_map: &'a SubgraphExecutorMap<'a>,
-    variable_values: &Option<HashMap<String, Value>>,
+    variable_values: &Option<Variables>,
     schema_metadata: &SchemaMetadata,
     operation: &OperationDefinition,
     has_introspection: bool,
-) -> ExecutionResult {
+) -> Response {
     debug!("executing the query plan: {:?}", query_plan);
     let mut result_data = Value::Null; // Initialize data as Null
     let mut result_errors = vec![]; // Initial errors are empty
@@ -1182,23 +1117,10 @@ pub async fn execute_query_plan<'a>(
     {
         result_extensions.insert("queryPlan".to_string(), serde_json::json!(query_plan));
     }
-    ExecutionResult {
-        data: if result_data.is_null() {
-            None
-        } else {
-            Some(result_data)
-        },
-        errors: if result_errors.is_empty() {
-            None
-        } else {
-            Some(result_errors)
-        },
-        extensions: if result_extensions.is_empty() {
-            None
-        } else {
-            Some(result_extensions)
-        },
-    }
+    let mut response: Response = Response::new(async_graphql::Value::from_json(result_data).unwrap_or_default());
+    response.errors.extend(result_errors);
+    // response.extensions = result_extensions.into_iter().map(|(k, v)| (k, v.into())).collect();
+    response
 }
 
 #[cfg(test)]

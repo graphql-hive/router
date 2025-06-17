@@ -1,30 +1,32 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap};
 
+use async_graphql::Variables;
 use query_planner::state::supergraph_state::TypeNode;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::schema_metadata::SchemaMetadata;
 
 pub fn collect_variables(
     operation: &query_planner::ast::operation::OperationDefinition,
-    variables: &Option<HashMap<String, Value>>,
+    variables: &Variables,
     schema_metadata: &SchemaMetadata,
-) -> Result<Option<HashMap<String, Value>>, String> {
+) -> Result<Option<Variables>, String> {
     if operation.variable_definitions.is_none() {
         return Ok(None);
     }
     let variable_definitions = operation.variable_definitions.as_ref().unwrap();
-    let collected_variables: Result<Vec<Option<(String, Value)>>, String> = variable_definitions
+    let collected_variables: Result<Vec<Option<(String, async_graphql::Value)>>, String> = variable_definitions
         .iter()
         .map(|variable_definition| {
             let variable_name = variable_definition.name.to_string();
-            if let Some(variable_value) = variables.as_ref().and_then(|v| v.get(&variable_name)) {
+            if let Some(variable_value) = variables.get(variable_name.as_str()) {
+                let variable_value = variable_value.clone().into_json().unwrap();
                 validate_runtime_value(
-                    variable_value,
+                    &variable_value,
                     &variable_definition.variable_type,
                     schema_metadata,
                 )?;
-                return Ok(Some((variable_name, variable_value.clone())));
+                return Ok(Some((variable_name, async_graphql::Value::from_json(variable_value).unwrap())));
             }
             if let Some(default_value) = &variable_definition.default_value {
                 // Assuming value_from_ast now returns Result<Value, String> or similar
@@ -36,7 +38,7 @@ pub fn collect_variables(
                     &variable_definition.variable_type,
                     schema_metadata,
                 )?;
-                return Ok(Some((variable_name, default_value_coerced)));
+                return Ok(Some((variable_name, async_graphql::Value::from_json(default_value_coerced).unwrap())));
             }
             if variable_definition.variable_type.is_non_null() {
                 return Err(format!(
@@ -48,13 +50,15 @@ pub fn collect_variables(
         })
         .collect();
 
-    let variable_values: HashMap<String, Value> =
+    let variable_values: BTreeMap<String, async_graphql::Value> =
         collected_variables?.into_iter().flatten().collect();
 
     if variable_values.is_empty() {
         Ok(None)
     } else {
-        Ok(Some(variable_values))
+        Ok(Some(
+            Variables::from_json(json!(variable_values))
+        ))
     }
 }
 

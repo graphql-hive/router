@@ -17,6 +17,7 @@ tokio = { version = "1.38.0", features = ["full"] }
 # GraphQL
 graphql-parser = "0.4.1" # Using version from original file
 graphql-tools = "0.4.0"  # Using version from original file
+async-graphql = { version = "7.0.17" }
 
 # Serialization
 serde = { version = "1.0.203", features = ["derive"] }

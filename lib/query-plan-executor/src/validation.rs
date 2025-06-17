@@ -1,24 +1,16 @@
-use graphql_parser::Pos;
+use async_graphql::ServerError;
 use graphql_tools::validation::utils::ValidationError;
 
-use crate::{GraphQLError, GraphQLErrorLocation};
-
-impl From<&ValidationError> for GraphQLError {
-    fn from(val: &ValidationError) -> Self {
-        GraphQLError {
-            message: val.message.to_string(),
-            locations: Some(val.locations.iter().map(|pos| pos.into()).collect()),
-            path: None,
-            extensions: None,
-        }
-    }
-}
-
-impl From<&Pos> for GraphQLErrorLocation {
-    fn from(val: &Pos) -> Self {
-        GraphQLErrorLocation {
-            line: val.line,
-            column: val.column,
-        }
-    }
+pub fn from_validation_error_to_server_error(
+    val: &ValidationError,
+) -> ServerError {
+    ServerError::new(
+        &val.message,
+        Some(
+            async_graphql::Pos {
+                line: val.locations.first().map_or(1, |pos| pos.line),
+                column: val.locations.first().map_or(1, |pos| pos.column),
+            }
+        )
+    )
 }

@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
+use async_graphql::{Executor, Request, Response, ServerError};
+use futures::stream::BoxStream;
 use tracing::instrument;
 
-use crate::{executors::common::SubgraphExecutor, ExecutionRequest, ExecutionResult};
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HTTPSubgraphExecutor {
     pub endpoint: String,
     pub http_client: Arc<reqwest::Client>,
@@ -20,27 +19,39 @@ impl HTTPSubgraphExecutor {
     }
     async fn _execute(
         &self,
-        execution_request: ExecutionRequest,
-    ) -> Result<ExecutionResult, reqwest::Error> {
+        execution_request: Request,
+    ) -> Result<Response, reqwest::Error> {
         self.http_client
             .post(&self.endpoint)
             .json(&execution_request)
             .send()
             .await?
-            .json::<ExecutionResult>()
+            .json::<Response>()
             .await
     }
 }
 
-#[async_trait]
-impl SubgraphExecutor for HTTPSubgraphExecutor {
+impl Executor for HTTPSubgraphExecutor {
     #[instrument(skip(self, execution_request))]
-    async fn execute(&self, execution_request: ExecutionRequest) -> ExecutionResult {
+    async fn execute(&self, execution_request: Request) -> Response {
         self._execute(execution_request).await.unwrap_or_else(|e| {
-            ExecutionResult::from_error_message(format!(
-                "Error executing subgraph {} at endpoint {}",
-                e, self.endpoint
-            ))
+            let error_message = format!(
+                "Error executing subgraph at endpoint {}: {}",
+                self.endpoint, e
+            );
+            Response::from_errors(
+                vec![
+                    ServerError::new(error_message, None)
+                ]
+            )   
         })
+    }
+
+    fn execute_stream(
+        &self,
+        _request: Request,
+        _session_data: Option<Arc<async_graphql::Data>>,
+    ) -> BoxStream<'static, Response> {
+        unimplemented!("HTTPSubgraphExecutor does not support streaming execution yet.")
     }
 }

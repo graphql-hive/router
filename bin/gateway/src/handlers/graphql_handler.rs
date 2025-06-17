@@ -1,3 +1,4 @@
+use async_graphql::{ErrorExtensionValues, Request};
 use axum::{extract::rejection::JsonRejection, http::StatusCode, response::IntoResponse, Json};
 use axum::{
     extract::{Query, State},
@@ -6,16 +7,16 @@ use axum::{
 };
 use axum_extra::extract::WithRejection;
 use query_plan_executor::execute_query_plan;
+use query_plan_executor::validation::from_validation_error_to_server_error;
 use query_plan_executor::{
     introspection::filter_introspection_fields_in_operation, variables::collect_variables,
-    ExecutionRequest, ExecutionResult, GraphQLError,
 };
 use query_planner::{
     ast::normalization::normalize_operation, planner::plan_nodes::QueryPlan,
     state::supergraph_state::OperationKind, utils::parsing::safe_parse_operation,
 };
-use serde_json::{json, Value};
-use std::{collections::HashMap, sync::Arc};
+use serde_json::{json};
+use std::{sync::Arc};
 use thiserror::Error;
 use tracing::error;
 
@@ -81,19 +82,16 @@ fn build_accept_aware_graphql_error_response(
 }
 
 fn build_graphql_error_response(message: String, code: &str, status_code: StatusCode) -> Response {
-    let error_result = ExecutionResult {
-        data: None,
-        errors: Some(vec![GraphQLError {
-            message,
-            locations: None,
-            path: None,
-            extensions: Some(HashMap::from([(
-                "code".to_string(),
-                Value::String(code.to_string()),
-            )])),
-        }]),
-        extensions: None,
-    };
+    let mut error = async_graphql::ServerError::new(
+        message, 
+        None,
+    );
+    let mut error_extensions = ErrorExtensionValues::default();
+    error_extensions.set("code", code);
+    error.extensions = Some(error_extensions);
+    let error_result = async_graphql::Response::from_errors(
+        vec![error],
+    );
     (status_code, Json(error_result)).into_response()
 }
 
@@ -101,16 +99,11 @@ fn build_validation_error_response(
     validation_errors: Arc<Vec<graphql_tools::validation::utils::ValidationError>>,
     status_code: StatusCode,
 ) -> Response {
-    let error_result = ExecutionResult {
-        data: None,
-        errors: Some(
-            validation_errors
-                .iter()
-                .map(|err| err.into())
-                .collect::<Vec<_>>(),
-        ),
-        extensions: None,
-    };
+    let errors = validation_errors
+        .iter()
+        .map(|err| from_validation_error_to_server_error(err))
+        .collect::<Vec<_>>();
+    let error_result = async_graphql::Response::from_errors(errors);
     (status_code, Json(error_result)).into_response()
 }
 
@@ -127,7 +120,7 @@ pub async fn graphql_post_handler(
     State(app_state): State<Arc<AppState>>,
     headers: HeaderMap,
     WithRejection(Json(execution_request), _): WithRejection<
-        Json<ExecutionRequest>,
+        Json<Request>,
         GraphQLHandlerError,
     >,
 ) -> Response {
@@ -179,19 +172,23 @@ pub async fn graphql_get_handler(
         _ => None,
     };
 
-    let execution_request = ExecutionRequest {
-        query,
-        operation_name: params.operation_name,
-        variables,
-        extensions,
-    };
+    let mut execution_request = Request::new(query);
+    if let Some(op_name) = params.operation_name {
+        execution_request.operation_name = Some(op_name);
+    }
+    if let Some(vars) = variables {
+        execution_request.variables = vars;
+    }
+    if let Some(exts) = extensions {
+        execution_request.extensions = exts;
+    }
 
     process_graphql_request(app_state, execution_request, headers, Method::GET).await
 }
 
 async fn process_graphql_request(
     app_state: Arc<AppState>,
-    execution_request: ExecutionRequest,
+    execution_request: Request,
     headers: HeaderMap,
     method: Method,
 ) -> Response {
