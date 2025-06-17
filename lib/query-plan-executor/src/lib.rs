@@ -1081,7 +1081,7 @@ pub async fn execute_query_plan<'a>(
         .execute(&mut execution_context, &mut result_data)
         .await;
     result_errors = execution_context.errors; // Get the final errors from the execution context
-    result_extensions = execution_context.extensions; // Get the final extensions from the execution context
+                                              // result_extensions = execution_context.extensions; // Get the final extensions from the execution context
     if !result_data.is_null() || has_introspection {
         if result_data.is_null() {
             result_data = Value::Object(serde_json::Map::new()); // Initialize as empty object if Null
@@ -1095,10 +1095,10 @@ pub async fn execute_query_plan<'a>(
         );
     }
 
-    #[cfg(debug_assertions)] // Only log in debug builds
-    {
-        result_extensions.insert("queryPlan".to_string(), serde_json::json!(query_plan));
-    }
+    // #[cfg(debug_assertions)] // Only log in debug builds
+    // {
+    //     result_extensions.insert("queryPlan".to_string(), serde_json::json!(query_plan));
+    // }
     let mut response: Response =
         Response::new(async_graphql::Value::from_json(result_data).unwrap_or_default());
     response.errors.extend(result_errors);
