@@ -8,7 +8,7 @@ members = [
   "bench/subgraphs",
 ]
 resolver = "2"
-default-members = ["bin/dev-cli"]
+default-members = ["bin/gateway"]
 
 [profile.dev]
 debug = 2
