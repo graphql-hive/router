@@ -820,10 +820,10 @@ impl QueryPlanExecutionContext<'_> {
                                     /*
                                      * TLDR: Needed for interface objects
                                      *
-                                     * There are cases where the entity has a `__typename` field,
-                                     * but the type name there might not exist in the subgraph.
+                                     * There are cases the type name in `__typename` might not exist in the subgraph.
                                      * We know that the type name in the type condition exists,
-                                     * so we set the `__typename` field to the value from the type condition.
+                                     * so we set the `__typename` field to the value from the type condition to guarantee
+                                     * that the type name in `__typename` is always present in the result.
                                      */
                                     result_map.insert(
                                         TYPENAME_FIELD.to_string(),
