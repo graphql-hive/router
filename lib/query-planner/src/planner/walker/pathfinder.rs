@@ -84,9 +84,12 @@ pub fn find_indirect_paths(
     while let Some(item) = queue.pop() {
         let (visited_graphs, visited_key_fields, path) = item;
 
-        let relevant_edges = graph
-            .edges_from(path.tail())
-            .filter(|e| matches!(e.weight(), Edge::EntityMove { .. }));
+        let relevant_edges = graph.edges_from(path.tail()).filter(|e| {
+            matches!(
+                e.weight(),
+                Edge::EntityMove { .. } | Edge::InterfaceObjectTypeMove { .. }
+            )
+        });
 
         for edge_ref in relevant_edges {
             trace!(
@@ -106,8 +109,11 @@ pub fn find_indirect_paths(
             }
 
             let edge_tail_graph_id = graph.node(edge_ref.target().id())?.graph_id().unwrap();
+            let edge = edge_ref.weight();
 
-            if edge_tail_graph_id == source_graph_id {
+            if edge_tail_graph_id == source_graph_id
+                && !matches!(edge, Edge::InterfaceObjectTypeMove(..))
+            {
                 // Prevent a situation where we are going back to the same graph
                 // The only exception is when we are moving to an abstract type
                 trace!("Ignoring. We would go back to the same graph");
@@ -125,8 +131,6 @@ pub fn find_indirect_paths(
             //    - User/B @key(name) -> User/A
             // Allows us to ignore an edge with the same key fields.
             // That's because in some other path, we will or already have checked the other edge.
-            let edge = edge_ref.weight();
-
             let requirements_already_checked = match edge.requirements() {
                 Some(selection_requirements) => visited_key_fields.contains(selection_requirements),
                 None => false,

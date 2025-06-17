@@ -2153,6 +2153,9 @@ fn process_query_node(
                 type_name,
                 &edge_index,
             ),
+            Edge::InterfaceObjectTypeMove(_) => {
+                todo!("Implement fetch graph processing for the @interfaceObject to type move");
+            }
         }
     } else {
         process_noop_edge(

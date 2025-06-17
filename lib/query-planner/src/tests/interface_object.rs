@@ -156,7 +156,7 @@ fn interface_object_field_local_object_type() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "a") {
+        Fetch(service: "b") {
           {
             anotherUsers {
               __typename
@@ -164,8 +164,8 @@ fn interface_object_field_local_object_type() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Flatten(path: "users.@") {
-          Fetch(service: "b") {
+        Flatten(path: "anotherUsers.@") {
+          Fetch(service: "a") {
               ... on NodeWithName {
                 __typename
                 id
@@ -269,7 +269,7 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
-        Fetch(service: "a") {
+        Fetch(service: "b") {
           {
             anotherUsers {
               __typename
@@ -288,7 +288,9 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
               ... on NodeWithName {
                 __typename
                 ... on User {
+                  __typename
                   age
+                  id
                   name
                 }
                 name
@@ -305,7 +307,6 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
             } =>
             {
               ... on NodeWithName {
-                id
                 username
               }
             }
@@ -357,8 +358,8 @@ fn interface_field_with_inline_fragment_resolving_remote_interface_object_field(
               __typename
               ... on User {
                 __typename
-                id
                 age
+                id
                 name
               }
               id
@@ -457,7 +458,6 @@ fn interface_object_field_with_inline_fragment_requiring_typename_check(
       QueryPlan {
         Sequence {
           Fetch(service: "b") {
-            {
               accounts {
                 __typename
                 id
@@ -589,36 +589,35 @@ fn interface_object_inline_fragment_with_remote_typename() -> Result<(), Box<dyn
     // and it needs to have all object types implementing Account,
     // next to it, within the subgraph.
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-      QueryPlan {
-        Sequence {
-          Fetch(service: "b") {
-            {
-              accounts {
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {
+            accounts {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "accounts.@") {
+          Fetch(service: "a") {
+              ... on Account {
                 __typename
                 id
               }
-            }
-          },
-          Flatten(path: "accounts.@") {
-            Fetch(service: "a") {
-              {
-                ... on Account {
+            } =>
+            {
+              ... on Account {
+                __typename
+                ... on Admin {
                   __typename
-                  id
-                }
-              } =>
-              {
-                ... on Account {
-                  __typename
-                  ... on Admin {
-                    __typename
-                  }
                 }
               }
-            },
+            }
           },
         },
-      }
+      },
+    },
     "#);
 
     Ok(())
@@ -706,36 +705,35 @@ fn interface_object_local_id_remote_field_with_inline_fragment() -> Result<(), B
     // To collect it, we perform an entity call to the interface entity,
     // and also make sure `isActive` belongs to `Admin` type.
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-      QueryPlan {
-        Sequence {
-          Fetch(service: "b") {
-            {
-              accounts {
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {
+            accounts {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "accounts.@") {
+          Fetch(service: "a") {
+              ... on Account {
                 __typename
                 id
               }
-            }
-          },
-          Flatten(path: "accounts.@") {
-            Fetch(service: "a") {
-              {
-                ... on Account {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Account {
-                  __typename
-                  ... on Admin {
-                    isActive
-                  }
+            } =>
+            {
+              ... on Account {
+                __typename
+                ... on Admin {
+                  isActive
                 }
               }
-            },
+            }
           },
         },
-      }
+      },
+    },
     "#);
 
     Ok(())

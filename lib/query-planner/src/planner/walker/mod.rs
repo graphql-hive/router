@@ -195,11 +195,24 @@ fn process_inline_fragment<'a>(
         )?;
 
         trace!("Direct paths found: {}", direct_paths.len());
-
         if !direct_paths.is_empty() {
             trace!("advanced: {}", path.pretty_print(graph));
             next_paths.push(direct_paths.remove(0));
-        } else {
+        }
+
+        let mut indirect_paths = find_indirect_paths(
+            graph,
+            path,
+            &NavigationTarget::ConcreteType(&fragment.type_condition),
+            &ExcludedFromLookup::new(),
+        )?;
+
+        if !indirect_paths.is_empty() {
+            trace!("advanced: {}", path.pretty_print(graph));
+            next_paths.push(indirect_paths.remove(0));
+        }
+
+        if indirect_paths.is_empty() && direct_paths.is_empty() {
             // Looks like a union member or an interface implementation is not resolvable.
             // The fact the fragment for that object type passed GraphQL validations,
             // means that it's a child of the abstract type,
