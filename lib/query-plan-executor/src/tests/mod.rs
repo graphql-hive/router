@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use subgraphs::accounts;
 
-use crate::{executors::async_graphql::AsyncGraphQLExecutor, SubgraphExecutorMap};
+use crate::SubgraphExecutorMap;
 
 #[test]
 fn query_executor_pipeline_locally() {
@@ -33,22 +33,10 @@ fn query_executor_pipeline_locally() {
         let inventory = subgraphs::inventory::get_subgraph();
         let products = subgraphs::products::get_subgraph();
         let reviews = subgraphs::reviews::get_subgraph();
-        subgraph_executor_map.insert(
-            "accounts".to_string(),
-            Arc::new(Box::new(AsyncGraphQLExecutor::new(accounts))),
-        );
-        subgraph_executor_map.insert(
-            "inventory".to_string(),
-            Arc::new(Box::new(AsyncGraphQLExecutor::new(inventory))),
-        );
-        subgraph_executor_map.insert(
-            "products".to_string(),
-            Arc::new(Box::new(AsyncGraphQLExecutor::new(products))),
-        );
-        subgraph_executor_map.insert(
-            "reviews".to_string(),
-            Arc::new(Box::new(AsyncGraphQLExecutor::new(reviews))),
-        );
+        subgraph_executor_map.insert("accounts".to_string(), Arc::new(Box::new(accounts)));
+        subgraph_executor_map.insert("inventory".to_string(), Arc::new(Box::new(inventory)));
+        subgraph_executor_map.insert("products".to_string(), Arc::new(Box::new(products)));
+        subgraph_executor_map.insert("reviews".to_string(), Arc::new(Box::new(reviews)));
         let result = crate::execute_query_plan(
             &query_plan,
             &subgraph_executor_map,

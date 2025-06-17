@@ -8,27 +8,13 @@ use crate::{
     GraphQLErrorLocation,
 };
 
-pub struct AsyncGraphQLExecutor<Executor> {
-    pub executor: Executor,
-}
-
-impl<Executor> AsyncGraphQLExecutor<Executor>
-where
-    Executor: async_graphql::Executor,
-{
-    pub fn new(executor: Executor) -> Self {
-        AsyncGraphQLExecutor { executor }
-    }
-}
-
 #[async_trait]
-impl<Executor> SubgraphExecutor for AsyncGraphQLExecutor<Executor>
+impl<Executor> SubgraphExecutor for Executor
 where
     Executor: async_graphql::Executor,
 {
-    async fn execute(&self, execution_request: crate::ExecutionRequest) -> crate::ExecutionResult {
-        let response: async_graphql::Response =
-            self.executor.execute(execution_request.into()).await;
+    async fn execute(&self, execution_request: ExecutionRequest) -> ExecutionResult {
+        let response: async_graphql::Response = self.execute(execution_request.into()).await;
         response.into()
     }
 }

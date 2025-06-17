@@ -143,30 +143,10 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
     let inventory = subgraphs::inventory::get_subgraph();
     let products = subgraphs::products::get_subgraph();
     let reviews = subgraphs::reviews::get_subgraph();
-    subgraph_executor_map.insert(
-        "accounts".to_string(),
-        Arc::new(Box::new(
-            query_plan_executor::executors::async_graphql::AsyncGraphQLExecutor::new(accounts),
-        )),
-    );
-    subgraph_executor_map.insert(
-        "inventory".to_string(),
-        Arc::new(Box::new(
-            query_plan_executor::executors::async_graphql::AsyncGraphQLExecutor::new(inventory),
-        )),
-    );
-    subgraph_executor_map.insert(
-        "products".to_string(),
-        Arc::new(Box::new(
-            query_plan_executor::executors::async_graphql::AsyncGraphQLExecutor::new(products),
-        )),
-    );
-    subgraph_executor_map.insert(
-        "reviews".to_string(),
-        Arc::new(Box::new(
-            query_plan_executor::executors::async_graphql::AsyncGraphQLExecutor::new(reviews),
-        )),
-    );
+    subgraph_executor_map.insert("accounts".to_string(), Arc::new(Box::new(accounts)));
+    subgraph_executor_map.insert("inventory".to_string(), Arc::new(Box::new(inventory)));
+    subgraph_executor_map.insert("products".to_string(), Arc::new(Box::new(products)));
+    subgraph_executor_map.insert("reviews".to_string(), Arc::new(Box::new(reviews)));
 
     c.bench_function("query_plan_executor_pipeline_locally", |b| {
         b.to_async(&rt).iter(|| async {
@@ -212,30 +192,10 @@ fn query_plan_executor_without_projection_locally(c: &mut Criterion) {
     let inventory = subgraphs::inventory::get_subgraph();
     let products = subgraphs::products::get_subgraph();
     let reviews = subgraphs::reviews::get_subgraph();
-    subgraph_executor_map.insert(
-        "accounts".to_string(),
-        Arc::new(Box::new(
-            query_plan_executor::executors::async_graphql::AsyncGraphQLExecutor::new(accounts),
-        )),
-    );
-    subgraph_executor_map.insert(
-        "inventory".to_string(),
-        Arc::new(Box::new(
-            query_plan_executor::executors::async_graphql::AsyncGraphQLExecutor::new(inventory),
-        )),
-    );
-    subgraph_executor_map.insert(
-        "products".to_string(),
-        Arc::new(Box::new(
-            query_plan_executor::executors::async_graphql::AsyncGraphQLExecutor::new(products),
-        )),
-    );
-    subgraph_executor_map.insert(
-        "reviews".to_string(),
-        Arc::new(Box::new(
-            query_plan_executor::executors::async_graphql::AsyncGraphQLExecutor::new(reviews),
-        )),
-    );
+    subgraph_executor_map.insert("accounts".to_string(), Arc::new(Box::new(accounts)));
+    subgraph_executor_map.insert("inventory".to_string(), Arc::new(Box::new(inventory)));
+    subgraph_executor_map.insert("products".to_string(), Arc::new(Box::new(products)));
+    subgraph_executor_map.insert("reviews".to_string(), Arc::new(Box::new(reviews)));
 
     c.bench_function("query_plan_executor_without_projection_locally", |b| {
         b.to_async(&rt).iter(|| async {
