@@ -53,7 +53,8 @@ fn main() {
             println!("{}", graph);
         }
         "paths" => {
-            let (graph, best_paths_per_leaf, _operation) = process_paths(&args[2], &args[3]);
+            let (graph, best_paths_per_leaf, _operation, _supergraph_state) =
+                process_paths(&args[2], &args[3]);
 
             for (index, best_path) in best_paths_per_leaf
                 .root_field_groups
@@ -73,7 +74,7 @@ fn main() {
             }
         }
         "tree" => {
-            let (graph, query_tree) = process_merged_tree(&args[2], &args[3]);
+            let (graph, query_tree, _supergraph_state) = process_merged_tree(&args[2], &args[3]);
 
             println!(
                 "{}",
@@ -123,9 +124,11 @@ fn process_consumer_schema(path: &str) {
 }
 
 fn process_fetch_graph(supergraph_path: &str, operation_path: &str) -> FetchGraph {
-    let (graph, query_tree) = process_merged_tree(supergraph_path, operation_path);
+    let (graph, query_tree, supergraph_state) =
+        process_merged_tree(supergraph_path, operation_path);
 
-    build_fetch_graph_from_query_tree(&graph, query_tree).expect("failed to build fetch graph")
+    build_fetch_graph_from_query_tree(&graph, &supergraph_state, query_tree)
+        .expect("failed to build fetch graph")
 }
 
 fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
@@ -137,17 +140,21 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
     let operation = get_operation(operation_path, &supergraph);
     let best_paths_per_leaf = walk_operation(&graph, &operation).unwrap();
     let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
-    let fetch_graph =
-        build_fetch_graph_from_query_tree(&graph, query_tree).expect("failed to build fetch graph");
+    let fetch_graph = build_fetch_graph_from_query_tree(&graph, &supergraph, query_tree)
+        .expect("failed to build fetch graph");
 
     build_query_plan_from_fetch_graph(fetch_graph, &supergraph).expect("failed to build query plan")
 }
 
-fn process_merged_tree(supergraph_path: &str, operation_path: &str) -> (Graph, QueryTree) {
-    let (graph, best_paths_per_leaf, _operation) = process_paths(supergraph_path, operation_path);
+fn process_merged_tree(
+    supergraph_path: &str,
+    operation_path: &str,
+) -> (Graph, QueryTree, SupergraphState) {
+    let (graph, best_paths_per_leaf, _operation, supergraph_state) =
+        process_paths(supergraph_path, operation_path);
     let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
 
-    (graph, query_tree)
+    (graph, query_tree, supergraph_state)
 }
 
 fn get_operation(operation_path: &str, supergraph: &SupergraphState) -> OperationDefinition {
@@ -162,7 +169,12 @@ fn get_operation(operation_path: &str, supergraph: &SupergraphState) -> Operatio
 fn process_paths(
     supergraph_path: &str,
     operation_path: &str,
-) -> (Graph, ResolvedOperation, OperationDefinition) {
+) -> (
+    Graph,
+    ResolvedOperation,
+    OperationDefinition,
+    SupergraphState,
+) {
     let supergraph_sdl =
         std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
@@ -171,5 +183,5 @@ fn process_paths(
     let operation = get_operation(operation_path, &supergraph);
     let best_paths_per_leaf = walk_operation(&graph, &operation).unwrap();
 
-    (graph, best_paths_per_leaf, operation)
+    (graph, best_paths_per_leaf, operation, supergraph)
 }

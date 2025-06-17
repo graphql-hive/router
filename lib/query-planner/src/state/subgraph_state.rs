@@ -2,7 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use tracing::instrument;
 
-use crate::federation_spec::{directives::JoinFieldDirective, join_type::JoinTypeDirective};
+use crate::{
+    federation_spec::{directives::JoinFieldDirective, join_type::JoinTypeDirective},
+    state::supergraph_state::TypeNode,
+};
 
 use super::supergraph_state::{
     SupergraphDefinition, SupergraphInterfaceType, SupergraphObjectType, SupergraphState,
@@ -85,7 +88,7 @@ impl SubgraphState {
                 |(field_name, (field_def, maybe_join_field))| SubgraphField {
                     name: field_name.to_string(),
                     join_field: maybe_join_field.clone(),
-                    return_type_name: field_def.field_type.inner_type().to_string(),
+                    field_type: field_def.field_type.clone(),
                     is_list: field_def.field_type.is_list(),
                 },
             )
@@ -121,7 +124,7 @@ impl SubgraphState {
                 |(field_name, (field_def, maybe_join_field))| SubgraphField {
                     name: field_name.to_string(),
                     join_field: maybe_join_field.clone(),
-                    return_type_name: field_def.field_type.inner_type().to_string(),
+                    field_type: field_def.field_type.clone(),
                     is_list: field_def.field_type.is_list(),
                 },
             )
@@ -264,6 +267,15 @@ impl SubgraphDefinition {
         }
     }
 
+    pub fn is_composite_type(&self) -> bool {
+        matches!(
+            self,
+            SubgraphDefinition::Object(_)
+                | SubgraphDefinition::Interface(_)
+                | SubgraphDefinition::Union(_)
+        )
+    }
+
     pub fn is_entity_type(&self) -> bool {
         match self {
             SubgraphDefinition::Object(obj) => obj
@@ -292,7 +304,7 @@ pub struct SubgraphInterfaceType {
 #[derive(Debug)]
 pub struct SubgraphField {
     pub name: String,
-    pub return_type_name: String,
+    pub field_type: TypeNode,
     pub is_list: bool,
     pub join_field: Option<JoinFieldDirective>,
 }
@@ -301,7 +313,7 @@ pub struct SubgraphField {
 mod tests {
     use std::path::PathBuf;
 
-    use crate::utils::parsing::parse_schema;
+    use crate::{state::supergraph_state::SubgraphName, utils::parsing::parse_schema};
 
     use super::*;
 
@@ -315,14 +327,24 @@ mod tests {
         let supergraph = SupergraphState::new(&schema);
 
         assert_eq!(supergraph.subgraphs_state.keys().count(), 5);
-        assert!(supergraph.subgraphs_state.contains_key("PANDAS"));
-        assert!(supergraph.subgraphs_state.contains_key("USERS"));
-        assert!(supergraph.subgraphs_state.contains_key("REVIEWS"));
-        assert!(supergraph.subgraphs_state.contains_key("PRODUCTS"));
-        assert!(supergraph.subgraphs_state.contains_key("INVENTORY"));
+        assert!(supergraph
+            .subgraphs_state
+            .contains_key(&SubgraphName("pandas".to_string())));
+        assert!(supergraph
+            .subgraphs_state
+            .contains_key(&SubgraphName("users".to_string())));
+        assert!(supergraph
+            .subgraphs_state
+            .contains_key(&SubgraphName("reviews".to_string())));
+        assert!(supergraph
+            .subgraphs_state
+            .contains_key(&SubgraphName("products".to_string())));
+        assert!(supergraph
+            .subgraphs_state
+            .contains_key(&SubgraphName("inventory".to_string())));
 
         let types = supergraph
-            .subgraph_state("PANDAS")
+            .subgraph_state(&SubgraphName("pandas".to_string()))
             .expect("failed to find subgraph")
             .known_subgraph_definitions();
 
@@ -352,7 +374,7 @@ mod tests {
         assert_eq!(panda_type_fields, vec!["favoriteFood", "name"]);
 
         let types = supergraph
-            .subgraph_state("USERS")
+            .subgraph_state(&SubgraphName("users".to_string()))
             .expect("failed to find subgraph")
             .known_subgraph_definitions();
 
@@ -374,7 +396,7 @@ mod tests {
         );
 
         let types = supergraph
-            .subgraph_state("REVIEWS")
+            .subgraph_state(&SubgraphName("reviews".to_string()))
             .expect("failed to find subgraph")
             .known_subgraph_definitions();
         assert_eq!(types.len(), 4);
@@ -394,7 +416,7 @@ mod tests {
         );
 
         let types = supergraph
-            .subgraph_state("PRODUCTS")
+            .subgraph_state(&SubgraphName("products".to_string()))
             .expect("failed to find subgraph")
             .known_subgraph_definitions();
         assert_eq!(types.len(), 8);
@@ -436,7 +458,7 @@ mod tests {
         );
 
         let types = supergraph
-            .subgraph_state("INVENTORY")
+            .subgraph_state(&SubgraphName("inventory".to_string()))
             .expect("failed to find subgraph")
             .known_subgraph_definitions();
 

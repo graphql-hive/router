@@ -1,5 +1,7 @@
 use graphql_parser::schema::{Directive, Value};
 
+use crate::state::supergraph_state::TypeNode;
+
 use super::directives::FederationDirective;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -7,7 +9,7 @@ pub struct JoinFieldDirective {
     pub graph_id: Option<String>,
     pub requires: Option<String>,
     pub provides: Option<String>,
-    pub type_in_graph: Option<String>,
+    pub type_in_graph: Option<TypeNode>,
     pub external: bool,
     pub override_value: Option<String>,
     pub used_overridden: bool,
@@ -62,7 +64,7 @@ impl FederationDirective for JoinFieldDirective {
                 }
             } else if arg_name.eq("type") {
                 if let Value::String(value) = arg_value {
-                    result.type_in_graph = Some(value.clone())
+                    result.type_in_graph = Some(value.as_str().try_into().unwrap())
                 }
             } else if arg_name.eq("external") {
                 if let Value::Boolean(value) = arg_value {

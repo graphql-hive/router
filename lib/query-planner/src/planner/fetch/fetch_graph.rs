@@ -6,12 +6,12 @@ use crate::graph::edge::{Edge, FieldMove, InterfaceObjectTypeMove};
 use crate::graph::node::Node;
 use crate::graph::Graph;
 use crate::planner::fetch::fetch_step_data::{FetchStepData, FetchStepKind};
-use crate::planner::plan_nodes::{FetchRewrite, ValueSetter};
+use crate::planner::plan_nodes::{FetchNodePathSegment, FetchRewrite, ValueSetter};
 use crate::planner::tree::query_tree::QueryTree;
 use crate::planner::tree::query_tree_node::{MutationFieldPosition, QueryTreeNode};
 use crate::planner::walker::path::OperationPath;
 use crate::planner::walker::pathfinder::can_satisfy_edge;
-use crate::state::supergraph_state::SubgraphName;
+use crate::state::supergraph_state::{SubgraphName, SupergraphState};
 use petgraph::graph::EdgeReference;
 use petgraph::stable_graph::{EdgeIndex, NodeIndex, NodeIndices, NodeReferences, StableDiGraph};
 use petgraph::visit::EdgeRef;
@@ -245,6 +245,7 @@ fn create_noop_fetch_step(fetch_graph: &mut FetchGraph, created_from_requires: b
         used_for_requires: created_from_requires,
         kind: FetchStepKind::Root,
         input_rewrites: None,
+        output_rewrites: None,
         variable_usages: None,
         variable_definitions: None,
         mutation_field_position: None,
@@ -276,6 +277,7 @@ fn create_fetch_step_for_entity_call(
         used_for_requires,
         kind: FetchStepKind::Entity,
         input_rewrites: None,
+        output_rewrites: None,
         variable_usages: None,
         variable_definitions: None,
         mutation_field_position: None,
@@ -306,6 +308,7 @@ fn create_fetch_step_for_root_move(
         variable_usages: None,
         variable_definitions: None,
         input_rewrites: None,
+        output_rewrites: None,
         mutation_field_position,
         internal_aliases_locations: Vec::new(),
     });
@@ -671,8 +674,8 @@ fn process_entity_move_edge(
         );
         fetch_step.add_input_rewrite(FetchRewrite::ValueSetter(ValueSetter {
             path: vec![
-                format!("... on {}", output_type_name),
-                "__typename".to_string(),
+                FetchNodePathSegment::TypenameEquals(output_type_name.to_string()),
+                FetchNodePathSegment::Key("__typename".to_string()),
             ],
             set_value_to: output_type_name.clone().into(),
         }));
@@ -799,8 +802,8 @@ fn process_interface_object_type_move_edge(
     );
     step_for_children.add_input_rewrite(FetchRewrite::ValueSetter(ValueSetter {
         path: vec![
-            format!("... on {}", interface_type_name),
-            "__typename".to_string(),
+            FetchNodePathSegment::TypenameEquals(interface_type_name.to_string()),
+            FetchNodePathSegment::Key("__typename".to_string()),
         ],
         set_value_to: interface_type_name.clone().into(),
     }));
@@ -1468,12 +1471,13 @@ pub fn find_graph_roots(graph: &FetchGraph) -> Vec<NodeIndex> {
     roots
 }
 
-#[instrument(level = "trace", skip(graph, query_tree), fields(
+#[instrument(level = "trace", skip(graph, query_tree, supergraph), fields(
     requirements_count = query_tree.root.requirements.len(),
     children_count = query_tree.root.children.len(),
 ))]
 pub fn build_fetch_graph_from_query_tree(
     graph: &Graph,
+    supergraph: &SupergraphState,
     query_tree: QueryTree,
 ) -> Result<FetchGraph, FetchGraphError> {
     let mut fetch_graph = FetchGraph::new();
@@ -1508,7 +1512,7 @@ pub fn build_fetch_graph_from_query_tree(
 
     // fine to unwrap as we have already checked the length
     fetch_graph.root_index = Some(*root_indexes.first().unwrap());
-    fetch_graph.optimize()?;
+    fetch_graph.optimize(supergraph)?;
     fetch_graph.collect_variable_usages()?;
 
     trace!("fetch graph after optimizations:");

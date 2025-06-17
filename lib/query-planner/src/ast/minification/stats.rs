@@ -71,7 +71,7 @@ fn walk_and_collect_stats(
     for item in &selection_set.items {
         match item {
             SelectionItem::Field(field) => {
-                if field.name.starts_with("__") {
+                if field.is_introspection_field() {
                     continue;
                 }
 
@@ -85,7 +85,7 @@ fn walk_and_collect_stats(
                     for item in &field.selections.items {
                         match item {
                             SelectionItem::Field(field) => {
-                                if field.name.starts_with("__") {
+                                if field.is_introspection_field() {
                                     continue;
                                 }
 

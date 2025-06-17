@@ -18,7 +18,6 @@ use crate::{
     state::supergraph_state::{
         OperationKind, SupergraphDefinition, SupergraphField, SupergraphState,
     },
-    utils::ast::strip_modifiers_from_type_string,
 };
 use error::GraphError;
 use graphql_parser::query::{Selection, SelectionSet};
@@ -112,17 +111,15 @@ impl<'a> UnionDefinitions<'a> {
             if let Some(graph_id) = join_field.graph_id.as_ref() {
                 let mut members_in_subgraph: HashSet<String> = HashSet::new();
 
-                if let Some(type_in_graph) = join_field
-                    .type_in_graph
-                    .as_ref()
-                    .map(|t| strip_modifiers_from_type_string(t))
+                if let Some(type_in_graph) =
+                    join_field.type_in_graph.as_ref().map(|t| t.inner_type())
                 {
                     // look for join__field(type:) - it could point to `Object` or `Union`
                     if type_in_graph != field_type {
                         // the field_type is a union, as we previously checked,
                         // so if the type_in_graph is different,
                         // it means it's an object type (one of the members).
-                        members_in_subgraph.insert(type_in_graph);
+                        members_in_subgraph.insert(type_in_graph.to_string());
                         members_per_subgraph.insert(graph_id, members_in_subgraph);
                         continue;
                     }

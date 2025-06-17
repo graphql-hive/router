@@ -161,7 +161,7 @@ fn transform_field(
     field: &mut FieldSelection,
     type_name: &str,
 ) -> Result<SelectionItem, MinificationError> {
-    if field.name.starts_with("__") {
+    if field.is_introspection_field() {
         return Ok(SelectionItem::Field(field.clone()));
     }
 
@@ -177,7 +177,7 @@ fn transform_field(
         for item in &mut field.selections.items {
             match item {
                 SelectionItem::Field(field) => {
-                    if field.name.starts_with("__") {
+                    if field.is_introspection_field() {
                         new_entities.push(SelectionItem::Field(take(field)));
                         continue;
                     }

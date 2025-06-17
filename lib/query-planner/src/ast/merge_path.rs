@@ -45,6 +45,12 @@ impl MergePath {
         self.inner.last()
     }
 
+    pub fn without_last(&self) -> Self {
+        Self {
+            inner: Arc::from(&self.inner[..self.inner.len() - 1]),
+        }
+    }
+
     pub fn join(&self, sep: &str) -> String {
         if self.inner.is_empty() {
             return String::new();
