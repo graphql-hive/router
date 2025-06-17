@@ -14,8 +14,7 @@ where
     Executor: async_graphql::Executor,
 {
     async fn execute(&self, execution_request: Request) -> Response {
-        let response: async_graphql::Response =
-            self.execute(execution_request).await;
+        let response: async_graphql::Response = self.execute(execution_request).await;
         response
     }
 }

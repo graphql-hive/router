@@ -15,8 +15,8 @@ use query_planner::{
     ast::normalization::normalize_operation, planner::plan_nodes::QueryPlan,
     state::supergraph_state::OperationKind, utils::parsing::safe_parse_operation,
 };
-use serde_json::{json};
-use std::{sync::Arc};
+use serde_json::json;
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::error;
 
@@ -82,16 +82,11 @@ fn build_accept_aware_graphql_error_response(
 }
 
 fn build_graphql_error_response(message: String, code: &str, status_code: StatusCode) -> Response {
-    let mut error = async_graphql::ServerError::new(
-        message, 
-        None,
-    );
+    let mut error = async_graphql::ServerError::new(message, None);
     let mut error_extensions = ErrorExtensionValues::default();
     error_extensions.set("code", code);
     error.extensions = Some(error_extensions);
-    let error_result = async_graphql::Response::from_errors(
-        vec![error],
-    );
+    let error_result = async_graphql::Response::from_errors(vec![error]);
     (status_code, Json(error_result)).into_response()
 }
 
@@ -101,7 +96,7 @@ fn build_validation_error_response(
 ) -> Response {
     let errors = validation_errors
         .iter()
-        .map(|err| from_validation_error_to_server_error(err))
+        .map(from_validation_error_to_server_error)
         .collect::<Vec<_>>();
     let error_result = async_graphql::Response::from_errors(errors);
     (status_code, Json(error_result)).into_response()
@@ -119,10 +114,7 @@ fn get_accept_header(headers: &HeaderMap) -> &str {
 pub async fn graphql_post_handler(
     State(app_state): State<Arc<AppState>>,
     headers: HeaderMap,
-    WithRejection(Json(execution_request), _): WithRejection<
-        Json<Request>,
-        GraphQLHandlerError,
-    >,
+    WithRejection(Json(execution_request), _): WithRejection<Json<Request>, GraphQLHandlerError>,
 ) -> Response {
     process_graphql_request(app_state, execution_request, headers, Method::POST).await
 }

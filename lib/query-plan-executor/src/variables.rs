@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap};
+use std::collections::BTreeMap;
 
 use async_graphql::Variables;
 use query_planner::state::supergraph_state::TypeNode;
@@ -15,40 +15,47 @@ pub fn collect_variables(
         return Ok(None);
     }
     let variable_definitions = operation.variable_definitions.as_ref().unwrap();
-    let collected_variables: Result<Vec<Option<(String, async_graphql::Value)>>, String> = variable_definitions
-        .iter()
-        .map(|variable_definition| {
-            let variable_name = variable_definition.name.to_string();
-            if let Some(variable_value) = variables.get(variable_name.as_str()) {
-                let variable_value = variable_value.clone().into_json().unwrap();
-                validate_runtime_value(
-                    &variable_value,
-                    &variable_definition.variable_type,
-                    schema_metadata,
-                )?;
-                return Ok(Some((variable_name, async_graphql::Value::from_json(variable_value).unwrap())));
-            }
-            if let Some(default_value) = &variable_definition.default_value {
-                // Assuming value_from_ast now returns Result<Value, String> or similar
-                // and needs to be adapted if it returns Option or panics.
-                // For now, let's assume it can return an Err that needs to be propagated.
-                let default_value_coerced: Value = default_value.into();
-                validate_runtime_value(
-                    &default_value_coerced,
-                    &variable_definition.variable_type,
-                    schema_metadata,
-                )?;
-                return Ok(Some((variable_name, async_graphql::Value::from_json(default_value_coerced).unwrap())));
-            }
-            if variable_definition.variable_type.is_non_null() {
-                return Err(format!(
-                    "Variable '{}' is non-nullable but no value was provided",
-                    variable_name
-                ));
-            }
-            Ok(None)
-        })
-        .collect();
+    let collected_variables: Result<Vec<Option<(String, async_graphql::Value)>>, String> =
+        variable_definitions
+            .iter()
+            .map(|variable_definition| {
+                let variable_name = variable_definition.name.to_string();
+                if let Some(variable_value) = variables.get(variable_name.as_str()) {
+                    let variable_value = variable_value.clone().into_json().unwrap();
+                    validate_runtime_value(
+                        &variable_value,
+                        &variable_definition.variable_type,
+                        schema_metadata,
+                    )?;
+                    return Ok(Some((
+                        variable_name,
+                        async_graphql::Value::from_json(variable_value).unwrap(),
+                    )));
+                }
+                if let Some(default_value) = &variable_definition.default_value {
+                    // Assuming value_from_ast now returns Result<Value, String> or similar
+                    // and needs to be adapted if it returns Option or panics.
+                    // For now, let's assume it can return an Err that needs to be propagated.
+                    let default_value_coerced: Value = default_value.into();
+                    validate_runtime_value(
+                        &default_value_coerced,
+                        &variable_definition.variable_type,
+                        schema_metadata,
+                    )?;
+                    return Ok(Some((
+                        variable_name,
+                        async_graphql::Value::from_json(default_value_coerced).unwrap(),
+                    )));
+                }
+                if variable_definition.variable_type.is_non_null() {
+                    return Err(format!(
+                        "Variable '{}' is non-nullable but no value was provided",
+                        variable_name
+                    ));
+                }
+                Ok(None)
+            })
+            .collect();
 
     let variable_values: BTreeMap<String, async_graphql::Value> =
         collected_variables?.into_iter().flatten().collect();
@@ -56,9 +63,7 @@ pub fn collect_variables(
     if variable_values.is_empty() {
         Ok(None)
     } else {
-        Ok(Some(
-            Variables::from_json(json!(variable_values))
-        ))
+        Ok(Some(Variables::from_json(json!(variable_values))))
     }
 }
 

@@ -11,7 +11,11 @@ use query_planner::{
     state::supergraph_state::OperationKind,
 };
 use serde_json::{json, Map, Value};
-use std::{collections::{BTreeMap, HashMap}, sync::Arc, vec};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+    vec,
+};
 use tracing::{debug, instrument, warn}; // For reading file in main
 
 use crate::{deep_merge::deep_merge_objects, schema_metadata::SchemaMetadata};
@@ -109,10 +113,8 @@ struct ExecuteForRepresentationsResult {
 
 #[async_trait]
 trait ExecutableFetchNode {
-    async fn execute_for_root(
-        &self,
-        execution_context: &QueryPlanExecutionContext<'_>,
-    ) -> Response;
+    async fn execute_for_root(&self, execution_context: &QueryPlanExecutionContext<'_>)
+        -> Response;
     fn project_representations(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
@@ -162,9 +164,7 @@ impl ExecutableFetchNode for FetchNode {
     ) -> Response {
         let variables = self.prepare_variables_for_fetch_node(execution_context.variable_values);
 
-        let mut request = Request::new(
-            self.operation.operation_str.clone(),
-        );
+        let mut request = Request::new(self.operation.operation_str.clone());
 
         if let Some(operation_name) = &self.operation_name {
             request = request.operation_name(operation_name.clone());
@@ -174,12 +174,7 @@ impl ExecutableFetchNode for FetchNode {
             request = request.variables(vars);
         }
 
-        let fetch_result = execution_context
-            .execute(
-                &self.service_name,
-                request,
-            )
-            .await;
+        let fetch_result = execution_context.execute(&self.service_name, request).await;
 
         // 5. Process the response
 
@@ -238,12 +233,10 @@ impl ExecutableFetchNode for FetchNode {
 
         variables.insert(
             Name::new("representations"),
-            async_graphql::Value::from_json(Value::Array(filtered_representations)).unwrap()
+            async_graphql::Value::from_json(Value::Array(filtered_representations)).unwrap(),
         );
 
-        let mut request = Request::new(
-            self.operation.operation_str.clone(),
-        );
+        let mut request = Request::new(self.operation.operation_str.clone());
 
         if let Some(operation_name) = &self.operation_name {
             request = request.operation_name(operation_name.clone());
@@ -254,12 +247,7 @@ impl ExecutableFetchNode for FetchNode {
         }
 
         // 3. Execute the fetch operation
-        let fetch_result = execution_context
-            .execute(
-                &self.service_name,
-                request,
-            )
-            .await;
+        let fetch_result = execution_context.execute(&self.service_name, request).await;
 
         // Process data
         // self.apply_output_rewrites(
@@ -279,7 +267,9 @@ impl ExecutableFetchNode for FetchNode {
             entities,
             indexes: filtered_repr_indexes,
             errors: fetch_result.errors,
-            extensions: fetch_result.extensions.into_iter()
+            extensions: fetch_result
+                .extensions
+                .into_iter()
                 .map(|(k, v)| (k.clone(), v.into_json().unwrap()))
                 .collect(),
         }
@@ -312,9 +302,7 @@ impl ExecutableFetchNode for FetchNode {
                             variables.insert(Name::new(variable_name), value.clone());
                         }
                     }
-                    Some(
-                        variables,
-                    )
+                    Some(variables)
                 }
             }
             _ => None,
@@ -488,7 +476,9 @@ fn process_result(
     process_errors_and_extensions(
         execution_context,
         fetch_result.errors,
-        fetch_result.extensions.into_iter()
+        fetch_result
+            .extensions
+            .into_iter()
             .map(|(k, v)| (k.clone(), v.into_json().unwrap()))
             .collect::<BTreeMap<String, Value>>(),
     );
@@ -688,11 +678,7 @@ pub struct QueryPlanExecutionContext<'a> {
 
 impl QueryPlanExecutionContext<'_> {
     #[instrument(skip(self, execution_request))]
-    async fn execute(
-        &self,
-        subgraph_name: &str,
-        execution_request: Request,
-    ) -> Response {
+    async fn execute(&self, subgraph_name: &str, execution_request: Request) -> Response {
         debug!(
             "ExecutionRequest; Subgraph: {} Query:{} Variables: {:?}",
             subgraph_name, execution_request.query, execution_request.variables
@@ -705,11 +691,7 @@ impl QueryPlanExecutionContext<'_> {
                     subgraph_name
                 );
                 warn!(error_message);
-                Response::from_errors(
-                    vec![
-                        ServerError::new(error_message, None)
-                    ]
-                )
+                Response::from_errors(vec![ServerError::new(error_message, None)])
             }
         }
     }
@@ -1004,7 +986,7 @@ fn project_selection_set(
                 if !enum_values.contains(value) {
                     let error_message = format!(
                         "Value '{}' is not a valid enum value for type '{}'",
-                        value.to_string(), type_name
+                        value, type_name
                     );
                     // If the value is not a valid enum value, add an error
                     // and set data to Null
@@ -1117,7 +1099,8 @@ pub async fn execute_query_plan<'a>(
     {
         result_extensions.insert("queryPlan".to_string(), serde_json::json!(query_plan));
     }
-    let mut response: Response = Response::new(async_graphql::Value::from_json(result_data).unwrap_or_default());
+    let mut response: Response =
+        Response::new(async_graphql::Value::from_json(result_data).unwrap_or_default());
     response.errors.extend(result_errors);
     // response.extensions = result_extensions.into_iter().map(|(k, v)| (k, v.into())).collect();
     response

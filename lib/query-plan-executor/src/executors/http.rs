@@ -17,10 +17,7 @@ impl HTTPSubgraphExecutor {
             http_client,
         }
     }
-    async fn _execute(
-        &self,
-        execution_request: Request,
-    ) -> Result<Response, reqwest::Error> {
+    async fn _execute(&self, execution_request: Request) -> Result<Response, reqwest::Error> {
         self.http_client
             .post(&self.endpoint)
             .json(&execution_request)
@@ -39,11 +36,7 @@ impl Executor for HTTPSubgraphExecutor {
                 "Error executing subgraph at endpoint {}: {}",
                 self.endpoint, e
             );
-            Response::from_errors(
-                vec![
-                    ServerError::new(error_message, None)
-                ]
-            )   
+            Response::from_errors(vec![ServerError::new(error_message, None)])
         })
     }
 
