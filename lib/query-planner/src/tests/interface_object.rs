@@ -528,34 +528,33 @@ fn interface_object_field_local_with_remote_typename() -> Result<(), Box<dyn Err
     // Because it's a fake interface type (actually object type),
     // we need to resolve it via entity call to the Accounts entity interface.
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-      QueryPlan {
-        Sequence {
-          Fetch(service: "b") {
-            {
-              accounts {
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {
+            accounts {
+              __typename
+              name
+              id
+            }
+          }
+        },
+        Flatten(path: "accounts.@") {
+          Fetch(service: "a") {
+              ... on Account {
                 __typename
                 id
-                name
+              }
+            } =>
+            {
+              ... on Account {
+                __typename
               }
             }
           },
-          Flatten(path: "accounts.@") {
-            Fetch(service: "a") {
-              {
-                ... on Account {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Account {
-                  __typename
-                }
-              }
-            },
-          },
         },
-      }
+      },
+    },
     "#);
 
     Ok(())
@@ -648,33 +647,32 @@ fn interface_object_local_id_remote_field() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-      QueryPlan {
-        Sequence {
-          Fetch(service: "b") {
-            {
-              accounts {
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {
+            accounts {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "accounts.@") {
+          Fetch(service: "c") {
+              ... on Account {
                 __typename
                 id
               }
+            } =>
+            {
+              ... on Account {
+                isActive
+              }
             }
           },
-          Flatten(path: "accounts.@") {
-            Fetch(service: "c") {
-              {
-                ... on Account {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Account {
-                  isActive
-                }
-              }
-            },
-          },
         },
-      }
+      },
+    },
     "#);
 
     Ok(())
@@ -742,3 +740,8 @@ fn interface_object_local_id_remote_field_with_inline_fragment() -> Result<(), B
 
     Ok(())
 }
+
+// TODO: We should not allow `__typename` in `type @interfaceObject`
+// TODO: we should add fields resolved by `@interfaceObject`
+//       to all object type definitions (in local subgraph) (?)
+//       and the interface itself (local subgraph)

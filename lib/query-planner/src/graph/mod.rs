@@ -463,12 +463,16 @@ impl Graph {
                     continue;
                 }
 
+                let is_interface_object = definition
+                    .extract_join_types_for(graph_id)
+                    .iter()
+                    .any(|j| j.is_interface_object);
                 let has_resolvable_typename = matches!(
                     definition,
                     SupergraphDefinition::Object(_)
                         | SupergraphDefinition::Union(_)
                         | SupergraphDefinition::Interface(_)
-                );
+                ) && !is_interface_object;
 
                 if has_resolvable_typename {
                     let field_name = "__typename".to_string();
