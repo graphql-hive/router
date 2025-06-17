@@ -741,7 +741,10 @@ fn interface_object_local_id_remote_field_with_inline_fragment() -> Result<(), B
     Ok(())
 }
 
-// TODO: We should not allow `__typename` in `type @interfaceObject`
-// TODO: we should add fields resolved by `@interfaceObject`
+// TODO: We should add fields resolved by `@interfaceObject`
 //       to all object type definitions (in local subgraph) (?)
 //       and the interface itself (local subgraph)
+///////////
+// TODO: To resolve __typename we need to move from interfaceObject to interface entity and collect __typename
+// TODO: From User object we should be able to move to NodeWithName interfaceObject
+//       to resolve User.username (that was added by the interfaceObject).
