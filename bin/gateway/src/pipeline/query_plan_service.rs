@@ -27,6 +27,7 @@ impl QueryPlanService {
 
 #[async_trait::async_trait]
 impl GatewayPipelineLayer for QueryPlanService {
+    #[tracing::instrument(level = "debug", name = "QueryPlanService", skip_all)]
     async fn process(
         &self,
         mut req: Request<Body>,

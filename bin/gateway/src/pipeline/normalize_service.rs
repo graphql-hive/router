@@ -37,6 +37,11 @@ impl GraphQLOperationNormalizationService {
 
 #[async_trait::async_trait]
 impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
+    #[tracing::instrument(
+        level = "debug",
+        name = "GraphQLOperationNormalizationService",
+        skip_all
+    )]
     async fn process(
         &self,
         mut req: Request<Body>,

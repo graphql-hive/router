@@ -40,6 +40,7 @@ impl Service<Request<Body>> for ExecutionService {
         Poll::Ready(Ok(()))
     }
 
+    #[tracing::instrument(level = "debug", name = "ExecutionService", skip_all)]
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         let expose_query_plan = self.expose_query_plan;
         Box::pin(async move {
