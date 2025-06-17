@@ -10,7 +10,7 @@ use query_planner::{
     state::supergraph_state::OperationKind,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 use std::{collections::HashMap, vec};
 use tracing::{debug, instrument, warn}; // For reading file in main
 
@@ -815,6 +815,12 @@ impl QueryPlanExecutionContext<'_> {
                                 // Merge the projected value into the result
                                 if let Value::Object(projected_map) = projected {
                                     deep_merge::deep_merge_objects(&mut result_map, projected_map);
+                                    // If this is the one subgraph needs,
+                                    // we should set the typename to this because we don't know if the subgraph knows the original typename
+                                    result_map.insert(
+                                        "__typename".to_string(),
+                                        json!(requires_selection.type_condition),
+                                    );
                                 }
                                 // If the projected value is not an object, it will be ignored
                             }
