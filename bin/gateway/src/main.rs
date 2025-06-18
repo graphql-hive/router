@@ -43,15 +43,16 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let log_format = env::var("LOG_FORMAT")
-        .map(|v| match v.as_str().to_lowercase() {
-            str if str == "json" => LoggingFormat::Json,
-            str if str == "tree" => LoggingFormat::PrettyTree,
-            str if str == "compact" => LoggingFormat::PrettyCompact,
-            _ => LoggingFormat::PrettyCompact,
-        })
-        .unwrap_or(LoggingFormat::PrettyCompact);
-    configure_logging(log_format);
+    env_logger::init();
+    // let log_format = env::var("LOG_FORMAT")
+    //     .map(|v| match v.as_str().to_lowercase() {
+    //         str if str == "json" => LoggingFormat::Json,
+    //         str if str == "tree" => LoggingFormat::PrettyTree,
+    //         str if str == "compact" => LoggingFormat::PrettyCompact,
+    //         _ => LoggingFormat::PrettyCompact,
+    //     })
+    //     .unwrap_or(LoggingFormat::PrettyCompact);
+    // configure_logging(log_format);
 
     let expose_query_plan = env::var("EXPOSE_QUERY_PLAN")
         .map(|v| matches!(v.as_str().to_lowercase(), str if str == "true" || str == "1"))

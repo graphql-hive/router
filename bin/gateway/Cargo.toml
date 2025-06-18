@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 query-planner = { path = "../../lib/query-planner" }
 query-plan-executor = { path = "../../lib/query-plan-executor" }
+env_logger = "0.11.8"
 
 # Tokio runtime
 tokio = { version = "1.38.0", features = ["full"] }
