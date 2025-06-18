@@ -11,10 +11,7 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use sonic_rs::{json, JsonContainerTrait, JsonValueMutTrait, JsonValueTrait, Value};
-use std::{
-    collections::{BTreeMap, HashMap},
-    vec,
-};
+use std::{collections::HashMap, vec};
 use tracing::{debug, instrument, warn}; // For reading file in main
 
 use crate::{
