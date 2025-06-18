@@ -9,6 +9,8 @@ const time = __ENV.BENCH_OVER_TIME || "30s";
 export const options = {
   vus: vus,
   duration: time,
+  // vus: 1,
+  // iterations: 1,
 };
 
 export function setup() {
@@ -48,7 +50,7 @@ export function handleSummary(data) {
 
         if (!passes) {
           result.push(
-            `> If the performance regression is expected, please increase the failing threshold.`
+            `> If the performance regression is expected, please increase the failing threshold.`,
           );
         }
 
@@ -62,6 +64,7 @@ export function handleSummary(data) {
 let identifiersMap = {};
 
 function printOnce(identifier, ...args) {
+  return;
   if (identifiersMap[identifier]) {
     return;
   }

@@ -20,7 +20,7 @@ graphql-tools = "0.4.0"  # Using version from original file
 
 # Serialization
 serde = { version = "1.0.203", features = ["derive"] }
-serde_json = { version = "1.0.120", features = ["preserve_order"] }
+sonic-rs = "0.5.1"
 
 # HTTP client and caching
 reqwest = { version = "0.12.5", features = ["json"] }

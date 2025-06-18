@@ -5,7 +5,7 @@ use graphql_parser::{
     schema::{Definition, TypeDefinition},
 };
 use query_planner::consumer_schema::ConsumerSchema;
-use serde_json::{json, Value};
+use sonic_rs::{json, Value};
 
 #[derive(Debug)]
 pub struct SchemaMetadata {

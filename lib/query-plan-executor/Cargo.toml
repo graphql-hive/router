@@ -8,14 +8,15 @@ edition = "2021"
 [dependencies]
 async-trait = "0.1"
 serde = "1.0.219"
-serde_json = { version = "1.0.140", features = ["preserve_order"] }
+sonic-rs = "0.5.1"
+serde_json = { version = "1.0.140" }
 futures = "0.3"
 reqwest = { version = "0.12", features = ["json"] }
 query-planner = { path = "../query-planner" }
 graphql-parser = "0.4.1"
 graphql-tools = "0.4.0"
 tracing = "0.1.41"
-async-graphql = { version = "7.0.17", features = ["dynamic-schema"]}
+async-graphql = { version = "7.0.17", features = ["dynamic-schema"] }
 
 [dev-dependencies]
 criterion = { version = "0.6", features = ["html_reports", "async_tokio"] }

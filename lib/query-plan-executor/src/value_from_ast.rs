@@ -1,61 +1,54 @@
-use std::collections::HashMap;
-
-use serde_json::Map;
+use graphql_parser::query::Value as ParserValue;
+use sonic_rs::Value as SonicValue;
+use std::collections::{BTreeMap, HashMap};
 
 pub fn value_from_ast(
-    value: &graphql_parser::query::Value<'static, String>,
-    variables: &Option<HashMap<String, serde_json::Value>>,
-) -> Result<serde_json::Value, String> {
+    value: &ParserValue<'static, String>,
+    variables: &Option<HashMap<String, SonicValue>>,
+) -> Result<SonicValue, String> {
     match value {
-        graphql_parser::query::Value::Null => Ok(serde_json::Value::Null),
-        graphql_parser::query::Value::Boolean(b) => Ok(serde_json::Value::Bool(*b)),
-        graphql_parser::query::Value::String(s) => Ok(serde_json::Value::String(s.to_string())),
-        graphql_parser::query::Value::Enum(e) => Ok(serde_json::Value::String(e.to_string())),
+        ParserValue::Null => Ok(SonicValue::new_null()),
+        ParserValue::Boolean(b) => Ok((*b).into()),
+        ParserValue::String(s) => Ok(s.into()),
+        ParserValue::Enum(e) => Ok(e.into()),
         // TODO: Handle variable parsing errors here just like in GraphQL-JS
-        graphql_parser::query::Value::Int(n) => {
+        ParserValue::Int(n) => {
             let n = n.as_i64().ok_or_else(|| "Failed to coerce".to_string())?;
-            let n = serde_json::Number::from(n);
-            Ok(serde_json::Value::Number(n))
+            Ok(n.into())
         }
-        graphql_parser::query::Value::Float(n) => {
-            let n = serde_json::Number::from_f64(*n);
-            n.map_or_else(
-                || Err("Failed to coerce".to_string()),
-                |num| Ok(serde_json::Value::Number(num)),
-            )
+        ParserValue::Float(n) => {
+            let n = SonicValue::new_f64(*n);
+            n.map_or_else(|| Err("Failed to coerce".to_string()), |num| Ok(num))
         }
-        graphql_parser::query::Value::List(l) => {
-            let list: Result<Vec<serde_json::Value>, String> =
+        ParserValue::List(l) => {
+            let list: Result<Vec<SonicValue>, String> =
                 l.iter().map(|v| value_from_ast(v, variables)).collect();
 
             match list {
                 Err(e) => Err(e),
-                Ok(vec) => Ok(serde_json::Value::Array(vec)),
+                Ok(vec) => Ok(SonicValue::from_iter(vec)),
             }
         }
-        graphql_parser::query::Value::Object(o) => {
-            let obj: Result<Map<String, serde_json::Value>, String> = o
+        ParserValue::Object(o) => {
+            let obj: Result<BTreeMap<String, SonicValue>, String> = o
                 .iter()
                 .map(|(k, v)| value_from_ast(v, variables).map(|val| (k.to_string(), val)))
                 .collect();
 
             match obj {
                 Err(e) => Err(e),
-                Ok(map) => {
-                    // Convert BTreeMap<String, serde_json::Value> to serde_json::Value::Object
-                    Ok(serde_json::Value::Object(map))
-                }
+                Ok(map) => Ok(SonicValue::from_iter(map.iter())),
             }
         }
-        graphql_parser::query::Value::Variable(var_name) => {
+        ParserValue::Variable(var_name) => {
             if let Some(variables_map) = variables {
                 if let Some(value) = variables_map.get(var_name) {
                     Ok(value.clone()) // Return the value from the variables map
                 } else {
-                    Ok(serde_json::Value::Null) // If variable not found, return null
+                    Ok(SonicValue::new_null()) // If variable not found, return null
                 }
             } else {
-                Ok(serde_json::Value::Null) // If no variables provided, return null
+                Ok(SonicValue::new_null()) // If no variables provided, return null
             }
         }
     }

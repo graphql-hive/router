@@ -5,7 +5,7 @@ use graphql_tools::validation::utils::ValidationError;
 use http::{Response, StatusCode};
 use query_plan_executor::{ExecutionResult, GraphQLError};
 use query_planner::{ast::normalization::error::NormalizationError, planner::PlannerError};
-use serde_json::Value;
+use sonic_rs::Value;
 
 use crate::pipeline::http_request_params::APPLICATION_JSON;
 
@@ -55,11 +55,11 @@ pub enum PipelineErrorVariant {
 
     // GraphQL-specific errors
     #[error("Failed to parse GraphQL request payload")]
-    FailedToParseBody(serde_json::Error),
+    FailedToParseBody(sonic_rs::Error),
     #[error("Failed to parse GraphQL variables JSON")]
-    FailedToParseVariables(serde_json::Error),
+    FailedToParseVariables(sonic_rs::Error),
     #[error("Failed to parse GraphQL extensions JSON")]
-    FailedToParseExtensions(serde_json::Error),
+    FailedToParseExtensions(sonic_rs::Error),
     #[error("Failed to parse GraphQL operation")]
     FailedToParseOperation(graphql_parser::query::ParseError),
     #[error("Failed to normalize GraphQL operation")]
@@ -149,7 +149,7 @@ impl IntoResponse for PipelineError {
 
             return (
                 StatusCode::OK,
-                serde_json::to_string(&validation_error_result).unwrap(),
+                sonic_rs::to_string(&validation_error_result).unwrap(),
             )
                 .into_response();
         }
@@ -158,10 +158,7 @@ impl IntoResponse for PipelineError {
         let message = self.error.graphql_error_message();
 
         let graphql_error = GraphQLError {
-            extensions: Some(HashMap::from([(
-                "code".to_string(),
-                Value::String(code.to_string()),
-            )])),
+            extensions: Some(HashMap::from([("code".to_string(), Value::from(code))])),
             message,
             path: None,
             locations: None,
@@ -173,6 +170,6 @@ impl IntoResponse for PipelineError {
             extensions: None,
         };
 
-        (status, serde_json::to_string(&result).unwrap()).into_response()
+        (status, sonic_rs::to_string(&result).unwrap()).into_response()
     }
 }

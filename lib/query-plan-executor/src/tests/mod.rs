@@ -82,7 +82,7 @@ fn query_executor_pipeline_locally() {
         .await;
         insta::assert_snapshot!(format!(
             "{}",
-            serde_json::to_string_pretty(&result).unwrap_or_default()
+            sonic_rs::to_string_pretty(&result).unwrap_or_default()
         ));
     });
 }

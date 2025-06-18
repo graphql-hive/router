@@ -10,8 +10,11 @@ use query_planner::{
     state::supergraph_state::OperationKind,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
-use std::{collections::HashMap, vec};
+use sonic_rs::{json, JsonContainerTrait, JsonValueMutTrait, JsonValueTrait, Value};
+use std::{
+    collections::{BTreeMap, HashMap},
+    vec,
+};
 use tracing::{debug, instrument, warn}; // For reading file in main
 
 use crate::{
@@ -238,7 +241,7 @@ impl ExecutableFetchNode for FetchNode {
 
         variables.insert(
             "representations".to_string(),
-            Value::Array(filtered_representations),
+            filtered_representations.into(),
         );
 
         // 3. Execute the fetch operation
@@ -260,12 +263,15 @@ impl ExecutableFetchNode for FetchNode {
                 &execution_context.schema_metadata.possible_types,
                 &mut data,
             );
-            match data {
-                Value::Object(mut obj) => match obj.remove("_entities") {
-                    Some(Value::Array(arr)) => Some(arr),
-                    _ => None, // If _entities is not found or not an array
-                },
-                _ => None, // If data is not an object
+            match data.as_object_mut() {
+                Some(obj) => {
+                    if let Some(val) = obj.remove(&"_entities").as_array() {
+                        Some(val.to_vec())
+                    } else {
+                        None // If _entities is not found or not an array
+                    }
+                }
+                None => None, // If data is not an object
             }
         } else {
             None
@@ -360,42 +366,39 @@ impl ApplyFetchRewrite for KeyRenamer {
         let current_segment = &path[0];
         let remaining_path = &path[1..];
 
-        match value {
-            Value::Array(arr) => {
-                for item in arr {
-                    self.apply_path(possible_types, item, path);
-                }
+        if let Some(arr) = value.as_array_mut() {
+            for item in arr {
+                self.apply_path(possible_types, item, path);
             }
-            Value::Object(obj) => {
-                let type_condition = current_segment.strip_prefix("... on ");
-                match type_condition {
-                    Some(type_condition) => {
-                        let type_name = match obj.get(TYPENAME_FIELD) {
-                            Some(Value::String(type_name)) => type_name,
-                            _ => type_condition, // Default to type_condition if not found
-                        };
-                        if entity_satisfies_type_condition(
-                            possible_types,
-                            type_name,
-                            type_condition,
-                        ) {
-                            self.apply_path(possible_types, value, remaining_path)
-                        }
+        } else if let Some(obj) = value.as_object_mut() {
+            let type_condition = current_segment.strip_prefix("... on ");
+            match type_condition {
+                Some(type_condition) => {
+                    let type_name_from_entity =
+                        obj.get(&TYPENAME_FIELD).and_then(sonic_rs::Value::as_str);
+
+                    let type_name = match type_name_from_entity {
+                        Some(tn_str) => tn_str,
+                        None => type_condition,
+                    };
+                    if entity_satisfies_type_condition(possible_types, type_name, type_condition) {
+                        self.apply_path(possible_types, value, remaining_path)
                     }
-                    _ => {
-                        if remaining_path.is_empty() {
-                            if *current_segment != self.rename_key_to {
-                                if let Some(val) = obj.remove(current_segment) {
-                                    obj.insert(self.rename_key_to.to_string(), val);
-                                }
+                }
+                _ => {
+                    if remaining_path.is_empty() {
+                        if *current_segment != self.rename_key_to {
+                            if let Some(val) = obj.remove(current_segment) {
+                                obj.insert(&self.rename_key_to, val);
                             }
-                        } else if let Some(next_value) = obj.get_mut(current_segment) {
-                            self.apply_path(possible_types, next_value, remaining_path)
                         }
+                    } else if let Some(next_value) = obj.get_mut(current_segment) {
+                        self.apply_path(possible_types, next_value, remaining_path)
                     }
                 }
             }
-            _ => (),
+        } else {
+            ()
         }
     }
 }
@@ -417,36 +420,37 @@ impl ApplyFetchRewrite for ValueSetter {
             return;
         }
 
-        match data {
-            Value::Array(arr) => {
-                for data in arr {
-                    // Apply the path to each item in the array
-                    self.apply_path(possible_types, data, path);
-                }
+        if let Some(arr) = data.as_array_mut() {
+            for data in arr {
+                // Apply the path to each item in the array
+                self.apply_path(possible_types, data, path);
             }
-            Value::Object(map) => {
-                let current_key = &path[0];
-                let remaining_path = &path[1..];
+        }
 
-                if let Some(type_condition) = current_key.strip_prefix("... on ") {
-                    let type_name = match map.get(TYPENAME_FIELD) {
-                        Some(Value::String(type_name)) => type_name,
-                        _ => type_condition, // Default to type_condition if not found
-                    };
-                    if entity_satisfies_type_condition(possible_types, type_name, type_condition) {
-                        self.apply_path(possible_types, data, remaining_path)
-                    }
-                } else if let Some(data) = map.get_mut(current_key) {
-                    // If the key exists, apply the remaining path to its value
+        if let Some(obj) = data.as_object_mut() {
+            let current_key = &path[0];
+            let remaining_path = &path[1..];
+
+            if let Some(type_condition) = current_key.strip_prefix("... on ") {
+                let type_name_from_entity =
+                    obj.get(&TYPENAME_FIELD).and_then(sonic_rs::Value::as_str);
+
+                let type_name = match type_name_from_entity {
+                    Some(tn_str) => tn_str,
+                    None => type_condition,
+                };
+                if entity_satisfies_type_condition(possible_types, type_name, type_condition) {
                     self.apply_path(possible_types, data, remaining_path)
                 }
+            } else if let Some(data) = obj.get_mut(current_key) {
+                // If the key exists, apply the remaining path to its value
+                self.apply_path(possible_types, data, remaining_path)
             }
-            _ => {
-                warn!(
-                    "Trying to apply ValueSetter path {:?} to non-object/array type: {:?}",
-                    path, data
-                );
-            }
+        } else {
+            warn!(
+                "Trying to apply ValueSetter path {:?} to non-object/array type: {:?}",
+                path, data
+            );
         }
     }
 }
@@ -631,8 +635,8 @@ impl ExecutablePlanNode for ConditionNode {
                 match variable_values.get(&self.condition) {
                     Some(value) => {
                         // Check if the value is a boolean
-                        match value {
-                            Value::Bool(b) => *b,
+                        match value.as_bool() {
+                            Some(b) => b,
                             _ => true, // Default to true if not a boolean
                         }
                     }
@@ -778,75 +782,91 @@ impl QueryPlanExecutionContext<'_> {
         if requires_selections.is_empty() {
             return entity.clone(); // No selections to project, return the entity as is
         }
-        match entity {
-            Value::Null => Value::Null,
-            Value::Array(entity_array) => Value::Array(
-                entity_array
-                    .iter()
-                    .map(|item| self.project_requires(requires_selections, item))
-                    .collect(),
-            ),
-            Value::Object(entity_obj) => {
-                let mut result_map = Map::new();
-                for requires_selection in requires_selections {
-                    match &requires_selection {
-                        SelectionItem::Field(requires_selection) => {
-                            let field_name = &requires_selection.name;
-                            let response_key = requires_selection.selection_identifier();
-                            let original = entity_obj
-                                .get(field_name)
-                                .unwrap_or(entity_obj.get(response_key).unwrap_or(&Value::Null));
-                            let projected_value: Value = self
-                                .project_requires(&requires_selection.selections.items, original);
-                            if !projected_value.is_null() {
-                                result_map.insert(response_key.to_string(), projected_value);
-                            }
+
+        if entity.is_null() {
+            return Value::new_null();
+        }
+
+        if let Some(entity_array) = entity.as_array() {
+            return entity_array
+                .iter()
+                .map(|item| self.project_requires(requires_selections, item))
+                .collect();
+        }
+
+        if let Some(entity_obj) = entity.as_object() {
+            let mut result_map = sonic_rs::Object::new();
+            for requires_selection in requires_selections {
+                match &requires_selection {
+                    SelectionItem::Field(requires_selection) => {
+                        let field_name = &requires_selection.name;
+                        let response_key = requires_selection.selection_identifier();
+                        let local_null_value_holder; // Will hold the owned Value::Null if needed
+
+                        let original = if let Some(val) = entity_obj.get(field_name) {
+                            val
+                        } else if let Some(val) = entity_obj.get(&response_key) {
+                            val
+                        } else {
+                            local_null_value_holder = sonic_rs::Value::new_null();
+                            &local_null_value_holder
+                        };
+                        let projected_value: Value =
+                            self.project_requires(&requires_selection.selections.items, original);
+                        if !projected_value.is_null() {
+                            result_map.insert(&response_key, projected_value);
                         }
-                        SelectionItem::InlineFragment(requires_selection) => {
-                            let type_name = match entity_obj.get(TYPENAME_FIELD) {
-                                Some(Value::String(type_name)) => type_name,
-                                _ => requires_selection.type_condition.as_str(),
-                            };
-                            if entity_satisfies_type_condition(
-                                &self.schema_metadata.possible_types,
-                                type_name,
-                                &requires_selection.type_condition,
-                            ) {
-                                let projected = self
-                                    .project_requires(&requires_selection.selections.items, entity);
-                                // Merge the projected value into the result
-                                if let Value::Object(projected_map) = projected {
-                                    deep_merge::deep_merge_objects(&mut result_map, projected_map);
-                                    /*
-                                     * TLDR: Needed for interface objects
-                                     *
-                                     * There are cases the type name in `__typename` might not exist in the subgraph.
-                                     * We know that the type name in the type condition exists,
-                                     * so we set the `__typename` field to the value from the type condition to guarantee
-                                     * that the type name in `__typename` is always present in the result.
-                                     */
-                                    result_map.insert(
-                                        TYPENAME_FIELD.to_string(),
-                                        json!(requires_selection.type_condition),
-                                    );
-                                }
-                                // If the projected value is not an object, it will be ignored
+                    }
+                    SelectionItem::InlineFragment(requires_selection) => {
+                        let type_name_from_entity = entity_obj
+                            .get(&TYPENAME_FIELD)
+                            .and_then(sonic_rs::Value::as_str);
+
+                        let type_name = match type_name_from_entity {
+                            Some(tn_str) => tn_str,
+                            None => requires_selection.type_condition.as_str(),
+                        };
+                        if entity_satisfies_type_condition(
+                            &self.schema_metadata.possible_types,
+                            type_name,
+                            &requires_selection.type_condition,
+                        ) {
+                            let projected =
+                                self.project_requires(&requires_selection.selections.items, entity);
+                            // Merge the projected value into the result
+                            if let Some(projected_map) = projected.as_object() {
+                                deep_merge::deep_merge_objects(
+                                    &mut result_map,
+                                    projected_map.to_owned(),
+                                );
+                                /*
+                                 * TLDR: Needed for interface objects
+                                 *
+                                 * There are cases the type name in `__typename` might not exist in the subgraph.
+                                 * We know that the type name in the type condition exists,
+                                 * so we set the `__typename` field to the value from the type condition to guarantee
+                                 * that the type name in `__typename` is always present in the result.
+                                 */
+                                result_map.insert(
+                                    &TYPENAME_FIELD,
+                                    json!(requires_selection.type_condition),
+                                );
                             }
+                            // If the projected value is not an object, it will be ignored
                         }
                     }
                 }
-                if (result_map.is_empty())
-                    || (result_map.len() == 1 && result_map.contains_key(TYPENAME_FIELD))
-                {
-                    Value::Null
-                } else {
-                    Value::Object(result_map)
-                }
             }
-            Value::Bool(bool) => Value::Bool(*bool),
-            Value::Number(num) => Value::Number(num.to_owned()),
-            Value::String(string) => Value::String(string.to_string()),
+            if (result_map.is_empty())
+                || (result_map.len() == 1 && result_map.contains_key(&TYPENAME_FIELD))
+            {
+                return Value::new_null();
+            }
+
+            return Value::from_iter(result_map.iter());
         }
+
+        entity.to_owned()
     }
 }
 
@@ -881,22 +901,45 @@ fn traverse_and_collect<'a>(
     current_data: &'a mut Value,
     remaining_path: &[&str],
 ) -> Vec<&'a mut Value> {
-    match (current_data, remaining_path) {
-        (Value::Array(arr), []) => arr.iter_mut().collect(), // Base case: No more path segments, return all items in the array
-        (current_data, []) => vec![current_data],            // Base case: No more path segments,
-        (Value::Object(obj), [next_segment, next_remaining_path @ ..]) => {
-            if let Some(next_value) = obj.get_mut(*next_segment) {
-                traverse_and_collect(next_value, next_remaining_path)
-            } else {
-                vec![] // No valid path segment
+    if remaining_path.is_empty() {
+        // Path is exhausted
+        if current_data.is_array() {
+            // It's an array, and path is empty. Return all its items.
+            // .unwrap() is safe here because we just checked is_array()
+            return current_data.as_array_mut().unwrap().iter_mut().collect();
+        } else {
+            // It's some other type, and path is empty. Return the item itself.
+            return vec![current_data];
+        }
+    }
+
+    // Path is not empty.
+    let first_segment = remaining_path[0];
+    let rest_of_the_path = &remaining_path[1..];
+
+    if current_data.is_object() {
+        // Current data is an object, try to traverse.
+        if let Some(obj_map) = current_data.as_object_mut() {
+            if let Some(next_value) = obj_map.get_mut(&first_segment) {
+                return traverse_and_collect(next_value, rest_of_the_path);
             }
         }
-        (Value::Array(arr), ["@", next_remaining_path @ ..]) => arr
-            .iter_mut()
-            .flat_map(|item| traverse_and_collect(item, next_remaining_path))
-            .collect(),
-        _ => vec![], // No valid path segment
+        // Object did not contain the segment, or it wasn't an object.
+        // Fall through to default (empty vec).
+    } else if current_data.is_array() && first_segment == "@" {
+        // Current data is an array, and we're iterating over it.
+        if let Some(arr_vec) = current_data.as_array_mut() {
+            return arr_vec
+                .iter_mut()
+                .flat_map(|item| traverse_and_collect(item, rest_of_the_path))
+                .collect();
+        }
+        // Array failed to convert.
+        // Fall through to default (empty vec).
     }
+
+    // Default case: No valid path segment, or type mismatch not handled above.
+    vec![]
 }
 
 // --- Helper Functions ---
@@ -908,19 +951,19 @@ fn traverse_and_collect<'a>(
     skip(selection_set, obj, schema_metadata, variable_values)
 )]
 fn project_selection_set_with_map(
-    obj: &mut Map<String, Value>,
+    obj: &mut sonic_rs::Object,
     errors: &mut Vec<GraphQLError>,
     selection_set: &SelectionSet,
-    type_name: &str,
+    current_type_name_from_caller: &str, // Renamed for clarity
     schema_metadata: &SchemaMetadata,
-    variable_values: &Option<HashMap<String, Value>>,
-) -> Option<Map<String, Value>> {
-    let type_name = match obj.get(TYPENAME_FIELD) {
-        Some(Value::String(type_name)) => type_name,
-        _ => type_name,
+    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+) -> Option<sonic_rs::Object> {
+    let type_name = match obj.get(&TYPENAME_FIELD).and_then(|v| v.as_str()) {
+        Some(tn_str) => tn_str,
+        _ => current_type_name_from_caller,
     }
     .to_string();
-    let mut new_obj = Map::new();
+    let mut new_obj = sonic_rs::value::Object::new();
     for selection in &selection_set.items {
         match selection {
             SelectionItem::Field(field) => {
@@ -932,7 +975,8 @@ fn project_selection_set_with_map(
                     let variable_value = variable_values
                         .as_ref()
                         .and_then(|vars| vars.get(skip_variable));
-                    if variable_value == Some(&Value::Bool(true)) {
+                    // Check if variable_value is Some(sonic_rs::Value::Bool(true))
+                    if variable_value.map_or(false, |v| v.as_bool() == Some(true)) {
                         continue; // Skip this field if the variable is true
                     }
                 }
@@ -940,67 +984,69 @@ fn project_selection_set_with_map(
                     let variable_value = variable_values
                         .as_ref()
                         .and_then(|vars| vars.get(include_variable));
-                    if variable_value != Some(&Value::Bool(true)) {
+                    // Check if variable_value is NOT Some(sonic_rs::Value::Bool(true))
+                    if !variable_value.map_or(false, |v| v.as_bool() == Some(true)) {
                         continue; // Skip this field if the variable is not true
                     }
                 }
                 let response_key = field.alias.as_ref().unwrap_or(&field.name).to_string();
                 if field.name == TYPENAME_FIELD {
-                    new_obj.insert(response_key, Value::String(type_name.to_string()));
+                    new_obj.insert(&response_key, Value::from(&type_name));
                     continue;
                 }
                 let field_map = field_map.unwrap();
                 let field_type = field_map.get(&field.name);
                 if field.name == "__schema" && type_name == "Query" {
                     obj.insert(
-                        response_key.to_string(),
+                        &response_key,
                         schema_metadata.introspection_schema_root_json.clone(),
                     );
                 }
-                let field_val = obj.get_mut(&response_key);
-                match (field_type, field_val) {
+                let field_val_option = obj.get_mut(&response_key); // field_val is Option<&mut sonic_rs::Value>
+                match (field_type, field_val_option) {
                     (Some(field_type), Some(field_val)) => {
-                        match field_val {
-                            Value::Object(field_val_map) => {
-                                let new_field_val_map = project_selection_set_with_map(
-                                    field_val_map,
+                        if field_val.is_object() {
+                            if let Some(field_val_map) = field_val.as_object_mut() {
+                                let new_field_val_map_opt = project_selection_set_with_map(
+                                    field_val_map, // This is &mut ObjectMap
                                     errors,
                                     &field.selections,
-                                    field_type,
+                                    field_type, // This is the field's type name from schema
                                     schema_metadata,
                                     variable_values,
                                 );
-                                match new_field_val_map {
-                                    Some(new_field_val_map) => {
-                                        // If the field is an object, merge the projected values
-                                        new_obj
-                                            .insert(response_key, Value::Object(new_field_val_map));
+                                match new_field_val_map_opt {
+                                    Some(new_inner_map) => {
+                                        new_obj.insert(&response_key, new_inner_map);
                                     }
                                     None => {
-                                        new_obj.insert(response_key, Value::Null);
+                                        new_obj.insert(&response_key, Value::new_null());
                                     }
                                 }
+                            } else {
+                                // This case should ideally not be reached if is_object() was true
+                                // and as_object_mut() returned None, but handle defensively.
+                                new_obj.insert(&response_key, Value::new_null());
                             }
-                            field_val => {
-                                project_selection_set(
-                                    field_val,
-                                    errors,
-                                    &field.selections,
-                                    field_type,
-                                    schema_metadata,
-                                    variable_values,
-                                );
-                                let field_val = std::mem::take(field_val);
-                                new_obj.insert(
-                                    response_key,
-                                    field_val, // Clone the value to insert
-                                );
-                            }
+                        } else {
+                            // field_val is not an object (e.g. String, Int, Array, etc.)
+                            project_selection_set(
+                                field_val,
+                                errors,
+                                &field.selections,
+                                field_type,
+                                schema_metadata,
+                                variable_values,
+                            );
+                            new_obj.insert(
+                                &response_key,
+                                std::mem::take(field_val), // field_val is &mut sonic_rs::Value
+                            );
                         }
                     }
                     (Some(_field_type), None) => {
                         // If the field is not found in the object, set it to Null
-                        new_obj.insert(response_key, Value::Null);
+                        new_obj.insert(&response_key, Value::new_null());
                     }
                     (None, _) => {
                         warn!(
@@ -1047,61 +1093,62 @@ fn project_selection_set(
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
 ) {
-    match data {
-        Value::Null => {
-            // If data is Null, no need to project further
-        }
-        Value::String(value) => {
-            if let Some(enum_values) = schema_metadata.enum_values.get(type_name) {
-                if !enum_values.contains(value) {
-                    // If the value is not a valid enum value, add an error
-                    // and set data to Null
-                    *data = Value::Null; // Set data to Null if the value is not valid
-                    errors.push(GraphQLError {
-                        message: format!(
-                            "Value is not a valid enum value for type '{}'",
-                            type_name
-                        ),
-                        locations: None,
-                        path: None,
-                        extensions: None,
-                    });
-                }
-            } // No further processing needed for strings
-        }
-        Value::Array(arr) => {
-            // If data is an array, project each item in the array
-            for item in arr {
-                project_selection_set(
-                    item,
-                    errors,
-                    selection_set,
-                    type_name,
-                    schema_metadata,
-                    variable_values,
-                );
-            } // No further processing needed for arrays
-        }
-        Value::Object(obj) => {
-            match project_selection_set_with_map(
-                obj,
+    if data.is_null() {
+        // If data is Null, no need to project further
+        return;
+    }
+
+    if let Some(value) = data.as_str() {
+        if let Some(enum_values) = schema_metadata.enum_values.get(type_name) {
+            if !enum_values.contains(&value.to_string()) {
+                // If the value is not a valid enum value, add an error
+                // and set data to Null
+                *data = Value::new_null(); // Set data to Null if the value is not valid
+                errors.push(GraphQLError {
+                    message: format!("Value is not a valid enum value for type '{}'", type_name),
+                    locations: None,
+                    path: None,
+                    extensions: None,
+                });
+            }
+        } // No further processing needed for strings
+
+        return;
+    }
+
+    if let Some(arr) = data.as_array_mut() {
+        // If data is an array, project each item in the array
+        for item in arr {
+            project_selection_set(
+                item,
                 errors,
                 selection_set,
                 type_name,
                 schema_metadata,
                 variable_values,
-            ) {
-                Some(new_obj) => {
-                    // If the projection returns a new object, replace the old one
-                    *obj = new_obj;
-                }
-                None => {
-                    // If the projection returns None, set data to Null
-                    *data = Value::Null;
-                }
+            );
+        } // No further processing needed for arrays
+        return;
+    }
+
+    if let Some(obj) = data.as_object_mut() {
+        match project_selection_set_with_map(
+            obj,
+            errors,
+            selection_set,
+            type_name,
+            schema_metadata,
+            variable_values,
+        ) {
+            Some(new_obj) => {
+                // If the projection returns a new object, replace the old one
+                *obj = new_obj;
+            }
+            None => {
+                // If the projection returns None, set data to Null
+                *data = Value::new_null();
             }
         }
-        _ => {}
     }
 }
 
@@ -1140,7 +1187,7 @@ pub async fn execute_query_plan(
     operation: &OperationDefinition,
     has_introspection: bool,
 ) -> ExecutionResult {
-    let mut result_data = Value::Null; // Initialize data as Null
+    let mut result_data = Value::new_null(); // Initialize data as Null
     let mut result_errors = vec![]; // Initial errors are empty
     #[allow(unused_mut)]
     let mut result_extensions = HashMap::new(); // Initial extensions are empty
@@ -1158,7 +1205,7 @@ pub async fn execute_query_plan(
     result_extensions = execution_context.extensions; // Get the final extensions from the execution context
     if !result_data.is_null() || has_introspection {
         if result_data.is_null() {
-            result_data = Value::Object(serde_json::Map::new()); // Initialize as empty object if Null
+            result_data = Value::from(sonic_rs::Object::new()); // Initialize as empty object if Null
         }
         project_data_by_operation(
             &mut result_data,

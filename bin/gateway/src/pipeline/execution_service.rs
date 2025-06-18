@@ -16,7 +16,7 @@ use axum::Json;
 use http::header::CONTENT_TYPE;
 use http::{Request, Response};
 use query_plan_executor::execute_query_plan;
-use serde_json::to_value;
+use sonic_rs::to_value;
 use tower::Service;
 use tracing::trace;
 

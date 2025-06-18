@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+use reqwest::header::CONTENT_TYPE;
 use tracing::{error, instrument, trace};
 
 use crate::{executors::common::SubgraphExecutor, ExecutionRequest, ExecutionResult};
 
-#[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
     pub subgraph_endpoint_map: HashMap<String, String>,
     http_client: reqwest::Client,
@@ -26,13 +26,22 @@ impl HTTPSubgraphExecutor {
     ) -> Result<ExecutionResult, reqwest::Error> {
         match self.subgraph_endpoint_map.get(subgraph_name) {
             Some(subgraph_endpoint) => {
-                self.http_client
+                let request_body_bytes =
+                    sonic_rs::to_vec(&execution_request).expect("to JSON(body)");
+                let response = self
+                    .http_client
                     .post(subgraph_endpoint)
-                    .json(&execution_request)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(request_body_bytes)
                     .send()
-                    .await?
-                    .json::<ExecutionResult>()
-                    .await
+                    .await?;
+
+                let response_bytes = response.bytes().await?;
+
+                let execution_result = sonic_rs::from_slice::<ExecutionResult>(&response_bytes)
+                    .expect("parse(response)");
+
+                Ok(execution_result)
             }
             None => Ok(ExecutionResult::from_error_message(format!(
                 "Subgraph {} not found in endpoint map",

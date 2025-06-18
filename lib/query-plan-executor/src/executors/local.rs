@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use async_graphql::{dynamic::Schema, PathSegment, Response, ServerError, Variables};
+use async_graphql::{dynamic::Schema, Response, ServerError, Variables};
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -46,7 +46,7 @@ impl From<ExecutionRequest> for async_graphql::Request {
             for (key, value) in extensions {
                 req.extensions.insert(
                     key,
-                    async_graphql::Value::from_json(value).unwrap_or_default(),
+                    async_graphql::Value::from_json(json!(value.to_string())).unwrap_or_default(),
                 );
             }
         }
@@ -68,25 +68,27 @@ impl From<&ServerError> for GraphQLError {
                     })
                     .collect(),
             ),
-            path: Some(
-                error
-                    .path
-                    .iter()
-                    .map(|s| match s {
-                        PathSegment::Field(name) => serde_json::Value::String(name.to_string()),
-                        PathSegment::Index(index) => serde_json::Value::Number((*index).into()),
-                    })
-                    .collect(),
-            ),
-            extensions: error.extensions.as_ref().map(|ext| {
-                let serialized = json!(ext);
-                serialized
-                    .as_object()
-                    .unwrap()
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), v.clone()))
-                    .collect::<HashMap<String, serde_json::Value>>()
-            }),
+            path: None,
+            extensions: None,
+            // path: Some(
+            //     error
+            //         .path
+            //         .iter()
+            //         .map(|s| match s {
+            //             PathSegment::Field(name) => serde_json::Value::String(name.to_string()),
+            //             PathSegment::Index(index) => serde_json::Value::Number((*index).into()),
+            //         })
+            //         .collect(),
+            // ),
+            // extensions: error.extensions.as_ref().map(|ext| {
+            //     let serialized = json!(ext);
+            //     serialized
+            //         .as_object()
+            //         .unwrap()
+            //         .iter()
+            //         .map(|(k, v)| (k.to_string(), v.clone()))
+            //         .collect::<HashMap<String, serde_json::Value>>()
+            // }),
         }
     }
 }
@@ -94,7 +96,10 @@ impl From<&ServerError> for GraphQLError {
 impl From<Response> for ExecutionResult {
     fn from(response: Response) -> Self {
         ExecutionResult {
-            data: Some(response.data.into_json().unwrap()),
+            data: Some(
+                sonic_rs::to_value(&response.data.into_value())
+                    .unwrap_or_else(|_| sonic_rs::Value::new_null()),
+            ),
             errors: Some(
                 response
                     .errors
@@ -102,13 +107,7 @@ impl From<Response> for ExecutionResult {
                     .map(|error| error.into())
                     .collect::<Vec<GraphQLError>>(),
             ),
-            extensions: Some(
-                response
-                    .extensions
-                    .into_iter()
-                    .map(|(key, value)| (key, value.into_json().unwrap()))
-                    .collect::<HashMap<String, serde_json::Value>>(),
-            ),
+            extensions: None,
         }
     }
 }

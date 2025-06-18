@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use query_planner::state::supergraph_state::TypeNode;
-use serde_json::Value;
+use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
 
 use crate::schema_metadata::SchemaMetadata;
 
@@ -66,7 +66,7 @@ fn validate_runtime_value(
     match type_node {
         TypeNode::Named(name) => {
             if let Some(enum_values) = schema_metadata.enum_values.get(name) {
-                if let Value::String(ref s) = value {
+                if let Some(s) = value.as_str() {
                     if !enum_values.contains(&s.to_string()) {
                         return Err(format!(
                             "Value '{}' is not a valid enum value for type '{}'",
@@ -80,7 +80,7 @@ fn validate_runtime_value(
                     ));
                 }
             } else if let Some(fields) = schema_metadata.type_fields.get(name) {
-                if let Value::Object(obj) = value {
+                if let Some(obj) = value.as_object() {
                     for (field_name, field_type) in fields {
                         if let Some(field_value) = obj.get(field_name) {
                             validate_runtime_value(
@@ -104,7 +104,7 @@ fn validate_runtime_value(
             } else {
                 return match name.as_str() {
                     "String" => {
-                        if let Value::String(_) = value {
+                        if let Some(_) = value.as_str() {
                             Ok(())
                         } else {
                             Err(format!(
@@ -114,15 +114,8 @@ fn validate_runtime_value(
                         }
                     }
                     "Int" => {
-                        if let Value::Number(num) = value {
-                            if num.is_i64() {
-                                Ok(())
-                            } else {
-                                Err(format!(
-                                    "Expected an integer for type '{}', got {:?}",
-                                    name, value
-                                ))
-                            }
+                        if let Some(_) = value.as_i64() {
+                            Ok(())
                         } else {
                             Err(format!(
                                 "Expected a number for type '{}', got {:?}",
@@ -131,15 +124,8 @@ fn validate_runtime_value(
                         }
                     }
                     "Float" => {
-                        if let Value::Number(num) = value {
-                            if num.is_f64() || num.is_i64() {
-                                Ok(())
-                            } else {
-                                Err(format!(
-                                    "Expected a float for type '{}', got {:?}",
-                                    name, value
-                                ))
-                            }
+                        if let Some(_) = value.as_i64() {
+                            Ok(())
                         } else {
                             Err(format!(
                                 "Expected a number for type '{}', got {:?}",
@@ -148,7 +134,7 @@ fn validate_runtime_value(
                         }
                     }
                     "Boolean" => {
-                        if let Value::Bool(_) = value {
+                        if let Some(_) = value.as_bool() {
                             Ok(())
                         } else {
                             Err(format!(
@@ -158,7 +144,7 @@ fn validate_runtime_value(
                         }
                     }
                     "ID" => {
-                        if let Value::String(_) = value {
+                        if let Some(_) = value.as_str() {
                             Ok(())
                         } else {
                             Err(format!("Expected a string for type 'ID', got {:?}", value))
@@ -175,7 +161,7 @@ fn validate_runtime_value(
             validate_runtime_value(value, inner_type, schema_metadata)?;
         }
         TypeNode::List(inner_type) => {
-            if let Value::Array(arr) = value {
+            if let Some(arr) = value.as_array() {
                 for item in arr {
                     validate_runtime_value(item, inner_type, schema_metadata)?;
                 }
