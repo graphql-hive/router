@@ -3,6 +3,8 @@ use std::collections::HashMap;
 
 use criterion::Criterion;
 use criterion::{criterion_group, criterion_main};
+use query_planner::ast::selection_item::SelectionItem;
+use query_planner::ast::selection_set::InlineFragmentSelection;
 use std::hint::black_box;
 
 use query_plan_executor::execute_query_plan;
@@ -268,14 +270,221 @@ fn project_data_by_operation(c: &mut Criterion) {
     });
 }
 
-fn all_benchmarks(c: &mut Criterion) {
-    query_plan_execution_without_projection_via_http(c);
-    query_plan_executor_pipeline_via_http(c);
+fn traverse_and_collect(c: &mut Criterion) {
+    let path = [
+        "users", "@", "reviews", "@", "product", "reviews", "@", "author", "reviews", "@",
+        "product",
+    ];
+    let mut result: Value = non_projected_result::get_result();
+    c.bench_function("traverse_and_collect", |b| {
+        b.iter(|| {
+            let result = black_box(&mut result);
+            let data = result.get_mut("data").unwrap();
+            let path = black_box(&path);
+            let result = query_plan_executor::traverse_and_collect(data, path);
+            black_box(result);
+        });
+    });
+}
 
+fn deep_merge_with_complex(c: &mut Criterion) {
+    let mut data_1 = serde_json::json!({
+        "users": []
+    });
+
+    let user_1 = serde_json::json!({
+        "id": "1",
+        "name": "Alice",
+        "reviews": []
+    });
+
+    let review_1 = serde_json::json!(
+    {
+        "id": "r1",
+        "content": "Great product!",
+        "product": {
+            "id": "p2",
+            "upc": "1234567890",
+        }
+    });
+
+    let user_2 = serde_json::json!({
+        "id": "1",
+        "age": 30,
+        "reviews": [],
+    });
+
+    let review_2 = serde_json::json!(
+    {
+        "id": "r1",
+        "product": {
+            "id": "p2",
+            "name": "Product B"
+        }
+    });
+
+    let mut data_2 = serde_json::json!({
+        "users": []
+    });
+
+    let data_1_users = data_1.get_mut("users").unwrap();
+    let data_2_users = data_2.get_mut("users").unwrap();
+    for _ in 0..30 {
+        let mut user_1_clone = user_1.clone();
+        let user_1_reviews = user_1_clone.get_mut("reviews").unwrap();
+        for _ in 0..5 {
+            let review_1_clone = review_1.clone();
+            user_1_reviews.as_array_mut().unwrap().push(review_1_clone);
+        }
+        data_1_users.as_array_mut().unwrap().push(user_1_clone);
+
+        let mut user_2_clone = user_2.clone();
+        let user_2_reviews = user_2_clone.get_mut("reviews").unwrap();
+        for _ in 0..5 {
+            let review_2_clone = review_2.clone();
+            user_2_reviews.as_array_mut().unwrap().push(review_2_clone);
+        }
+        data_2_users.as_array_mut().unwrap().push(user_2_clone);
+    }
+
+    c.bench_function("deep_merge_with_complex", |b| {
+        b.iter(|| {
+            let mut target = black_box(data_1.clone());
+            let source = black_box(data_2.clone());
+            query_plan_executor::deep_merge::deep_merge(&mut target, source);
+        });
+    });
+}
+
+fn project_requires(c: &mut Criterion) {
+    let path = [
+        "users", "@", "reviews", "@", "product", "reviews", "@", "author", "reviews", "@",
+        "product",
+    ];
+    let mut result: Value = non_projected_result::get_result();
+    let data = result.get_mut("data").unwrap();
+    let representations = query_plan_executor::traverse_and_collect(data, &path);
+    let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
+        .expect("Unable to read input file");
+    let parsed_schema = parse_schema(&supergraph_sdl);
+    let planner = query_planner::planner::Planner::new_from_supergraph(&parsed_schema)
+        .expect("Failed to create planner from supergraph");
+    let schema_metadata = &planner.consumer_schema.schema_metadata();
+    let execution_context = query_plan_executor::QueryPlanExecutionContext {
+        variable_values: &None,
+        executor: &HTTPSubgraphExecutor::new(HashMap::new()),
+        schema_metadata,
+        errors: Vec::new(),
+        extensions: HashMap::new(),
+    };
+    let requires_selections: Vec<SelectionItem> =
+        [SelectionItem::InlineFragment(InlineFragmentSelection {
+            type_condition: "Product".to_string(),
+            selections: query_planner::ast::selection_set::SelectionSet {
+                items: vec![
+                    SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                        name: "__typename".to_string(),
+                        selections: query_planner::ast::selection_set::SelectionSet {
+                            items: vec![],
+                        },
+                        alias: None,
+                        arguments: None,
+                        include_if: None,
+                        skip_if: None,
+                    }),
+                    SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                        name: "price".to_string(),
+                        selections: query_planner::ast::selection_set::SelectionSet {
+                            items: vec![],
+                        },
+                        alias: None,
+                        arguments: None,
+                        include_if: None,
+                        skip_if: None,
+                    }),
+                    SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                        name: "weight".to_string(),
+                        selections: query_planner::ast::selection_set::SelectionSet {
+                            items: vec![],
+                        },
+                        alias: None,
+                        arguments: None,
+                        include_if: None,
+                        skip_if: None,
+                    }),
+                    SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                        name: "upc".to_string(),
+                        selections: query_planner::ast::selection_set::SelectionSet {
+                            items: vec![],
+                        },
+                        alias: None,
+                        arguments: None,
+                        include_if: None,
+                        skip_if: None,
+                    }),
+                ],
+            },
+        })]
+        .to_vec();
+    c.bench_function("project_requires", |b| {
+        b.iter(|| {
+            let execution_context = black_box(&execution_context);
+            for representation in black_box(&representations) {
+                let requires =
+                    execution_context.project_requires(&requires_selections, representation);
+                black_box(requires);
+            }
+        });
+    });
+}
+
+fn deep_merge_with_simple(c: &mut Criterion) {
+    let mut data_1 = serde_json::json!({
+        "users": []
+    });
+
+    let user_1 = serde_json::json!({
+        "id": "1",
+        "name": "Alice"
+    });
+
+    let mut data_2 = serde_json::json!({
+        "users": []
+    });
+    let user_2 = serde_json::json!({
+        "id": "1",
+        "age": 30,
+    });
+
+    let data_1_users = data_1.get_mut("users").unwrap();
+    let data_2_users = data_2.get_mut("users").unwrap();
+    for _ in 0..30 {
+        let user_1_clone = user_1.clone();
+        let user_2_clone = user_2.clone();
+        data_1_users.as_array_mut().unwrap().push(user_1_clone);
+        data_2_users.as_array_mut().unwrap().push(user_2_clone);
+    }
+
+    c.bench_function("deep_merge_with_simple", |b| {
+        b.iter(|| {
+            let mut target = black_box(data_1.clone());
+            let source = black_box(data_2.clone());
+            query_plan_executor::deep_merge::deep_merge(&mut target, source);
+        });
+    });
+}
+
+fn all_benchmarks(c: &mut Criterion) {
+    deep_merge_with_simple(c);
+    deep_merge_with_complex(c);
+    project_requires(c);
+    traverse_and_collect(c);
+    project_data_by_operation(c);
     query_plan_executor_without_projection_locally(c);
     query_plan_executor_pipeline_locally(c);
 
-    project_data_by_operation(c);
+    query_plan_execution_without_projection_via_http(c);
+    query_plan_executor_pipeline_via_http(c);
 }
 
 criterion_group!(benches, all_benchmarks);
