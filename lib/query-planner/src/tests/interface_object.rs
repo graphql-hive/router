@@ -4,11 +4,11 @@ use crate::{
 };
 use std::error::Error;
 
-#[test]
 /// The field the interface object resolves (`username`) is local to the root field,
 /// so it's being resolved locally as well,
 /// but the missing field (`name`) needs an interface entity call (interface with @key),
 /// and no object types are involved. Simple.
+#[test]
 fn interface_object_field_local() -> Result<(), Box<dyn Error>> {
     init_logger();
     let document = parse_operation(
@@ -68,10 +68,10 @@ fn interface_object_field_local() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[test]
 /// The field the interface object resolves (`username`) is not local to the root field,
 /// so it's being resolved with an entity call.
 /// It's similar to the `interface_object_field_local` test, but "reversed" :)
+#[test]
 fn interface_object_field_remote() -> Result<(), Box<dyn Error>> {
     init_logger();
     let document = parse_operation(
@@ -123,10 +123,10 @@ fn interface_object_field_remote() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[test]
 /// Query field resolves interface object type,
 /// but the resolution of the missing field (`age`)
 /// requires an entity call.
+#[test]
 fn interface_object_field_local_object_type() -> Result<(), Box<dyn Error>> {
     init_logger();
     let document = parse_operation(
@@ -188,8 +188,8 @@ fn interface_object_field_local_object_type() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[test]
 /// Resolves interface's implementation locally, interfaceObject is not involved.
+#[test]
 fn interface_to_object_type_locally() -> Result<(), Box<dyn Error>> {
     init_logger();
     let document = parse_operation(
