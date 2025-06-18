@@ -13,7 +13,7 @@ thiserror = "2.0.12"
 petgraph = "0.8.0"
 tracing = { version = "0.1.41", features = ["release_max_level_debug"] }
 serde = "1.0.219"
-serde_json = { version = "1.0.140", features = ["preserve_order"] }
+sonic-rs = "0.5.1"
 
 [dev-dependencies]
 insta = { version = "1.42.1" }

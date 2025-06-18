@@ -98,8 +98,7 @@ pub enum FetchRewrite {
 #[serde(rename_all = "camelCase")]
 pub struct ValueSetter {
     pub path: Vec<String>,
-    // Use serde_json::Value for the 'any' type
-    pub set_value_to: serde_json::Value,
+    pub set_value_to: sonic_rs::Value,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

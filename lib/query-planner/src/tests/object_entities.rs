@@ -67,7 +67,7 @@ fn testing() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -196,7 +196,7 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -334,7 +334,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -519,7 +519,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {

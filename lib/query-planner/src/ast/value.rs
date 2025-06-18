@@ -98,55 +98,75 @@ impl From<&mut ParserValue<'_, String>> for Value {
     }
 }
 
-impl From<&Value> for serde_json::Value {
+impl From<&Value> for sonic_rs::Value {
     fn from(value: &Value) -> Self {
         match value {
-            Value::Null => serde_json::Value::Null,
-            Value::Int(n) => serde_json::Value::Number((*n).into()),
-            Value::Boolean(b) => serde_json::Value::Bool(*b),
-            Value::Enum(s) => serde_json::Value::String(s.to_string()),
-            Value::Float(n) => {
-                let number = serde_json::Number::from_f64(*n);
-                match number {
-                    Some(num) => serde_json::Value::Number(num),
-                    None => serde_json::Value::Null, // Handle case where float conversion fails
+            Value::Null => sonic_rs::Value::new_null(),
+            Value::Int(n) => (*n).into(),
+            Value::Boolean(b) => (*b).into(),
+            Value::Enum(s) => s.into(),
+            Value::Float(n) => match sonic_rs::Value::new_f64(*n) {
+                Some(num) => num,
+                None => sonic_rs::Value::new_null(),
+            },
+            Value::List(l) => {
+                let mut array_value = sonic_rs::Value::new_array_with(l.len());
+
+                for val in l.iter() {
+                    array_value.append_value(val.into());
                 }
+
+                array_value
             }
-            Value::List(l) => serde_json::Value::Array(l.iter().map(|v| v.into()).collect()),
-            Value::Object(o) => serde_json::Value::Object(
-                o.iter().map(|(k, v)| (k.to_string(), v.into())).collect(),
-            ),
-            Value::String(s) => serde_json::Value::String(s.to_string()),
-            Value::Variable(_var_name) => serde_json::Value::Null,
+            Value::Object(o) => {
+                let mut object_value = sonic_rs::Value::new_object_with(o.len());
+
+                for (k, v) in o.iter() {
+                    object_value.insert(k, v.into());
+                }
+
+                object_value
+            }
+            Value::String(s) => s.into(),
+            Value::Variable(_var_name) => sonic_rs::Value::new_null(),
         }
     }
 }
 
-impl From<&mut Value> for serde_json::Value {
-    fn from(value: &mut Value) -> Self {
-        match value {
-            Value::Null => serde_json::Value::Null,
-            Value::Int(n) => serde_json::Value::Number((mem::take(n)).into()),
-            Value::Boolean(b) => serde_json::Value::Bool(mem::take(b)),
-            Value::Enum(s) => serde_json::Value::String(mem::take(s)),
-            Value::Float(n) => {
-                let number = serde_json::Number::from_f64(mem::take(n));
-                match number {
-                    Some(num) => serde_json::Value::Number(num),
-                    None => serde_json::Value::Null, // Handle case where float conversion fails
-                }
-            }
-            Value::List(l) => serde_json::Value::Array(l.iter_mut().map(|v| v.into()).collect()),
-            Value::Object(o) => serde_json::Value::Object(
-                o.iter_mut()
-                    .map(|(k, v)| (k.to_string(), v.into()))
-                    .collect(),
-            ),
-            Value::String(s) => serde_json::Value::String(mem::take(s)),
-            Value::Variable(_var_name) => serde_json::Value::Null,
-        }
-    }
-}
+// impl From<&mut Value> for sonic_rs::Value {
+//     fn from(value: &mut Value) -> Self {
+//         match value {
+//             Value::Null => sonic_rs::Value::new_null(),
+//             Value::Int(n) => (*n).into(),
+//             Value::Boolean(b) => (*b).into(),
+//             Value::Enum(s) => s.into(),
+//             Value::Float(n) => match sonic_rs::Value::new_f64(*n) {
+//                 Some(num) => num,
+//                 None => sonic_rs::Value::new_null(),
+//             },
+//             Value::List(l) => {
+//                 let mut array_value = sonic_rs::Value::new_array_with(l.len());
+
+//                 for val in l.iter() {
+//                     array_value.append_value(val.into());
+//                 }
+
+//                 array_value
+//             }
+//             Value::Object(o) => {
+//                 let mut object_value = sonic_rs::Value::new_object_with(o.len());
+
+//                 for (k, v) in o.iter() {
+//                     object_value.insert(k, v.into());
+//                 }
+
+//                 object_value
+//             }
+//             Value::String(s) => s.into(),
+//             Value::Variable(_var_name) => sonic_rs::Value::new_null(),
+//         }
+//     }
+// }
 
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

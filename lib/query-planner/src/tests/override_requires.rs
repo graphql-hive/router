@@ -190,7 +190,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -543,7 +543,7 @@ fn override_with_requires_cname_in_c() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -681,7 +681,7 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -819,7 +819,7 @@ fn override_with_requires_aname_in_a() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
