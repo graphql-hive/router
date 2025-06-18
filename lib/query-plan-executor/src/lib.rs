@@ -18,7 +18,7 @@ use crate::{
     deep_merge::deep_merge_objects, executors::common::SubgraphExecutor,
     schema_metadata::SchemaMetadata,
 };
-mod deep_merge;
+pub mod deep_merge;
 pub mod executors;
 pub mod introspection;
 pub mod schema_metadata;
@@ -774,7 +774,11 @@ impl QueryPlanExecutionContext<'_> {
             entity = ?entity
         )
     )]
-    fn project_requires(&self, requires_selections: &Vec<SelectionItem>, entity: &Value) -> Value {
+    pub fn project_requires(
+        &self,
+        requires_selections: &Vec<SelectionItem>,
+        entity: &Value,
+    ) -> Value {
         if requires_selections.is_empty() {
             return entity.clone(); // No selections to project, return the entity as is
         }
@@ -877,7 +881,7 @@ fn entity_satisfies_type_condition(
 /// Recursively traverses the data according to the path segments,
 /// handling '@' for array iteration, and collects the final values.current_data.to_vec()
 #[instrument(level = "trace")]
-fn traverse_and_collect<'a>(
+pub fn traverse_and_collect<'a>(
     current_data: &'a mut Value,
     remaining_path: &[&str],
 ) -> Vec<&'a mut Value> {
@@ -921,13 +925,17 @@ fn project_selection_set_with_map(
     }
     .to_string();
     let mut new_obj = Map::new();
+    let field_map = schema_metadata.type_fields.get(&type_name);
     for selection in &selection_set.items {
         match selection {
             SelectionItem::Field(field) => {
                 // Get the type fields for the current type
-                let field_map = schema_metadata.type_fields.get(&type_name);
                 // Type is not found in the schema
-                field_map?;
+                if field_map.is_none() {
+                    // It won't reach here already, as the selection should be validated before projection
+                    warn!("Type {} not found. Skipping projection.", type_name);
+                    continue;
+                }
                 if let Some(ref skip_variable) = field.skip_if {
                     let variable_value = variable_values
                         .as_ref()
@@ -1003,6 +1011,7 @@ fn project_selection_set_with_map(
                         new_obj.insert(response_key, Value::Null);
                     }
                     (None, _) => {
+                        // It won't reach here already, as the selection should be validated before projection
                         warn!(
                             "Field {} not found in type {}. Skipping projection.",
                             field.name, type_name
