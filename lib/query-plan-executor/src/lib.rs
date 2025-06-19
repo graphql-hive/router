@@ -144,7 +144,7 @@ trait ExecutableFetchNode {
 
 #[async_trait]
 impl ExecutablePlanNode for FetchNode {
-    #[instrument(level = "debug", skip(self, execution_context), name = "FetchNode")]
+    #[instrument(level = "debug", skip_all, name = "FetchNode")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -163,7 +163,7 @@ struct ProjectRepresentationsResult {
 
 #[async_trait]
 impl ExecutableFetchNode for FetchNode {
-    #[instrument(level = "debug", skip(self, execution_context))]
+    #[instrument(level = "debug", skip_all)]
     async fn execute_for_root(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
@@ -454,7 +454,7 @@ impl ApplyFetchRewrite for ValueSetter {
 
 #[async_trait]
 impl ExecutablePlanNode for SequenceNode {
-    #[instrument(level = "trace", skip(self, execution_context), name = "SequenceNode")]
+    #[instrument(level = "trace", skip_all, name = "SequenceNode")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -490,7 +490,7 @@ fn process_result(
 
 #[async_trait]
 impl ExecutablePlanNode for ParallelNode {
-    #[instrument(level = "trace", skip(self, execution_context), name = "ParallelNode")]
+    #[instrument(level = "trace", skip_all, name = "ParallelNode")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -581,7 +581,7 @@ impl ExecutablePlanNode for ParallelNode {
 
 #[async_trait]
 impl ExecutablePlanNode for FlattenNode {
-    #[instrument(level = "trace", skip(self, execution_context), name = "FlattenNode")]
+    #[instrument(level = "trace", skip_all, name = "FlattenNode")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -620,7 +620,7 @@ impl ExecutablePlanNode for FlattenNode {
 
 #[async_trait]
 impl ExecutablePlanNode for ConditionNode {
-    #[instrument(level = "trace", skip(self, execution_context), name = "ConditionNode")]
+    #[instrument(level = "trace", skip_all, name = "ConditionNode")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -660,7 +660,7 @@ impl ExecutablePlanNode for ConditionNode {
 
 #[async_trait]
 impl ExecutableQueryPlan for QueryPlan {
-    #[instrument(level = "trace", skip(self, execution_context))]
+    #[instrument(level = "trace", skip_all)]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -752,7 +752,7 @@ pub struct QueryPlanExecutionContext<'a> {
 }
 
 impl QueryPlanExecutionContext<'_> {
-    #[instrument(level = "trace", skip(self, execution_request))]
+    #[instrument(level = "trace", skip_all)]
     async fn execute(
         &self,
         subgraph_name: &str,
@@ -763,14 +763,7 @@ impl QueryPlanExecutionContext<'_> {
             .await
     }
 
-    #[instrument(
-        level = "trace",
-        skip(self, requires_selections, entity)
-        fields(
-            requires_selections = ?requires_selections,
-            entity = ?entity
-        )
-    )]
+    #[instrument(level = "trace", skip_all)]
     pub fn project_requires(
         &self,
         requires_selections: &Vec<SelectionItem>,
@@ -877,7 +870,7 @@ fn entity_satisfies_type_condition(
 
 /// Recursively traverses the data according to the path segments,
 /// handling '@' for array iteration, and collects the final values.current_data.to_vec()
-#[instrument(level = "trace")]
+#[instrument(level = "trace", skip_all)]
 pub fn traverse_and_collect<'a>(
     current_data: &'a mut Value,
     remaining_path: &[&str],
@@ -904,10 +897,7 @@ pub fn traverse_and_collect<'a>(
 
 // --- Main Function (for testing) ---
 
-#[instrument(
-    level = "trace",
-    skip(selection_set, obj, schema_metadata, variable_values)
-)]
+#[instrument(level = "trace", skip_all)]
 fn project_selection_set_with_map(
     obj: &mut Map<String, Value>,
     errors: &mut Vec<GraphQLError>,
@@ -1044,7 +1034,7 @@ fn project_selection_set_with_map(
     Some(new_obj)
 }
 
-#[instrument(level = "trace", skip(selection_set, schema_metadata, variable_values))]
+#[instrument(level = "trace", skip_all)]
 fn project_selection_set(
     data: &mut Value,
     errors: &mut Vec<GraphQLError>,
@@ -1111,7 +1101,7 @@ fn project_selection_set(
     }
 }
 
-#[instrument(level = "trace", skip(operation, schema_metadata, variable_values))]
+#[instrument(level = "trace", skip_all)]
 pub fn project_data_by_operation(
     data: &mut Value,
     errors: &mut Vec<GraphQLError>,

@@ -18,7 +18,6 @@ use http::{Request, Response};
 use query_plan_executor::execute_query_plan;
 use serde_json::to_value;
 use tower::Service;
-use tracing::trace;
 
 #[derive(Clone, Debug, Default)]
 pub struct ExecutionService {
@@ -85,8 +84,6 @@ impl Service<Request<Body>> for ExecutionService {
                     .get_or_insert_with(HashMap::new)
                     .insert("queryPlan".to_string(), plan_value);
             }
-
-            trace!("execution completed, result: {:?}", execution_result);
 
             let mut response = Json(execution_result).into_response();
             response.headers_mut().insert(

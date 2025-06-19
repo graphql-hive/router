@@ -44,11 +44,7 @@ impl HTTPSubgraphExecutor {
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
-    #[instrument(
-        level = "trace",
-        skip(self, execution_request),
-        name = "HTTPSubgraphExecutor"
-    )]
+    #[instrument(level = "trace", skip_all, name = "HTTPSubgraphExecutor")]
     async fn execute(
         &self,
         subgraph_name: &str,

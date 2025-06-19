@@ -5,3 +5,4 @@ profile.json.gz
 .DS_Store
 ./supergraph.graphql
 ./flamegraph.svg
+trace-*.json

@@ -19,3 +19,9 @@ samply record ./target/profiling/gateway SUPERGRAPH_PATH
 ```
 cargo flamegraph -p gateway --profile profiling -- SUPERGRAPH_PATH
 ```
+
+## Profiling with perfetto
+
+1. Build GW in release mode: `cargo build --release -p gateway`
+2. Run gateway in release mode with the following flag: `PERFETTO_OUT="1" RUST_LOG="trace" ./target/release/gateway bench/supergraph.graphql`
+3. Use the generated `trace-*.json` file and load it into https://ui.perfetto.dev

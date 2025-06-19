@@ -44,6 +44,7 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let perfetto_file = env::var("PERFETTO_OUT").ok().is_some_and(|v| v == "1");
     let log_format = env::var("LOG_FORMAT")
         .map(|v| match v.as_str().to_lowercase() {
             str if str == "json" => LoggingFormat::Json,
@@ -52,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => LoggingFormat::PrettyCompact,
         })
         .unwrap_or(LoggingFormat::PrettyCompact);
-    configure_logging(log_format);
+    let _logger_drop = configure_logging(log_format, perfetto_file);
 
     let expose_query_plan = env::var("EXPOSE_QUERY_PLAN")
         .map(|v| matches!(v.as_str().to_lowercase(), str if str == "true" || str == "1"))
