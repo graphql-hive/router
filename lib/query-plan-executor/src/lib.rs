@@ -93,11 +93,12 @@ fn process_errors_and_extensions(
 fn process_representations_result(
     result: ExecuteForRepresentationsResult,
     representations: &mut Vec<&mut Value>,
+    indexes: Vec<usize>,
     execution_context: &mut QueryPlanExecutionContext<'_>,
 ) {
     if let Some(entities) = result.entities {
         // 3. Process the entities
-        for (entity, index) in entities.into_iter().zip(result.indexes.into_iter()) {
+        for (entity, index) in entities.into_iter().zip(indexes.into_iter()) {
             if let Some(representation) = representations.get_mut(index) {
                 // Merge the entity into the representation
                 deep_merge::deep_merge(representation, entity);
@@ -109,7 +110,6 @@ fn process_representations_result(
 
 struct ExecuteForRepresentationsResult {
     entities: Option<Vec<Value>>,
-    indexes: Vec<usize>,
     errors: Option<Vec<GraphQLError>>,
     extensions: Option<HashMap<String, Value>>,
 }
@@ -129,7 +129,6 @@ trait ExecutableFetchNode {
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
         filtered_representations: Vec<Value>,
-        filtered_repr_indexes: Vec<usize>,
     ) -> ExecuteForRepresentationsResult;
     fn apply_output_rewrites(
         &self,
@@ -230,7 +229,6 @@ impl ExecutableFetchNode for FetchNode {
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
         filtered_representations: Vec<Value>,
-        filtered_repr_indexes: Vec<usize>,
     ) -> ExecuteForRepresentationsResult {
         // 2. Prepare variables for fetch
         let mut variables = self
@@ -273,7 +271,6 @@ impl ExecutableFetchNode for FetchNode {
         };
         ExecuteForRepresentationsResult {
             entities,
-            indexes: filtered_repr_indexes,
             errors: fetch_result.errors,
             extensions: fetch_result.extensions,
         }
@@ -488,9 +485,10 @@ fn process_result(
     );
 }
 
+
 #[async_trait]
 impl ExecutablePlanNode for ParallelNode {
-    #[instrument(level = "trace", skip(self, execution_context), name = "ParallelNode")]
+    #[instrument(skip(self, execution_context), name = "ParallelNode::execute")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -499,7 +497,11 @@ impl ExecutablePlanNode for ParallelNode {
         // Here we call fetch nodes in parallel and non-fetch nodes sequentially.
         let mut fetch_jobs = vec![];
         let mut flatten_jobs = vec![];
+        let mut flatten_hashes = vec![];
         let mut flatten_paths = vec![];
+        let mut flatten_projections: Vec<Vec<Value>> = vec![];
+        let mut flatten_indexes = vec![];
+        let mut flatten_nodes = vec![];
 
         // Collect Fetch node results and non-fetch nodes for sequential execution
         for node in &self.nodes {
@@ -523,32 +525,69 @@ impl ExecutablePlanNode for ParallelNode {
                             continue; // Skip if the child node is not a FetchNode
                         }
                     };
-                    let project_result = fetch_node
-                        .project_representations(execution_context, &collected_representations);
-                    let job = fetch_node.execute_for_projected_representations(
+                    let project_result = fetch_node.project_representations(
                         execution_context,
-                        project_result.representations,
-                        project_result.indexes,
+                        &collected_representations,
                     );
-                    flatten_jobs.push(job);
-                    flatten_paths.push(normalized_path);
+                    let flatten_hash = format!(
+                        "{}-{}",
+                        fetch_node.service_name, fetch_node.operation.operation_str,
+                    );
+                    let flatten_index = match flatten_hashes
+                    .iter()
+                    .position(|h| h == &flatten_hash) {
+                        Some(index) => index,
+                        None => {
+                            flatten_hashes.push(flatten_hash);
+                            flatten_paths.push(vec![]);
+                            flatten_indexes.push(vec![]);
+                            flatten_projections.push(vec![]);
+                            flatten_nodes.push(fetch_node);
+                            flatten_hashes.len() - 1
+                        }
+                    };
+                    flatten_projections[flatten_index]
+                        .extend(project_result.representations);
+                    flatten_indexes[flatten_index].push(project_result.indexes);
+                    flatten_paths[flatten_index].push(normalized_path);
                 }
                 _ => {}
             }
         }
 
+        for (flatten_node, representations) in flatten_nodes.into_iter().zip(flatten_projections.into_iter())
+        {   
+            let flatten_job = flatten_node.execute_for_projected_representations(
+                execution_context,
+                representations,
+            );
+            flatten_jobs.push(flatten_job);
+        }
+
         let mut all_errors = vec![];
         let mut all_extensions = vec![];
         let flatten_results = futures::future::join_all(flatten_jobs).await;
-        for (result, path) in flatten_results.into_iter().zip(flatten_paths) {
-            // Process FlattenNode results
+        for ((result, paths), indexes) in flatten_results.into_iter().zip(flatten_paths).zip(flatten_indexes.into_iter()) {
             if let Some(entities) = result.entities {
+                let mut overall_index = 0;
+                let mut path = paths.get(overall_index).unwrap();
+                let mut index_arr = indexes.get(overall_index).unwrap();
                 let mut collected_representations = traverse_and_collect(data, &path);
-                for (entity, index) in entities.into_iter().zip(result.indexes.into_iter()) {
-                    if let Some(representation) = collected_representations.get_mut(index) {
+                let mut entity_index = 0;
+                for entity in entities {
+                    if index_arr.len() == entity_index {
+                        entity_index = 0; // Reset entity index if we reach the end of the index array
+                        overall_index += 1;
+                        path = paths.get(overall_index).unwrap();
+                        index_arr = indexes.get(overall_index).unwrap();
+                        collected_representations = traverse_and_collect(data, &path);
+                    }
+                    let representation_index = index_arr.get(entity_index).unwrap();
+                    if let Some(representation) = collected_representations.get_mut(*representation_index) {
                         // Merge the entity into the representation
                         deep_merge::deep_merge(representation, entity);
                     }
+                    entity_index += 1;
                 }
             }
             // Extend errors and extensions from the result
@@ -579,6 +618,7 @@ impl ExecutablePlanNode for ParallelNode {
     }
 }
 
+
 #[async_trait]
 impl ExecutablePlanNode for FlattenNode {
     #[instrument(level = "trace", skip(self, execution_context), name = "FlattenNode")]
@@ -602,11 +642,10 @@ impl ExecutablePlanNode for FlattenNode {
                     .execute_for_projected_representations(
                         execution_context,
                         filtered_representations,
-                        filtered_repr_indexes,
                     )
                     .await;
                 // Process the result
-                process_representations_result(result, &mut representations, execution_context);
+                process_representations_result(result, &mut representations, filtered_repr_indexes, execution_context);
             }
             _ => {
                 unimplemented!(
