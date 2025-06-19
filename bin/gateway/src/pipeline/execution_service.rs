@@ -18,7 +18,6 @@ use http::{Request, Response};
 use query_plan_executor::execute_query_plan;
 use serde_json::to_value;
 use tower::Service;
-use tracing::trace;
 
 #[derive(Clone, Debug, Default)]
 pub struct ExecutionService {

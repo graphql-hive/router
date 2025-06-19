@@ -21,7 +21,7 @@ impl SubgraphExecutorMap {
         }
     }
 
-    #[instrument(level = "trace", name = "subgraph_execute", skip_all)]
+    #[instrument(level = "trace", name = "subgraph_execute", skip_all, fields(subgraph_name = %subgraph_name, execution_request = ?execution_request))]
     pub async fn execute(
         &self,
         subgraph_name: &str,

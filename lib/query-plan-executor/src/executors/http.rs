@@ -21,7 +21,7 @@ impl HTTPSubgraphExecutor {
         &self,
         execution_request: ExecutionRequest,
     ) -> Result<ExecutionResult, reqwest::Error> {
-        println!("Executing HTTP request to subgraph at {}", self.endpoint);
+        trace!("Executing HTTP request to subgraph at {}", self.endpoint);
         self.http_client
             .post(&self.endpoint)
             .json(&execution_request)
@@ -34,7 +34,7 @@ impl HTTPSubgraphExecutor {
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
-    #[instrument(level = "trace", skip(self), name = "http_subgraph_execute")]
+    #[instrument(level = "trace", skip(self), name = "http_subgraph_execute", fields(endpoint = %self.endpoint))]
     async fn execute(&self, execution_request: ExecutionRequest) -> ExecutionResult {
         self._execute(execution_request).await.unwrap_or_else(|e| {
             error!("Failed to execute request to subgraph: {}", e);

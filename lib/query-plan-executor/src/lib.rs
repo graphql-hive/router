@@ -207,6 +207,7 @@ impl ExecutableFetchNode for FetchNode {
             extensions: None,
         };
         let mut fetch_result = execution_context
+            .subgraph_executor_map
             .execute(&self.service_name, execution_request)
             .await;
 
@@ -286,6 +287,7 @@ impl ExecutableFetchNode for FetchNode {
 
         // 3. Execute the fetch operation
         let fetch_result = execution_context
+            .subgraph_executor_map
             .execute(&self.service_name, execution_request)
             .await;
 
@@ -327,7 +329,7 @@ impl ExecutableFetchNode for FetchNode {
 
     #[instrument(
         level = "debug",
-        skip(variable_values),
+        skip(self, variable_values),
         name = "prepare_variables_for_fetch_node"
     )]
     fn prepare_variables_for_fetch_node(
@@ -863,17 +865,6 @@ pub struct QueryPlanExecutionContext<'a> {
 }
 
 impl QueryPlanExecutionContext<'_> {
-    #[instrument(level = "trace", skip_all)]
-    pub async fn execute(
-        &self,
-        subgraph_name: &str,
-        execution_request: ExecutionRequest,
-    ) -> ExecutionResult {
-        self.subgraph_executor_map
-            .execute(subgraph_name, execution_request)
-            .await
-    }
-
     #[instrument(
         level = "trace",
         skip_all,
