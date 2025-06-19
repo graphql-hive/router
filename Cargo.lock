@@ -1909,7 +1909,6 @@ dependencies = [
  "graphql-tools",
  "insta",
  "query-planner",
- "rayon",
  "reqwest",
  "serde",
  "serde_json",
