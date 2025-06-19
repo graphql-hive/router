@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tracing::{debug, instrument, warn};
+use tracing::{instrument, warn};
 
 use crate::executors::common::{SubgraphExecutor, SubgraphExecutorBoxedArc};
 
@@ -21,16 +21,12 @@ impl SubgraphExecutorMap {
         }
     }
 
-    #[instrument(level = "trace", skip(self, execution_request))]
+    #[instrument(level = "trace", name = "subgraph_execute", skip_all)]
     pub async fn execute(
         &self,
         subgraph_name: &str,
         execution_request: crate::ExecutionRequest,
     ) -> crate::ExecutionResult {
-        debug!(
-            "ExecutionRequest; Subgraph: {} Query:{} Variables: {:?}",
-            subgraph_name, execution_request.query, execution_request.variables
-        );
         match self.inner.get(subgraph_name) {
             Some(executor) => executor.execute(execution_request).await,
             None => {
