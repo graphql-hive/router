@@ -27,7 +27,7 @@ impl QueryPlanService {
 
 #[async_trait::async_trait]
 impl GatewayPipelineLayer for QueryPlanService {
-    #[tracing::instrument(level = "debug", name = "QueryPlanService", skip_all)]
+    #[tracing::instrument(level = "trace", name = "QueryPlanService", skip_all)]
     async fn process(
         &self,
         mut req: Request<Body>,
@@ -51,12 +51,12 @@ impl GatewayPipelineLayer for QueryPlanService {
 
         let query_plan_arc = match app_state.plan_cache.get(&plan_cache_key).await {
             Some(plan) => {
-                debug!("Plan with hash key {} was found in cache", plan_cache_key);
+                trace!("Plan with hash key {} was found in cache", plan_cache_key);
 
                 plan
             }
             None => {
-                debug!(
+                trace!(
                     "Plan with hash key {} was not found in cache, planning...",
                     plan_cache_key
                 );
@@ -80,9 +80,10 @@ impl GatewayPipelineLayer for QueryPlanService {
                     }
                 };
 
-                debug!(
+                trace!(
                     "Plan with hash key {} built and stored in cache:\n{}",
-                    plan_cache_key, plan
+                    plan_cache_key,
+                    plan
                 );
 
                 trace!("complete plan object:\n{:?}", plan);

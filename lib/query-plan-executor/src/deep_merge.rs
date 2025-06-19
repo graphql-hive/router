@@ -2,6 +2,7 @@ use serde_json::Value;
 use tracing::instrument;
 
 // Deeply merges two serde_json::Values (mutates target in place)
+#[instrument(level = "trace", skip_all)]
 pub fn deep_merge(target: &mut Value, source: Value) {
     match (target, source) {
         // 1. Source is Null: Do nothing

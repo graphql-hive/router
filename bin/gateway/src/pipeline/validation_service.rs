@@ -25,7 +25,7 @@ impl GraphQLValidationService {
 
 #[async_trait::async_trait]
 impl GatewayPipelineLayer for GraphQLValidationService {
-    #[tracing::instrument(level = "debug", name = "GraphQLValidationService", skip_all)]
+    #[tracing::instrument(level = "trace", name = "GraphQLValidationService", skip_all)]
     async fn process(
         &self,
         req: Request<Body>,

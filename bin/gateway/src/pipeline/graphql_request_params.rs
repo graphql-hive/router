@@ -66,7 +66,7 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
 
 #[async_trait::async_trait]
 impl GatewayPipelineLayer for GraphQLRequestParamsExtractor {
-    #[tracing::instrument(level = "debug", name = "GraphQLRequestParamsExtractor", skip_all)]
+    #[tracing::instrument(level = "trace", name = "GraphQLRequestParamsExtractor", skip_all)]
     async fn process(
         &self,
         mut req: Request<Body>,

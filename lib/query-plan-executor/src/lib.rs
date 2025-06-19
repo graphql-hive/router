@@ -12,7 +12,7 @@ use query_planner::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::{collections::HashMap, vec};
-use tracing::{debug, instrument, warn}; // For reading file in main
+use tracing::{instrument, warn};
 
 use crate::{
     deep_merge::deep_merge_objects, executors::common::SubgraphExecutor,
@@ -163,6 +163,7 @@ struct ProjectRepresentationsResult {
 
 #[async_trait]
 impl ExecutableFetchNode for FetchNode {
+    #[instrument(level = "debug", skip(self, execution_context))]
     async fn execute_for_root(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
@@ -757,10 +758,6 @@ impl QueryPlanExecutionContext<'_> {
         subgraph_name: &str,
         execution_request: ExecutionRequest,
     ) -> ExecutionResult {
-        debug!(
-            "ExecutionRequest; Subgraph: {} Query:{} Variables: {:?}",
-            subgraph_name, execution_request.query, execution_request.variables
-        );
         self.executor
             .execute(subgraph_name, execution_request)
             .await

@@ -32,7 +32,7 @@ impl CoerceVariablesService {
 
 #[async_trait::async_trait]
 impl GatewayPipelineLayer for CoerceVariablesService {
-    #[tracing::instrument(level = "debug", name = "CoerceVariablesService", skip_all)]
+    #[tracing::instrument(level = "trace", name = "CoerceVariablesService", skip_all)]
     async fn process(
         &self,
         mut req: Request<Body>,

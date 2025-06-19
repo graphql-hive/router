@@ -15,7 +15,7 @@ use crate::pipeline::gateway_layer::{
 use crate::pipeline::http_request_params::HttpRequestParams;
 use crate::pipeline::parser_service::GraphQLParserPayload;
 use crate::shared_state::GatewaySharedState;
-use tracing::{debug, error, trace};
+use tracing::{error, trace};
 
 #[derive(Debug, Clone)]
 pub struct GraphQLNormalizationPayload {
@@ -38,7 +38,7 @@ impl GraphQLOperationNormalizationService {
 #[async_trait::async_trait]
 impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
     #[tracing::instrument(
-        level = "debug",
+        level = "trace",
         name = "GraphQLOperationNormalizationService",
         skip_all
     )]
@@ -73,7 +73,6 @@ impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
             execution_params.operation_name.as_deref(),
         ) {
             Ok(doc) => {
-                debug!("Successfully normalized GraphQL operation");
                 trace!(
                     "Successfully normalized GraphQL operation (operation name={:?}): {}",
                     doc.operation_name,

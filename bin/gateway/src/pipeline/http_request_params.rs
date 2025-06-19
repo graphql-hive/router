@@ -34,7 +34,7 @@ impl HttpRequestParamsExtractor {
 
 #[async_trait::async_trait]
 impl GatewayPipelineLayer for HttpRequestParamsExtractor {
-    #[tracing::instrument(level = "debug", name = "HttpRequestParamsExtractor", skip_all)]
+    #[tracing::instrument(level = "trace", name = "HttpRequestParamsExtractor", skip_all)]
     async fn process(
         &self,
         mut req: Request<Body>,
