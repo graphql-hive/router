@@ -189,7 +189,6 @@ fn project_selection_set_with_map(
                         response_key.to_string(),
                         schema_metadata.introspection_schema_root_json.clone(),
                     );
-                    continue;
                 }
                 let field_val = obj.get_mut(&response_key);
                 match (field_type, field_val) {

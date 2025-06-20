@@ -68,6 +68,7 @@ impl Service<Request<Body>> for ExecutionService {
                 &variable_payload.variables_map,
                 &app_state.schema_metadata,
                 &normalized_payload.normalized_document.operation,
+                normalized_payload.has_introspection,
                 expose_query_plan,
             )
             .await;

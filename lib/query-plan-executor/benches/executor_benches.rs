@@ -45,14 +45,14 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
             let schema_metadata = black_box(&schema_metadata);
             let operation = black_box(&normalized_operation);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
-            let has_introspection = false;
             let result = execute_query_plan_and_serialize(
                 query_plan,
                 subgraph_executor_map,
                 &None,
                 schema_metadata,
                 operation,
-                has_introspection,
+                false,
+                false,
             )
             .await;
             black_box(result)
@@ -134,14 +134,14 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
             let schema_metadata = black_box(&schema_metadata);
             let operation = black_box(&normalized_operation);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
-            let has_introspection = false;
             let result = execute_query_plan_and_serialize(
                 query_plan,
                 subgraph_executor_map,
                 &None,
                 schema_metadata,
                 operation,
-                has_introspection,
+                false,
+                false,
             )
             .await;
             black_box(result)

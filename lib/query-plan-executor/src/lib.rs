@@ -1017,6 +1017,7 @@ pub async fn execute_query_plan_and_serialize(
     variable_values: &Option<HashMap<String, Value>>,
     schema_metadata: &SchemaMetadata,
     operation: &OperationDefinition,
+    has_introspection: bool,
     expose_query_plan: bool,
 ) -> String {
     let mut result_data = Value::Null; // Initialize data as Null
@@ -1032,6 +1033,9 @@ pub async fn execute_query_plan_and_serialize(
     query_plan
         .execute(&mut execution_context, &mut result_data)
         .await;
+    if result_data.is_null() && has_introspection {
+        result_data = Value::Object(Map::new()); // Ensure data is an empty object if it was null
+    }
     if expose_query_plan {
         execution_context
             .extensions
