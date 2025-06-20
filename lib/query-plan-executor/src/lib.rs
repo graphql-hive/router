@@ -35,7 +35,7 @@ struct NodeResult {
 }
 
 impl NodeResult {
-    fn apply(self, final_data: &mut Value) {
+    fn apply(self, final_data: &mut Value, execution_context: &mut QueryPlanExecutionContext<'_>) {
         if self.json_path == "/" {
             // If the path is root, we can directly set the data
             deep_merge::deep_merge(final_data, self.data);
@@ -51,6 +51,7 @@ impl NodeResult {
                 self.json_path
             );
         }
+        process_errors_and_extensions(execution_context, self.errors, self.extensions);
     }
 }
 
@@ -237,7 +238,7 @@ impl ExecutablePlanNode for FetchNode {
     ) {
         let result = self.execute_for_root(execution_context).await;
         // Apply the result to the data
-        result.apply(data);
+        result.apply(data, execution_context);
     }
 }
 
@@ -615,7 +616,7 @@ impl ExecutablePlanNode for ParallelNode {
         let results = futures::future::join_all(jobs).await;
         for result in results {
             for node_result in result {
-                node_result.apply(data);
+                node_result.apply(data, execution_context);
             }
         }
     }
@@ -624,54 +625,6 @@ impl ExecutablePlanNode for ParallelNode {
 struct CollectedRepresentation {
     representation: Value, // The representation data
     json_path: String,     // The path to the representation in the JSON structure
-}
-
-
-fn collect_paths(
-    root_data: &Value,
-    base_path: &str,
-    remaining_path: &[&str],
-) -> Vec<String> {
-    // If @, handle arrays
-    if remaining_path.is_empty() {
-        return vec![base_path.to_string()];
-    }
-    let current_segment = remaining_path[0];
-    let next_path = &remaining_path[1..];
-    match (current_segment, root_data) {
-        ("@", Value::Array(arr)) => {
-            arr.iter().enumerate().flat_map(|(index, item)| {
-                let new_path = format!("{}/{}", base_path, index);
-                collect_paths(
-                    item,
-                    &new_path,
-                    next_path,
-                )
-            }).collect()
-        },
-        (_, Value::Object(obj)) => {
-            // If current segment is a key in the object
-            if let Some(value) = obj.get(current_segment) {
-                let new_path = if base_path == "/" {
-                    format!("/{}", current_segment)
-                } else {
-                    format!("{}/{}", base_path, current_segment)
-                };
-                collect_paths(
-                    value,
-                    &new_path,
-                    next_path,
-                )
-            } else {
-                // If the key does not exist, return empty paths
-                vec![]
-            }
-        }
-        _ => {
-            // If no match, return empty paths
-            vec![]
-        }
-    }
 }
 
 fn collect_representations(
@@ -696,8 +649,10 @@ fn collect_representations(
     let current_segment = remaining_path[0];
     let next_path = &remaining_path[1..];
     match (current_segment, root_data) {
-        ("@", Value::Array(arr)) => {
-            arr.iter().enumerate().flat_map(|(index, item)| {
+        ("@", Value::Array(arr)) => arr
+            .iter()
+            .enumerate()
+            .flat_map(|(index, item)| {
                 let new_path = format!("{}/{}", base_path, index);
                 collect_representations(
                     item,
@@ -706,8 +661,8 @@ fn collect_representations(
                     execution_context,
                     requires_items,
                 )
-            }).collect()
-        },
+            })
+            .collect(),
         (_, Value::Object(obj)) => {
             // If current segment is a key in the object
             if let Some(value) = obj.get(current_segment) {
