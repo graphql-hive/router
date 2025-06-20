@@ -30,8 +30,8 @@ const TYPENAME_FIELD: &str = "__typename";
 struct NodeResult {
     data: Value,                                // The data to put into the JSON structure
     json_path: String,                          // Path to the node in the JSON structure
-    _errors: Option<Vec<GraphQLError>>,          // Errors that occurred during execution
-    _extensions: Option<HashMap<String, Value>>, // Extensions to include in the result
+    errors: Option<Vec<GraphQLError>>,          // Errors that occurred during execution
+    extensions: Option<HashMap<String, Value>>, // Extensions to include in the result
 }
 
 impl NodeResult {
