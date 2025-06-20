@@ -94,24 +94,20 @@ fn project_selection_set(
             format!("\"{}\"", value) // Return the string value wrapped in quotes
         }
         Value::Array(arr) => {
-            let mut items = "[".to_string();
-            for item in arr {
-                let projected = project_selection_set(
-                    item,
-                    errors,
-                    selection_set,
-                    type_name,
-                    schema_metadata,
-                    variable_values,
-                );
-                items.push_str(&projected);
-                items.push(',');
-            }
-            if items.ends_with(',') {
-                items.pop(); // Remove the trailing comma
-            }
-            items.push(']');
-            items
+            let items = arr
+                .iter_mut()
+                .map(|item| {
+                    project_selection_set(
+                        item,
+                        errors,
+                        selection_set,
+                        type_name,
+                        schema_metadata,
+                        variable_values,
+                    )
+                })
+                .collect::<Vec<_>>();
+            format!("[{}]", items.join(","))
         }
         Value::Object(obj) => {
             let items = project_selection_set_with_map(
@@ -122,7 +118,7 @@ fn project_selection_set(
                 schema_metadata,
                 variable_values,
             );
-            format!("{{{}}}", items.trim_end_matches(","))
+            format!("{{{}}}", items.join(","))
         }
     }
 }
@@ -143,14 +139,14 @@ fn project_selection_set_with_map(
     type_name: &str,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
-) -> String {
+) -> Vec<String> {
     let type_name = match obj.get(TYPENAME_FIELD) {
         Some(Value::String(type_name)) => type_name,
         _ => type_name,
     }
     .to_string();
     let field_map = schema_metadata.type_fields.get(&type_name);
-    let mut items = "".to_string();
+    let mut items = vec![];
     for selection in &selection_set.items {
         match selection {
             SelectionItem::Field(field) => {
@@ -179,7 +175,7 @@ fn project_selection_set_with_map(
                 }
                 let response_key = field.alias.as_ref().unwrap_or(&field.name).to_string();
                 if field.name == TYPENAME_FIELD {
-                    items.push_str(&format!("\"{}\":\"{}\",", response_key, type_name));
+                    items.push(format!("\"{}\":\"{}\"", response_key, type_name));
                     continue;
                 }
                 let field_map = field_map.unwrap();
@@ -201,11 +197,11 @@ fn project_selection_set_with_map(
                             schema_metadata,
                             variable_values,
                         );
-                        items.push_str(&format!("\"{}\":{},", response_key, projected));
+                        items.push(format!("\"{}\":{}", response_key, projected));
                     }
                     (Some(_field_type), None) => {
                         // If the field is not found in the object, set it to Null
-                        items.push_str(&format!("\"{}\":null,", response_key));
+                        items.push(format!("\"{}\":null", response_key));
                     }
                     (None, _) => {
                         // It won't reach here already, as the selection should be validated before projection
@@ -230,7 +226,7 @@ fn project_selection_set_with_map(
                         schema_metadata,
                         variable_values,
                     );
-                    items.push_str(&projected);
+                    items.extend(projected);
                 }
             }
         }
