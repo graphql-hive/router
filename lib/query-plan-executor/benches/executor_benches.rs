@@ -9,9 +9,8 @@ use query_planner::ast::selection_item::SelectionItem;
 use query_planner::ast::selection_set::InlineFragmentSelection;
 use std::hint::black_box;
 
-use query_plan_executor::execute_query_plan;
 use query_plan_executor::schema_metadata::SchemaWithMetadata;
-use query_plan_executor::ExecutableQueryPlan;
+use query_plan_executor::{execute_query_plan_and_serialize, ExecutableQueryPlan};
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::utils::parsing::parse_operation;
 use query_planner::utils::parsing::parse_schema;
@@ -47,7 +46,7 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
             let operation = black_box(&normalized_operation);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
             let has_introspection = false;
-            let result = execute_query_plan(
+            let result = execute_query_plan_and_serialize(
                 query_plan,
                 subgraph_executor_map,
                 &None,
@@ -136,7 +135,7 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
             let operation = black_box(&normalized_operation);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
             let has_introspection = false;
-            let result = execute_query_plan(
+            let result = execute_query_plan_and_serialize(
                 query_plan,
                 subgraph_executor_map,
                 &None,
@@ -221,16 +220,19 @@ fn project_data_by_operation(c: &mut Criterion) {
             let data = black_box(&mut data);
             let mut errors = vec![];
             let errors = black_box(&mut errors);
+            let mut extensions = HashMap::new();
+            let extensions = black_box(&mut extensions);
             let operation = black_box(&operation);
             let schema_metadata = black_box(&schema_metadata);
-            query_plan_executor::project_data_by_operation(
+            let str = query_plan_executor::projection::project_by_operation(
                 data,
                 errors,
+                extensions,
                 operation,
                 schema_metadata,
                 &None,
             );
-            black_box(());
+            black_box(str);
         });
     });
 }

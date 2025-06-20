@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
@@ -11,12 +10,9 @@ use crate::pipeline::normalize_service::GraphQLNormalizationPayload;
 use crate::pipeline::query_plan_service::QueryPlanPayload;
 use crate::shared_state::GatewaySharedState;
 use axum::body::Body;
-use axum::response::IntoResponse;
-use axum::Json;
 use http::header::CONTENT_TYPE;
 use http::{Request, Response};
-use query_plan_executor::execute_query_plan;
-use serde_json::to_value;
+use query_plan_executor::{execute_query_plan_and_serialize};
 use tower::Service;
 
 #[derive(Clone, Debug, Default)]
@@ -66,26 +62,19 @@ impl Service<Request<Body>> for ExecutionService {
                 .get::<HttpRequestParams>()
                 .expect("HttpRequestParams missing");
 
-            let mut execution_result = execute_query_plan(
+            let execution_result = execute_query_plan_and_serialize(
                 &query_plan_payload.query_plan,
                 &app_state.subgraph_executor_map,
                 &variable_payload.variables_map,
                 &app_state.schema_metadata,
                 &normalized_payload.normalized_document.operation,
-                normalized_payload.has_introspection,
+                expose_query_plan,
             )
             .await;
 
-            if expose_query_plan {
-                let plan_value = to_value(query_plan_payload.query_plan.as_ref()).unwrap();
-
-                execution_result
-                    .extensions
-                    .get_or_insert_with(HashMap::new)
-                    .insert("queryPlan".to_string(), plan_value);
-            }
-
-            let mut response = Json(execution_result).into_response();
+            let mut response = Response::new(
+                Body::from(execution_result)
+            );
             response.headers_mut().insert(
                 CONTENT_TYPE,
                 http_request_params.response_content_type.clone(),

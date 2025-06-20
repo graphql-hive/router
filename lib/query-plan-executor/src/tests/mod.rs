@@ -35,7 +35,7 @@ fn query_executor_pipeline_locally() {
         subgraph_executor_map.insert_boxed_arc("inventory".to_string(), inventory.to_boxed_arc());
         subgraph_executor_map.insert_boxed_arc("products".to_string(), products.to_boxed_arc());
         subgraph_executor_map.insert_boxed_arc("reviews".to_string(), reviews.to_boxed_arc());
-        let result = crate::execute_query_plan(
+        let result = crate::execute_query_plan_and_serialize(
             &query_plan,
             &subgraph_executor_map,
             &None,
@@ -44,9 +44,6 @@ fn query_executor_pipeline_locally() {
             false,
         )
         .await;
-        insta::assert_snapshot!(format!(
-            "{}",
-            serde_json::to_string_pretty(&result).unwrap_or_default()
-        ));
+        insta::assert_snapshot!(result);
     });
 }
