@@ -22,13 +22,17 @@ impl HTTPSubgraphExecutor {
         execution_request: ExecutionRequest,
     ) -> Result<ExecutionResult, reqwest::Error> {
         trace!("Executing HTTP request to subgraph at {}", self.endpoint);
-        self.http_client
-            .post(&self.endpoint)
+        let http_client = self.http_client.clone();
+        let endpoint = self.endpoint.clone();
+        tokio::spawn(async move {
+            http_client
+            .post(&endpoint)
             .json(&execution_request)
             .send()
             .await?
             .json::<ExecutionResult>()
             .await
+        }).await.unwrap()
     }
 }
 
@@ -36,16 +40,14 @@ impl HTTPSubgraphExecutor {
 impl SubgraphExecutor for HTTPSubgraphExecutor {
     #[instrument(level = "trace", skip(self), name = "http_subgraph_execute", fields(endpoint = %self.endpoint))]
     async fn execute(&self, execution_request: ExecutionRequest) -> ExecutionResult {
-        tokio::spawn(
-            self._execute(execution_request).await.unwrap_or_else(|e| {
-                error!("Failed to execute request to subgraph: {}", e);
-                trace!("network error: {:?}", e);
-    
-                ExecutionResult::from_error_message(format!(
-                    "Error executing subgraph {}: {}",
-                    self.endpoint, e
-                ))
-            })
-        )
+        self._execute(execution_request).await.unwrap_or_else(|e| {
+            error!("Failed to execute request to subgraph: {}", e);
+            trace!("network error: {:?}", e);
+
+            ExecutionResult::from_error_message(format!(
+                "Error executing subgraph {}: {}",
+                self.endpoint, e
+            ))
+        })
     }
 }
