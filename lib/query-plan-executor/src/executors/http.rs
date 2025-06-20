@@ -36,14 +36,16 @@ impl HTTPSubgraphExecutor {
 impl SubgraphExecutor for HTTPSubgraphExecutor {
     #[instrument(level = "trace", skip(self), name = "http_subgraph_execute", fields(endpoint = %self.endpoint))]
     async fn execute(&self, execution_request: ExecutionRequest) -> ExecutionResult {
-        self._execute(execution_request).await.unwrap_or_else(|e| {
-            error!("Failed to execute request to subgraph: {}", e);
-            trace!("network error: {:?}", e);
-
-            ExecutionResult::from_error_message(format!(
-                "Error executing subgraph {}: {}",
-                self.endpoint, e
-            ))
-        })
+        tokio::spawn(
+            self._execute(execution_request).await.unwrap_or_else(|e| {
+                error!("Failed to execute request to subgraph: {}", e);
+                trace!("network error: {:?}", e);
+    
+                ExecutionResult::from_error_message(format!(
+                    "Error executing subgraph {}: {}",
+                    self.endpoint, e
+                ))
+            })
+        )
     }
 }
