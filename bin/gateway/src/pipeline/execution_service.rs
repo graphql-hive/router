@@ -12,7 +12,7 @@ use crate::shared_state::GatewaySharedState;
 use axum::body::Body;
 use http::header::CONTENT_TYPE;
 use http::{Request, Response};
-use query_plan_executor::{execute_query_plan_and_serialize};
+use query_plan_executor::execute_query_plan_and_serialize;
 use tower::Service;
 
 #[derive(Clone, Debug, Default)]
@@ -72,9 +72,7 @@ impl Service<Request<Body>> for ExecutionService {
             )
             .await;
 
-            let mut response = Response::new(
-                Body::from(execution_result)
-            );
+            let mut response = Response::new(Body::from(execution_result));
             response.headers_mut().insert(
                 CONTENT_TYPE,
                 http_request_params.response_content_type.clone(),

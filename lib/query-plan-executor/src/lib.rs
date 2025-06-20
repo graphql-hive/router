@@ -1,8 +1,6 @@
 use async_trait::async_trait;
 use query_planner::{
-    ast::{
-        operation::OperationDefinition, selection_item::SelectionItem,
-    },
+    ast::{operation::OperationDefinition, selection_item::SelectionItem},
     planner::plan_nodes::{
         ConditionNode, FetchNode, FetchRewrite, FlattenNode, KeyRenamer, ParallelNode, PlanNode,
         QueryPlan, SequenceNode, ValueSetter,
@@ -13,10 +11,7 @@ use serde_json::{json, to_value, Map, Value};
 use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
-use crate::{
-    executors::map::SubgraphExecutorMap,
-    schema_metadata::SchemaMetadata,
-};
+use crate::{executors::map::SubgraphExecutorMap, schema_metadata::SchemaMetadata};
 pub mod deep_merge;
 pub mod executors;
 pub mod introspection;
@@ -1045,7 +1040,7 @@ pub async fn execute_query_plan_and_serialize(
     projection::project_by_operation(
         &mut result_data,
         &mut execution_context.errors,
-        &mut execution_context.extensions,
+        &execution_context.extensions,
         operation,
         schema_metadata,
         variable_values,
