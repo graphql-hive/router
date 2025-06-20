@@ -27,14 +27,45 @@ mod value_from_ast;
 pub mod variables;
 
 const TYPENAME_FIELD: &str = "__typename";
+struct NodeResult {
+    data: Value,                                // The data to put into the JSON structure
+    json_path: String,                          // Path to the node in the JSON structure
+    _errors: Option<Vec<GraphQLError>>,          // Errors that occurred during execution
+    _extensions: Option<HashMap<String, Value>>, // Extensions to include in the result
+}
+
+impl NodeResult {
+    fn apply(self, final_data: &mut Value) {
+        if self.json_path == "/" {
+            // If the path is root, we can directly set the data
+            deep_merge::deep_merge(final_data, self.data);
+            return;
+        }
+        let current_data = final_data.pointer_mut(&self.json_path);
+        if let Some(data) = current_data {
+            // Merge the data into the existing data at the path
+            deep_merge::deep_merge(data, self.data);
+        } else {
+            println!(
+                "NodeResult::apply: No data found at path {}",
+                self.json_path
+            );
+        }
+    }
+}
 
 #[async_trait]
 trait ExecutablePlanNode {
-    async fn execute(
+    async fn execute_mut(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
         data: &mut Value,
     );
+    async fn execute_immut(
+        &self,
+        execution_context: &QueryPlanExecutionContext<'_>,
+        data: &Value,
+    ) -> Vec<NodeResult>;
 }
 
 #[async_trait]
@@ -48,28 +79,54 @@ pub trait ExecutableQueryPlan {
 
 #[async_trait]
 impl ExecutablePlanNode for PlanNode {
-    async fn execute(
+    async fn execute_mut(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
         data: &mut Value,
     ) {
         match self {
-            PlanNode::Fetch(node) => node.execute(execution_context, data).await,
-            PlanNode::Sequence(node) => node.execute(execution_context, data).await,
-            PlanNode::Parallel(node) => node.execute(execution_context, data).await,
-            PlanNode::Flatten(node) => node.execute(execution_context, data).await,
-            PlanNode::Condition(node) => node.execute(execution_context, data).await,
+            PlanNode::Fetch(node) => node.execute_mut(execution_context, data).await,
+            PlanNode::Sequence(node) => node.execute_mut(execution_context, data).await,
+            PlanNode::Parallel(node) => node.execute_mut(execution_context, data).await,
+            PlanNode::Flatten(node) => node.execute_mut(execution_context, data).await,
+            PlanNode::Condition(node) => node.execute_mut(execution_context, data).await,
             PlanNode::Subscription(node) => {
                 // Subscriptions typically use a different protocol.
                 // Execute the primary node for now.
                 warn!(
             "Executing SubscriptionNode's primary as a normal node. Real subscription handling requires a different mechanism."
         );
-                node.primary.execute(execution_context, data).await
+                node.primary.execute_mut(execution_context, data).await
             }
             PlanNode::Defer(_) => {
                 // Defer/Deferred execution is complex.
                 warn!("DeferNode execution is not fully implemented.");
+            }
+        }
+    }
+    async fn execute_immut(
+        &self,
+        execution_context: &QueryPlanExecutionContext<'_>,
+        data: &Value,
+    ) -> Vec<NodeResult> {
+        match self {
+            PlanNode::Fetch(node) => node.execute_immut(execution_context, data).await,
+            PlanNode::Sequence(node) => node.execute_immut(execution_context, data).await,
+            PlanNode::Parallel(node) => node.execute_immut(execution_context, data).await,
+            PlanNode::Flatten(node) => node.execute_immut(execution_context, data).await,
+            PlanNode::Condition(node) => node.execute_immut(execution_context, data).await,
+            PlanNode::Subscription(node) => {
+                // Subscriptions typically use a different protocol.
+                // Execute the primary node for now.
+                warn!(
+            "Executing SubscriptionNode's primary as a normal node. Real subscription handling requires a different mechanism."
+        );
+                node.primary.execute_immut(execution_context, data).await
+            }
+            PlanNode::Defer(_) => {
+                // Defer/Deferred execution is complex.
+                warn!("DeferNode execution is not fully implemented.");
+                vec![]
             }
         }
     }
@@ -106,6 +163,7 @@ fn process_errors_and_extensions(
 )]
 fn process_representations_result(
     result: ExecuteForRepresentationsResult,
+    indexes: Vec<usize>,
     representations: &mut Vec<&mut Value>,
     execution_context: &mut QueryPlanExecutionContext<'_>,
 ) {
@@ -114,7 +172,7 @@ fn process_representations_result(
             "Processing representations result: {} entities",
             entities.len()
         );
-        for (entity, index) in entities.into_iter().zip(result.indexes.into_iter()) {
+        for (entity, index) in entities.into_iter().zip(indexes.into_iter()) {
             if let Some(representation) = representations.get_mut(index) {
                 trace!(
                     "Merging entity into representation at index {}: {:?}",
@@ -130,7 +188,6 @@ fn process_representations_result(
 
 struct ExecuteForRepresentationsResult {
     entities: Option<Vec<Value>>,
-    indexes: Vec<usize>,
     errors: Option<Vec<GraphQLError>>,
     extensions: Option<HashMap<String, Value>>,
 }
@@ -140,7 +197,7 @@ trait ExecutableFetchNode {
     async fn execute_for_root(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
-    ) -> ExecutionResult;
+    ) -> NodeResult;
     fn project_representations(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
@@ -150,7 +207,6 @@ trait ExecutableFetchNode {
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
         filtered_representations: Vec<Value>,
-        filtered_repr_indexes: Vec<usize>,
     ) -> ExecuteForRepresentationsResult;
     fn apply_output_rewrites(
         &self,
@@ -166,14 +222,22 @@ trait ExecutableFetchNode {
 #[async_trait]
 impl ExecutablePlanNode for FetchNode {
     #[instrument(level = "debug", skip_all, name = "FetchNode::execute")]
-    async fn execute(
+    async fn execute_immut(
+        &self,
+        execution_context: &QueryPlanExecutionContext<'_>,
+        _data: &Value,
+    ) -> Vec<NodeResult> {
+        let result = self.execute_for_root(execution_context).await;
+        vec![result]
+    }
+    async fn execute_mut(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
         data: &mut Value,
     ) {
-        let fetch_result = self.execute_for_root(execution_context).await;
-
-        process_root_result(fetch_result, execution_context, data);
+        let result = self.execute_for_root(execution_context).await;
+        // Apply the result to the data
+        result.apply(data);
     }
 }
 
@@ -197,7 +261,7 @@ impl ExecutableFetchNode for FetchNode {
     async fn execute_for_root(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
-    ) -> ExecutionResult {
+    ) -> NodeResult {
         let variables = self.prepare_variables_for_fetch_node(execution_context.variable_values);
 
         let execution_request = ExecutionRequest {
@@ -217,7 +281,12 @@ impl ExecutableFetchNode for FetchNode {
             self.apply_output_rewrites(&execution_context.schema_metadata.possible_types, new_data);
         }
 
-        fetch_result
+        NodeResult {
+            data: fetch_result.data.unwrap_or(Value::Null),
+            json_path: "/".to_string(), // Root path
+            errors: fetch_result.errors,
+            extensions: fetch_result.extensions,
+        }
     }
 
     fn project_representations(
@@ -267,7 +336,6 @@ impl ExecutableFetchNode for FetchNode {
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
         filtered_representations: Vec<Value>,
-        filtered_repr_indexes: Vec<usize>,
     ) -> ExecuteForRepresentationsResult {
         // 2. Prepare variables for fetch
         let mut variables = self
@@ -309,7 +377,6 @@ impl ExecutableFetchNode for FetchNode {
         };
         ExecuteForRepresentationsResult {
             entities,
-            indexes: filtered_repr_indexes,
             errors: fetch_result.errors,
             extensions: fetch_result.extensions,
         }
@@ -498,41 +565,23 @@ impl ExecutablePlanNode for SequenceNode {
     #[instrument(level = "trace", skip_all, name = "SequenceNode::execute", fields(
         nodes_count = %self.nodes.len()
     ))]
-    async fn execute(
+    async fn execute_mut(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
         data: &mut Value,
     ) {
         for node in &self.nodes {
-            node.execute(execution_context, data) // No representations passed to child nodes
+            node.execute_mut(execution_context, data) // No representations passed to child nodes
                 .await;
         }
     }
-}
-
-#[instrument(level = "debug", skip_all, name = "process_root_result", fields(
-    fetch_result = ?fetch_result.data.as_ref().map(|d| d.to_string()),
-    errors_count = %fetch_result.errors.as_ref().map_or(0, |e| e.len()),
-))]
-fn process_root_result(
-    fetch_result: ExecutionResult,
-    execution_context: &mut QueryPlanExecutionContext<'_>,
-    data: &mut Value,
-) {
-    // 4. Process the response
-    if let Some(new_data) = fetch_result.data {
-        if data.is_null() {
-            *data = new_data; // Initialize with new_data
-        } else {
-            deep_merge::deep_merge(data, new_data);
-        }
+    async fn execute_immut(
+        &self,
+        _execution_context: &QueryPlanExecutionContext<'_>,
+        _data: &Value,
+    ) -> Vec<NodeResult> {
+        unimplemented!("...")
     }
-
-    process_errors_and_extensions(
-        execution_context,
-        fetch_result.errors,
-        fetch_result.extensions,
-    );
 }
 
 #[async_trait]
@@ -540,139 +589,203 @@ impl ExecutablePlanNode for ParallelNode {
     #[instrument(level = "trace", skip_all, name = "ParallelNode::execute", fields(
         nodes_count = %self.nodes.len()
     ))]
-    async fn execute(
+    async fn execute_immut(
+        &self,
+        execution_context: &QueryPlanExecutionContext<'_>,
+        data: &Value,
+    ) -> Vec<NodeResult> {
+        let mut jobs = vec![];
+        for node in &self.nodes {
+            let job = node.execute_immut(execution_context, data);
+            jobs.push(job);
+        }
+        let results = futures::future::join_all(jobs).await;
+        results.into_iter().flatten().collect()
+    }
+    async fn execute_mut(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
         data: &mut Value,
     ) {
-        // Here we call fetch nodes in parallel and non-fetch nodes sequentially.
-        let mut fetch_jobs = vec![];
-        let mut flatten_jobs = vec![];
-        let mut flatten_paths = vec![];
-
-        // Collect Fetch node results and non-fetch nodes for sequential execution
-        let now = std::time::Instant::now();
+        let mut jobs = vec![];
         for node in &self.nodes {
-            match node {
-                PlanNode::Fetch(fetch_node) => {
-                    // Execute FetchNode in parallel
-                    let job = fetch_node.execute_for_root(execution_context);
-                    fetch_jobs.push(job);
-                }
-                PlanNode::Flatten(flatten_node) => {
-                    let normalized_path: Vec<&str> =
-                        flatten_node.path.iter().map(String::as_str).collect();
-                    let collected_representations = traverse_and_collect(data, &normalized_path);
-                    let fetch_node = match flatten_node.node.as_ref() {
-                        PlanNode::Fetch(fetch_node) => fetch_node,
-                        _ => {
-                            warn!(
-                                "FlattenNode can only execute FetchNode as child node, found: {:?}",
-                                flatten_node.node
-                            );
-                            continue; // Skip if the child node is not a FetchNode
-                        }
-                    };
-                    let project_result = fetch_node
-                        .project_representations(execution_context, &collected_representations);
-                    let job = fetch_node.execute_for_projected_representations(
-                        execution_context,
-                        project_result.representations,
-                        project_result.indexes,
-                    );
-                    flatten_jobs.push(job);
-                    flatten_paths.push(normalized_path);
-                }
-                _ => {}
+            let job = node.execute_immut(execution_context, data);
+            jobs.push(job);
+        }
+        let results = futures::future::join_all(jobs).await;
+        for result in results {
+            for node_result in result {
+                node_result.apply(data);
             }
         }
-        trace!(
-            "Prepared {} fetch jobs and {} flatten jobs in {:?}",
-            fetch_jobs.len(),
-            flatten_jobs.len(),
-            now.elapsed()
-        );
+    }
+}
 
-        let mut all_errors = vec![];
-        let mut all_extensions = vec![];
+struct CollectedRepresentation {
+    representation: Value, // The representation data
+    json_path: String,     // The path to the representation in the JSON structure
+}
 
-        let now = std::time::Instant::now();
 
-        let flatten_results = futures::future::join_all(flatten_jobs).await;
-        let flatten_results_len = flatten_results.len();
-
-        trace!(
-            "Executed {} flatten jobs in {:?}",
-            flatten_results_len,
-            now.elapsed()
-        );
-
-        let now = std::time::Instant::now();
-        for (result, path) in flatten_results.into_iter().zip(flatten_paths) {
-            // Process FlattenNode results
-            if let Some(entities) = result.entities {
-                let mut collected_representations = traverse_and_collect(data, &path);
-                for (entity, index) in entities.into_iter().zip(result.indexes.into_iter()) {
-                    if let Some(representation) = collected_representations.get_mut(index) {
-                        // Merge the entity into the representation
-                        deep_merge::deep_merge(representation, entity);
-                    }
-                }
-            }
-            // Extend errors and extensions from the result
-            if let Some(errors) = result.errors {
-                all_errors.extend(errors);
-            }
-            if let Some(extensions) = result.extensions {
-                all_extensions.push(extensions);
+fn collect_paths(
+    root_data: &Value,
+    base_path: &str,
+    remaining_path: &[&str],
+) -> Vec<String> {
+    // If @, handle arrays
+    if remaining_path.is_empty() {
+        return vec![base_path.to_string()];
+    }
+    let current_segment = remaining_path[0];
+    let next_path = &remaining_path[1..];
+    match (current_segment, root_data) {
+        ("@", Value::Array(arr)) => {
+            arr.iter().enumerate().flat_map(|(index, item)| {
+                let new_path = format!("{}/{}", base_path, index);
+                collect_paths(
+                    item,
+                    &new_path,
+                    next_path,
+                )
+            }).collect()
+        },
+        (_, Value::Object(obj)) => {
+            // If current segment is a key in the object
+            if let Some(value) = obj.get(current_segment) {
+                let new_path = if base_path == "/" {
+                    format!("/{}", current_segment)
+                } else {
+                    format!("{}/{}", base_path, current_segment)
+                };
+                collect_paths(
+                    value,
+                    &new_path,
+                    next_path,
+                )
+            } else {
+                // If the key does not exist, return empty paths
+                vec![]
             }
         }
-
-        trace!(
-            "Processed {} flatten results in {:?}",
-            flatten_results_len,
-            now.elapsed()
-        );
-
-        let now = std::time::Instant::now();
-        let fetch_results = futures::future::join_all(fetch_jobs).await;
-        let fetch_results_len = fetch_results.len();
-        trace!(
-            "Executed {} fetch jobs in {:?}",
-            fetch_results_len,
-            now.elapsed()
-        );
-
-        let now = std::time::Instant::now();
-        // Process results from FetchNode executions
-        for fetch_result in fetch_results {
-            process_root_result(fetch_result, execution_context, data);
+        _ => {
+            // If no match, return empty paths
+            vec![]
         }
+    }
+}
 
-        trace!(
-            "Processed {} fetch results in {:?}",
-            fetch_results_len,
-            now.elapsed()
-        );
-
-        // Process errors and extensions from FlattenNode results
-        if !all_errors.is_empty() {
-            execution_context.errors.extend(all_errors);
-        }
-        if !all_extensions.is_empty() {
-            for extensions in all_extensions {
-                execution_context.extensions.extend(extensions);
+fn collect_representations(
+    root_data: &Value,
+    base_path: &str,
+    remaining_path: &[&str],
+    execution_context: &QueryPlanExecutionContext<'_>,
+    requires_items: &Vec<SelectionItem>,
+) -> Vec<CollectedRepresentation> {
+    // If @, handle arrays
+    if remaining_path.is_empty() {
+        let projected = execution_context.project_requires(requires_items, root_data);
+        return if projected.is_null() {
+            vec![]
+        } else {
+            vec![CollectedRepresentation {
+                representation: projected,
+                json_path: base_path.to_string(),
+            }]
+        };
+    }
+    let current_segment = remaining_path[0];
+    let next_path = &remaining_path[1..];
+    match (current_segment, root_data) {
+        ("@", Value::Array(arr)) => {
+            arr.iter().enumerate().flat_map(|(index, item)| {
+                let new_path = format!("{}/{}", base_path, index);
+                collect_representations(
+                    item,
+                    &new_path,
+                    next_path,
+                    execution_context,
+                    requires_items,
+                )
+            }).collect()
+        },
+        (_, Value::Object(obj)) => {
+            // If current segment is a key in the object
+            if let Some(value) = obj.get(current_segment) {
+                let new_path = if base_path == "/" {
+                    format!("/{}", current_segment)
+                } else {
+                    format!("{}/{}", base_path, current_segment)
+                };
+                collect_representations(
+                    value,
+                    &new_path,
+                    next_path,
+                    execution_context,
+                    requires_items,
+                )
+            } else {
+                // If the key does not exist, return empty paths
+                vec![]
             }
+        }
+        _ => {
+            // If no match, return empty paths
+            vec![]
         }
     }
 }
 
 #[async_trait]
 impl ExecutablePlanNode for FlattenNode {
+    async fn execute_immut(
+        &self,
+        execution_context: &QueryPlanExecutionContext<'_>,
+        data: &Value,
+    ) -> Vec<NodeResult> {
+        let fetch_node = match self.node.as_ref() {
+            PlanNode::Fetch(fetch_node) => fetch_node,
+            _ => {
+                unimplemented!(
+                    "FlattenNode can only execute FetchNode as child node, found: {:?}",
+                    self.node
+                );
+            }
+        };
+        let collected_representations = collect_representations(
+            data,
+            "/",
+            &self.path.iter().map(String::as_str).collect::<Vec<_>>(),
+            execution_context,
+            &fetch_node.requires.as_ref().unwrap().items,
+        );
+        let mut filtered_representations = vec![];
+        let mut json_paths = vec![];
+        for collected_representation in collected_representations {
+            filtered_representations.push(collected_representation.representation);
+            json_paths.push(collected_representation.json_path);
+        }
+        let result = fetch_node
+            .execute_for_projected_representations(execution_context, filtered_representations)
+            .await;
+        match result.entities {
+            Some(entities) => entities
+                .into_iter()
+                .zip(json_paths.into_iter())
+                .map(|(data, json_path)| NodeResult {
+                    data,
+                    json_path,
+                    errors: result.errors.clone(),
+                    extensions: result.extensions.clone(),
+                })
+                .collect(),
+            None => vec![],
+        }
+    }
+
     #[instrument(level = "trace", skip_all, name = "FlattenNode::execute", fields(
         path = ?self.path
     ))]
-    async fn execute(
+    async fn execute_mut(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
         data: &mut Value,
@@ -705,7 +818,6 @@ impl ExecutablePlanNode for FlattenNode {
                     .execute_for_projected_representations(
                         execution_context,
                         filtered_representations,
-                        filtered_repr_indexes,
                     )
                     .await;
                 trace!(
@@ -714,7 +826,12 @@ impl ExecutablePlanNode for FlattenNode {
                     now.elapsed()
                 );
                 // Process the result
-                process_representations_result(result, &mut representations, execution_context);
+                process_representations_result(
+                    result,
+                    filtered_repr_indexes,
+                    &mut representations,
+                    execution_context,
+                );
                 trace!(
                     "processed projected representations: {:?} in {:?}",
                     representations.len(),
@@ -731,16 +848,20 @@ impl ExecutablePlanNode for FlattenNode {
     }
 }
 
-#[async_trait]
-impl ExecutablePlanNode for ConditionNode {
-    #[instrument(level = "trace", skip_all, name = "ConditionNode::execute")]
-    async fn execute(
-        &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
-        data: &mut Value,
-    ) {
+trait InnerNode {
+    fn get_inner_node<'a>(
+        &'a self,
+        variable_values: &Option<HashMap<String, Value>>,
+    ) -> Option<&'a Box<PlanNode>>;
+}
+
+impl InnerNode for ConditionNode {
+    fn get_inner_node<'a>(
+        &'a self,
+        variable_values: &Option<HashMap<String, Value>>,
+    ) -> Option<&'a Box<PlanNode>> {
         // Get the condition variable from the context
-        let condition_value: bool = match execution_context.variable_values {
+        let condition_value: bool = match variable_values {
             Some(ref variable_values) => {
                 match variable_values.get(&self.condition) {
                     Some(value) => {
@@ -763,10 +884,45 @@ impl ExecutablePlanNode for ConditionNode {
         };
         if condition_value {
             if let Some(if_clause) = &self.if_clause {
-                return if_clause.execute(execution_context, data).await;
+                return Some(if_clause);
             }
         } else if let Some(else_clause) = &self.else_clause {
-            return else_clause.execute(execution_context, data).await;
+            return Some(else_clause);
+        }
+        None
+    }
+}
+
+#[async_trait]
+impl ExecutablePlanNode for ConditionNode {
+    #[instrument(level = "trace", skip_all, name = "ConditionNode::execute")]
+    async fn execute_mut(
+        &self,
+        execution_context: &mut QueryPlanExecutionContext<'_>,
+        data: &mut Value,
+    ) {
+        let inner_node = self.get_inner_node(execution_context.variable_values);
+        if let Some(node) = inner_node {
+            // Execute the inner node if the condition is met
+            node.execute_mut(execution_context, data).await;
+        } else {
+            // If no inner node is found, do nothing
+            trace!("ConditionNode condition not met, skipping execution.");
+        }
+    }
+    async fn execute_immut(
+        &self,
+        execution_context: &QueryPlanExecutionContext<'_>,
+        data: &Value,
+    ) -> Vec<NodeResult> {
+        let inner_node = self.get_inner_node(execution_context.variable_values);
+        if let Some(node) = inner_node {
+            // Execute the inner node if the condition is met
+            node.execute_immut(execution_context, data).await
+        } else {
+            // If no inner node is found, do nothing
+            trace!("ConditionNode condition not met, skipping execution.");
+            vec![]
         }
     }
 }
@@ -780,7 +936,7 @@ impl ExecutableQueryPlan for QueryPlan {
         data: &mut Value,
     ) {
         if let Some(root_node) = &self.node {
-            root_node.execute(execution_context, data).await
+            root_node.execute_mut(execution_context, data).await
         }
     }
 }
