@@ -1,6 +1,9 @@
 use std::{fmt::Display, hash::Hash};
 
-use crate::ast::merge_path::Segment;
+use crate::ast::{
+    merge_path::Segment,
+    safe_merge::{AliasesRecords, SafeSelectionSetMerger},
+};
 
 use super::{merge_path::MergePath, selection_item::SelectionItem, selection_set::SelectionSet};
 
@@ -68,10 +71,36 @@ impl TypeAwareSelection {
 
     pub fn add_at_path(&mut self, to_add: &Self, add_at_fetch_path: MergePath, as_first: bool) {
         if let Some(source) =
-            find_selection_set_by_path_mut(&mut self.selection_set, add_at_fetch_path)
+            find_selection_set_by_path_mut(&mut self.selection_set, &add_at_fetch_path)
         {
             merge_selection_set(source, &to_add.selection_set, as_first);
         }
+    }
+
+    pub fn add_at_path_and_solve_conflicts(
+        &mut self,
+        to_add: &Self,
+        add_at_fetch_path: MergePath,
+        (self_used_for_requires, other_used_for_requires): (bool, bool),
+        as_first: bool,
+    ) -> Option<AliasesRecords> {
+        if let Some(source) =
+            find_selection_set_by_path_mut(&mut self.selection_set, &add_at_fetch_path)
+        {
+            let mut merger = SafeSelectionSetMerger::default();
+            let aliases_made = merger.merge_selection_set(
+                source,
+                &to_add.selection_set,
+                (self_used_for_requires, other_used_for_requires),
+                as_first,
+            );
+
+            if !aliases_made.is_empty() {
+                return Some(aliases_made);
+            }
+        }
+
+        None
     }
 
     pub fn has_typename_at_path(&self, lookup_path: &MergePath) -> bool {
@@ -167,7 +196,7 @@ fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_firs
     }
 }
 
-fn find_selection_set_by_path<'a>(
+pub fn find_selection_set_by_path<'a>(
     root_selection_set: &'a SelectionSet,
     path: &MergePath,
 ) -> Option<&'a SelectionSet> {
@@ -210,8 +239,7 @@ fn find_selection_set_by_path<'a>(
                         .iter()
                         .find_map(|item| match item {
                             SelectionItem::Field(field) => {
-                                if field.selection_identifier() == field_name
-                                    && field.arguments_hash() == *args_hash
+                                if &field.name == field_name && field.arguments_hash() == *args_hash
                                 {
                                     Some(&field.selections)
                                 } else {
@@ -236,10 +264,10 @@ fn find_selection_set_by_path<'a>(
     Some(current_selection_set)
 }
 
-fn find_selection_set_by_path_mut(
-    root_selection_set: &mut SelectionSet,
-    path: MergePath,
-) -> Option<&mut SelectionSet> {
+pub fn find_selection_set_by_path_mut<'a>(
+    root_selection_set: &'a mut SelectionSet,
+    path: &MergePath,
+) -> Option<&'a mut SelectionSet> {
     let mut current_selection_set = root_selection_set;
 
     for path_element in path.inner.iter() {
@@ -302,4 +330,49 @@ fn find_selection_set_by_path_mut(
         }
     }
     Some(current_selection_set)
+}
+
+/// Find the arguments conflicts between two selections.
+/// Returns a vector of tuples containing the indices of conflicting fields in both "source" and "other"
+/// Both indices are returned in order to allow for easy resolution of conflicts later, in either side.
+pub fn find_arguments_conflicts(
+    source: &TypeAwareSelection,
+    other: &TypeAwareSelection,
+) -> Vec<(usize, usize)> {
+    other
+        .selection_set
+        .items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, other_selection)| {
+            if let SelectionItem::Field(other_field) = other_selection {
+                let other_identifier = other_field.selection_identifier();
+                let other_args_hash = other_field.arguments_hash();
+
+                let existing_in_self = source.selection_set.items.iter().enumerate().find_map(
+                    |(self_index, self_selection)| {
+                        if let SelectionItem::Field(self_field) = self_selection {
+                            // If the field selection identifier matches and the arguments hash is different,
+                            // then it means that we can't merge the two input siblings
+                            if self_field.selection_identifier() == other_identifier
+                                && self_field.arguments_hash() != other_args_hash
+                            {
+                                return Some(self_index);
+                            }
+                        }
+
+                        None
+                    },
+                );
+
+                if let Some(existing_index) = existing_in_self {
+                    return Some((existing_index, index));
+                }
+
+                return None;
+            }
+
+            None
+        })
+        .collect()
 }

@@ -4,6 +4,143 @@ use crate::{
 };
 use std::error::Error;
 
+// The "requires-with-argument-conflict" test from the Fed audit
+#[test]
+fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          products {
+            upc
+            name
+            shippingEstimate
+            shippingEstimateEUR
+            isExpensiveCategory
+          }
+        }"#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/requires-with-argument-conflict.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {
+            products {
+              __typename
+              upc
+              name
+              price(currency: "USD")
+              weight
+              _internal_qp_alias_0: price(currency: "EUR")
+              category {
+                averagePrice(currency: "USD")
+              }
+            }
+          }
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "a") {
+              ... on Product {
+                __typename
+                price
+                weight
+                upc
+                category {
+                  averagePrice
+                }
+                price: _internal_qp_alias_0
+              }
+            } =>
+            {
+              ... on Product {
+                shippingEstimate
+                isExpensiveCategory
+                shippingEstimateEUR
+              }
+            }
+          },
+        },
+      },
+    },
+    "###);
+
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "b",
+            "operationKind": "query",
+            "operation": "query{products{__typename upc name price(currency: \"USD\") weight _internal_qp_alias_0: price(currency: \"EUR\") category{averagePrice(currency: \"USD\")}}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "products",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate isExpensiveCategory shippingEstimateEUR}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "Product",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "price"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "weight"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "upc"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "category",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "averagePrice"
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "_internal_qp_alias_0",
+                      "alias": "price"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+    "###);
+
+    Ok(())
+}
+
 // In this test, `comments(arg: 3)` conflicts with `comments(arg: 1)` in the `feed` field.
 // But unlike the other cases in this file, the `comments` field is being queried only after a few other fetches
 // are executed, so `comments(arg: 3)` is deeply nested inside the fetch-steps and not a direct descendant of the field that was aliased.

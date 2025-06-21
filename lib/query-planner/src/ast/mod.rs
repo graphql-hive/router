@@ -9,3 +9,5 @@ pub(crate) mod arguments;
 pub(crate) mod merge_path;
 pub(crate) mod type_aware_selection;
 pub mod value;
+
+pub(crate) mod safe_merge;

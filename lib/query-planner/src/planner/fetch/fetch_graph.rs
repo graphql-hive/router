@@ -1,8 +1,11 @@
 use crate::ast::merge_path::{MergePath, Segment};
 use crate::ast::operation::VariableDefinition;
+use crate::ast::safe_merge::AliasesRecords;
 use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
-use crate::ast::type_aware_selection::TypeAwareSelection;
+use crate::ast::type_aware_selection::{
+    find_arguments_conflicts, find_selection_set_by_path_mut, TypeAwareSelection,
+};
 use crate::graph::edge::{Edge, FieldMove, InterfaceObjectTypeMove};
 use crate::graph::node::Node;
 use crate::graph::Graph;
@@ -48,8 +51,6 @@ impl FetchGraph {
         self.graph.node_references()
     }
 }
-
-type MergesSiblingsToPerform = Vec<(NodeIndex, NodeIndex, Option<Vec<(usize, usize)>>)>;
 
 impl FetchGraph {
     pub fn parents_of(&self, index: NodeIndex) -> petgraph::stable_graph::Edges<'_, (), Directed> {
@@ -180,8 +181,10 @@ impl FetchGraph {
         self.merge_children_with_parents()?;
         self.merge_siblings()?;
         self.deduplicate_and_prune_fetch_steps()?;
-        self.apply_internal_aliases_patching()?;
         self.turn_mutations_into_sequence()?;
+
+        // We call this last, because it should be done after all other optimizations/merging are done
+        self.apply_internal_aliases_patching()?;
 
         Ok(())
     }
@@ -247,6 +250,11 @@ impl FetchGraph {
         Ok(())
     }
 
+    /// This method applies internal aliasing for fields in the fetch graph.
+    /// In case a fetch step contains a record of alias made to an output field, it needs to be propagated to all descendants steps that depends on this
+    /// output field, in multiple locations:
+    /// 1. In "input" selections
+    /// 2. In "response_path"
     #[instrument(level = "trace", skip_all)]
     fn apply_internal_aliases_patching(&mut self) -> Result<(), FetchGraphError> {
         // First, iterate and find all nodes that needed to perform internal aliasing for fields
@@ -254,8 +262,8 @@ impl FetchGraph {
             .graph
             .node_references()
             .filter_map(|(index, node)| {
-                if !node.aliased_fields.is_empty() {
-                    Some(index)
+                if !node.internal_aliases_locations.is_empty() {
+                    Some((index, node.internal_aliases_locations.clone()))
                 } else {
                     None
                 }
@@ -263,109 +271,106 @@ impl FetchGraph {
             .collect::<Vec<_>>();
 
         trace!(
-            "found total of {} node with internal aliased fields: {:?}",
+            "found total of {} node with internal aliased fields",
             nodes_with_aliases.len(),
-            nodes_with_aliases
         );
 
-        // A list of modifications that needs to be applied as input rewrites.
-        // Data is: (index_to_modify, field_index, alias_name)
-        let mut nodes_that_needs_rewrite: Vec<(NodeIndex, usize, String)> = vec![];
-        // Data is: (index_to_modify, segment_index_in_response_path, alias_name)
-        let mut nodes_that_needs_response_path_patching: Vec<(NodeIndex, usize, String)> = vec![];
-
-        // For every node that has internal aliased fields...
-        while let Some(aliased_node_index) = nodes_with_aliases.pop() {
-            let node_with_aliases = self.get_step_data(aliased_node_index)?;
+        while let Some((aliased_node_index, aliases_locations)) = nodes_with_aliases.pop() {
             let mut bfs = Bfs::new(&self.graph, aliased_node_index);
 
-            // Iterate and find all possible children of a node that needed aliasing
-            // We can't really tell which nodes are affected, as they might be at any level of the hierarchy.
+            trace!(
+                "Iterating step [{}], total of {} aliased fields in output selections",
+                aliased_node_index.index(),
+                aliases_locations.len()
+            );
+
+            // Iterate and find all possible children of a node that needed aliasing.
+            // We can't really tell which nodes are affected, as they might be at any level of the hierarchy, so we travel the graph.
             while let Some(decendent_idx) = bfs.next(&self.graph) {
                 if decendent_idx != aliased_node_index {
-                    let decendent = self.get_step_data(decendent_idx)?;
+                    let decendent = self.get_step_data_mut(decendent_idx)?;
 
-                    // First, let's try to find all response_path that's using this specific field as input.
-                    // A segment in the response_path is identified by the selection_identifier + the arguments hash.
-                    // Once we find it, we store it and we'll do patching later.
-                    for (segment_index, segment_value) in
-                        decendent.response_path.inner.iter().enumerate()
-                    {
-                        if let Segment::Field(selection_identifier, args_hash) = segment_value {
-                            if let Some(aliased_field_name) = node_with_aliases
-                                .aliased_fields
-                                .get(&(selection_identifier.clone(), *args_hash))
-                            {
-                                nodes_that_needs_response_path_patching.push((
-                                    decendent_idx,
-                                    segment_index,
-                                    aliased_field_name.clone(),
-                                ));
-                            }
-                        }
-                    }
+                    trace!(
+                        "Checking if decendent [{}] is relevant for aliasing patching...",
+                        decendent_idx.index()
+                    );
 
-                    // Next, iterate and find all nodes that needed to perform internal aliasing for fields
-                    for (input_selection_item_idx, input_selection_item) in
-                        decendent.input.selection_set.items.iter().enumerate()
-                    {
-                        if let SelectionItem::Field(field) = input_selection_item {
-                            let key_tuple = (field.name.clone(), field.arguments_hash());
+                    for (alias_path, new_name) in aliases_locations.iter() {
+                        // Last segment is the field that was aliased
+                        let maybe_patched_field = alias_path.last();
+                        // Build a path without the alias path, to make sure we don't patch the wrong field
+                        let relative_path = decendent.response_path.slice_from(alias_path.len());
 
-                            if let Some(alias_field_name) =
-                                node_with_aliases.aliased_fields.get(&key_tuple)
-                            {
+                        if let Some(Segment::Field(field_name, args_hash)) = maybe_patched_field {
+                            trace!(
+                                "field '{}' was aliased, relative selection path: '{}', checking if need to patch selection '{}'",
+                                field_name,
+                                relative_path,
+                                decendent.input.selection_set
+                            );
+
+                            // First, check if the node's input selection set contains the field that was aliased
+                            if let Some(selection) = find_selection_set_by_path_mut(
+                                &mut decendent.input.selection_set,
+                                &relative_path,
+                            ) {
+                                trace!("found selection to patch: {}", selection);
+                                let item_to_patch = selection.items.iter_mut().find(|item| matches!(item, SelectionItem::Field(field) if field.name == *field_name && field.arguments_hash() == *args_hash));
+
+                                if let Some(SelectionItem::Field(field_to_patch)) = item_to_patch {
+                                    field_to_patch.alias = Some(field_to_patch.name.clone());
+                                    field_to_patch.name = new_name.clone();
+
+                                    trace!(
+                                        "path '{}' found in selection, patched applied, new selection: {}",
+                                        relative_path,
+                                        field_to_patch
+                                    );
+                                }
+                            } else {
                                 trace!(
-                                  "found a field '{}' (args hash: {}) that's using an aliased field: '{}', it need an input selection alias",
-                                  key_tuple.0, key_tuple.1, alias_field_name
+                                    "path '{}' was not found in selection '{}', skipping...",
+                                    relative_path,
+                                    decendent.input.selection_set
+                                );
+                            }
+
+                            // Then, check if the node's response_path is using the part that was aliased
+                            let segment_idx_to_patch = decendent
+                                .response_path
+                                .inner
+                                .iter()
+                                .enumerate()
+                                .find_map(|(idx, part)| {
+                                    if matches!(part, Segment::Field(f, a) if f == field_name && a == args_hash) {
+                                        Some(idx)
+                                    } else {
+                                        None
+                                    }
+                                });
+
+                            if let Some(segment_idx_to_patch) = segment_idx_to_patch {
+                                trace!(
+                                  "Node [{}] is using aliased field {} in response_path (segment idx: {}, alias: {:?})",
+                                  decendent_idx.index(),
+                                  field_name,
+                                  segment_idx_to_patch,
+                                  alias_path
                               );
-                                nodes_that_needs_rewrite.push((
-                                    decendent_idx,
-                                    input_selection_item_idx,
-                                    alias_field_name.to_string(),
-                                ));
+
+                                let mut new_path = (*decendent.response_path.inner).to_vec();
+
+                                if let Some(Segment::Field(name, _)) =
+                                    new_path.get_mut(segment_idx_to_patch)
+                                {
+                                    *name = new_name.clone();
+                                    decendent.response_path = MergePath::new(new_path);
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-
-        // Go over all nodes that need to be rewritten, and add the alias in the right place
-        for (idx_to_modify, field_idx, alias_name) in nodes_that_needs_rewrite {
-            let step_data = self.get_step_data_mut(idx_to_modify)?;
-
-            if let Some(SelectionItem::Field(field_to_mutate)) =
-                step_data.input.selection_set.items.get_mut(field_idx)
-            {
-                trace!(
-                    "patching input selection field step [{}]: {} -> {}",
-                    idx_to_modify.index(),
-                    field_to_mutate.name,
-                    alias_name
-                );
-
-                field_to_mutate.alias = Some(field_to_mutate.name.clone());
-                field_to_mutate.name = alias_name;
-            }
-        }
-
-        // Go over all nodes that are using this field as input, and apply the patch on the response_path
-        for (idx_to_modify, segment_idx, alias_name) in nodes_that_needs_response_path_patching {
-            let step_data = self.get_step_data_mut(idx_to_modify)?;
-            let mut new_path = (*step_data.response_path.inner).to_vec();
-
-            if let Some(Segment::Field(name, _)) = new_path.get_mut(segment_idx) {
-                trace!(
-                    "patching response_path#{} on step [{}]: {name} -> {alias_name}",
-                    segment_idx,
-                    idx_to_modify.index()
-                );
-
-                *name = alias_name;
-            }
-
-            step_data.response_path = MergePath::new(new_path);
         }
 
         Ok(())
@@ -383,7 +388,7 @@ impl FetchGraph {
             // Store pairs of sibling nodes that can be merged.
             // The additional Vec<usize> is an indicator for conflicting field indexes in the 2nd sibling.
             // If the Vec is empty, it means there are no conflicts.
-            let mut merges_to_perform = MergesSiblingsToPerform::new();
+            let mut merges_to_perform = Vec::<(NodeIndex, NodeIndex)>::new();
 
             // HashMap to keep track of node index mappings, especially after merges.
             // Key: original index, Value: potentially updated index after merges.
@@ -422,23 +427,12 @@ impl FetchGraph {
                         other_sibling_index.index()
                     );
 
-                    let merge_siblings_result = current.can_merge_siblings(
+                    if current.can_merge_siblings(
                         *sibling_index,
                         *other_sibling_index,
                         other_sibling,
                         self,
-                    );
-
-                    // Siblings can be merged if they have no input conflicts only. In case of input conflicts, we cannot perform any kind of merge.
-                    let can_merge = merge_siblings_result
-                        .as_ref()
-                        .is_some_and(|result| !result.has_input_conflicts());
-
-                    if can_merge {
-                        let conflicting_output_fields = merge_siblings_result
-                            .filter(|result| !result.conflicting_output_fields.is_empty())
-                            .map(|result| result.conflicting_output_fields);
-
+                    ) {
                         trace!(
                             "Found siblings optimization: {} <- {}",
                             sibling_index.index(),
@@ -448,11 +442,7 @@ impl FetchGraph {
                         node_indexes.insert(*sibling_index, *sibling_index);
                         node_indexes.insert(*other_sibling_index, *other_sibling_index);
 
-                        merges_to_perform.push((
-                            *sibling_index,
-                            *other_sibling_index,
-                            conflicting_output_fields,
-                        ));
+                        merges_to_perform.push((*sibling_index, *other_sibling_index));
 
                         // Since a merge is possible, move to the next child to avoid redundant checks.
                         break;
@@ -460,7 +450,7 @@ impl FetchGraph {
                 }
             }
 
-            for (child_index, other_child_index, maybe_field_conflicts) in merges_to_perform {
+            for (child_index, other_child_index) in merges_to_perform {
                 // Get the latest indexes for the nodes, accounting for previous merges.
                 let child_index_latest = node_indexes
                     .get(&child_index)
@@ -468,16 +458,6 @@ impl FetchGraph {
                 let other_child_index_latest = node_indexes
                     .get(&other_child_index)
                     .ok_or(FetchGraphError::IndexMappingLost)?;
-
-                // If any conflicts exist, perform aliasing.
-                if let Some(output_conflicts) = maybe_field_conflicts {
-                    perform_aliasing_for_conflicts(
-                        *child_index_latest,
-                        *other_child_index_latest,
-                        &output_conflicts,
-                        self,
-                    )?;
-                }
 
                 perform_fetch_step_merge(*child_index_latest, *other_child_index_latest, self)?;
 
@@ -742,18 +722,6 @@ pub enum FetchStepKind {
     Root,
 }
 
-// A map between: (selection_identifier, arguments_hash) -> alias_name
-//
-// ## Key
-// The "selection_identifier" is the alias, or the selection name.
-// The "arguments_hash" is the hash of the arguments passed to the field.
-// We are using both together as a key to uniquely identify a field, and to check if it needs to be aliased in the plan.
-// ## Value
-// The value of the map is the new name of the alias.
-// The data stored in the value of this map is later used to create aliases on nodes that depend on the one that was originally patched.
-// Every internal alias made, will follow with an selection alias + response_path alias, in one or many of the children fetch steps (at any level).
-pub type InternalAliasMap = HashMap<(String, u64), String>;
-
 #[derive(Debug, Clone)]
 pub struct FetchStepData {
     pub service_name: SubgraphName,
@@ -761,12 +729,12 @@ pub struct FetchStepData {
     pub input: TypeAwareSelection,
     pub output: TypeAwareSelection,
     pub kind: FetchStepKind,
-    pub aliased_fields: InternalAliasMap,
     pub used_for_requires: bool,
     pub variable_usages: Option<BTreeSet<String>>,
     pub variable_definitions: Option<Vec<VariableDefinition>>,
     pub mutation_field_position: MutationFieldPosition,
     pub input_rewrites: Option<Vec<FetchRewrite>>,
+    pub internal_aliases_locations: AliasesRecords,
 }
 
 impl Display for FetchStepData {
@@ -785,26 +753,11 @@ impl Display for FetchStepData {
             write!(f, " [@requires]")?;
         }
 
-        if !self.aliased_fields.is_empty() {
-            write!(f, " [aliases=")?;
-            for (i, (alias, field)) in self.aliased_fields.iter().enumerate() {
-                if i > 0 {
-                    write!(f, ", ")?;
-                }
-                write!(f, "{}→{}", alias.0, field)?;
-            }
-            write!(f, "]")?;
-        }
-
         Ok(())
     }
 }
 
 impl FetchStepData {
-    fn next_alias_id(&self) -> usize {
-        self.aliased_fields.len()
-    }
-
     pub fn pretty_write(
         &self,
         writer: &mut std::fmt::Formatter<'_>,
@@ -857,7 +810,7 @@ impl FetchStepData {
         other_index: NodeIndex,
         other: &Self,
         fetch_graph: &FetchGraph,
-    ) -> Option<CanMergeSiblingsResult> {
+    ) -> bool {
         // First, check if the base conditions for merging are met.
         let can_merge_base = self.can_merge(self_index, other_index, other, fetch_graph);
 
@@ -870,23 +823,11 @@ impl FetchStepData {
             if self_mut_idx != other_mut_index
                 && (self_mut_idx as i64 - other_mut_index as i64).abs() != 1
             {
-                return None;
+                return false;
             }
         }
 
-        // Now that we think it can be merged,
-        // let's validate the selection sets and apply specific rules to avoid conflicts when merging siblings.
-        if can_merge_base {
-            let input_conflicts = find_arguments_conflicts(&self.input, &other.input);
-            let output_conflicts = find_arguments_conflicts(&other.output, &self.output);
-
-            return Some(CanMergeSiblingsResult {
-                conflicting_input_fields: input_conflicts,
-                conflicting_output_fields: output_conflicts,
-            });
-        }
-
-        None
+        can_merge_base
     }
 
     pub fn can_merge(
@@ -915,6 +856,18 @@ impl FetchStepData {
             if !other.response_path.starts_with(&self.response_path) {
                 return false;
             }
+        }
+
+        let input_conflicts = find_arguments_conflicts(&self.input, &other.input);
+
+        if !input_conflicts.is_empty() {
+            trace!(
+                "preventing merge of [{}]+[{}] due to input conflicts",
+                self_index.index(),
+                other_index.index()
+            );
+
+            return false;
         }
 
         // if the `other` FetchStep has a single parent and it's `this` FetchStep
@@ -1002,86 +955,6 @@ fn perform_passthrough_child_merge(
     Ok(())
 }
 
-#[instrument(level = "trace", skip_all)]
-fn solve_output_conflicts_by_aliasing(
-    step: &mut FetchStepData,
-    field_index: usize,
-    unique_alias_id: usize,
-) {
-    if let Some(SelectionItem::Field(field)) = step.output.selection_set.items.get_mut(field_index)
-    {
-        let new_alias = format!("_internal_qp_alias_{}", unique_alias_id);
-        trace!(
-            "adding alias for field {} (at index {}) -> {}",
-            field.name,
-            field_index,
-            new_alias
-        );
-
-        let key_tuple = (
-            field.selection_identifier().to_string(),
-            field.arguments_hash(),
-        );
-
-        step.aliased_fields.insert(key_tuple, new_alias.to_string());
-        field.alias = Some(new_alias);
-    }
-}
-
-// Return the index of the modified step
-#[instrument(level = "trace", skip_all)]
-fn perform_aliasing_for_conflicts(
-    me_index: NodeIndex,
-    other_index: NodeIndex,
-    conflicting_fields_pairs: &[(usize, usize)],
-    fetch_graph: &mut FetchGraph,
-) -> Result<NodeIndex, FetchGraphError> {
-    trace!(
-        "applying aliases to resolve {} conflict(s) between fetch steps [{}] <-> [{}]",
-        conflicting_fields_pairs.len(),
-        me_index.index(),
-        other_index.index()
-    );
-
-    let (me, other) = fetch_graph.get_pair_of_steps_mut(me_index, other_index)?;
-
-    // We need to decide which step to modify based on the used_for_requires flag.
-    // If "me" is created from a "@requires" flow, it means we need to alias it, otherwise, we'll alias "other".
-    // There's no such scenario where both steps are NOT created from "@requires" flows.
-    let (step_to_modify_index, step_to_modify, indices_to_alias) =
-        match (me.used_for_requires, other.used_for_requires) {
-            (true, false) => (
-                me_index,
-                me,
-                conflicting_fields_pairs
-                    .iter()
-                    .map(|r| r.0)
-                    .collect::<Vec<usize>>(),
-            ),
-            (false, true) | (true, true) => (
-                other_index,
-                other,
-                conflicting_fields_pairs
-                    .iter()
-                    .map(|r| r.1)
-                    .collect::<Vec<usize>>(),
-            ),
-            (false, false) => return Err(FetchGraphError::UnexpectedConflict),
-        };
-
-    trace!(
-        "decided to apply aliases to step [{}] because it's using requires",
-        step_to_modify_index.index()
-    );
-
-    for index in indices_to_alias {
-        let unique_alias_id = step_to_modify.next_alias_id();
-        solve_output_conflicts_by_aliasing(step_to_modify, index, unique_alias_id);
-    }
-
-    Ok(step_to_modify_index)
-}
-
 // Return true in case an alias was applied during the merge process.
 #[instrument(level = "trace", skip_all)]
 fn perform_fetch_step_merge(
@@ -1094,14 +967,20 @@ fn perform_fetch_step_merge(
     trace!(
         "merging fetch steps [{}] + [{}]",
         self_index.index(),
-        other_index.index()
+        other_index.index(),
     );
 
-    me.output.add_at_path(
+    let maybe_aliases = me.output.add_at_path_and_solve_conflicts(
         &other.output,
         other.response_path.slice_from(me.response_path.len()),
+        (me.used_for_requires, other.used_for_requires),
         false,
     );
+
+    // In cases where merging a step resulted in internal aliasing, keep a record of the aliases.
+    if let Some(aliases) = maybe_aliases {
+        me.internal_aliases_locations.extend(aliases);
+    }
 
     if let Some(input_rewrites) = other.input_rewrites.take() {
         if !input_rewrites.is_empty() {
@@ -1117,10 +996,6 @@ fn perform_fetch_step_merge(
         }
 
         me.input.add(&other.input);
-    }
-
-    if !other.aliased_fields.is_empty() {
-        me.aliased_fields.extend(other.aliased_fields.clone());
     }
 
     let mut children_indexes: Vec<NodeIndex> = vec![];
@@ -1165,11 +1040,11 @@ fn create_noop_fetch_step(fetch_graph: &mut FetchGraph, created_from_requires: b
         },
         used_for_requires: created_from_requires,
         kind: FetchStepKind::Root,
-        aliased_fields: HashMap::new(),
         input_rewrites: None,
         variable_usages: None,
         variable_definitions: None,
         mutation_field_position: None,
+        internal_aliases_locations: Vec::new(),
     })
 }
 
@@ -1196,11 +1071,11 @@ fn create_fetch_step_for_entity_call(
         },
         used_for_requires,
         kind: FetchStepKind::Entity,
-        aliased_fields: HashMap::new(),
         input_rewrites: None,
         variable_usages: None,
         variable_definitions: None,
         mutation_field_position: None,
+        internal_aliases_locations: Vec::new(),
     })
 }
 
@@ -1224,11 +1099,11 @@ fn create_fetch_step_for_root_move(
         },
         used_for_requires: false,
         kind: FetchStepKind::Root,
-        aliased_fields: HashMap::new(),
         variable_usages: None,
         variable_definitions: None,
         input_rewrites: None,
         mutation_field_position,
+        internal_aliases_locations: Vec::new(),
     });
 
     fetch_graph.connect(root_step_index, idx);
@@ -2089,13 +1964,13 @@ fn process_requires_field_edge(
     );
 
     trace!(
-        "Adding {} to fetch([{}]).input",
+        "Adding {} to fetch([{}]).input (requires)",
         requires,
         step_for_children_index.index()
     );
     step_for_children.input.add(requires);
     trace!(
-        "Adding {} to fetch([{}]).input",
+        "Adding {} to fetch([{}]).input (key re-enter)",
         key_to_reenter_subgraph,
         step_for_children_index.index()
     );
@@ -2502,66 +2377,4 @@ pub fn is_reachable_via_alternative_upstream_path(
 
     // no indirect path exists
     Ok(false)
-}
-
-/// Find the arguments conflicts between two selections.
-/// Returns a vector of tuples containing the indices of conflicting fields in both "source" and "other"
-/// Both indices are returned in order to allow for easy resolution of conflicts later, in either side.
-pub fn find_arguments_conflicts(
-    source: &TypeAwareSelection,
-    other: &TypeAwareSelection,
-) -> Vec<(usize, usize)> {
-    other
-        .selection_set
-        .items
-        .iter()
-        .enumerate()
-        .filter_map(|(index, other_selection)| {
-            if let SelectionItem::Field(other_field) = other_selection {
-                let other_identifier = other_field.selection_identifier();
-                let other_args_hash = other_field.arguments_hash();
-
-                let existing_in_self = source.selection_set.items.iter().enumerate().find_map(
-                    |(self_index, self_selection)| {
-                        if let SelectionItem::Field(self_field) = self_selection {
-                            // If the field selection identifier matches and the arguments hash is different,
-                            // then it means that we can't merge the two input siblings
-                            if self_field.selection_identifier() == other_identifier
-                                && self_field.arguments_hash() != other_args_hash
-                            {
-                                return Some(self_index);
-                            }
-                        }
-
-                        None
-                    },
-                );
-
-                if let Some(existing_index) = existing_in_self {
-                    return Some((existing_index, index));
-                }
-
-                return None;
-            }
-
-            None
-        })
-        .collect()
-}
-
-pub struct CanMergeSiblingsResult {
-    /// vector of conflicting input indices: (index_in_current, index_in_other)
-    pub conflicting_input_fields: Vec<(usize, usize)>,
-    /// vector of conflicting input indices: (index_in_current, index_in_other)
-    pub conflicting_output_fields: Vec<(usize, usize)>,
-}
-
-impl CanMergeSiblingsResult {
-    pub fn has_input_conflicts(&self) -> bool {
-        !self.conflicting_input_fields.is_empty()
-    }
-
-    pub fn has_output_conflicts(&self) -> bool {
-        !self.conflicting_output_fields.is_empty()
-    }
 }
