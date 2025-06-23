@@ -33,7 +33,7 @@ pub enum FetchGraphError {
     MutationStepWithNoOrder,
     #[error("Index mapping got lost")]
     IndexMappingLost,
-    #[error("fetch steps weren't empty, expected to find a first step")]
+    #[error("Expected Fetch Steps not to be empty")]
     EmptyFetchSteps,
     #[error("Unexpected case where two user-defined fields are conflicting!")]
     UnexpectedConflict,
