@@ -11,6 +11,18 @@ use crate::{
 pub struct EntityMove {
     pub key: String,
     pub requirements: TypeAwareSelection,
+    /// Indicates whether the move is to an interface entity.
+    ///
+    /// Object @key -> Object @key (@interfaceObject)
+    ///
+    /// Interface @key -> Interface @key
+    pub is_interface: bool,
+}
+
+#[derive(Debug)]
+pub struct InterfaceObjectTypeMove {
+    pub object_type_name: String,
+    pub requirements: TypeAwareSelection,
 }
 
 /// Represent a simple file move
@@ -36,16 +48,40 @@ pub enum Edge {
     EntityMove(EntityMove),
     /// join__implements
     AbstractMove(String),
-    // interfaceObject
-    // InterfaceObjectMove(String),
+    /// Represents a special case where going from @interfaceObject
+    /// to an object type due to the `__typename` field usage,
+    /// or usage of a type condition (fragment),
+    /// is not possible as the interface is fake, it's an object type,
+    /// so there's no subgraph-level information about object types
+    /// implementing the interface,
+    /// and resolving the `__typename` in the subgraph
+    /// would result in a incorrect value (name of the @interfaceObject type).
+    /// This enum variant tells the Query Planner to do an entity call,
+    /// to verify the type condition or resolve the __typename.
+    InterfaceObjectTypeMove(InterfaceObjectTypeMove),
 }
 
 pub type EdgeReference<'a> = GraphEdgeReference<'a, Edge>;
 
 impl Edge {
-    pub fn create_entity_move(key: &str, selection: TypeAwareSelection) -> Self {
+    pub fn create_entity_move(
+        key: &str,
+        selection: TypeAwareSelection,
+        is_interface: bool,
+    ) -> Self {
         Self::EntityMove(EntityMove {
             key: key.to_string(),
+            requirements: selection,
+            is_interface,
+        })
+    }
+
+    pub fn create_interface_object_type_move(
+        object_type_name: &str,
+        selection: TypeAwareSelection,
+    ) -> Self {
+        Self::InterfaceObjectTypeMove(InterfaceObjectTypeMove {
+            object_type_name: object_type_name.to_string(),
             requirements: selection,
         })
     }
@@ -77,12 +113,16 @@ impl Edge {
             Self::EntityMove(EntityMove { key, .. }) => key,
             Self::AbstractMove(id) => id,
             Self::SubgraphEntrypoint { name, .. } => &name.0,
+            Self::InterfaceObjectTypeMove(InterfaceObjectTypeMove {
+                object_type_name, ..
+            }) => object_type_name,
         }
     }
 
     pub fn requirements(&self) -> Option<&TypeAwareSelection> {
         match self {
             Self::EntityMove(entity_move) => Some(&entity_move.requirements),
+            Self::InterfaceObjectTypeMove(m) => Some(&m.requirements),
             Self::FieldMove(field_move) => field_move.requirements.as_ref(),
             _ => None,
         }
@@ -110,6 +150,7 @@ impl Display for Edge {
             Edge::EntityMove(EntityMove { .. }) => write!(f, "🔑"),
             Edge::AbstractMove(_) => write!(f, "🔮"),
             Edge::FieldMove(field_move) => write!(f, "{}", field_move.name),
+            Edge::InterfaceObjectTypeMove(m) => write!(f, "🔎 {}", m.object_type_name),
         }?;
 
         if let Some(reqs) = self.requirements() {
@@ -158,6 +199,7 @@ impl Debug for Edge {
                 write!(f, "🔑 {}", key)
             }
             Edge::AbstractMove(name) => write!(f, "🔮 {}", name),
+            Edge::InterfaceObjectTypeMove(m) => write!(f, "🔎 {}", m.object_type_name),
         }
     }
 }
@@ -211,6 +253,9 @@ impl PartialEq for Edge {
             ) => key == other_key,
 
             (Edge::AbstractMove(name), Edge::AbstractMove(other_name)) => name == other_name,
+            (Edge::InterfaceObjectTypeMove(st), Edge::InterfaceObjectTypeMove(ot)) => {
+                st.object_type_name == ot.object_type_name
+            }
 
             _ => false,
         }

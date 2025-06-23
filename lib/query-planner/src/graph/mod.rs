@@ -278,7 +278,9 @@ impl Graph {
     #[instrument(level = "trace", skip(self, state))]
     fn build_entity_reference_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
+            let is_interface = matches!(definition, SupergraphDefinition::Interface(_));
             for join_type1 in definition.join_types() {
+                // Connects object and interface entities of the same name by @key
                 for join_type2 in definition.join_types() {
                     let head = self.upsert_node(Node::new_node(
                         def_name,
@@ -310,7 +312,7 @@ impl Graph {
                             self.upsert_edge(
                                 head,
                                 tail,
-                                Edge::create_entity_move(key, key_selection),
+                                Edge::create_entity_move(key, key_selection, is_interface),
                             );
                         }
                     } else if let (true, Some(key)) = (&join_type1.resolvable, &join_type1.key) {
@@ -324,7 +326,127 @@ impl Graph {
                             key
                         );
 
-                        self.upsert_edge(head, head, Edge::create_entity_move(key, key_selection));
+                        self.upsert_edge(
+                            head,
+                            head,
+                            Edge::create_entity_move(key, key_selection, is_interface),
+                        );
+                    }
+                }
+
+                // Connects object types implementing @interfaceObject by @key
+                if !join_type1.is_interface_object {
+                    continue;
+                }
+
+                // Ignore if the @key is not resolable
+                if !join_type1.resolvable {
+                    continue;
+                }
+
+                // Ignore if there is no @key
+                if join_type1.key.is_none() {
+                    continue;
+                }
+
+                let interface_object_name = def_name;
+                let tail = self.upsert_node(Node::new_node(
+                    interface_object_name,
+                    state.resolve_graph_id(&join_type1.graph_id)?,
+                ));
+
+                let typename_selection = FederationRules::parse_key(
+                    state,
+                    &join_type1.graph_id,
+                    interface_object_name,
+                    &"__typename".to_string(),
+                );
+
+                for (object_type_name, object_type_definition) in state
+                    .definitions
+                    .iter()
+                    .filter(|(_name, def)| matches!(def, SupergraphDefinition::Object(..)))
+                {
+                    let SupergraphDefinition::Object(object_type) = object_type_definition else {
+                        panic!("Expected to get an Object type after filtering");
+                    };
+
+                    // Ignore if the object type does not implement the matching interface
+                    if !object_type
+                        .join_implements
+                        .iter()
+                        .any(|j| &j.interface == interface_object_name)
+                    {
+                        continue;
+                    }
+
+                    // In order to support fragments with type conditions
+                    // or `__typename` on @interfaceObject
+                    // we need tell the Query Planner that this action occured,
+                    // so it knows to look for `__typename`,
+                    // but using a resolable path.
+                    // The subgraph defining the @interfaceObject has no idea,
+                    // that it's an interface and what object types implement it.
+                    // We need to collect `__typename` remotely (via entity call).
+                    trace!(
+                        "Creating @interfaceObject to type '{}' move edge from '{}/{}' to '{}/{}' via key '{}'",
+                        object_type_name,
+                        interface_object_name,
+                        join_type1.graph_id,
+                        interface_object_name,
+                        join_type1.graph_id,
+                        "__typename"
+                    );
+                    self.upsert_edge(
+                        tail,
+                        tail,
+                        Edge::create_interface_object_type_move(
+                            object_type_name,
+                            typename_selection.clone(),
+                        ),
+                    );
+
+                    // Connect them via @key of the @interfaceObject.
+                    // Safe to expect a key, because of the if statement before.
+                    let key = join_type1
+                        .key
+                        .as_ref()
+                        .expect("@interfaceObject to have a key");
+
+                    let key_selection = FederationRules::parse_key(
+                        state,
+                        &join_type1.graph_id,
+                        interface_object_name,
+                        key,
+                    );
+
+                    for join_type2 in object_type_definition.join_types() {
+                        if join_type1.graph_id == join_type2.graph_id {
+                            // it shouldn't really happen as the @interfaceObject is an object type,
+                            // so no object types within the same subgraph can implement it,
+                            // as it's not an interface.
+                            continue;
+                        }
+
+                        let head = self.upsert_node(Node::new_node(
+                            object_type_name,
+                            state.resolve_graph_id(&join_type2.graph_id)?,
+                        ));
+
+                        trace!(
+                            "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
+                            interface_object_name,
+                            join_type1.graph_id,
+                            object_type_name,
+                            join_type2.graph_id,
+                            key
+                        );
+
+                        self.upsert_edge(
+                            head,
+                            tail,
+                            Edge::create_entity_move(key, key_selection.clone(), is_interface),
+                        );
                     }
                 }
             }
@@ -463,12 +585,16 @@ impl Graph {
                     continue;
                 }
 
+                let is_interface_object = definition
+                    .extract_join_types_for(graph_id)
+                    .iter()
+                    .any(|j| j.is_interface_object);
                 let has_resolvable_typename = matches!(
                     definition,
                     SupergraphDefinition::Object(_)
                         | SupergraphDefinition::Union(_)
                         | SupergraphDefinition::Interface(_)
-                );
+                ) && !is_interface_object;
 
                 if has_resolvable_typename {
                     let field_name = "__typename".to_string();

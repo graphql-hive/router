@@ -84,9 +84,12 @@ pub fn find_indirect_paths(
     while let Some(item) = queue.pop() {
         let (visited_graphs, visited_key_fields, path) = item;
 
-        let relevant_edges = graph
-            .edges_from(path.tail())
-            .filter(|e| matches!(e.weight(), Edge::EntityMove { .. }));
+        let relevant_edges = graph.edges_from(path.tail()).filter(|e| {
+            matches!(
+                e.weight(),
+                Edge::EntityMove { .. } | Edge::InterfaceObjectTypeMove { .. }
+            )
+        });
 
         for edge_ref in relevant_edges {
             trace!(
@@ -106,8 +109,11 @@ pub fn find_indirect_paths(
             }
 
             let edge_tail_graph_id = graph.node(edge_ref.target().id())?.graph_id().unwrap();
+            let edge = edge_ref.weight();
 
-            if edge_tail_graph_id == source_graph_id {
+            if edge_tail_graph_id == source_graph_id
+                && !matches!(edge, Edge::InterfaceObjectTypeMove(..))
+            {
                 // Prevent a situation where we are going back to the same graph
                 // The only exception is when we are moving to an abstract type
                 trace!("Ignoring. We would go back to the same graph");
@@ -125,8 +131,6 @@ pub fn find_indirect_paths(
             //    - User/B @key(name) -> User/A
             // Allows us to ignore an edge with the same key fields.
             // That's because in some other path, we will or already have checked the other edge.
-            let edge = edge_ref.weight();
-
             let requirements_already_checked = match edge.requirements() {
                 Some(selection_requirements) => visited_key_fields.contains(selection_requirements),
                 None => false,
@@ -265,17 +269,41 @@ pub fn find_direct_paths(
         NavigationTarget::ConcreteType(type_name) => {
             let edges_iter = graph
                 .edges_from(path_tail_index)
-                .filter(|e| matches!(e.weight(), Edge::AbstractMove(t) if t == type_name));
+                .filter(|e| match e.weight() {
+                    Edge::AbstractMove(t) => t == type_name,
+                    Edge::InterfaceObjectTypeMove(t) => t.object_type_name == type_name,
+                    _ => false,
+                });
+
             for edge_ref in edges_iter {
                 trace!(
-                    "Advancing path {} with edge {}",
-                    path.pretty_print(graph),
+                    "Checking edge {}",
                     graph.pretty_print_edge(edge_ref.id(), false)
                 );
 
-                let next_resolution_path = path.advance(&edge_ref, None, None);
+                let can_be_satisfied =
+                    can_satisfy_edge(graph, &edge_ref, path, &ExcludedFromLookup::new(), false)?;
 
-                result.push(next_resolution_path);
+                match can_be_satisfied {
+                    Some(paths) => {
+                        trace!(
+                            "Advancing path {} with edge {}",
+                            path.pretty_print(graph),
+                            graph.pretty_print_edge(edge_ref.id(), false)
+                        );
+
+                        let next_resolution_path = path.advance(
+                            &edge_ref,
+                            QueryTreeNode::from_paths(graph, &paths, None)?,
+                            None,
+                        );
+
+                        result.push(next_resolution_path);
+                    }
+                    None => {
+                        trace!("Edge not satisfied, continue look up...");
+                    }
+                }
             }
 
             Ok(result)

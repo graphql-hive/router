@@ -87,7 +87,7 @@ pub fn walk_operation(
 }
 
 fn process_selection<'a>(
-    graph: &Graph,
+    graph: &'a Graph,
     selection_item: &'a SelectionItem,
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
@@ -111,9 +111,9 @@ fn process_selection<'a>(
     Ok((stack_to_resolve, paths_per_leaf))
 }
 
-#[instrument(level = "trace", skip_all)]
+#[instrument(level = "trace", skip(graph, selection_set, paths))]
 fn process_selection_set<'a>(
-    graph: &Graph,
+    graph: &'a Graph,
     selection_set: &'a SelectionSet,
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
@@ -133,7 +133,7 @@ fn process_selection_set<'a>(
   type_condition = fragment.type_condition,
 ))]
 fn process_inline_fragment<'a>(
-    graph: &Graph,
+    graph: &'a Graph,
     fragment: &'a InlineFragmentSelection,
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
@@ -195,11 +195,24 @@ fn process_inline_fragment<'a>(
         )?;
 
         trace!("Direct paths found: {}", direct_paths.len());
-
         if !direct_paths.is_empty() {
             trace!("advanced: {}", path.pretty_print(graph));
             next_paths.push(direct_paths.remove(0));
-        } else {
+        }
+
+        let mut indirect_paths = find_indirect_paths(
+            graph,
+            path,
+            &NavigationTarget::ConcreteType(&fragment.type_condition),
+            &ExcludedFromLookup::new(),
+        )?;
+
+        if !indirect_paths.is_empty() {
+            trace!("advanced: {}", path.pretty_print(graph));
+            next_paths.push(indirect_paths.remove(0));
+        }
+
+        if indirect_paths.is_empty() && direct_paths.is_empty() {
             // Looks like a union member or an interface implementation is not resolvable.
             // The fact the fragment for that object type passed GraphQL validations,
             // means that it's a child of the abstract type,
@@ -256,7 +269,7 @@ fn process_inline_fragment<'a>(
   leaf = field.is_leaf()
 ))]
 fn process_field<'a>(
-    graph: &Graph,
+    graph: &'a Graph,
     field: &'a FieldSelection,
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {

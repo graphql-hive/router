@@ -81,20 +81,20 @@ pub struct ConditionNode {
     pub else_clause: Option<Box<PlanNode>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyRenamer {
     pub path: Vec<String>,
     pub rename_key_to: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum FetchRewrite {
     ValueSetter(ValueSetter),
     KeyRenamer(KeyRenamer),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ValueSetter {
     pub path: Vec<String>,
@@ -246,7 +246,7 @@ impl From<&FetchStepData> for FetchNode {
                         operation_str,
                     },
                     requires: None,
-                    input_rewrites: None,
+                    input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: None,
                 }
             }
@@ -257,7 +257,7 @@ impl From<&FetchStepData> for FetchNode {
                 operation_name: None,
                 operation: create_output_operation(step),
                 requires: Some(create_input_selection_set(&step.input)),
-                input_rewrites: None,
+                input_rewrites: step.input_rewrites.clone(),
                 output_rewrites: None,
             },
         }

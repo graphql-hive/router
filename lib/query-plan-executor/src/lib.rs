@@ -10,7 +10,7 @@ use query_planner::{
     state::supergraph_state::OperationKind,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
@@ -920,18 +920,6 @@ impl QueryPlanExecutionContext<'_> {
                                 // Merge the projected value into the result
                                 if let Value::Object(projected_map) = projected {
                                     deep_merge::deep_merge_objects(&mut result_map, projected_map);
-                                    /*
-                                     * TLDR: Needed for interface objects
-                                     *
-                                     * There are cases the type name in `__typename` might not exist in the subgraph.
-                                     * We know that the type name in the type condition exists,
-                                     * so we set the `__typename` field to the value from the type condition to guarantee
-                                     * that the type name in `__typename` is always present in the result.
-                                     */
-                                    result_map.insert(
-                                        TYPENAME_FIELD.to_string(),
-                                        json!(requires_selection.type_condition),
-                                    );
                                 }
                                 // If the projected value is not an object, it will be ignored
                             }
@@ -1113,10 +1101,9 @@ fn project_selection_set_with_map(
                                     schema_metadata,
                                     variable_values,
                                 );
-                                let field_val = std::mem::take(field_val);
                                 new_obj.insert(
                                     response_key,
-                                    field_val, // Clone the value to insert
+                                    field_val.clone(), // Clone the value to insert
                                 );
                             }
                         }

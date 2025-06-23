@@ -3,9 +3,10 @@ use crate::ast::operation::VariableDefinition;
 use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
 use crate::ast::type_aware_selection::TypeAwareSelection;
-use crate::graph::edge::{Edge, FieldMove};
+use crate::graph::edge::{Edge, FieldMove, InterfaceObjectTypeMove};
 use crate::graph::node::Node;
 use crate::graph::Graph;
+use crate::planner::plan_nodes::{FetchRewrite, ValueSetter};
 use crate::planner::tree::query_tree::QueryTree;
 use crate::planner::tree::query_tree_node::{MutationFieldPosition, QueryTreeNode};
 use crate::planner::walker::path::OperationPath;
@@ -765,6 +766,7 @@ pub struct FetchStepData {
     pub variable_usages: Option<BTreeSet<String>>,
     pub variable_definitions: Option<Vec<VariableDefinition>>,
     pub mutation_field_position: MutationFieldPosition,
+    pub input_rewrites: Option<Vec<FetchRewrite>>,
 }
 
 impl Display for FetchStepData {
@@ -815,6 +817,14 @@ impl FetchStepData {
         self.input.type_name != "Query"
             && self.input.type_name != "Mutation"
             && self.input.type_name != "Subscription"
+    }
+
+    pub fn add_input_rewrite(&mut self, rewrite: FetchRewrite) {
+        let rewrites = self.input_rewrites.get_or_insert_default();
+
+        if !rewrites.contains(&rewrite) {
+            rewrites.push(rewrite);
+        }
     }
 
     /// see `perform_passthrough_child_merge`
@@ -1150,16 +1160,18 @@ fn create_noop_fetch_step(fetch_graph: &mut FetchGraph, created_from_requires: b
         used_for_requires: created_from_requires,
         kind: FetchStepKind::Root,
         aliased_fields: HashMap::new(),
+        input_rewrites: None,
         variable_usages: None,
         variable_definitions: None,
         mutation_field_position: None,
     })
 }
 
-fn create_fetch_step_for_entity_move(
+fn create_fetch_step_for_entity_call(
     fetch_graph: &mut FetchGraph,
     subgraph_name: &SubgraphName,
-    type_name: &str,
+    input_type_name: &str,
+    output_type_name: &str,
     response_path: &MergePath,
     used_for_requires: bool,
 ) -> NodeIndex {
@@ -1170,15 +1182,16 @@ fn create_fetch_step_for_entity_move(
             selection_set: SelectionSet {
                 items: vec![SelectionItem::Field(FieldSelection::new_typename())],
             },
-            type_name: type_name.to_string(),
+            type_name: input_type_name.to_string(),
         },
         output: TypeAwareSelection {
             selection_set: SelectionSet::default(),
-            type_name: type_name.to_string(),
+            type_name: output_type_name.to_string(),
         },
         used_for_requires,
         kind: FetchStepKind::Entity,
         aliased_fields: HashMap::new(),
+        input_rewrites: None,
         variable_usages: None,
         variable_definitions: None,
         mutation_field_position: None,
@@ -1208,6 +1221,7 @@ fn create_fetch_step_for_root_move(
         aliased_fields: HashMap::new(),
         variable_usages: None,
         variable_definitions: None,
+        input_rewrites: None,
         mutation_field_position,
     });
 
@@ -1222,7 +1236,8 @@ fn ensure_fetch_step_for_subgraph(
     fetch_graph: &mut FetchGraph,
     parent_fetch_step_index: NodeIndex,
     subgraph_name: &SubgraphName,
-    type_name: &String,
+    input_type_name: &str,
+    output_type_name: &str,
     response_path: &MergePath,
     key: Option<&TypeAwareSelection>,
     requires: Option<&TypeAwareSelection>,
@@ -1239,7 +1254,7 @@ fn ensure_fetch_step_for_subgraph(
                         return None;
                     }
 
-                    if fetch_step.input.type_name != *type_name {
+                    if fetch_step.input.type_name != *input_type_name {
                         return None;
                     }
 
@@ -1279,10 +1294,11 @@ fn ensure_fetch_step_for_subgraph(
             Ok(idx)
         }
         None => {
-            let step_index = create_fetch_step_for_entity_move(
+            let step_index = create_fetch_step_for_entity_call(
                 fetch_graph,
                 subgraph_name,
-                type_name,
+                input_type_name,
+                output_type_name,
                 response_path,
                 created_from_requires || requires.is_some(),
             );
@@ -1295,7 +1311,7 @@ fn ensure_fetch_step_for_subgraph(
                 "created a new fetch step [{}] subgraph({}) type({}) requirement({}) key({}) in children of {}",
                 step_index.index(),
                 subgraph_name,
-                type_name,
+                input_type_name,
                 requires.map(|r| r.to_string()).unwrap_or_default(),
                 key.map(|r| r.to_string()).unwrap_or_default(),
                 parent_fetch_step_index.index(),
@@ -1351,9 +1367,10 @@ fn ensure_fetch_step_for_requirement(
             Ok(idx)
         }
         None => {
-            let step_index = create_fetch_step_for_entity_move(
+            let step_index = create_fetch_step_for_entity_call(
                 fetch_graph,
                 subgraph_name,
+                type_name,
                 type_name,
                 response_path,
                 true,
@@ -1517,17 +1534,28 @@ fn process_entity_move_edge(
         panic!("Expected a parent fetch step");
     }
     let edge = graph.edge(edge_index)?;
-    let requirement = match edge {
-        Edge::EntityMove(em) => TypeAwareSelection {
-            selection_set: em.requirements.selection_set.clone(),
-            type_name: em.requirements.type_name.clone(),
-        },
+    let (requirement, is_interface) = match edge {
+        Edge::EntityMove(em) => (
+            TypeAwareSelection {
+                selection_set: em.requirements.selection_set.clone(),
+                type_name: em.requirements.type_name.clone(),
+            },
+            em.is_interface,
+        ),
         _ => panic!("Expected an entity move"),
+    };
+
+    let head_node_index = graph.get_edge_head(&edge_index)?;
+    let head_node = graph.node(head_node_index)?;
+    let input_type_name = match head_node {
+        Node::SubgraphType(t) => &t.name,
+        // todo: FetchGraphError::MissingSubgraphName(head_node.clone())
+        _ => panic!("Expected a subgraph type, not root type"),
     };
 
     let tail_node_index = graph.get_edge_tail(&edge_index)?;
     let tail_node = graph.node(tail_node_index)?;
-    let (type_name, subgraph_name) = match tail_node {
+    let (output_type_name, subgraph_name) = match tail_node {
         Node::SubgraphType(t) => (&t.name, &t.subgraph),
         // todo: FetchGraphError::MissingSubgraphName(tail_node.clone())
         _ => panic!("Expected a subgraph type, not root type"),
@@ -1537,7 +1565,8 @@ fn process_entity_move_edge(
         fetch_graph,
         parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?,
         subgraph_name,
-        type_name,
+        input_type_name,
+        output_type_name,
         response_path,
         Some(&requirement),
         None,
@@ -1552,9 +1581,146 @@ fn process_entity_move_edge(
     );
     fetch_step.input.add(&requirement);
 
+    if is_interface {
+        // We use `output_type_name` as there's no connection from `Interface` to `Object`,
+        // it's always Object -> Interface.
+        trace!(
+            "adding input rewrite '... on {} {{ __typename }}' to '{}'",
+            output_type_name,
+            output_type_name
+        );
+        fetch_step.add_input_rewrite(FetchRewrite::ValueSetter(ValueSetter {
+            path: vec![
+                format!("... on {}", output_type_name),
+                "__typename".to_string(),
+            ],
+            set_value_to: output_type_name.clone().into(),
+        }));
+    }
+
     let parent_fetch_step = fetch_graph
         .get_step_data_mut(parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?)?;
-    add_typename_field_to_output(parent_fetch_step, type_name, fetch_path);
+    add_typename_field_to_output(parent_fetch_step, output_type_name, fetch_path);
+
+    // Make the fetch step a child of the parent fetch step
+    trace!(
+        "connecting fetch step to parent [{}] -> [{}]",
+        parent_fetch_step_index
+            .ok_or(FetchGraphError::IndexNone)?
+            .index(),
+        fetch_step_index.index()
+    );
+    fetch_graph.connect(
+        parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?,
+        fetch_step_index,
+    );
+
+    process_requirements_for_fetch_steps(
+        graph,
+        fetch_graph,
+        query_node,
+        parent_fetch_step_index,
+        Some(fetch_step_index),
+        response_path,
+        fetch_path,
+    )?;
+
+    process_children_for_fetch_steps(
+        graph,
+        fetch_graph,
+        query_node,
+        Some(fetch_step_index),
+        response_path,
+        &MergePath::default(),
+        requiring_fetch_step_index,
+        created_from_requires,
+    )
+}
+
+// TODO: simplfy args
+#[allow(clippy::too_many_arguments)]
+#[instrument(level = "trace",skip_all, fields(
+  edge = graph.pretty_print_edge(edge_index, false),
+  parent_fetch_step_index = parent_fetch_step_index.map(|f| f.index()),
+  requiring_fetch_step_index = requiring_fetch_step_index.map(|f| f.index()),
+))]
+fn process_interface_object_type_move_edge(
+    graph: &Graph,
+    fetch_graph: &mut FetchGraph,
+    query_node: &QueryTreeNode,
+    parent_fetch_step_index: Option<NodeIndex>,
+    response_path: &MergePath,
+    fetch_path: &MergePath,
+    requiring_fetch_step_index: Option<NodeIndex>,
+    edge_index: EdgeIndex,
+    object_type_name: &str,
+    created_from_requires: bool,
+) -> Result<Vec<NodeIndex>, FetchGraphError> {
+    if parent_fetch_step_index.is_none() {
+        panic!("Expected a parent fetch step");
+    }
+    let edge = graph.edge(edge_index)?;
+    let requirement = match edge {
+        Edge::InterfaceObjectTypeMove(m) => TypeAwareSelection {
+            selection_set: m.requirements.selection_set.clone(),
+            type_name: m.requirements.type_name.clone(),
+        },
+        _ => panic!("Expected an interfaceObject type move"),
+    };
+
+    let tail_node_index = graph.get_edge_tail(&edge_index)?;
+    let tail_node = graph.node(tail_node_index)?;
+    let (interface_type_name, subgraph_name) = match tail_node {
+        Node::SubgraphType(t) => (&t.name, &t.subgraph),
+        // todo: FetchGraphError::MissingSubgraphName(tail_node.clone())
+        _ => panic!("Expected a subgraph type, not root type"),
+    };
+
+    let fetch_step_index = ensure_fetch_step_for_subgraph(
+        fetch_graph,
+        parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?,
+        subgraph_name,
+        object_type_name,
+        interface_type_name,
+        response_path,
+        Some(&requirement),
+        None,
+        created_from_requires,
+    )?;
+
+    let fetch_step = fetch_graph.get_step_data_mut(fetch_step_index)?;
+    trace!(
+        "adding input requirement '{}' to fetch step [{}]",
+        requirement,
+        fetch_step_index.index()
+    );
+    fetch_step.input.add(&requirement);
+    let key_to_reenter_subgraph =
+        find_satisfiable_key(graph, query_node.requirements.first().unwrap())?;
+    fetch_step.input.add(&requirement);
+    trace!(
+        "adding key '{}' to fetch step [{}]",
+        key_to_reenter_subgraph,
+        fetch_step_index.index()
+    );
+    fetch_step.input.add(key_to_reenter_subgraph);
+
+    trace!(
+        "adding input rewrite '... on {} {{ __typename }}' to '{}'",
+        interface_type_name,
+        interface_type_name
+    );
+    fetch_step.add_input_rewrite(FetchRewrite::ValueSetter(ValueSetter {
+        path: vec![
+            format!("... on {}", interface_type_name),
+            "__typename".to_string(),
+        ],
+        set_value_to: interface_type_name.clone().into(),
+    }));
+
+    let parent_fetch_step = fetch_graph
+        .get_step_data_mut(parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?)?;
+    add_typename_field_to_output(parent_fetch_step, interface_type_name, fetch_path);
 
     // Make the fetch step a child of the parent fetch step
     trace!(
@@ -1912,9 +2078,10 @@ fn process_requires_field_edge(
     step_for_children.input.add(key_to_reenter_subgraph);
 
     trace!("Creating a fetch step for requirement of @requires");
-    let step_for_requirements_index = create_fetch_step_for_entity_move(
+    let step_for_requirements_index = create_fetch_step_for_entity_call(
         fetch_graph,
         head_subgraph_name,
+        head_type_name,
         head_type_name,
         response_path,
         true,
@@ -2152,6 +2319,20 @@ fn process_query_node(
                 fetch_path,
                 type_name,
                 &edge_index,
+            ),
+            Edge::InterfaceObjectTypeMove(InterfaceObjectTypeMove {
+                object_type_name, ..
+            }) => process_interface_object_type_move_edge(
+                graph,
+                fetch_graph,
+                query_node,
+                parent_fetch_step_index,
+                response_path,
+                fetch_path,
+                requiring_fetch_step_index,
+                edge_index,
+                object_type_name,
+                created_from_requires,
             ),
         }
     } else {

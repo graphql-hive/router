@@ -57,7 +57,7 @@ impl FederationDirective for JoinTypeDirective {
                 if let Value::Boolean(value) = arg_value {
                     result.resolvable = *value
                 }
-            } else if arg_name.eq("is_interface_object") {
+            } else if arg_name.eq("isInterfaceObject") {
                 if let Value::Boolean(value) = arg_value {
                     result.is_interface_object = *value
                 }
