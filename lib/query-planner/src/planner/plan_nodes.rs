@@ -81,20 +81,20 @@ pub struct ConditionNode {
     pub else_clause: Option<Box<PlanNode>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyRenamer {
     pub path: Vec<String>,
     pub rename_key_to: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum FetchRewrite {
     ValueSetter(ValueSetter),
     KeyRenamer(KeyRenamer),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ValueSetter {
     pub path: Vec<String>,

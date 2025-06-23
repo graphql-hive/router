@@ -11,6 +11,12 @@ use crate::{
 pub struct EntityMove {
     pub key: String,
     pub requirements: TypeAwareSelection,
+    /// Indicates whether the move is to an interface entity.
+    ///
+    /// Object @key -> Object @key (@interfaceObject)
+    ///
+    /// Interface @key -> Interface @key
+    pub is_interface: bool,
 }
 
 #[derive(Debug)]
@@ -58,10 +64,15 @@ pub enum Edge {
 pub type EdgeReference<'a> = GraphEdgeReference<'a, Edge>;
 
 impl Edge {
-    pub fn create_entity_move(key: &str, selection: TypeAwareSelection) -> Self {
+    pub fn create_entity_move(
+        key: &str,
+        selection: TypeAwareSelection,
+        is_interface: bool,
+    ) -> Self {
         Self::EntityMove(EntityMove {
             key: key.to_string(),
             requirements: selection,
+            is_interface,
         })
     }
 

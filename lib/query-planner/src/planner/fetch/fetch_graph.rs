@@ -20,7 +20,7 @@ use petgraph::Directed;
 use petgraph::Direction;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt::{Debug, Display};
-use tracing::{info, instrument, trace};
+use tracing::{instrument, trace};
 
 use super::error::FetchGraphError;
 
@@ -820,14 +820,11 @@ impl FetchStepData {
     }
 
     pub fn add_input_rewrite(&mut self, rewrite: FetchRewrite) {
-        if self.input_rewrites.is_none() {
-            self.input_rewrites = Some(vec![]);
-        }
+        let rewrites = self.input_rewrites.get_or_insert_default();
 
-        self.input_rewrites
-            .as_mut()
-            .expect("should exist")
-            .push(rewrite);
+        if !rewrites.contains(&rewrite) {
+            rewrites.push(rewrite);
+        }
     }
 
     /// see `perform_passthrough_child_merge`
@@ -1537,11 +1534,14 @@ fn process_entity_move_edge(
         panic!("Expected a parent fetch step");
     }
     let edge = graph.edge(edge_index)?;
-    let requirement = match edge {
-        Edge::EntityMove(em) => TypeAwareSelection {
-            selection_set: em.requirements.selection_set.clone(),
-            type_name: em.requirements.type_name.clone(),
-        },
+    let (requirement, is_interface) = match edge {
+        Edge::EntityMove(em) => (
+            TypeAwareSelection {
+                selection_set: em.requirements.selection_set.clone(),
+                type_name: em.requirements.type_name.clone(),
+            },
+            em.is_interface,
+        ),
         _ => panic!("Expected an entity move"),
     };
 
@@ -1580,6 +1580,23 @@ fn process_entity_move_edge(
         fetch_step_index.index()
     );
     fetch_step.input.add(&requirement);
+
+    if is_interface {
+        // We use `output_type_name` as there's no connection from `Interface` to `Object`,
+        // it's always Object -> Interface.
+        trace!(
+            "adding input rewrite '... on {} {{ __typename }}' to '{}'",
+            output_type_name,
+            output_type_name
+        );
+        fetch_step.add_input_rewrite(FetchRewrite::ValueSetter(ValueSetter {
+            path: vec![
+                format!("... on {}", output_type_name),
+                "__typename".to_string(),
+            ],
+            set_value_to: output_type_name.clone().into(),
+        }));
+    }
 
     let parent_fetch_step = fetch_graph
         .get_step_data_mut(parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?)?;

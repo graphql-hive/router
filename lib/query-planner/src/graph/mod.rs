@@ -278,6 +278,7 @@ impl Graph {
     #[instrument(level = "trace", skip(self, state))]
     fn build_entity_reference_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
+            let is_interface = matches!(definition, SupergraphDefinition::Interface(_));
             for join_type1 in definition.join_types() {
                 // Connects object and interface entities of the same name by @key
                 for join_type2 in definition.join_types() {
@@ -311,7 +312,7 @@ impl Graph {
                             self.upsert_edge(
                                 head,
                                 tail,
-                                Edge::create_entity_move(key, key_selection),
+                                Edge::create_entity_move(key, key_selection, is_interface),
                             );
                         }
                     } else if let (true, Some(key)) = (&join_type1.resolvable, &join_type1.key) {
@@ -325,7 +326,11 @@ impl Graph {
                             key
                         );
 
-                        self.upsert_edge(head, head, Edge::create_entity_move(key, key_selection));
+                        self.upsert_edge(
+                            head,
+                            head,
+                            Edge::create_entity_move(key, key_selection, is_interface),
+                        );
                     }
                 }
 
@@ -440,7 +445,7 @@ impl Graph {
                         self.upsert_edge(
                             head,
                             tail,
-                            Edge::create_entity_move(key, key_selection.clone()),
+                            Edge::create_entity_move(key, key_selection.clone(), is_interface),
                         );
                     }
                 }

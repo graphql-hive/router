@@ -425,6 +425,17 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
                     }
                   ]
                 }
+              ],
+              "inputRewrites": [
+                {
+                  "ValueSetter": {
+                    "path": [
+                      "... on NodeWithName",
+                      "__typename"
+                    ],
+                    "setValueTo": "NodeWithName"
+                  }
+                }
               ]
             }
           },
