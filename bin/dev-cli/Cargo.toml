@@ -12,3 +12,4 @@ query-planner = { path = "../../lib/query-planner" }
 graphql-parser = "0.4.1"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing-tree = "0.4.0"
+serde_json = { version = "1.0.120", features = ["preserve_order"] }

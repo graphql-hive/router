@@ -2,6 +2,7 @@ mod alias;
 mod arguments;
 mod fragments;
 mod interface_object;
+mod interface_object_with_requires;
 mod mutations;
 mod object_entities;
 mod override_requires;
