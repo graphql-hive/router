@@ -10,7 +10,7 @@ use query_planner::{
     state::supergraph_state::OperationKind,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
@@ -285,11 +285,14 @@ impl ExecutableFetchNode for FetchNode {
             extensions: None,
         };
 
+        println!("request {:#?}", execution_request);
+
         // 3. Execute the fetch operation
         let fetch_result = execution_context
             .subgraph_executor_map
             .execute(&self.service_name, execution_request)
             .await;
+        println!("fetch_result {:#?}", fetch_result);
 
         // Process data
         let entities = if let Some(mut data) = fetch_result.data {
@@ -920,18 +923,6 @@ impl QueryPlanExecutionContext<'_> {
                                 // Merge the projected value into the result
                                 if let Value::Object(projected_map) = projected {
                                     deep_merge::deep_merge_objects(&mut result_map, projected_map);
-                                    /*
-                                     * TLDR: Needed for interface objects
-                                     *
-                                     * There are cases the type name in `__typename` might not exist in the subgraph.
-                                     * We know that the type name in the type condition exists,
-                                     * so we set the `__typename` field to the value from the type condition to guarantee
-                                     * that the type name in `__typename` is always present in the result.
-                                     */
-                                    result_map.insert(
-                                        TYPENAME_FIELD.to_string(),
-                                        json!(requires_selection.type_condition),
-                                    );
                                 }
                                 // If the projected value is not an object, it will be ignored
                             }
@@ -1034,6 +1025,7 @@ fn project_selection_set_with_map(
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
 ) -> Option<Map<String, Value>> {
+    println!("old_obj {:#?}", obj);
     let type_name = match obj.get(TYPENAME_FIELD) {
         Some(Value::String(type_name)) => type_name,
         _ => type_name,
@@ -1113,10 +1105,9 @@ fn project_selection_set_with_map(
                                     schema_metadata,
                                     variable_values,
                                 );
-                                let field_val = std::mem::take(field_val);
                                 new_obj.insert(
                                     response_key,
-                                    field_val, // Clone the value to insert
+                                    field_val.clone(), // Clone the value to insert
                                 );
                             }
                         }
@@ -1159,6 +1150,7 @@ fn project_selection_set_with_map(
             }
         }
     }
+    println!("new obj{:#?}", new_obj);
     Some(new_obj)
 }
 
