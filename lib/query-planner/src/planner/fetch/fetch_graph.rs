@@ -389,23 +389,23 @@ impl FetchGraph {
             // Key: original index, Value: potentially updated index after merges.
             let mut node_indexes: HashMap<NodeIndex, NodeIndex> = HashMap::new();
 
-            let mut siblings: Vec<_> = self
+            // Sort fetch steps by mutation's field position,
+            // to execute mutations in correct order.
+            let mut siblings_with_pos: Vec<(NodeIndex, Option<usize>)> = self
                 .graph
                 .neighbors_directed(parent_index, Direction::Outgoing)
-                .collect();
+                .map(|sibling| {
+                    self.get_step_data(sibling)
+                        .map(|data| (sibling, data.mutation_field_position))
+                })
+                .collect::<Result<_, _>>()?;
 
             // Sort fetch steps by mutation's field position,
             // to execute mutations in correct order.
-            siblings.sort_by(|a, b| {
-                // It's safe to panic as the indexes comes from the graph and not outside the function,
-                // we know they exist.
-                let a_step = self.get_step_data(a.id()).expect("Sibling to exist");
-                let b_step = self.get_step_data(b.id()).expect("Sibling to exist");
+            siblings_with_pos.sort_by_key(|(_node, pos)| *pos);
 
-                a_step
-                    .mutation_field_position
-                    .cmp(&b_step.mutation_field_position)
-            });
+            let siblings: Vec<NodeIndex> =
+                siblings_with_pos.into_iter().map(|(idx, _)| idx).collect();
 
             for (i, sibling_index) in siblings.iter().enumerate() {
                 // Add the current node to the queue for further processing (BFS).
@@ -464,10 +464,10 @@ impl FetchGraph {
                 // Get the latest indexes for the nodes, accounting for previous merges.
                 let child_index_latest = node_indexes
                     .get(&child_index)
-                    .expect("Index mapping got lost");
+                    .ok_or(FetchGraphError::IndexMappingLost)?;
                 let other_child_index_latest = node_indexes
                     .get(&other_child_index)
-                    .expect("Index mapping got lost");
+                    .ok_or(FetchGraphError::IndexMappingLost)?;
 
                 // If any conflicts exist, perform aliasing.
                 if let Some(output_conflicts) = maybe_field_conflicts {
@@ -668,7 +668,7 @@ impl FetchGraph {
         // Bring back the root -> Mutation edge
         let first_pair = node_mutation_field_pos_pairs
             .first()
-            .expect("fetch steps weren't empty, expected to find a first step");
+            .ok_or(FetchGraphError::EmptyFetchSteps)?;
         self.connect(root_index, first_pair.0);
 
         for (from_id, to_id) in new_edges_pairs {
@@ -687,10 +687,10 @@ impl Display for FetchGraph {
             if node_index.index() == 0 {
                 continue;
             }
-            let fetch_step = self.graph.node_weight(node_index).expect("node to exist");
-
-            fetch_step.pretty_write(f, node_index)?;
-            writeln!(f)?;
+            if let Some(fetch_step) = self.graph.node_weight(node_index) {
+                fetch_step.pretty_write(f, node_index)?;
+                writeln!(f)?;
+            }
         }
 
         writeln!(f, "\nTree:")?;
@@ -1066,9 +1066,7 @@ fn perform_aliasing_for_conflicts(
                     .map(|r| r.1)
                     .collect::<Vec<usize>>(),
             ),
-            (false, false) => {
-                panic!("Unexpected case where two user-defined fields are conflicting!")
-            }
+            (false, false) => return Err(FetchGraphError::UnexpectedConflict),
         };
 
     trace!(
@@ -1107,7 +1105,7 @@ fn perform_fetch_step_merge(
 
     if me.input.type_name == other.input.type_name {
         if me.response_path != other.response_path {
-            panic!("input types are equal but resonse_path are different, should not happen");
+            return Err(FetchGraphError::MismatchedResponsePath);
         }
 
         me.input.add(&other.input);
@@ -1539,21 +1537,25 @@ fn process_entity_move_edge(
             },
             em.is_interface,
         ),
-        _ => panic!("Expected an entity move"),
+        _ => {
+            return Err(FetchGraphError::UnexpectedEdgeMove(
+                "EntityMove".to_string(),
+            ))
+        }
     };
 
     let head_node_index = graph.get_edge_head(&edge_index)?;
     let head_node = graph.node(head_node_index)?;
     let input_type_name = match head_node {
         Node::SubgraphType(t) => &t.name,
-        _ => panic!("Expected a subgraph type, not root type"),
+        _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
     let tail_node_index = graph.get_edge_tail(&edge_index)?;
     let tail_node = graph.node(tail_node_index)?;
     let (output_type_name, subgraph_name) = match tail_node {
         Node::SubgraphType(t) => (&t.name, &t.subgraph),
-        _ => panic!("Expected a subgraph type, not root type"),
+        _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
     let fetch_step_index = ensure_fetch_step_for_subgraph(
@@ -1651,7 +1653,11 @@ fn process_interface_object_type_move_edge(
             selection_set: m.requirements.selection_set.clone(),
             type_name: m.requirements.type_name.clone(),
         },
-        _ => panic!("Expected an interfaceObject type move"),
+        _ => {
+            return Err(FetchGraphError::UnexpectedEdgeMove(
+                "InterfaceObjectTypeMove".to_string(),
+            ))
+        }
     };
 
     let tail_node_index = graph.get_edge_tail(&edge_index)?;
@@ -1659,7 +1665,7 @@ fn process_interface_object_type_move_edge(
     let (interface_type_name, subgraph_name) = match tail_node {
         Node::SubgraphType(t) => (&t.name, &t.subgraph),
         // todo: FetchGraphError::MissingSubgraphName(tail_node.clone())
-        _ => panic!("Expected a subgraph type, not root type"),
+        _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
     let fetch_step_index = ensure_fetch_step_for_subgraph(
@@ -1797,7 +1803,7 @@ fn process_abstract_edge(
     let head = graph.node(head_index)?;
     let head_type_name = match head {
         Node::SubgraphType(t) => &t.name,
-        _ => panic!("Expected a subgraph type"),
+        _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
@@ -1954,21 +1960,19 @@ fn process_requires_field_edge(
     let requires = field_move
         .requirements
         .as_ref()
-        .expect("Expected @requires");
+        .ok_or(FetchGraphError::MissingRequires)?;
 
     let tail_node_index = graph.get_edge_tail(&edge_index)?;
     let tail_node = graph.node(tail_node_index)?;
     let tail_type_name = match tail_node {
         Node::SubgraphType(t) => &t.name,
-        // todo: FetchGraphError::MissingSubgraphName(tail_node.clone())
-        _ => panic!("Expected a subgraph type, not root type"),
+        _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
     let head_node_index = graph.get_edge_head(&edge_index)?;
     let head_node = graph.node(head_node_index)?;
     let (head_type_name, head_subgraph_name) = match head_node {
         Node::SubgraphType(t) => (&t.name, &t.subgraph),
-        // todo: FetchGraphError::MissingSubgraphName(head.clone())
-        _ => panic!("Expected a subgraph type, not root type"),
+        _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
     let key_to_reenter_subgraph =
