@@ -87,7 +87,7 @@ pub fn walk_operation(
 }
 
 fn process_selection<'a>(
-    graph: &Graph,
+    graph: &'a Graph,
     selection_item: &'a SelectionItem,
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
@@ -111,9 +111,9 @@ fn process_selection<'a>(
     Ok((stack_to_resolve, paths_per_leaf))
 }
 
-#[instrument(level = "trace", skip_all)]
+#[instrument(level = "trace", skip(graph, selection_set, paths))]
 fn process_selection_set<'a>(
-    graph: &Graph,
+    graph: &'a Graph,
     selection_set: &'a SelectionSet,
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
@@ -133,7 +133,7 @@ fn process_selection_set<'a>(
   type_condition = fragment.type_condition,
 ))]
 fn process_inline_fragment<'a>(
-    graph: &Graph,
+    graph: &'a Graph,
     fragment: &'a InlineFragmentSelection,
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
@@ -269,7 +269,7 @@ fn process_inline_fragment<'a>(
   leaf = field.is_leaf()
 ))]
 fn process_field<'a>(
-    graph: &Graph,
+    graph: &'a Graph,
     field: &'a FieldSelection,
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {

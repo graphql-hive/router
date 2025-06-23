@@ -111,6 +111,7 @@ impl Edge {
     pub fn requirements(&self) -> Option<&TypeAwareSelection> {
         match self {
             Self::EntityMove(entity_move) => Some(&entity_move.requirements),
+            Self::InterfaceObjectTypeMove(m) => Some(&m.requirements),
             Self::FieldMove(field_move) => field_move.requirements.as_ref(),
             _ => None,
         }
@@ -241,6 +242,9 @@ impl PartialEq for Edge {
             ) => key == other_key,
 
             (Edge::AbstractMove(name), Edge::AbstractMove(other_name)) => name == other_name,
+            (Edge::InterfaceObjectTypeMove(st), Edge::InterfaceObjectTypeMove(ot)) => {
+                st.object_type_name == ot.object_type_name
+            }
 
             _ => false,
         }

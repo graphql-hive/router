@@ -269,17 +269,41 @@ pub fn find_direct_paths(
         NavigationTarget::ConcreteType(type_name) => {
             let edges_iter = graph
                 .edges_from(path_tail_index)
-                .filter(|e| matches!(e.weight(), Edge::AbstractMove(t) if t == type_name));
+                .filter(|e| match e.weight() {
+                    Edge::AbstractMove(t) => t == type_name,
+                    Edge::InterfaceObjectTypeMove(t) => t.object_type_name == type_name,
+                    _ => false,
+                });
+
             for edge_ref in edges_iter {
                 trace!(
-                    "Advancing path {} with edge {}",
-                    path.pretty_print(graph),
+                    "Checking edge {}",
                     graph.pretty_print_edge(edge_ref.id(), false)
                 );
 
-                let next_resolution_path = path.advance(&edge_ref, None, None);
+                let can_be_satisfied =
+                    can_satisfy_edge(graph, &edge_ref, path, &ExcludedFromLookup::new(), false)?;
 
-                result.push(next_resolution_path);
+                match can_be_satisfied {
+                    Some(paths) => {
+                        trace!(
+                            "Advancing path {} with edge {}",
+                            path.pretty_print(graph),
+                            graph.pretty_print_edge(edge_ref.id(), false)
+                        );
+
+                        let next_resolution_path = path.advance(
+                            &edge_ref,
+                            QueryTreeNode::from_paths(graph, &paths, None)?,
+                            None,
+                        );
+
+                        result.push(next_resolution_path);
+                    }
+                    None => {
+                        trace!("Edge not satisfied, continue look up...");
+                    }
+                }
             }
 
             Ok(result)

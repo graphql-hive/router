@@ -246,7 +246,7 @@ impl From<&FetchStepData> for FetchNode {
                         operation_str,
                     },
                     requires: None,
-                    input_rewrites: None,
+                    input_rewrites: step.input_rewrites.clone(),
                     output_rewrites: None,
                 }
             }
@@ -257,7 +257,7 @@ impl From<&FetchStepData> for FetchNode {
                 operation_name: None,
                 operation: create_output_operation(step),
                 requires: Some(create_input_selection_set(&step.input)),
-                input_rewrites: None,
+                input_rewrites: step.input_rewrites.clone(),
                 output_rewrites: None,
             },
         }

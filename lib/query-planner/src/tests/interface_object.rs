@@ -231,6 +231,78 @@ fn interface_to_object_type_locally() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn interface_object_with_inline_fragment_resolving_remote_interface_field_simple(
+) -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          anotherUsers {
+            ... on User {
+              username
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/simple-interface-object.supergraph.graphql",
+        document,
+    )?;
+
+    // The `Query.anotherUsers` resolves `[NodeWithName]`,
+    // and in the same subgraph the `NodeWithName` is an object type with @interfaceObject.
+    // It means that it's not capable of resolving interface implementations (object types),
+    // as it's fake interface, an true object type.
+    // To resolve the User part, we need to confirm correct __typename.
+    // To resolve `User.username`, we need to call the NodeWithName interfaceObject,
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {
+            anotherUsers {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "anotherUsers.@") {
+          Fetch(service: "a") {
+              ... on NodeWithName {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on NodeWithName {
+                __typename
+              }
+            }
+          },
+        },
+        Flatten(path: "anotherUsers.@") {
+          Fetch(service: "b") {
+              ... on User {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on NodeWithName {
+                username
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
 fn interface_object_with_inline_fragment_resolving_remote_interface_field(
 ) -> Result<(), Box<dyn Error>> {
     init_logger();
@@ -288,9 +360,7 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
               ... on NodeWithName {
                 __typename
                 ... on User {
-                  __typename
                   age
-                  id
                   name
                 }
                 name
@@ -307,6 +377,7 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
             } =>
             {
               ... on NodeWithName {
+                id
                 username
               }
             }
@@ -314,6 +385,92 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
         },
       },
     },
+    "#);
+
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "b",
+            "operationKind": "query",
+            "operation": "query{anotherUsers{__typename id}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "anotherUsers",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename ...on User{age name} name}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "NodeWithName",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "anotherUsers",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "b",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{id username}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "User",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "inputRewrites": [
+                {
+                  "ValueSetter": {
+                    "path": [
+                      "... on NodeWithName",
+                      "__typename"
+                    ],
+                    "setValueTo": "NodeWithName"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
     "#);
 
     Ok(())
@@ -455,47 +612,46 @@ fn interface_object_field_with_inline_fragment_requiring_typename_check(
     // If the `__typename` equals to `Admin`, then we're able to call the interfaceObject,
     // and resolve the `name`.
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-      QueryPlan {
-        Sequence {
-          Fetch(service: "b") {
-              accounts {
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {
+            accounts {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "accounts.@") {
+          Fetch(service: "a") {
+              ... on Account {
                 __typename
                 id
               }
+            } =>
+            {
+              ... on Account {
+                __typename
+              }
             }
           },
-          Flatten(path: "accounts.@") {
-            Fetch(service: "a") {
-              {
-                ... on Account {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Account {
-                  __typename
-                }
+        },
+        Flatten(path: "accounts.@") {
+          Fetch(service: "b") {
+              ... on Admin {
+                __typename
+                id
               }
-            },
-          },
-          Flatten(path: "accounts.@") {
-            Fetch(service: "b") {
-              {
-                ... on Admin {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Account {
-                  name
-                }
+            } =>
+            {
+              ... on Account {
+                name
               }
-            },
+            }
           },
         },
-      }
+      },
+    },
     "#);
 
     Ok(())

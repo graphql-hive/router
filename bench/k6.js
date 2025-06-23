@@ -48,7 +48,7 @@ export function handleSummary(data) {
 
         if (!passes) {
           result.push(
-            `> If the performance regression is expected, please increase the failing threshold.`
+            `> If the performance regression is expected, please increase the failing threshold.`,
           );
         }
 
