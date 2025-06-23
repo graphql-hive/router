@@ -1104,8 +1104,10 @@ fn perform_fetch_step_merge(
     );
 
     if let Some(input_rewrites) = other.input_rewrites.take() {
-        for input_rewrite in input_rewrites {
-            me.add_input_rewrite(input_rewrite);
+        if !input_rewrites.is_empty() {
+            for input_rewrite in input_rewrites {
+                me.add_input_rewrite(input_rewrite);
+            }
         }
     }
 
