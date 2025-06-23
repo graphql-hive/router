@@ -285,14 +285,11 @@ impl ExecutableFetchNode for FetchNode {
             extensions: None,
         };
 
-        println!("request {:#?}", execution_request);
-
         // 3. Execute the fetch operation
         let fetch_result = execution_context
             .subgraph_executor_map
             .execute(&self.service_name, execution_request)
             .await;
-        println!("fetch_result {:#?}", fetch_result);
 
         // Process data
         let entities = if let Some(mut data) = fetch_result.data {
@@ -1025,7 +1022,6 @@ fn project_selection_set_with_map(
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
 ) -> Option<Map<String, Value>> {
-    println!("old_obj {:#?}", obj);
     let type_name = match obj.get(TYPENAME_FIELD) {
         Some(Value::String(type_name)) => type_name,
         _ => type_name,
@@ -1150,7 +1146,6 @@ fn project_selection_set_with_map(
             }
         }
     }
-    println!("new obj{:#?}", new_obj);
     Some(new_obj)
 }
 
