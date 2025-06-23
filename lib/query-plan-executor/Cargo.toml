@@ -15,7 +15,8 @@ query-planner = { path = "../query-planner" }
 graphql-parser = "0.4.1"
 graphql-tools = "0.4.0"
 tracing = "0.1.41"
-async-graphql = { version = "7.0.17", features = ["dynamic-schema"]}
+# TODO: Move this to dev-dependencies but currently benchmarks need it
+async-graphql = { version = "7.0.17" }
 
 [dev-dependencies]
 criterion = { version = "0.6", features = ["html_reports", "async_tokio"] }

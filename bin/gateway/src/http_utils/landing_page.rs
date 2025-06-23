@@ -15,9 +15,7 @@ pub async fn landing_page_handler(
     subgraph_html.push_str("<h3>Supergraph Status: Loaded ✅</h3>");
     subgraph_html.push_str("<table>");
     subgraph_html.push_str("<tr><th>Subgraph</th><th>Transport</th><th>Location</th></tr>");
-    for (subgraph_name, subgraph_endpoint) in
-        gateway_shared_state.executor.subgraph_endpoint_map.iter()
-    {
+    for (subgraph_name, subgraph_endpoint) in &gateway_shared_state.subgraph_endpoint_map {
         subgraph_html.push_str("<tr>");
         subgraph_html.push_str(&format!("<td>{}</td>", subgraph_name));
         subgraph_html.push_str(&format!(

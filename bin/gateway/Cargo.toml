@@ -23,7 +23,6 @@ serde = { version = "1.0.203", features = ["derive"] }
 serde_json = { version = "1.0.120", features = ["preserve_order"] }
 
 # HTTP client and caching
-reqwest = { version = "0.12.5", features = ["json"] }
 moka = { version = "0.12.8", features = ["future"] }
 
 # Tracing

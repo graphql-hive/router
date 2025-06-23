@@ -12,10 +12,10 @@ use query_planner::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::{collections::HashMap, vec};
-use tracing::{instrument, warn};
+use tracing::{instrument, trace, warn}; // For reading file in main
 
 use crate::{
-    deep_merge::deep_merge_objects, executors::common::SubgraphExecutor,
+    deep_merge::deep_merge_objects, executors::map::SubgraphExecutorMap,
     schema_metadata::SchemaMetadata,
 };
 pub mod deep_merge;
@@ -75,31 +75,52 @@ impl ExecutablePlanNode for PlanNode {
     }
 }
 
+#[instrument(
+    level = "trace",
+    skip(execution_context),
+    name = "process_errors_and_extensions"
+)]
 fn process_errors_and_extensions(
     execution_context: &mut QueryPlanExecutionContext<'_>,
     errors: Option<Vec<GraphQLError>>,
     extensions: Option<HashMap<String, Value>>,
 ) {
-    // 6. Handle errors
     if let Some(errors) = errors {
+        trace!("Processing errors: {:?}", errors);
         execution_context.errors.extend(errors);
     }
     // 7. Handle extensions
     if let Some(extensions) = extensions {
+        trace!("Processing extensions: {:?}", extensions);
         execution_context.extensions.extend(extensions);
     }
 }
 
+#[instrument(
+    level = "debug", 
+    skip_all
+    name = "process_representations_result",
+    fields(
+        representations_count = %result.entities.as_ref().map_or(0, |e| e.len())
+    ),
+)]
 fn process_representations_result(
     result: ExecuteForRepresentationsResult,
     representations: &mut Vec<&mut Value>,
     execution_context: &mut QueryPlanExecutionContext<'_>,
 ) {
     if let Some(entities) = result.entities {
-        // 3. Process the entities
+        trace!(
+            "Processing representations result: {} entities",
+            entities.len()
+        );
         for (entity, index) in entities.into_iter().zip(result.indexes.into_iter()) {
             if let Some(representation) = representations.get_mut(index) {
-                // Merge the entity into the representation
+                trace!(
+                    "Merging entity into representation at index {}: {:?}",
+                    index,
+                    entity
+                );
                 deep_merge::deep_merge(representation, entity);
             }
         }
@@ -144,7 +165,7 @@ trait ExecutableFetchNode {
 
 #[async_trait]
 impl ExecutablePlanNode for FetchNode {
-    #[instrument(level = "debug", skip_all, name = "FetchNode")]
+    #[instrument(level = "debug", skip_all, name = "FetchNode::execute")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -152,7 +173,7 @@ impl ExecutablePlanNode for FetchNode {
     ) {
         let fetch_result = self.execute_for_root(execution_context).await;
 
-        process_result(fetch_result, execution_context, data);
+        process_root_result(fetch_result, execution_context, data);
     }
 }
 
@@ -163,23 +184,31 @@ struct ProjectRepresentationsResult {
 
 #[async_trait]
 impl ExecutableFetchNode for FetchNode {
-    #[instrument(level = "debug", skip_all)]
+    #[instrument(
+        level = "trace", 
+        skip_all,
+        name="FetchNode::execute_for_root",
+        fields(
+            service_name = self.service_name,
+            operation_name = ?self.operation_name,
+            operation_str = %self.operation.operation_str,
+        )
+    )]
     async fn execute_for_root(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
     ) -> ExecutionResult {
         let variables = self.prepare_variables_for_fetch_node(execution_context.variable_values);
 
+        let execution_request = ExecutionRequest {
+            query: self.operation.operation_str.clone(),
+            operation_name: self.operation_name.clone(),
+            variables,
+            extensions: None,
+        };
         let mut fetch_result = execution_context
-            .execute(
-                &self.service_name,
-                ExecutionRequest {
-                    query: self.operation.operation_str.clone(),
-                    operation_name: self.operation_name.clone(),
-                    variables,
-                    extensions: None,
-                },
-            )
+            .subgraph_executor_map
+            .execute(&self.service_name, execution_request)
             .await;
 
         // 5. Process the response
@@ -226,6 +255,14 @@ impl ExecutableFetchNode for FetchNode {
         }
     }
 
+    #[instrument(
+        level = "debug", 
+        skip_all,
+        name = "execute_for_projected_representations",
+        fields(
+            representations_count = %filtered_representations.len(),
+        ),
+    )]
     async fn execute_for_projected_representations(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
@@ -236,23 +273,22 @@ impl ExecutableFetchNode for FetchNode {
         let mut variables = self
             .prepare_variables_for_fetch_node(execution_context.variable_values)
             .unwrap_or_default();
-
         variables.insert(
             "representations".to_string(),
             Value::Array(filtered_representations),
         );
 
+        let execution_request = ExecutionRequest {
+            query: self.operation.operation_str.clone(),
+            operation_name: self.operation_name.clone(),
+            variables: Some(variables),
+            extensions: None,
+        };
+
         // 3. Execute the fetch operation
         let fetch_result = execution_context
-            .execute(
-                &self.service_name,
-                ExecutionRequest {
-                    query: self.operation.operation_str.clone(),
-                    operation_name: self.operation_name.clone(),
-                    variables: Some(variables),
-                    extensions: None,
-                },
-            )
+            .subgraph_executor_map
+            .execute(&self.service_name, execution_request)
             .await;
 
         // Process data
@@ -291,6 +327,11 @@ impl ExecutableFetchNode for FetchNode {
         }
     }
 
+    #[instrument(
+        level = "debug",
+        skip(self, variable_values),
+        name = "prepare_variables_for_fetch_node"
+    )]
     fn prepare_variables_for_fetch_node(
         &self,
         variable_values: &Option<HashMap<String, Value>>,
@@ -454,7 +495,9 @@ impl ApplyFetchRewrite for ValueSetter {
 
 #[async_trait]
 impl ExecutablePlanNode for SequenceNode {
-    #[instrument(level = "trace", skip_all, name = "SequenceNode")]
+    #[instrument(level = "trace", skip_all, name = "SequenceNode::execute", fields(
+        nodes_count = %self.nodes.len()
+    ))]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -467,7 +510,11 @@ impl ExecutablePlanNode for SequenceNode {
     }
 }
 
-fn process_result(
+#[instrument(level = "debug", skip_all, name = "process_root_result", fields(
+    fetch_result = ?fetch_result.data.as_ref().map(|d| d.to_string()),
+    errors_count = %fetch_result.errors.as_ref().map_or(0, |e| e.len()),
+))]
+fn process_root_result(
     fetch_result: ExecutionResult,
     execution_context: &mut QueryPlanExecutionContext<'_>,
     data: &mut Value,
@@ -490,7 +537,9 @@ fn process_result(
 
 #[async_trait]
 impl ExecutablePlanNode for ParallelNode {
-    #[instrument(level = "trace", skip_all, name = "ParallelNode")]
+    #[instrument(level = "trace", skip_all, name = "ParallelNode::execute", fields(
+        nodes_count = %self.nodes.len()
+    ))]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -502,6 +551,7 @@ impl ExecutablePlanNode for ParallelNode {
         let mut flatten_paths = vec![];
 
         // Collect Fetch node results and non-fetch nodes for sequential execution
+        let now = std::time::Instant::now();
         for node in &self.nodes {
             match node {
                 PlanNode::Fetch(fetch_node) => {
@@ -536,10 +586,28 @@ impl ExecutablePlanNode for ParallelNode {
                 _ => {}
             }
         }
+        trace!(
+            "Prepared {} fetch jobs and {} flatten jobs in {:?}",
+            fetch_jobs.len(),
+            flatten_jobs.len(),
+            now.elapsed()
+        );
 
         let mut all_errors = vec![];
         let mut all_extensions = vec![];
+
+        let now = std::time::Instant::now();
+
         let flatten_results = futures::future::join_all(flatten_jobs).await;
+        let flatten_results_len = flatten_results.len();
+
+        trace!(
+            "Executed {} flatten jobs in {:?}",
+            flatten_results_len,
+            now.elapsed()
+        );
+
+        let now = std::time::Instant::now();
         for (result, path) in flatten_results.into_iter().zip(flatten_paths) {
             // Process FlattenNode results
             if let Some(entities) = result.entities {
@@ -560,12 +628,32 @@ impl ExecutablePlanNode for ParallelNode {
             }
         }
 
-        let fetch_results = futures::future::join_all(fetch_jobs).await;
+        trace!(
+            "Processed {} flatten results in {:?}",
+            flatten_results_len,
+            now.elapsed()
+        );
 
+        let now = std::time::Instant::now();
+        let fetch_results = futures::future::join_all(fetch_jobs).await;
+        let fetch_results_len = fetch_results.len();
+        trace!(
+            "Executed {} fetch jobs in {:?}",
+            fetch_results_len,
+            now.elapsed()
+        );
+
+        let now = std::time::Instant::now();
         // Process results from FetchNode executions
         for fetch_result in fetch_results {
-            process_result(fetch_result, execution_context, data);
+            process_root_result(fetch_result, execution_context, data);
         }
+
+        trace!(
+            "Processed {} fetch results in {:?}",
+            fetch_results_len,
+            now.elapsed()
+        );
 
         // Process errors and extensions from FlattenNode results
         if !all_errors.is_empty() {
@@ -581,7 +669,9 @@ impl ExecutablePlanNode for ParallelNode {
 
 #[async_trait]
 impl ExecutablePlanNode for FlattenNode {
-    #[instrument(level = "trace", skip_all, name = "FlattenNode")]
+    #[instrument(level = "trace", skip_all, name = "FlattenNode::execute", fields(
+        path = ?self.path
+    ))]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -590,14 +680,27 @@ impl ExecutablePlanNode for FlattenNode {
         // Execute the child node. `execution_context` can be borrowed mutably
         // because `collected_representations` borrows `data_for_flatten`, not `execution_context.data`.
         let normalized_path: Vec<&str> = self.path.iter().map(String::as_str).collect();
+        let now = std::time::Instant::now();
         let mut representations = traverse_and_collect(data, normalized_path.as_slice());
+        trace!(
+            "traversed and collected representations: {:?} in {:#?}",
+            representations.len(),
+            now.elapsed()
+        );
         match self.node.as_ref() {
             PlanNode::Fetch(fetch_node) => {
+                let now = std::time::Instant::now();
                 let ProjectRepresentationsResult {
                     representations: filtered_representations,
                     indexes: filtered_repr_indexes,
                 } = fetch_node.project_representations(execution_context, &representations);
+                trace!(
+                    "projected representations: {:?} in {:#?}",
+                    representations.len(),
+                    now.elapsed()
+                );
 
+                let now = std::time::Instant::now();
                 let result = fetch_node
                     .execute_for_projected_representations(
                         execution_context,
@@ -605,8 +708,18 @@ impl ExecutablePlanNode for FlattenNode {
                         filtered_repr_indexes,
                     )
                     .await;
+                trace!(
+                    "executed projected representations: {:?} in {:?}",
+                    representations.len(),
+                    now.elapsed()
+                );
                 // Process the result
                 process_representations_result(result, &mut representations, execution_context);
+                trace!(
+                    "processed projected representations: {:?} in {:?}",
+                    representations.len(),
+                    now.elapsed()
+                );
             }
             _ => {
                 unimplemented!(
@@ -620,7 +733,7 @@ impl ExecutablePlanNode for FlattenNode {
 
 #[async_trait]
 impl ExecutablePlanNode for ConditionNode {
-    #[instrument(level = "trace", skip_all, name = "ConditionNode")]
+    #[instrument(level = "trace", skip_all, name = "ConditionNode::execute")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -660,7 +773,7 @@ impl ExecutablePlanNode for ConditionNode {
 
 #[async_trait]
 impl ExecutableQueryPlan for QueryPlan {
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "trace", skip_all, name = "QueryPlan::execute")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -746,24 +859,20 @@ pub struct QueryPlanExecutionContext<'a> {
     // Using `Value` provides flexibility
     pub variable_values: &'a Option<HashMap<String, Value>>,
     pub schema_metadata: &'a SchemaMetadata,
-    pub executor: &'a SubgraphExecutorType<'a>,
+    pub subgraph_executor_map: &'a SubgraphExecutorMap,
     pub errors: Vec<GraphQLError>,
     pub extensions: HashMap<String, Value>,
 }
 
 impl QueryPlanExecutionContext<'_> {
-    #[instrument(level = "trace", skip_all)]
-    async fn execute(
-        &self,
-        subgraph_name: &str,
-        execution_request: ExecutionRequest,
-    ) -> ExecutionResult {
-        self.executor
-            .execute(subgraph_name, execution_request)
-            .await
-    }
-
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(
+        level = "trace",
+        skip_all,
+        fields(
+            requires_selections = ?requires_selections.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            entity = ?entity
+        )
+    )]
     pub fn project_requires(
         &self,
         requires_selections: &Vec<SelectionItem>,
@@ -844,7 +953,15 @@ impl QueryPlanExecutionContext<'_> {
     }
 }
 
-#[instrument(level = "trace", skip(possible_types))]
+#[instrument(
+    level = "trace",
+    skip_all,
+    name = "entity_satisfies_type_condition",
+    fields(
+        type_name = %type_name,
+        type_condition = %type_condition,
+    )
+)]
 fn entity_satisfies_type_condition(
     possible_types: &HashMap<String, Vec<String>>,
     type_name: &str,
@@ -870,7 +987,10 @@ fn entity_satisfies_type_condition(
 
 /// Recursively traverses the data according to the path segments,
 /// handling '@' for array iteration, and collects the final values.current_data.to_vec()
-#[instrument(level = "trace", skip_all)]
+#[instrument(level = "trace", skip_all, fields(
+    current_type = ?current_data,
+    remaining_path = ?remaining_path
+))]
 pub fn traverse_and_collect<'a>(
     current_data: &'a mut Value,
     remaining_path: &[&str],
@@ -897,7 +1017,15 @@ pub fn traverse_and_collect<'a>(
 
 // --- Main Function (for testing) ---
 
-#[instrument(level = "trace", skip_all)]
+#[instrument(
+    level = "trace", 
+    skip_all,
+    fields(
+        type_name = %type_name,
+        selection_set = ?selection_set.items.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        obj = ?obj
+    )
+)]
 fn project_selection_set_with_map(
     obj: &mut Map<String, Value>,
     errors: &mut Vec<GraphQLError>,
@@ -1034,7 +1162,15 @@ fn project_selection_set_with_map(
     Some(new_obj)
 }
 
-#[instrument(level = "trace", skip_all)]
+#[instrument(
+    level = "trace", 
+    skip_all,
+    fields(
+        type_name = %type_name,
+        selection_set = ?selection_set.items.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        data = ?data
+    )
+)]
 fn project_selection_set(
     data: &mut Value,
     errors: &mut Vec<GraphQLError>,
@@ -1126,11 +1262,18 @@ pub fn project_data_by_operation(
     )
 }
 
-type SubgraphExecutorType<'a> = dyn SubgraphExecutor + 'a + Send + Sync;
-
+#[instrument(
+    level = "trace", 
+    skip_all,
+    fields(
+        query_plan = ?query_plan,
+        variable_values = ?variable_values,
+        operation = ?operation.to_string(),
+    )
+)]
 pub async fn execute_query_plan(
     query_plan: &QueryPlan,
-    executor: &SubgraphExecutorType<'_>,
+    subgraph_executor_map: &SubgraphExecutorMap,
     variable_values: &Option<HashMap<String, Value>>,
     schema_metadata: &SchemaMetadata,
     operation: &OperationDefinition,
@@ -1142,7 +1285,7 @@ pub async fn execute_query_plan(
     let mut result_extensions = HashMap::new(); // Initial extensions are empty
     let mut execution_context = QueryPlanExecutionContext {
         variable_values,
-        executor,
+        subgraph_executor_map,
         schema_metadata,
         errors: result_errors,
         extensions: result_extensions,
