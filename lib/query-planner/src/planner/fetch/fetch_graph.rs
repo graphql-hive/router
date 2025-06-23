@@ -1236,8 +1236,8 @@ fn ensure_fetch_step_for_subgraph(
     fetch_graph: &mut FetchGraph,
     parent_fetch_step_index: NodeIndex,
     subgraph_name: &SubgraphName,
-    input_type_name: &String,
-    output_type_name: &String,
+    input_type_name: &str,
+    output_type_name: &str,
     response_path: &MergePath,
     key: Option<&TypeAwareSelection>,
     requires: Option<&TypeAwareSelection>,
@@ -1653,7 +1653,7 @@ fn process_interface_object_type_move_edge(
     fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
     edge_index: EdgeIndex,
-    object_type_name: &String,
+    object_type_name: &str,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     if parent_fetch_step_index.is_none() {
@@ -1703,7 +1703,7 @@ fn process_interface_object_type_move_edge(
         key_to_reenter_subgraph,
         fetch_step_index.index()
     );
-    fetch_step.input.add(&key_to_reenter_subgraph);
+    fetch_step.input.add(key_to_reenter_subgraph);
 
     trace!(
         "adding input rewrite '... on {} {{ __typename }}' to '{}'",
