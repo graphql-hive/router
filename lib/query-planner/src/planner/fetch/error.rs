@@ -31,6 +31,20 @@ pub enum FetchGraphError {
     SatisfiableKeyFailure(Box<WalkOperationError>),
     #[error("Expected a FetchStep with Mutation to have its order defined")]
     MutationStepWithNoOrder,
+    #[error("Index mapping got lost")]
+    IndexMappingLost,
+    #[error("Expected Fetch Steps not to be empty")]
+    EmptyFetchSteps,
+    #[error("Unexpected case where two user-defined fields are conflicting!")]
+    UnexpectedConflict,
+    #[error("Input types are equal but response_path are different!")]
+    MismatchedResponsePath,
+    #[error("Expected {0}")]
+    UnexpectedEdgeMove(String),
+    #[error("Expected a subgraph type")]
+    ExpectedSubgraphType,
+    #[error("Expected @requires")]
+    MissingRequires,
 }
 
 impl From<GraphError> for FetchGraphError {
