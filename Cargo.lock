@@ -1893,6 +1893,7 @@ version = "0.0.1"
 dependencies = [
  "graphql-parser",
  "query-planner",
+ "serde_json",
  "tracing-subscriber",
  "tracing-tree",
 ]

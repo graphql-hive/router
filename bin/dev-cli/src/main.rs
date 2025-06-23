@@ -88,7 +88,11 @@ fn main() {
         }
         "plan" => {
             let plan = process_plan(&args[2], &args[3]);
-            println!("{}", plan);
+            if args.contains(&"--json".into()) {
+                println!("{}", serde_json::to_string_pretty(&plan).unwrap());
+            } else {
+                println!("{}", plan);
+            }
         }
         "normalize" => {
             let supergraph_sdl =

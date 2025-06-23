@@ -1103,6 +1103,14 @@ fn perform_fetch_step_merge(
         false,
     );
 
+    if let Some(input_rewrites) = other.input_rewrites.take() {
+        if !input_rewrites.is_empty() {
+            for input_rewrite in input_rewrites {
+                me.add_input_rewrite(input_rewrite);
+            }
+        }
+    }
+
     if me.input.type_name == other.input.type_name {
         if me.response_path != other.response_path {
             return Err(FetchGraphError::MismatchedResponsePath);
