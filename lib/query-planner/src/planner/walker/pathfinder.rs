@@ -4,6 +4,7 @@ use std::rc::Rc;
 use petgraph::visit::{EdgeRef, NodeRef};
 use tracing::{instrument, trace};
 
+use crate::ast::selection_set::InlineFragmentSelection;
 use crate::{
     ast::{
         selection_item::SelectionItem, selection_set::FieldSelection,
@@ -386,8 +387,30 @@ pub fn can_satisfy_edge(
                             }
                         };
                     }
-                    SelectionItem::InlineFragment { .. } => {
-                        unimplemented!("fragment not supported yet in requires")
+                    SelectionItem::InlineFragment(fragment_selection) => {
+                        let fragment_requirements = validate_fragment_requirement(
+                            graph,
+                            &requirement,
+                            fragment_selection,
+                            excluded,
+                        )?;
+
+                        match fragment_requirements {
+                            Some((next_paths, next_requirements)) => {
+                                trace!("Paths for {}", fragment_selection);
+
+                                for next_path in next_paths.iter() {
+                                    trace!("  Path {} is valid", next_path.pretty_print(graph));
+                                }
+
+                                for req in next_requirements.into_iter().rev() {
+                                    requirements.push_front(req);
+                                }
+                            }
+                            None => {
+                                return Ok(None);
+                            }
+                        };
                     }
                 }
             }
@@ -408,8 +431,8 @@ pub struct MoveRequirement {
 }
 
 type FieldRequirementsResult = Option<(Vec<OperationPath>, Vec<MoveRequirement>)>;
+type FragmentRequirementsResult = Option<(Vec<OperationPath>, Vec<MoveRequirement>)>;
 
-#[instrument(level = "trace", skip_all, ret())]
 #[instrument(level = "trace", skip_all, ret())]
 fn validate_field_requirement(
     graph: &Graph,
@@ -476,6 +499,78 @@ fn validate_field_requirement(
 
     let shared_next_paths_for_subs = Rc::new(next_paths.clone());
     let next_requirements: Vec<MoveRequirement> = move_requirement
+        .selection
+        .selections()
+        .unwrap() // Safe due to the check above
+        .iter()
+        .map(|selection_item| MoveRequirement {
+            selection: selection_item.clone(),
+            paths: Rc::clone(&shared_next_paths_for_subs),
+        })
+        .collect();
+
+    Ok(Some((next_paths, next_requirements)))
+}
+fn validate_fragment_requirement(
+    graph: &Graph,
+    requirement: &MoveRequirement,
+    fragment_selection: &InlineFragmentSelection,
+    excluded: &ExcludedFromLookup,
+) -> Result<FragmentRequirementsResult, WalkOperationError> {
+    let type_name = &fragment_selection.type_condition;
+    // Collect all Vec<OperationPath> results from find_direct_paths
+    let mut direct_path_results: Vec<Vec<OperationPath>> =
+        Vec::with_capacity(requirement.paths.len());
+    for path in requirement.paths.iter() {
+        direct_path_results.push(find_direct_paths(
+            graph,
+            path,
+            &NavigationTarget::ConcreteType(type_name),
+        )?);
+    }
+
+    // Collect all Vec<OperationPath> results from find_indirect_paths
+    let mut indirect_path_results: Vec<Vec<OperationPath>> =
+        Vec::with_capacity(requirement.paths.len());
+    for path_from_rc in requirement.paths.iter() {
+        indirect_path_results.push(find_indirect_paths(
+            graph,
+            path_from_rc,
+            &NavigationTarget::ConcreteType(type_name),
+            excluded,
+        )?);
+    }
+
+    // sum of direct and indirect
+    let total_capacity: usize = direct_path_results.iter().map(|v| v.len()).sum::<usize>()
+        + indirect_path_results.iter().map(|v| v.len()).sum::<usize>();
+
+    let mut next_paths: Vec<OperationPath> = Vec::with_capacity(total_capacity);
+
+    // These extend calls should not reallocate `next_paths`.
+    for paths_vec in direct_path_results {
+        next_paths.extend(paths_vec);
+    }
+    for paths_vec in indirect_path_results {
+        next_paths.extend(paths_vec);
+    }
+
+    if next_paths.is_empty() {
+        return Ok(None);
+    }
+
+    if requirement.selection.selections().is_none()
+        || requirement
+            .selection
+            .selections()
+            .is_some_and(|s| s.is_empty())
+    {
+        // No sub-selections, next_paths is returned directly.
+        return Ok(Some((next_paths, vec![])));
+    }
+
+    let shared_next_paths_for_subs = Rc::new(next_paths.clone());
+    let next_requirements: Vec<MoveRequirement> = requirement
         .selection
         .selections()
         .unwrap() // Safe due to the check above
