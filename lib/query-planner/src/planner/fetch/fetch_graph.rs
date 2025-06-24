@@ -1747,6 +1747,18 @@ fn process_interface_object_type_move_edge(
     );
     step_for_requirements.input.add(key_to_reenter_subgraph);
 
+    //
+    // Given `f0 { ... on User { f1 } }` where f1 is a field contributed by @interfaceObject,
+    // the requirement to resolve `f1` with `User` type condition is a real value of `__typename` field.
+    // - step_for_requirements    -> __typename
+    // - step_for_children        -> f1
+    // - parent                   -> f0
+    //
+    // parent -> step_for_requirements -> step_for_children
+    //
+    // f0 -> __typename -> f1
+    //
+
     fetch_graph.connect(parent_fetch_step_index, step_for_requirements_index);
 
     trace!("Processing requirements");
