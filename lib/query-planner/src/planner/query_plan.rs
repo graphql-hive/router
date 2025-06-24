@@ -166,6 +166,6 @@ pub fn build_query_plan_from_fetch_graph(
 
     Ok(QueryPlan {
         kind: "QueryPlan".to_string(),
-        node: Some(root_node),
+        node: Some(Box::new(root_node)),
     })
 }

@@ -21,7 +21,7 @@ use std::{
 pub struct QueryPlan {
     pub kind: String, // "QueryPlan"
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub node: Option<PlanNode>,
+    pub node: Option<Box<PlanNode>>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -35,6 +35,7 @@ pub enum PlanNode {
     Condition(ConditionNode),
     Subscription(SubscriptionNode),
     Defer(DeferNode),
+    QueryPlan(QueryPlan),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

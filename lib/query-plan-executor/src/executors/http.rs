@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use tracing::{error, instrument, trace};
 
-use crate::{executors::common::SubgraphExecutor, ExecutionRequest, ExecutionResult};
+use crate::{
+    execution_result::ExecutionResult, executors::common::SubgraphExecutor, ExecutionRequest,
+};
 
 #[derive(Debug)]
 pub struct HTTPSubgraphExecutor {

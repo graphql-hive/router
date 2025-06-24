@@ -26,7 +26,7 @@ impl SubgraphExecutorMap {
         &self,
         subgraph_name: &str,
         execution_request: crate::ExecutionRequest,
-    ) -> crate::ExecutionResult {
+    ) -> crate::execution_result::ExecutionResult {
         match self.inner.get(subgraph_name) {
             Some(executor) => executor.execute(execution_request).await,
             None => {
@@ -34,7 +34,7 @@ impl SubgraphExecutorMap {
                     "Subgraph executor not found for subgraph: {}",
                     subgraph_name
                 );
-                crate::ExecutionResult::from_error_message(format!(
+                crate::execution_result::ExecutionResult::from_error_message(format!(
                     "Subgraph executor not found for subgraph: {}",
                     subgraph_name
                 ))

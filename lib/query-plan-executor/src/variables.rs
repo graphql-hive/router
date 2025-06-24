@@ -1,15 +1,13 @@
-use std::collections::HashMap;
-
 use query_planner::state::supergraph_state::TypeNode;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::schema_metadata::SchemaMetadata;
 
 pub fn collect_variables(
     operation: &query_planner::ast::operation::OperationDefinition,
-    variables: &Option<HashMap<String, Value>>,
+    variables: &Option<Map<String, Value>>,
     schema_metadata: &SchemaMetadata,
-) -> Result<Option<HashMap<String, Value>>, String> {
+) -> Result<Option<Map<String, Value>>, String> {
     if operation.variable_definitions.is_none() {
         return Ok(None);
     }
@@ -48,8 +46,7 @@ pub fn collect_variables(
         })
         .collect();
 
-    let variable_values: HashMap<String, Value> =
-        collected_variables?.into_iter().flatten().collect();
+    let variable_values: Map<String, Value> = collected_variables?.into_iter().flatten().collect();
 
     if variable_values.is_empty() {
         Ok(None)

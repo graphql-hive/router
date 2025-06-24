@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use serde_json::json;
+use serde_json::{json, Map};
 
 use crate::{
-    executors::common::SubgraphExecutor, ExecutionRequest, ExecutionResult, GraphQLError,
-    GraphQLErrorLocation,
+    execution_result::ExecutionResult, executors::common::SubgraphExecutor, ExecutionRequest,
+    GraphQLError, GraphQLErrorLocation,
 };
 
 #[async_trait]
@@ -97,7 +97,7 @@ impl From<async_graphql::Response> for ExecutionResult {
                     .extensions
                     .into_iter()
                     .map(|(key, value)| (key, value.into_json().unwrap()))
-                    .collect::<HashMap<String, serde_json::Value>>(),
+                    .collect::<Map<String, serde_json::Value>>(),
             ),
         }
     }

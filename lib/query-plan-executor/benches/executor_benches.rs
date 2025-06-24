@@ -1,22 +1,18 @@
 #![recursion_limit = "256"]
-use std::collections::HashMap;
-
 use criterion::Criterion;
 use criterion::{criterion_group, criterion_main};
+use query_plan_executor::deep_merge::DeepMerge;
+use query_plan_executor::execute_query_plan;
 use query_plan_executor::executors::common::SubgraphExecutor;
 use query_plan_executor::executors::map::SubgraphExecutorMap;
-use query_planner::ast::selection_item::SelectionItem;
-use query_planner::ast::selection_set::InlineFragmentSelection;
+use query_plan_executor::nodes::query_plan_node::ExecutableQueryPlanNode;
 use std::hint::black_box;
 
-use query_plan_executor::execute_query_plan;
 use query_plan_executor::schema_metadata::SchemaWithMetadata;
-use query_plan_executor::ExecutableQueryPlan;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::utils::parsing::parse_operation;
 use query_planner::utils::parsing::parse_schema;
 mod non_projected_result;
-use serde_json::Value;
 // This is a struct that tells Criterion.rs to use the "futures" crate's current-thread executor
 use tokio::runtime::Runtime;
 
@@ -85,18 +81,14 @@ fn query_plan_execution_without_projection_via_http(c: &mut Criterion) {
         b.to_async(&rt).iter(|| async {
             let schema_metadata = black_box(&schema_metadata);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
-            let mut execution_context = query_plan_executor::QueryPlanExecutionContext {
-                variable_values: &None,
+            let execution_context = query_plan_executor::execution_context::ExecutionContext {
+                variables: &None,
                 schema_metadata,
                 subgraph_executor_map,
-                errors: Vec::new(),
-                extensions: HashMap::new(),
             };
             let query_plan = black_box(&query_plan);
-            let mut data = Value::Null;
-            let result = query_plan.execute(&mut execution_context, &mut data).await;
+            let result = query_plan.execute(&execution_context).await;
             black_box(result);
-            black_box(data);
         });
     });
 }
@@ -184,18 +176,14 @@ fn query_plan_executor_without_projection_locally(c: &mut Criterion) {
             let schema_metadata = black_box(&schema_metadata);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
 
-            let mut execution_context = query_plan_executor::QueryPlanExecutionContext {
-                variable_values: &None,
+            let ctx = query_plan_executor::execution_context::ExecutionContext {
+                variables: &None,
                 schema_metadata,
                 subgraph_executor_map,
-                errors: Vec::new(),
-                extensions: HashMap::new(),
             };
             let query_plan = black_box(&query_plan);
-            let mut data = Value::Null;
-            let result = query_plan.execute(&mut execution_context, &mut data).await;
+            let result = query_plan.execute(&ctx).await;
             black_box(result);
-            black_box(data);
         });
     });
 }
@@ -223,7 +211,7 @@ fn project_data_by_operation(c: &mut Criterion) {
             let errors = black_box(&mut errors);
             let operation = black_box(&operation);
             let schema_metadata = black_box(&schema_metadata);
-            query_plan_executor::project_data_by_operation(
+            query_plan_executor::projection::project_data_by_operation(
                 data,
                 errors,
                 operation,
@@ -231,23 +219,6 @@ fn project_data_by_operation(c: &mut Criterion) {
                 &None,
             );
             black_box(());
-        });
-    });
-}
-
-fn traverse_and_collect(c: &mut Criterion) {
-    let path = [
-        "users", "@", "reviews", "@", "product", "reviews", "@", "author", "reviews", "@",
-        "product",
-    ];
-    let mut result: Value = non_projected_result::get_result();
-    c.bench_function("traverse_and_collect", |b| {
-        b.iter(|| {
-            let result = black_box(&mut result);
-            let data = result.get_mut("data").unwrap();
-            let path = black_box(&path);
-            let result = query_plan_executor::traverse_and_collect(data, path);
-            black_box(result);
         });
     });
 }
@@ -316,91 +287,7 @@ fn deep_merge_with_complex(c: &mut Criterion) {
         b.iter(|| {
             let mut target = black_box(data_1.clone());
             let source = black_box(data_2.clone());
-            query_plan_executor::deep_merge::deep_merge(&mut target, source);
-        });
-    });
-}
-
-fn project_requires(c: &mut Criterion) {
-    let path = [
-        "users", "@", "reviews", "@", "product", "reviews", "@", "author", "reviews", "@",
-        "product",
-    ];
-    let mut result: Value = non_projected_result::get_result();
-    let data = result.get_mut("data").unwrap();
-    let representations = query_plan_executor::traverse_and_collect(data, &path);
-    let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
-        .expect("Unable to read input file");
-    let parsed_schema = parse_schema(&supergraph_sdl);
-    let planner = query_planner::planner::Planner::new_from_supergraph(&parsed_schema)
-        .expect("Failed to create planner from supergraph");
-    let schema_metadata = &planner.consumer_schema.schema_metadata();
-    let subgraph_executor_map =
-        SubgraphExecutorMap::from_http_endpoint_map(planner.supergraph.subgraph_endpoint_map);
-    let execution_context = query_plan_executor::QueryPlanExecutionContext {
-        variable_values: &None,
-        subgraph_executor_map: &subgraph_executor_map,
-        schema_metadata,
-        errors: Vec::new(),
-        extensions: HashMap::new(),
-    };
-    let requires_selections: Vec<SelectionItem> =
-        [SelectionItem::InlineFragment(InlineFragmentSelection {
-            type_condition: "Product".to_string(),
-            selections: query_planner::ast::selection_set::SelectionSet {
-                items: vec![
-                    SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
-                        name: "__typename".to_string(),
-                        selections: query_planner::ast::selection_set::SelectionSet {
-                            items: vec![],
-                        },
-                        alias: None,
-                        arguments: None,
-                        include_if: None,
-                        skip_if: None,
-                    }),
-                    SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
-                        name: "price".to_string(),
-                        selections: query_planner::ast::selection_set::SelectionSet {
-                            items: vec![],
-                        },
-                        alias: None,
-                        arguments: None,
-                        include_if: None,
-                        skip_if: None,
-                    }),
-                    SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
-                        name: "weight".to_string(),
-                        selections: query_planner::ast::selection_set::SelectionSet {
-                            items: vec![],
-                        },
-                        alias: None,
-                        arguments: None,
-                        include_if: None,
-                        skip_if: None,
-                    }),
-                    SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
-                        name: "upc".to_string(),
-                        selections: query_planner::ast::selection_set::SelectionSet {
-                            items: vec![],
-                        },
-                        alias: None,
-                        arguments: None,
-                        include_if: None,
-                        skip_if: None,
-                    }),
-                ],
-            },
-        })]
-        .to_vec();
-    c.bench_function("project_requires", |b| {
-        b.iter(|| {
-            let execution_context = black_box(&execution_context);
-            for representation in black_box(&representations) {
-                let requires =
-                    execution_context.project_requires(&requires_selections, representation);
-                black_box(requires);
-            }
+            target.deep_merge(source);
         });
     });
 }
@@ -436,7 +323,7 @@ fn deep_merge_with_simple(c: &mut Criterion) {
         b.iter(|| {
             let mut target = black_box(data_1.clone());
             let source = black_box(data_2.clone());
-            query_plan_executor::deep_merge::deep_merge(&mut target, source);
+            target.deep_merge(source);
         });
     });
 }
@@ -444,8 +331,6 @@ fn deep_merge_with_simple(c: &mut Criterion) {
 fn all_benchmarks(c: &mut Criterion) {
     deep_merge_with_simple(c);
     deep_merge_with_complex(c);
-    project_requires(c);
-    traverse_and_collect(c);
     project_data_by_operation(c);
     query_plan_executor_without_projection_locally(c);
     query_plan_executor_pipeline_locally(c);

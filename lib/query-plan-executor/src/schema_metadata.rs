@@ -6,6 +6,7 @@ use graphql_parser::{
 };
 use query_planner::consumer_schema::ConsumerSchema;
 use serde_json::{json, Value};
+use tracing::instrument;
 
 #[derive(Debug)]
 pub struct SchemaMetadata {
@@ -116,6 +117,38 @@ impl TypeName for Type<'_, String> {
             graphql_parser::schema::Type::NamedType(named_type) => named_type.to_string(),
             graphql_parser::schema::Type::NonNullType(non_null_type) => non_null_type.type_name(),
             graphql_parser::schema::Type::ListType(list_type) => list_type.type_name(),
+        }
+    }
+}
+
+pub trait EntitySatisfiesTypeCondition {
+    fn entity_satisfies_type_condition(&self, type_name: &str, type_condition: &str) -> bool;
+}
+
+impl EntitySatisfiesTypeCondition for SchemaMetadata {
+    #[instrument(
+        level = "trace",
+        skip_all,
+        name = "entity_satisfies_type_condition",
+        fields(
+            type_name = %type_name,
+            type_condition = %type_condition,
+        )
+    )]
+    fn entity_satisfies_type_condition(&self, type_name: &str, type_condition: &str) -> bool {
+        if type_name == type_condition {
+            true
+        } else {
+            let possible_types_for_type_condition = self.possible_types.get(type_condition);
+            match possible_types_for_type_condition {
+                Some(possible_types_for_type_condition) => {
+                    possible_types_for_type_condition.contains(&type_name.to_string())
+                }
+                None => {
+                    // If no possible types are found, return false
+                    false
+                }
+            }
         }
     }
 }

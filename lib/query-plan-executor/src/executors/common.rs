@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::{ExecutionRequest, ExecutionResult};
+use crate::{execution_result::ExecutionResult, ExecutionRequest};
 
 #[async_trait]
 pub trait SubgraphExecutor {

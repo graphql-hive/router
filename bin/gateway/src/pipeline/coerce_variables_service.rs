@@ -1,11 +1,10 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::body::Body;
 use http::Request;
 use query_plan_executor::variables::collect_variables;
 use query_plan_executor::ExecutionRequest;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tracing::{trace, warn};
 
 use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
@@ -18,7 +17,7 @@ use crate::shared_state::GatewaySharedState;
 
 #[derive(Clone, Debug)]
 pub struct CoerceVariablesPayload {
-    pub variables_map: Option<HashMap<String, Value>>,
+    pub variables_map: Option<Map<String, Value>>,
 }
 
 #[derive(Clone, Debug, Default)]

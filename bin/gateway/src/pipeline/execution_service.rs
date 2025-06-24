@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
@@ -16,7 +15,7 @@ use axum::Json;
 use http::header::CONTENT_TYPE;
 use http::{Request, Response};
 use query_plan_executor::execute_query_plan;
-use serde_json::to_value;
+use serde_json::{to_value, Map};
 use tower::Service;
 
 #[derive(Clone, Debug, Default)]
@@ -81,7 +80,7 @@ impl Service<Request<Body>> for ExecutionService {
 
                 execution_result
                     .extensions
-                    .get_or_insert_with(HashMap::new)
+                    .get_or_insert_with(Map::new)
                     .insert("queryPlan".to_string(), plan_value);
             }
 

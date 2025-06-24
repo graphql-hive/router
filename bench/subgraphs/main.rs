@@ -53,7 +53,7 @@ async fn main() {
         )
         .route_layer(middleware::from_fn(delay_middleware));
 
-    println!("Starting server on http://localhost:4200");
+    println!("Starting server on http://{}:{}", host, port);
 
     axum::serve(
         TcpListener::bind(&format!("{}:{}", host, port))

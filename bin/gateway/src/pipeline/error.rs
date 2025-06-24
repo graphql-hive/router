@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use axum::{body::Body, extract::rejection::QueryRejection, response::IntoResponse};
 use graphql_tools::validation::utils::ValidationError;
 use http::{Response, StatusCode};
-use query_plan_executor::{ExecutionResult, GraphQLError};
+use query_plan_executor::{execution_result::ExecutionResult, GraphQLError};
 use query_planner::{ast::normalization::error::NormalizationError, planner::PlannerError};
 use serde_json::Value;
 
@@ -141,11 +141,11 @@ impl IntoResponse for PipelineError {
         let status = self.error.default_status_code(accept_ok);
 
         if let PipelineErrorVariant::ValidationErrors(validation_errors) = self.error {
-            let validation_error_result = ExecutionResult {
-                data: None,
-                errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
-                extensions: None,
-            };
+            let validation_error_result = ExecutionResult::new(
+                None,
+                Some(validation_errors.iter().map(|error| error.into()).collect()),
+                None,
+            );
 
             return (
                 StatusCode::OK,
