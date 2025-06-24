@@ -225,9 +225,9 @@ impl ExecutableFetchNode for FetchNode {
         execution_context: &QueryPlanExecutionContext<'_>,
         representations: &[&mut Value],
     ) -> ProjectRepresentationsResult {
-        let mut filtered_repr_indexes = Vec::new();
+        let mut filtered_repr_indexes = Vec::with_capacity(representations.len());
         // 1. Filter representations based on requires (if present)
-        let mut filtered_representations: Vec<Value> = Vec::new();
+        let mut filtered_representations: Vec<Value> = Vec::with_capacity(representations.len());
         let requires_nodes = self.requires.as_ref().unwrap();
         for (index, entity) in representations.iter().enumerate() {
             let entity_projected =
@@ -879,18 +879,18 @@ impl QueryPlanExecutionContext<'_> {
         entity: &Value,
     ) -> Value {
         if requires_selections.is_empty() {
-            return entity.clone(); // No selections to project, return the entity as is
+            return entity.to_owned(); // No selections to project, return the entity as is
         }
         match entity {
             Value::Null => Value::Null,
             Value::Array(entity_array) => Value::Array(
                 entity_array
-                    .iter()
+                    .into_iter()
                     .map(|item| self.project_requires(requires_selections, item))
                     .collect(),
             ),
             Value::Object(entity_obj) => {
-                let mut result_map = Map::new();
+                let mut result_map = Map::with_capacity(entity_obj.len().max(requires_selections.len()));
                 for requires_selection in requires_selections {
                     match &requires_selection {
                         SelectionItem::Field(requires_selection) => {
@@ -984,7 +984,7 @@ pub fn traverse_and_collect<'a>(
     remaining_path: &[&str],
 ) -> Vec<&'a mut Value> {
     match (current_data, remaining_path) {
-        (Value::Array(arr), []) => arr.iter_mut().collect(), // Base case: No more path segments, return all items in the array
+        (Value::Array(arr), []) => arr.into_iter().collect(), // Base case: No more path segments, return all items in the array
         (current_data, []) => vec![current_data],            // Base case: No more path segments,
         (Value::Object(obj), [next_segment, next_remaining_path @ ..]) => {
             if let Some(next_value) = obj.get_mut(*next_segment) {
@@ -994,7 +994,7 @@ pub fn traverse_and_collect<'a>(
             }
         }
         (Value::Array(arr), ["@", next_remaining_path @ ..]) => arr
-            .iter_mut()
+            .into_iter()
             .flat_map(|item| traverse_and_collect(item, next_remaining_path))
             .collect(),
         _ => vec![], // No valid path segment
@@ -1027,7 +1027,7 @@ fn project_selection_set_with_map(
         _ => type_name,
     }
     .to_string();
-    let mut new_obj = Map::new();
+    let mut new_obj = Map::with_capacity(obj.len().max(selection_set.items.len()));
     let field_map = schema_metadata.type_fields.get(&type_name);
     for selection in &selection_set.items {
         match selection {
@@ -1158,9 +1158,9 @@ fn project_selection_set_with_map(
         data = ?data
     )
 )]
-fn project_selection_set(
-    data: &mut Value,
-    errors: &mut Vec<GraphQLError>,
+fn project_selection_set<'a>(
+    data: &'a mut Value,
+    errors: &'a mut Vec<GraphQLError>,
     selection_set: &SelectionSet,
     type_name: &str,
     schema_metadata: &SchemaMetadata,
