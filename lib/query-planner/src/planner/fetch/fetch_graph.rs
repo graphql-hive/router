@@ -1461,10 +1461,6 @@ fn process_requirements_for_fetch_steps(
             requiring_fetch_step_index,
             true,
         )?;
-        fetch_graph.connect(
-            parent_fetch_step_index,
-            requiring_fetch_step_index.ok_or(FetchGraphError::IndexNone)?,
-        );
     }
 
     Ok(())
@@ -1655,6 +1651,11 @@ fn process_interface_object_type_move_edge(
     object_type_name: &str,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
+    if fetch_graph.parents_of(parent_fetch_step_index).count() != 1 {
+        return Err(FetchGraphError::NonSingleParent(
+            parent_fetch_step_index.index(),
+        ));
+    }
     let edge = graph.edge(edge_index)?;
     let requirement = match edge {
         Edge::InterfaceObjectTypeMove(m) => TypeAwareSelection {
@@ -1668,6 +1669,13 @@ fn process_interface_object_type_move_edge(
         }
     };
 
+    let head_node_index = graph.get_edge_head(&edge_index)?;
+    let head_node = graph.node(head_node_index)?;
+    let head_subgraph_name = match head_node {
+        Node::SubgraphType(t) => &t.subgraph,
+        _ => return Err(FetchGraphError::ExpectedSubgraphType),
+    };
+
     let tail_node_index = graph.get_edge_tail(&edge_index)?;
     let tail_node = graph.node(tail_node_index)?;
     let (interface_type_name, subgraph_name) = match tail_node {
@@ -1676,7 +1684,7 @@ fn process_interface_object_type_move_edge(
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
-    let fetch_step_index = ensure_fetch_step_for_subgraph(
+    let step_for_children_index = ensure_fetch_step_for_subgraph(
         fetch_graph,
         parent_fetch_step_index,
         subgraph_name,
@@ -1688,29 +1696,29 @@ fn process_interface_object_type_move_edge(
         created_from_requires,
     )?;
 
-    let fetch_step = fetch_graph.get_step_data_mut(fetch_step_index)?;
+    let step_for_children = fetch_graph.get_step_data_mut(step_for_children_index)?;
     trace!(
         "adding input requirement '{}' to fetch step [{}]",
         requirement,
-        fetch_step_index.index()
+        step_for_children_index.index()
     );
-    fetch_step.input.add(&requirement);
+    step_for_children.input.add(&requirement);
     let key_to_reenter_subgraph =
         find_satisfiable_key(graph, query_node.requirements.first().unwrap())?;
-    fetch_step.input.add(&requirement);
+    step_for_children.input.add(&requirement);
     trace!(
         "adding key '{}' to fetch step [{}]",
         key_to_reenter_subgraph,
-        fetch_step_index.index()
+        step_for_children_index.index()
     );
-    fetch_step.input.add(key_to_reenter_subgraph);
+    step_for_children.input.add(key_to_reenter_subgraph);
 
     trace!(
         "adding input rewrite '... on {} {{ __typename }}' to '{}'",
         interface_type_name,
         interface_type_name
     );
-    fetch_step.add_input_rewrite(FetchRewrite::ValueSetter(ValueSetter {
+    step_for_children.add_input_rewrite(FetchRewrite::ValueSetter(ValueSetter {
         path: vec![
             format!("... on {}", interface_type_name),
             "__typename".to_string(),
@@ -1721,29 +1729,52 @@ fn process_interface_object_type_move_edge(
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
     add_typename_field_to_output(parent_fetch_step, interface_type_name, fetch_path);
 
-    // Make the fetch step a child of the parent fetch step
-    trace!(
-        "connecting fetch step to parent [{}] -> [{}]",
-        parent_fetch_step_index.index(),
-        fetch_step_index.index()
+    // In all cases it's `__typename` that needs to be resolved by another subgraph.
+    trace!("Creating a fetch step for requirement of @interfaceObject");
+    let step_for_requirements_index = create_fetch_step_for_entity_call(
+        fetch_graph,
+        head_subgraph_name,
+        object_type_name,
+        interface_type_name,
+        response_path,
+        false,
     );
-    fetch_graph.connect(parent_fetch_step_index, fetch_step_index);
+    let step_for_requirements = fetch_graph.get_step_data_mut(step_for_requirements_index)?;
+    trace!(
+        "Adding {} to fetch([{}]).input",
+        key_to_reenter_subgraph,
+        step_for_requirements_index.index()
+    );
+    step_for_requirements.input.add(key_to_reenter_subgraph);
 
-    process_requirements_for_fetch_steps(
+    fetch_graph.connect(parent_fetch_step_index, step_for_requirements_index);
+
+    trace!("Processing requirements");
+    let leaf_fetch_step_indexes = process_query_node(
         graph,
         fetch_graph,
-        query_node,
-        parent_fetch_step_index,
-        Some(fetch_step_index),
+        query_node.requirements.first().unwrap(),
+        Some(step_for_requirements_index),
         response_path,
-        fetch_path,
+        &MergePath::default(),
+        None,
+        true,
     )?;
 
+    if leaf_fetch_step_indexes.is_empty() {
+        fetch_graph.connect(step_for_requirements_index, step_for_children_index);
+    } else {
+        for idx in leaf_fetch_step_indexes {
+            fetch_graph.connect(idx, step_for_children_index);
+        }
+    }
+
+    trace!("Processing children");
     process_children_for_fetch_steps(
         graph,
         fetch_graph,
         query_node,
-        fetch_step_index,
+        step_for_children_index,
         response_path,
         &MergePath::default(),
         requiring_fetch_step_index,
@@ -1956,7 +1987,9 @@ fn process_requires_field_edge(
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     if fetch_graph.parents_of(parent_fetch_step_index).count() != 1 {
-        return Err(FetchGraphError::NonSingleParent);
+        return Err(FetchGraphError::NonSingleParent(
+            parent_fetch_step_index.index(),
+        ));
     }
 
     let parent_parent_index = fetch_graph
