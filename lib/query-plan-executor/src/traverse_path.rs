@@ -1,5 +1,5 @@
 use serde_json::Value;
-use tracing::instrument;
+use tracing::{instrument, trace};
 
 use crate::deep_merge::DeepMerge;
 
@@ -39,7 +39,7 @@ impl SetPathValue for Value {
                         }
                         array[*index].deep_merge(value);
                     } else {
-                        println!(
+                        trace!(
                             "Cannot set value at path segment {:?} in current data",
                             current_segment
                         );
@@ -56,14 +56,14 @@ impl SetPathValue for Value {
                             map.insert(field.to_string(), value);
                         }
                     } else {
-                        println!(
+                        trace!(
                             "Cannot set value at path segment {:?} in current data",
                             current_segment
                         );
                     }
                 }
                 _ => {
-                    println!(
+                    trace!(
                         "Cannot set value at path segment {:?} in current data",
                         current_segment
                     );

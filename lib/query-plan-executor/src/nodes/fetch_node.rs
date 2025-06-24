@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use futures::future::BoxFuture;
 use query_planner::planner::plan_nodes::FetchNode;
 use serde_json::{Map, Value};
@@ -16,14 +18,17 @@ pub trait ExecutableFetchNode {
         root: &Value,
         path: Vec<String>,
         ctx: &ExecutionContext,
-    ) -> Option<(Map<String, Value>, Option<Vec<Vec<TraversedPathSegment>>>)>;
+    ) -> Option<(
+        Map<String, Value>,
+        Option<VecDeque<Vec<TraversedPathSegment>>>,
+    )>;
     fn variables_from_usages(&self, ctx: &ExecutionContext) -> Option<Map<String, Value>>;
     fn representations(
         &self,
         root: &Value,
         path: Vec<String>,
         ctx: &ExecutionContext,
-    ) -> Option<(Vec<Value>, Vec<Vec<TraversedPathSegment>>)>;
+    ) -> Option<(VecDeque<Value>, VecDeque<Vec<TraversedPathSegment>>)>;
     fn execute<'a>(
         &'a self,
         root: &'a Value,
@@ -38,7 +43,10 @@ impl ExecutableFetchNode for FetchNode {
         root: &Value,
         path: Vec<String>,
         ctx: &ExecutionContext,
-    ) -> Option<(Map<String, Value>, Option<Vec<Vec<TraversedPathSegment>>>)> {
+    ) -> Option<(
+        Map<String, Value>,
+        Option<VecDeque<Vec<TraversedPathSegment>>>,
+    )> {
         let representations_and_paths = self.representations(root, path, ctx);
         let variables = self.variables_from_usages(ctx);
         match (representations_and_paths, variables) {
@@ -46,12 +54,18 @@ impl ExecutableFetchNode for FetchNode {
             (Some((representations, paths)), None) => {
                 // Only representations available, return them as variables
                 let mut map = Map::with_capacity(1);
-                map.insert("representations".to_string(), Value::Array(representations));
+                map.insert(
+                    "representations".to_string(),
+                    Value::Array(representations.into()),
+                );
                 Some((map, Some(paths)))
             }
             (None, Some(variables)) => Some((variables, None)), // Only variables available
             (Some((representations, paths)), Some(mut variables)) => {
-                variables.insert("representations".to_string(), Value::Array(representations)); // Merge representations into variables
+                variables.insert(
+                    "representations".to_string(),
+                    Value::Array(representations.into()),
+                ); // Merge representations into variables
                 Some((variables, Some(paths))) // Both representations and variables available, merge them
             }
         }
@@ -81,14 +95,14 @@ impl ExecutableFetchNode for FetchNode {
         root: &Value,
         path: Vec<String>,
         ctx: &ExecutionContext,
-    ) -> Option<(Vec<Value>, Vec<Vec<TraversedPathSegment>>)> {
+    ) -> Option<(VecDeque<Value>, VecDeque<Vec<TraversedPathSegment>>)> {
         self.requires.as_ref()?;
         let requires = self.requires.as_ref().unwrap();
         if requires.is_empty() {
             return None;
         }
-        let mut representations = vec![];
-        let mut paths = vec![];
+        let mut representations = VecDeque::new();
+        let mut paths = VecDeque::new();
         let path_slice = path.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
         traverse_path::traverse_path(
             root,
@@ -97,8 +111,8 @@ impl ExecutableFetchNode for FetchNode {
             &mut |path, entity| {
                 let projected = requires.project_for_requires(entity, ctx.schema_metadata);
                 if !projected.is_null() {
-                    representations.push(projected);
-                    paths.push(path)
+                    representations.push_back(projected);
+                    paths.push_back(path)
                 }
             },
         );

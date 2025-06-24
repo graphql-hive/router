@@ -205,7 +205,7 @@ fn project_data_by_operation(c: &mut Criterion) {
     let operation = black_box(&normalized_operation);
     c.bench_function("project_data_by_operation", |b| {
         b.iter(|| {
-            let mut data = non_projected_result::get_result();
+            let mut data = non_projected_result::get_result().clone();
             let data = black_box(&mut data);
             let mut errors = vec![];
             let errors = black_box(&mut errors);
