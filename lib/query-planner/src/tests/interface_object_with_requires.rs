@@ -445,9 +445,7 @@ fn inline_fragment_on_local_type_behind_interface() -> Result<(), Box<dyn Error>
     Ok(())
 }
 
-// TODO: fix it
 #[test]
-#[ignore = "NonSingleParent error..."]
 fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<dyn Error>> {
     init_logger();
     let document = parse_operation(
@@ -484,7 +482,6 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
           },
           Flatten(path: "anotherUsers.@") {
             Fetch(service: "a") {
-              {
                 ... on NodeWithName {
                   __typename
                   id
@@ -493,140 +490,135 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
               {
                 ... on NodeWithName {
                   __typename
+                  id
+                  name
                   ... on User {
                     age
                     name
                   }
-                  name
-                  id
                 }
               }
             },
           },
           Flatten(path: "anotherUsers.@") {
             Fetch(service: "b") {
-              {
-                ... on User {
-                  __typename
-                  id
-                }
                 ... on NodeWithName {
                   __typename
                   name
+                  id
                 }
               } =>
               {
                 ... on NodeWithName {
-                  id
                   username
+                  id
                 }
               }
             },
           },
         },
-      }
+      },
     "#);
 
     insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
-      {
-        "kind": "QueryPlan",
-        "node": {
-          "kind": "Sequence",
-          "nodes": [
-            {
+    {
+      "kind": "QueryPlan",
+      "node": {
+        "kind": "Sequence",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "serviceName": "b",
+            "operationKind": "query",
+            "operation": "query{anotherUsers{__typename id}}"
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "anotherUsers",
+              "@"
+            ],
+            "node": {
+              "kind": "Fetch",
+              "serviceName": "a",
+              "operationKind": "query",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename id name ...on User{age name}}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "NodeWithName",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "inputRewrites": [
+                {
+                  "ValueSetter": {
+                    "path": [
+                      "... on NodeWithName",
+                      "__typename"
+                    ],
+                    "setValueTo": "NodeWithName"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "Flatten",
+            "path": [
+              "anotherUsers",
+              "@"
+            ],
+            "node": {
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "{ anotherUsers { __typename id } }"
-            },
-            {
-              "kind": "Flatten",
-              "path": ["anotherUsers", "@"],
-              "node": {
-                "kind": "Fetch",
-                "serviceName": "a",
-                "operationKind": "query",
-                "operation": "query($representations: [_Any!]!) { _entities(representations: $representations) { ... on NodeWithName { __typename ... on User { age name } name id } } }",
-                "requires": [
-                  {
-                    "kind": "InlineFragment",
-                    "typeCondition": "NodeWithName",
-                    "selections": [
-                      {
-                        "kind": "Field",
-                        "name": "__typename"
-                      },
-                      {
-                        "kind": "Field",
-                        "name": "id"
-                      }
-                    ]
-                  }
-                ],
-                "inputRewrites": [
-                  {
-                    "kind": "ValueSetter",
-                    "path": ["... on NodeWithName", "__typename"],
-                    "setValueTo": "NodeWithName"
-                  },
-                  {
-                    "kind": "ValueSetter",
-                    "path": ["... on NodeWithName", "__typename"],
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{username id}}}",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "typeCondition": "NodeWithName",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "name"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ]
+                }
+              ],
+              "inputRewrites": [
+                {
+                  "ValueSetter": {
+                    "path": [
+                      "... on NodeWithName",
+                      "__typename"
+                    ],
                     "setValueTo": "NodeWithName"
                   }
-                ]
-              }
-            },
-            {
-              "kind": "Flatten",
-              "path": ["anotherUsers", "@"],
-              "node": {
-                "kind": "Fetch",
-                "serviceName": "b",
-                "operationKind": "query",
-                "operation": "query($representations: [_Any!]!) { _entities(representations: $representations) { ... on NodeWithName { id username } } }",
-                "requires": [
-                  {
-                    "kind": "InlineFragment",
-                    "typeCondition": "User",
-                    "selections": [
-                      {
-                        "kind": "Field",
-                        "name": "__typename"
-                      },
-                      {
-                        "kind": "Field",
-                        "name": "id"
-                      }
-                    ]
-                  },
-                  {
-                    "kind": "InlineFragment",
-                    "typeCondition": "NodeWithName",
-                    "selections": [
-                      {
-                        "kind": "Field",
-                        "name": "__typename"
-                      },
-                      {
-                        "kind": "Field",
-                        "name": "name"
-                      }
-                    ]
-                  }
-                ],
-                "inputRewrites": [
-                  {
-                    "kind": "ValueSetter",
-                    "path": ["... on NodeWithName", "__typename"],
-                    "setValueTo": "NodeWithName"
-                  }
-                ]
-              }
+                }
+              ]
             }
-          ]
-        }
+          }
+        ]
       }
+    }
     "#);
 
     Ok(())
