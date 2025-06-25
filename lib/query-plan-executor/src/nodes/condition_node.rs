@@ -1,6 +1,7 @@
 use futures::future::BoxFuture;
 use query_planner::planner::plan_nodes::{ConditionNode, PlanNode};
 use serde_json::Value;
+use tracing::instrument;
 
 use crate::{
     execution_context::ExecutionContext, execution_result::ExecutionResult,
@@ -18,6 +19,15 @@ pub trait ExecutableConditionNode {
 }
 
 impl ExecutableConditionNode for ConditionNode {
+    #[instrument(
+        level = "debug",
+        skip_all,
+        name="ConditionNode::execute",
+        fields(
+            path = ?path,
+            condition = %self.condition,
+        )
+    )]
     fn execute<'a>(
         &'a self,
         root: &'a Value,

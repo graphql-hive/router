@@ -1,6 +1,7 @@
 use futures::future::BoxFuture;
 use query_planner::planner::plan_nodes::SequenceNode;
 use serde_json::{Map, Value};
+use tracing::instrument;
 
 use crate::{
     deep_merge::DeepMerge, execution_context::ExecutionContext, execution_result::ExecutionResult,
@@ -17,6 +18,10 @@ pub trait ExecutableSequenceNode {
 }
 
 impl ExecutableSequenceNode for SequenceNode {
+    #[instrument(level = "debug", skip_all, name = "SequenceNode::execute", fields(
+         nodes_count = %self.nodes.len(),
+         path = ?path
+     ))]
     fn execute<'a>(
         &'a self,
         root: &'a Value,

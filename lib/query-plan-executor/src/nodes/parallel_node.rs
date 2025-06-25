@@ -3,6 +3,7 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use query_planner::planner::plan_nodes::ParallelNode;
 use serde_json::{Map, Value};
+use tracing::instrument;
 
 use crate::deep_merge::DeepMerge;
 use crate::execution_context::ExecutionContext;
@@ -19,6 +20,10 @@ pub trait ExecutableParallelNode {
 }
 
 impl ExecutableParallelNode for ParallelNode {
+    #[instrument(level = "debug", skip_all, name = "ParallelNode::execute", fields(
+        nodes_count = %self.nodes.len(),
+        path = ?path
+     ))]
     fn execute<'a>(
         &'a self,
         root: &'a Value,

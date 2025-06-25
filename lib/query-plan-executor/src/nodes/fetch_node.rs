@@ -1,6 +1,7 @@
 use futures::future::BoxFuture;
 use query_planner::planner::plan_nodes::FetchNode;
 use serde_json::{Map, Value};
+use tracing::{instrument, trace};
 
 use crate::{
     execution_context::ExecutionContext,
@@ -32,12 +33,21 @@ pub trait ExecutableFetchNode {
 }
 
 impl ExecutableFetchNode for FetchNode {
+    #[instrument(
+        level = "debug",
+        skip_all,
+        name="FetchNode::variables",
+        fields(
+            path = ?path,
+            service_name = self.service_name,
+        )
+    )]
     fn variables(
         &self,
         root: &Value,
         path: Vec<String>,
         ctx: &ExecutionContext,
-    ) -> Option<(Map<String, Value>, Option<Vec<TraversedPath>>)> {
+    ) -> VariablesResult {
         let representations_and_paths = self.representations(root, path, ctx);
         let variables = self.variables_from_usages(ctx);
         match (representations_and_paths, variables) {
@@ -109,8 +119,24 @@ impl ExecutableFetchNode for FetchNode {
         if representations.is_empty() {
             return None; // No valid representations found
         }
+        trace!(
+            "Found representations for FetchNode {:?} on path {:?}",
+            representations.len(),
+            path,
+        );
         Some((representations, paths))
     }
+    #[instrument(
+        level = "debug",
+        skip_all,
+        name="FetchNode::execute",
+        fields(
+            service_name = self.service_name,
+            operation_name = ?self.operation_name,
+            operation_str = %self.operation.operation_str,
+            path = ?path,
+        )
+    )]
     fn execute<'a>(
         &'a self,
         root: &'a Value,

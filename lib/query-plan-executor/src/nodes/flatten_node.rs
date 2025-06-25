@@ -1,6 +1,7 @@
 use futures::future::BoxFuture;
 use query_planner::planner::plan_nodes::FlattenNode;
 use serde_json::Value;
+use tracing::instrument;
 
 use crate::{
     execution_context::ExecutionContext, execution_result::ExecutionResult,
@@ -17,6 +18,9 @@ pub trait ExecutableFlattenNode {
 }
 
 impl ExecutableFlattenNode for FlattenNode {
+    #[instrument(level = "debug", skip_all, name = "FlattenNode::execute", fields(
+          path = ?self.path
+      ))]
     fn execute<'a>(
         &'a self,
         root: &'a Value,
