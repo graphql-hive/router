@@ -54,6 +54,7 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
                 schema_metadata,
                 operation,
                 has_introspection,
+                false,
             )
             .await;
             black_box(result)
@@ -143,6 +144,7 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
                 schema_metadata,
                 operation,
                 has_introspection,
+                false,
             )
             .await;
             black_box(result)
@@ -221,16 +223,19 @@ fn project_data_by_operation(c: &mut Criterion) {
             let data = black_box(&mut data);
             let mut errors = vec![];
             let errors = black_box(&mut errors);
+            let extensions = HashMap::new();
+            let extensions = black_box(&extensions);
             let operation = black_box(&operation);
             let schema_metadata = black_box(&schema_metadata);
-            query_plan_executor::project_data_by_operation(
+            let result = query_plan_executor::projection::project_by_operation(
                 data,
                 errors,
+                extensions,
                 operation,
                 schema_metadata,
                 &None,
             );
-            black_box(());
+            black_box(result);
         });
     });
 }
