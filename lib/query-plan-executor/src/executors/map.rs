@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use tracing::{instrument, warn};
 
-use crate::executors::common::{SubgraphExecutor, SubgraphExecutorBoxedArc};
+use crate::executors::{
+    batch::BatchExecutor,
+    common::{SubgraphExecutor, SubgraphExecutorBoxedArc},
+};
 
 pub struct SubgraphExecutorMap {
     inner: HashMap<String, SubgraphExecutorBoxedArc>,
@@ -61,6 +64,21 @@ impl SubgraphExecutorMap {
             .collect::<HashMap<_, _>>();
         SubgraphExecutorMap {
             inner: executor_map,
+        }
+    }
+
+    pub fn to_batched(&self) -> SubgraphExecutorMap {
+        SubgraphExecutorMap {
+            inner: self
+                .inner
+                .iter()
+                .map(|(subgraph_name, executor)| {
+                    (
+                        subgraph_name.to_string(),
+                        BatchExecutor::new(executor.clone()).to_boxed_arc(),
+                    )
+                })
+                .collect::<HashMap<_, _>>(),
         }
     }
 }
