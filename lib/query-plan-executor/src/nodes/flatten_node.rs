@@ -28,6 +28,6 @@ impl ExecutableFlattenNode for FlattenNode {
             .map(|s| s.to_string())
             .collect::<Vec<String>>();
         new_path.extend(self.path.clone());
-        Box::pin(self.node.execute(root, new_path, ctx))
+        self.node.execute(root, new_path, ctx)
     }
 }
