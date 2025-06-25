@@ -9,6 +9,7 @@ pub mod deep_merge;
 pub mod execution_context;
 pub mod execution_result;
 pub mod executors;
+pub mod fetch_rewrites;
 pub mod introspection;
 pub mod nodes;
 pub mod projection;

@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 use crate::{
     execution_context::ExecutionContext,
     execution_result::ExecutionResult,
+    fetch_rewrites::ApplyFetchRewrite,
     projection::SelectionSetProjection,
     traverse_path::{self, SetPathValue, TraversedPathSegment},
     ExecutionRequest,
@@ -95,8 +96,13 @@ impl ExecutableFetchNode for FetchNode {
             Vec::with_capacity(0),
             &path_slice,
             &mut |path, entity| {
-                let projected = requires.project_for_requires(entity, ctx.schema_metadata);
+                let mut projected = requires.project_for_requires(entity, ctx.schema_metadata);
                 if !projected.is_null() {
+                    if let Some(input_rewrites) = &self.input_rewrites {
+                        for rewrite in input_rewrites {
+                            rewrite.apply(ctx.schema_metadata, &mut projected);
+                        }
+                    }
                     representations.push(projected);
                     paths.push(path)
                 }
@@ -131,7 +137,13 @@ impl ExecutableFetchNode for FetchNode {
                 .subgraph_executor_map
                 .execute(&self.service_name, execution_request)
                 .await;
-            // TODO: Output rewrites
+            if let (Some(output_rewrites), Some(data)) =
+                (&self.output_rewrites, &mut subgraph_result.data)
+            {
+                for rewrite in output_rewrites {
+                    rewrite.apply(ctx.schema_metadata, data);
+                }
+            }
             if let Some(paths) = paths {
                 let mut final_data = Value::Null;
                 let entities = subgraph_result.data.as_mut().and_then(|data| {
