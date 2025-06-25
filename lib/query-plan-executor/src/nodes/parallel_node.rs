@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
+
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use query_planner::planner::plan_nodes::ParallelNode;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use tracing::instrument;
 
 use crate::deep_merge::DeepMerge;
@@ -38,7 +40,7 @@ impl ExecutableParallelNode for ParallelNode {
                 .collect();
             let mut data = Value::Null;
             let mut errors = vec![];
-            let mut extensions = Map::new();
+            let mut extensions = BTreeMap::new();
             while let Some(node_result) = stream.next().await {
                 if let Some(node_data) = node_result.data {
                     data.deep_merge(node_data);
@@ -47,7 +49,7 @@ impl ExecutableParallelNode for ParallelNode {
                     errors.extend(node_errors);
                 }
                 if let Some(node_extensions) = node_result.extensions {
-                    extensions.deep_merge(node_extensions);
+                    extensions.extend(node_extensions);
                 }
             }
 

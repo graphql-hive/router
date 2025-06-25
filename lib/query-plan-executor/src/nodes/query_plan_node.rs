@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use futures::future::BoxFuture;
 use query_planner::{ast::operation::OperationDefinition, planner::plan_nodes::QueryPlan};
 use serde_json::{Map, Value};
@@ -16,7 +18,7 @@ pub trait ExecutableQueryPlanNode {
     fn execute_operation<'a>(
         &'a self,
         subgraph_executor_map: &'a SubgraphExecutorMap,
-        variables: &'a Option<Map<String, Value>>,
+        variables: &'a Option<BTreeMap<String, Value>>,
         schema_metadata: &'a SchemaMetadata,
         operation: &'a OperationDefinition,
         has_introspection: bool,
@@ -35,7 +37,7 @@ impl ExecutableQueryPlanNode for QueryPlan {
     fn execute_operation<'a>(
         &'a self,
         subgraph_executor_map: &'a executors::map::SubgraphExecutorMap,
-        variables: &'a Option<Map<String, Value>>,
+        variables: &'a Option<BTreeMap<String, Value>>,
         schema_metadata: &'a SchemaMetadata,
         operation: &'a OperationDefinition,
         has_introspection: bool,

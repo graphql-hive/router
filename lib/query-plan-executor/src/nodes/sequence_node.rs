@@ -1,6 +1,8 @@
+use std::collections::BTreeMap;
+
 use futures::future::BoxFuture;
 use query_planner::planner::plan_nodes::SequenceNode;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use tracing::instrument;
 
 use crate::{
@@ -31,7 +33,7 @@ impl ExecutableSequenceNode for SequenceNode {
         Box::pin(async move {
             let mut data = root.clone();
             let mut errors = vec![];
-            let mut extensions = Map::new();
+            let mut extensions = BTreeMap::new();
             for node in &self.nodes {
                 let node_result = node.execute(&data, path.clone(), ctx).await;
                 if let Some(node_data) = node_result.data {
@@ -41,7 +43,7 @@ impl ExecutableSequenceNode for SequenceNode {
                     errors.extend(node_errors);
                 }
                 if let Some(node_extensions) = node_result.extensions {
-                    extensions.deep_merge(node_extensions);
+                    extensions.extend(node_extensions);
                 }
             }
             ExecutionResult::new(Some(data), Some(errors), Some(extensions))

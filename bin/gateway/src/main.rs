@@ -42,7 +42,7 @@ use tower_http::{
 };
 use tracing::info;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let perfetto_file = env::var("PERFETTO_OUT").ok().is_some_and(|v| v == "1");
     let log_format = env::var("LOG_FORMAT")

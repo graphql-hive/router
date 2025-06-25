@@ -1,6 +1,8 @@
+use std::collections::BTreeMap;
+
 use futures::future::BoxFuture;
 use query_planner::planner::plan_nodes::FetchNode;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use tracing::{instrument, trace};
 
 use crate::{
@@ -13,11 +15,11 @@ use crate::{
 };
 
 type TraversedPath = Vec<TraversedPathSegment>;
-type VariablesResult = Option<(Map<String, Value>, Option<Vec<TraversedPath>>)>;
+type VariablesResult = Option<(BTreeMap<String, Value>, Option<Vec<TraversedPath>>)>;
 pub trait ExecutableFetchNode {
     fn variables(&self, root: &Value, path: Vec<String>, ctx: &ExecutionContext)
         -> VariablesResult;
-    fn variables_from_usages(&self, ctx: &ExecutionContext) -> Option<Map<String, Value>>;
+    fn variables_from_usages(&self, ctx: &ExecutionContext) -> Option<BTreeMap<String, Value>>;
     fn representations(
         &self,
         root: &Value,
@@ -54,7 +56,7 @@ impl ExecutableFetchNode for FetchNode {
             (None, None) => None, // No representations and no variables
             (Some((representations, paths)), None) => {
                 // Only representations available, return them as variables
-                let mut map = Map::with_capacity(1);
+                let mut map = BTreeMap::new();
                 map.insert("representations".to_string(), Value::Array(representations));
                 Some((map, Some(paths)))
             }
@@ -65,7 +67,7 @@ impl ExecutableFetchNode for FetchNode {
             }
         }
     }
-    fn variables_from_usages(&self, ctx: &ExecutionContext) -> Option<Map<String, Value>> {
+    fn variables_from_usages(&self, ctx: &ExecutionContext) -> Option<BTreeMap<String, Value>> {
         match (&self.variable_usages, ctx.variables) {
             (None, _) => None, // No variable usages
             (Some(variable_usages), None) => Some(
@@ -168,7 +170,7 @@ impl ExecutableFetchNode for FetchNode {
                     rewrite.apply(ctx.schema_metadata, data);
                 }
             }
-            if let Some(paths) = paths {
+            if let Some(mut paths) = paths {
                 let mut final_data = Value::Null;
                 let entities = subgraph_result.data.as_mut().and_then(|data| {
                     if let Value::Object(ref mut map) = data {
@@ -183,9 +185,9 @@ impl ExecutableFetchNode for FetchNode {
                         None
                     }
                 });
-                if let Some(entities) = entities {
-                    for (path, entity) in paths.iter().zip(entities.into_iter()) {
-                        final_data.set_path_value(path, entity);
+                if let Some(mut entities) = entities {
+                    for (path, entity) in paths.drain(..).zip(entities.drain(..)) {
+                        final_data.set_path_value(&path, entity);
                     }
                 }
                 ExecutionResult::new(

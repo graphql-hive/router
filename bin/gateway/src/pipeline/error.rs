@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 use axum::{body::Body, extract::rejection::QueryRejection, response::IntoResponse};
 use graphql_tools::validation::utils::ValidationError;
@@ -158,7 +158,7 @@ impl IntoResponse for PipelineError {
         let message = self.error.graphql_error_message();
 
         let graphql_error = GraphQLError {
-            extensions: Some(HashMap::from([(
+            extensions: Some(BTreeMap::from([(
                 "code".to_string(),
                 Value::String(code.to_string()),
             )])),

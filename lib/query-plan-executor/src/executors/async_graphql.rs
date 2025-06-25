@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use serde_json::{json, Map};
+use serde_json::json;
 
 use crate::{
     execution_request::ExecutionRequest,
@@ -76,7 +76,7 @@ impl From<&async_graphql::ServerError> for GraphQLError {
                     .unwrap()
                     .iter()
                     .map(|(k, v)| (k.to_string(), v.clone()))
-                    .collect::<HashMap<String, serde_json::Value>>()
+                    .collect::<BTreeMap<String, serde_json::Value>>()
             }),
         }
     }
@@ -98,7 +98,7 @@ impl From<async_graphql::Response> for ExecutionResult {
                     .extensions
                     .into_iter()
                     .map(|(key, value)| (key, value.into_json().unwrap()))
-                    .collect::<Map<String, serde_json::Value>>(),
+                    .collect::<BTreeMap<String, serde_json::Value>>(),
             ),
         }
     }

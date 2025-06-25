@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::{collections::HashMap, hash::Hash, sync::Arc};
 
 use async_trait::async_trait;
@@ -64,14 +65,14 @@ impl BatchFn<ExecutionRequest, ExecutionResult> for BatchLoadFn<'_> {
 }
 
 fn merge_requests(requests: &[ExecutionRequest]) -> ExecutionRequest {
-    let mut merged_variables = Map::new();
+    let mut merged_variables = BTreeMap::new();
     let mut merged_variable_definitions: Vec<query::VariableDefinition<'static, String>> =
         Vec::new();
     let mut merged_selections = Vec::new();
     let mut merged_fragment_definitions = Vec::new();
-    let mut merged_extensions = Map::new();
+    let mut merged_extensions = BTreeMap::new();
 
-    let mut original_to_prefix_variable_names = HashMap::new();
+    let mut original_to_prefix_variable_names = BTreeMap::new();
 
     for (index, request) in requests.iter().enumerate() {
         let prefix = create_prefix(index);

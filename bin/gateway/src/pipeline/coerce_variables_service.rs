@@ -1,10 +1,11 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::body::Body;
 use http::Request;
 use query_plan_executor::execution_request::ExecutionRequest;
 use query_plan_executor::variables::collect_variables;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use tracing::{trace, warn};
 
 use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
@@ -17,7 +18,7 @@ use crate::shared_state::GatewaySharedState;
 
 #[derive(Clone, Debug)]
 pub struct CoerceVariablesPayload {
-    pub variables_map: Option<Map<String, Value>>,
+    pub variables_map: Option<BTreeMap<String, Value>>,
 }
 
 #[derive(Clone, Debug, Default)]

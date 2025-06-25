@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -10,13 +10,13 @@ pub struct ExecutionResultExtensions {
     http: Option<HTTPErrorExtensions>,
     service_name: Option<String>,
     #[serde(flatten)]
-    extensions: Option<Map<String, Value>>,
+    extensions: Option<BTreeMap<String, Value>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HTTPErrorExtensions {
     status: Option<u16>,
-    headers: Option<HashMap<String, String>>,
+    headers: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -27,7 +27,7 @@ pub struct GraphQLError {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<Vec<Value>>, // Path can be string or number
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub extensions: Option<HashMap<String, Value>>,
+    pub extensions: Option<BTreeMap<String, Value>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -43,7 +43,7 @@ pub struct ExecutionResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub errors: Option<Vec<GraphQLError>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub extensions: Option<Map<String, Value>>,
+    pub extensions: Option<BTreeMap<String, Value>>,
 }
 
 impl ExecutionResult {
@@ -62,7 +62,7 @@ impl ExecutionResult {
     pub fn new(
         data: Option<Value>,
         errors: Option<Vec<GraphQLError>>,
-        extensions: Option<Map<String, Value>>,
+        extensions: Option<BTreeMap<String, Value>>,
     ) -> ExecutionResult {
         let final_data = match data {
             Some(data) if data.is_null() => None,

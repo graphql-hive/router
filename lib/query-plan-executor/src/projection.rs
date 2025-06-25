@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use query_planner::{
     ast::{
         operation::OperationDefinition, selection_item::SelectionItem, selection_set::SelectionSet,
@@ -99,7 +101,7 @@ fn project_selection_set_with_map(
     selection_set: &SelectionSet,
     type_name: &str,
     schema_metadata: &SchemaMetadata,
-    variable_values: &Option<Map<String, Value>>,
+    variable_values: &Option<BTreeMap<String, Value>>,
 ) -> Option<Map<String, Value>> {
     let type_name = match obj.get(TYPENAME_FIELD) {
         Some(Value::String(type_name)) => type_name,
@@ -241,7 +243,7 @@ fn project_selection_set(
     selection_set: &SelectionSet,
     type_name: &str,
     schema_metadata: &SchemaMetadata,
-    variable_values: &Option<Map<String, Value>>,
+    variable_values: &Option<BTreeMap<String, Value>>,
 ) {
     match data {
         Value::Null => {
@@ -307,7 +309,7 @@ pub fn project_data_by_operation(
     errors: &mut Vec<GraphQLError>,
     operation: &OperationDefinition,
     schema_metadata: &SchemaMetadata,
-    variable_values: &Option<Map<String, Value>>,
+    variable_values: &Option<BTreeMap<String, Value>>,
 ) {
     let root_type_name = match operation.operation_kind {
         Some(OperationKind::Query) => "Query",

@@ -16,7 +16,7 @@ pub trait SetPathValue {
 impl SetPathValue for Value {
     fn set_path_value(&mut self, path: &[TraversedPathSegment], value: Value) {
         let current_segment = &path[0];
-        let remaining_path = path.get(1..).unwrap_or(&[]).to_vec();
+        let remaining_path = path.get(1..).unwrap_or(&[]);
         if self.is_null() {
             // If the current value is null, we need to create a new structure
             match current_segment {
@@ -77,7 +77,7 @@ impl SetPathValue for Value {
                     // Extend the array with nulls if necessary
                     array.resize(index + 1, Value::Null);
                 }
-                array[*index].set_path_value(&remaining_path, value);
+                array[*index].set_path_value(remaining_path, value);
             }
             (Value::Object(map), TraversedPathSegment::Field(field)) => {
                 if !map.contains_key(field) {
@@ -86,7 +86,7 @@ impl SetPathValue for Value {
                 }
                 map.get_mut(field)
                     .unwrap()
-                    .set_path_value(&remaining_path, value);
+                    .set_path_value(remaining_path, value);
             }
             (_, _) => {
                 // If the current value is not compatible with the path, we can't set the value
