@@ -46,11 +46,9 @@ fn query_executor_pipeline_locally() {
             &schema_metadata,
             normalized_operation,
             false,
+            false,
         )
         .await;
-        insta::assert_snapshot!(format!(
-            "{}",
-            serde_json::to_string_pretty(&result).unwrap_or_default()
-        ));
+        insta::assert_snapshot!(result);
     });
 }
