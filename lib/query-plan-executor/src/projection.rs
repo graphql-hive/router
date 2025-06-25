@@ -9,8 +9,9 @@ use tracing::{instrument, warn};
 
 use crate::{
     deep_merge::DeepMerge,
+    execution_result::GraphQLError,
     schema_metadata::{EntitySatisfiesTypeCondition, SchemaMetadata},
-    GraphQLError, TYPENAME_FIELD,
+    TYPENAME_FIELD,
 };
 
 pub trait SelectionSetProjection {

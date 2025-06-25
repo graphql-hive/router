@@ -1,7 +1,7 @@
 use axum::body::{to_bytes, Body};
 use axum::extract::Query;
 use http::{Method, Request};
-use query_plan_executor::ExecutionRequest;
+use query_plan_executor::execution_request::ExecutionRequest;
 use tracing::{trace, warn};
 
 use crate::pipeline::error::{PipelineError, PipelineErrorVariant};

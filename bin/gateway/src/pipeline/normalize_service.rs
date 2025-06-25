@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use http::Request;
+use query_plan_executor::execution_request::ExecutionRequest;
 use query_plan_executor::introspection::filter_introspection_fields_in_operation;
-use query_plan_executor::ExecutionRequest;
 use query_planner::ast::document::NormalizedDocument;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;

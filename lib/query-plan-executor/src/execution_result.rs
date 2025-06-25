@@ -3,8 +3,6 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::GraphQLError;
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionResultExtensions {
@@ -19,6 +17,23 @@ pub struct ExecutionResultExtensions {
 pub struct HTTPErrorExtensions {
     status: Option<u16>,
     headers: Option<HashMap<String, String>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GraphQLError {
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locations: Option<Vec<GraphQLErrorLocation>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<Vec<Value>>, // Path can be string or number
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<HashMap<String, Value>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GraphQLErrorLocation {
+    pub line: usize,
+    pub column: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]

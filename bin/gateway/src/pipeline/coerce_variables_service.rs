@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use http::Request;
+use query_plan_executor::execution_request::ExecutionRequest;
 use query_plan_executor::variables::collect_variables;
-use query_plan_executor::ExecutionRequest;
 use serde_json::{Map, Value};
 use tracing::{trace, warn};
 

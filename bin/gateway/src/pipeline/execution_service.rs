@@ -14,7 +14,7 @@ use axum::response::IntoResponse;
 use axum::Json;
 use http::header::CONTENT_TYPE;
 use http::{Request, Response};
-use query_plan_executor::execute_query_plan;
+use query_plan_executor::nodes::query_plan_node::ExecutableQueryPlanNode;
 use serde_json::{to_value, Map};
 use tower::Service;
 
@@ -65,15 +65,16 @@ impl Service<Request<Body>> for ExecutionService {
                 .get::<HttpRequestParams>()
                 .expect("HttpRequestParams missing");
 
-            let mut execution_result = execute_query_plan(
-                &query_plan_payload.query_plan,
-                &app_state.subgraph_executor_map,
-                &variable_payload.variables_map,
-                &app_state.schema_metadata,
-                &normalized_payload.normalized_document.operation,
-                normalized_payload.has_introspection,
-            )
-            .await;
+            let mut execution_result = query_plan_payload
+                .query_plan
+                .execute_operation(
+                    &app_state.subgraph_executor_map,
+                    &variable_payload.variables_map,
+                    &app_state.schema_metadata,
+                    &normalized_payload.normalized_document.operation,
+                    normalized_payload.has_introspection,
+                )
+                .await;
 
             if expose_query_plan {
                 let plan_value = to_value(query_plan_payload.query_plan.as_ref()).unwrap();

@@ -25,7 +25,7 @@ impl SubgraphExecutorMap {
     pub async fn execute(
         &self,
         subgraph_name: &str,
-        execution_request: crate::ExecutionRequest,
+        execution_request: crate::execution_request::ExecutionRequest,
     ) -> crate::execution_result::ExecutionResult {
         match self.inner.get(subgraph_name) {
             Some(executor) => executor.execute(execution_request).await,

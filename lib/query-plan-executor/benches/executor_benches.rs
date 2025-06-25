@@ -2,7 +2,6 @@
 use criterion::Criterion;
 use criterion::{criterion_group, criterion_main};
 use query_plan_executor::deep_merge::DeepMerge;
-use query_plan_executor::execute_query_plan;
 use query_plan_executor::executors::common::SubgraphExecutor;
 use query_plan_executor::executors::map::SubgraphExecutorMap;
 use query_plan_executor::nodes::query_plan_node::ExecutableQueryPlanNode;
@@ -43,15 +42,15 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
             let operation = black_box(&normalized_operation);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
             let has_introspection = false;
-            let result = execute_query_plan(
-                query_plan,
-                subgraph_executor_map,
-                &None,
-                schema_metadata,
-                operation,
-                has_introspection,
-            )
-            .await;
+            let result = query_plan
+                .execute_operation(
+                    subgraph_executor_map,
+                    &None,
+                    schema_metadata,
+                    operation,
+                    has_introspection,
+                )
+                .await;
             black_box(result)
         });
     });
@@ -128,15 +127,15 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
             let operation = black_box(&normalized_operation);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
             let has_introspection = false;
-            let result = execute_query_plan(
-                query_plan,
-                subgraph_executor_map,
-                &None,
-                schema_metadata,
-                operation,
-                has_introspection,
-            )
-            .await;
+            let result = query_plan
+                .execute_operation(
+                    subgraph_executor_map,
+                    &None,
+                    schema_metadata,
+                    operation,
+                    has_introspection,
+                )
+                .await;
             black_box(result)
         });
     });

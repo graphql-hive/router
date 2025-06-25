@@ -1,7 +1,7 @@
 use axum::body::Body;
 use graphql_parser::query::Document;
 use http::Request;
-use query_plan_executor::ExecutionRequest;
+use query_plan_executor::execution_request::ExecutionRequest;
 use query_planner::utils::parsing::safe_parse_operation;
 
 use crate::pipeline::error::{PipelineError, PipelineErrorVariant};

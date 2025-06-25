@@ -2,7 +2,8 @@ use async_trait::async_trait;
 use tracing::{error, instrument, trace};
 
 use crate::{
-    execution_result::ExecutionResult, executors::common::SubgraphExecutor, ExecutionRequest,
+    execution_request::ExecutionRequest, execution_result::ExecutionResult,
+    executors::common::SubgraphExecutor,
 };
 
 #[derive(Debug)]

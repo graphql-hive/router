@@ -4,11 +4,11 @@ use serde_json::{Map, Value};
 
 use crate::{
     execution_context::ExecutionContext,
+    execution_request::ExecutionRequest,
     execution_result::ExecutionResult,
     fetch_rewrites::ApplyFetchRewrite,
     projection::SelectionSetProjection,
     traverse_path::{self, SetPathValue, TraversedPathSegment},
-    ExecutionRequest,
 };
 
 type TraversedPath = Vec<TraversedPathSegment>;

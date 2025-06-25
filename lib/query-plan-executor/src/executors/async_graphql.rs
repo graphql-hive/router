@@ -4,8 +4,9 @@ use async_trait::async_trait;
 use serde_json::{json, Map};
 
 use crate::{
-    execution_result::ExecutionResult, executors::common::SubgraphExecutor, ExecutionRequest,
-    GraphQLError, GraphQLErrorLocation,
+    execution_request::ExecutionRequest,
+    execution_result::{ExecutionResult, GraphQLError, GraphQLErrorLocation},
+    executors::common::SubgraphExecutor,
 };
 
 #[async_trait]

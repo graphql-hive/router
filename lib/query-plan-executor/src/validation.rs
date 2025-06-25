@@ -1,7 +1,7 @@
 use graphql_parser::Pos;
 use graphql_tools::validation::utils::ValidationError;
 
-use crate::{GraphQLError, GraphQLErrorLocation};
+use crate::execution_result::{GraphQLError, GraphQLErrorLocation};
 
 impl From<&ValidationError> for GraphQLError {
     fn from(val: &ValidationError) -> Self {
