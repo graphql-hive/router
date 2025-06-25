@@ -14,7 +14,7 @@ pub trait ExecutableConditionNode {
         path: Vec<String>,
         ctx: &'a ExecutionContext,
     ) -> BoxFuture<'a, ExecutionResult>;
-    fn inner_node(&self, ctx: &ExecutionContext) -> Option<&Box<PlanNode>>;
+    fn inner_node(&self, ctx: &ExecutionContext) -> Option<&PlanNode>;
 }
 
 impl ExecutableConditionNode for ConditionNode {
@@ -34,7 +34,7 @@ impl ExecutableConditionNode for ConditionNode {
             Box::pin(async move { ExecutionResult::default() })
         }
     }
-    fn inner_node(&self, ctx: &ExecutionContext) -> Option<&Box<PlanNode>> {
+    fn inner_node(&self, ctx: &ExecutionContext) -> Option<&PlanNode> {
         // Get the condition variable from the context
         let condition_value: bool = match ctx.variables {
             Some(ref variable_values) => {
@@ -58,9 +58,9 @@ impl ExecutableConditionNode for ConditionNode {
             }
         };
         if condition_value {
-            self.if_clause.as_ref()
+            self.if_clause.as_ref().map(|node| node.as_ref())
         } else {
-            self.else_clause.as_ref()
+            self.else_clause.as_ref().map(|node| node.as_ref())
         }
     }
 }

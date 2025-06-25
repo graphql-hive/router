@@ -10,11 +10,11 @@ pub enum TraversedPathSegment {
 }
 
 pub trait SetPathValue {
-    fn set_path_value(&mut self, path: &Vec<TraversedPathSegment>, value: Value);
+    fn set_path_value(&mut self, path: &[TraversedPathSegment], value: Value);
 }
 
 impl SetPathValue for Value {
-    fn set_path_value(&mut self, path: &Vec<TraversedPathSegment>, value: Value) {
+    fn set_path_value(&mut self, path: &[TraversedPathSegment], value: Value) {
         let current_segment = &path[0];
         let remaining_path = path.get(1..).unwrap_or(&[]).to_vec();
         if self.is_null() {

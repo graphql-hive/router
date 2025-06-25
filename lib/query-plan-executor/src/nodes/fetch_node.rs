@@ -11,20 +11,18 @@ use crate::{
     ExecutionRequest,
 };
 
+type TraversedPath = Vec<TraversedPathSegment>;
+type VariablesResult = Option<(Map<String, Value>, Option<Vec<TraversedPath>>)>;
 pub trait ExecutableFetchNode {
-    fn variables(
-        &self,
-        root: &Value,
-        path: Vec<String>,
-        ctx: &ExecutionContext,
-    ) -> Option<(Map<String, Value>, Option<Vec<Vec<TraversedPathSegment>>>)>;
+    fn variables(&self, root: &Value, path: Vec<String>, ctx: &ExecutionContext)
+        -> VariablesResult;
     fn variables_from_usages(&self, ctx: &ExecutionContext) -> Option<Map<String, Value>>;
     fn representations(
         &self,
         root: &Value,
         path: Vec<String>,
         ctx: &ExecutionContext,
-    ) -> Option<(Vec<Value>, Vec<Vec<TraversedPathSegment>>)>;
+    ) -> Option<(Vec<Value>, Vec<TraversedPath>)>;
     fn execute<'a>(
         &'a self,
         root: &'a Value,
@@ -39,7 +37,7 @@ impl ExecutableFetchNode for FetchNode {
         root: &Value,
         path: Vec<String>,
         ctx: &ExecutionContext,
-    ) -> Option<(Map<String, Value>, Option<Vec<Vec<TraversedPathSegment>>>)> {
+    ) -> Option<(Map<String, Value>, Option<Vec<TraversedPath>>)> {
         let representations_and_paths = self.representations(root, path, ctx);
         let variables = self.variables_from_usages(ctx);
         match (representations_and_paths, variables) {
@@ -82,7 +80,7 @@ impl ExecutableFetchNode for FetchNode {
         root: &Value,
         path: Vec<String>,
         ctx: &ExecutionContext,
-    ) -> Option<(Vec<Value>, Vec<Vec<TraversedPathSegment>>)> {
+    ) -> Option<(Vec<Value>, Vec<TraversedPath>)> {
         self.requires.as_ref()?;
         let requires = self.requires.as_ref().unwrap();
         if requires.is_empty() {
