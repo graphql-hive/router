@@ -886,6 +886,7 @@ pub struct GraphQLErrorLocation {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ExecutionRequest {
     pub query: String,
     pub operation_name: Option<String>,
