@@ -202,56 +202,112 @@ fn handle_selection_set(
                 }
 
                 if let Some(object_types) = &possible_object_types {
-                    if !field.name.starts_with("__") {
-                        let field_on_abstract = type_def.fields().get(&field.name);
-                        let should_expand = field_on_abstract.is_none()
-                            || object_types.iter().any(|obj| {
-                                obj.fields
+                    if field.name.starts_with("__") {
+                        new_items.push(Selection::Field(field));
+                        continue;
+                    }
+
+                    let mut interface_needs_expansion_due_to_subgraphs = false;
+                    if let SupergraphDefinition::Interface(interface_type) = type_def {
+                        let mut subgraphs_with_interface = std::collections::HashSet::new();
+                        let mut subgraphs_resolving_field = std::collections::HashSet::new();
+
+                        for jt in &interface_type.join_type {
+                            if !jt.is_interface_object {
+                                subgraphs_with_interface.insert(&jt.graph_id);
+                            }
+                        }
+
+                        if let Some(field_def) = interface_type.fields.get(&field.name) {
+                            // Check if the field is contributed by the interface object
+                            let interface_object_in_graphs = interface_type
+                                .join_type
+                                .iter()
+                                .filter_map(|jt| match jt.is_interface_object {
+                                    true => Some(&jt.graph_id),
+                                    false => None,
+                                })
+                                .collect::<Vec<&String>>();
+
+                            let is_interface_object_field =
+                                field_def.join_field.iter().all(|j| j.graph_id.is_none())
+                                    || field_def.join_field.iter().any(|jf| {
+                                        !jf.external
+                                            && jf.graph_id.as_ref().is_some_and(|g| {
+                                                interface_object_in_graphs.contains(&g)
+                                            })
+                                    });
+
+                            if field_def.join_field.is_empty() {
+                                // No join__field: field is available everywhere the interface is defined
+                                interface_needs_expansion_due_to_subgraphs = false;
+                            } else if !is_interface_object_field {
+                                for jf in &field_def.join_field {
+                                    if !jf.external {
+                                        if let Some(graph_id) = &jf.graph_id {
+                                            subgraphs_resolving_field.insert(graph_id);
+                                        }
+                                    }
+                                }
+                                if subgraphs_with_interface.len() > 1
+                                    && subgraphs_resolving_field.len()
+                                        < subgraphs_with_interface.len()
+                                {
+                                    interface_needs_expansion_due_to_subgraphs = true;
+                                }
+                            }
+                        }
+                    }
+
+                    let should_expand = interface_needs_expansion_due_to_subgraphs
+                        || object_types.iter().any(|obj| {
+                            obj.fields.get(&field.name).is_none()
+                                || obj
+                                    .fields
                                     .get(&field.name)
                                     .map(|obj_field| {
                                         obj_field.join_field.iter().any(|jf| jf.external)
                                     })
-                                    .unwrap_or(true)
-                            });
+                                    .unwrap_or(false)
+                        });
 
-                        if should_expand {
-                            // Sort object_types by name for deterministic fragment order
-                            let mut sorted_object_types: Vec<_> = object_types.iter().collect();
-                            sorted_object_types.sort_by(|a, b| a.name.cmp(&b.name));
+                    if should_expand {
+                        // Sort object_types by name for deterministic fragment order
+                        let mut sorted_object_types: Vec<_> = object_types.iter().collect();
+                        sorted_object_types.sort_by(|a, b| a.name.cmp(&b.name));
 
-                            let mut fragments = Vec::with_capacity(sorted_object_types.len());
-                            for obj in sorted_object_types {
-                                let mut new_field = field.clone();
-                                if !new_field.selection_set.items.is_empty() {
-                                    if let Some(obj_field) = obj.fields.get(&new_field.name) {
-                                        let inner_type_name = obj_field.field_type.inner_type();
-                                        let inner_type_def =
-                                            state.definitions.get(inner_type_name).ok_or_else(
-                                                || NormalizationError::SchemaTypeNotFound {
-                                                    type_name: inner_type_name.to_string(),
-                                                },
-                                            )?;
-                                        handle_selection_set(
-                                            state,
-                                            possible_types,
-                                            inner_type_def,
-                                            &mut new_field.selection_set,
-                                        )?;
-                                    }
+                        let mut fragments = Vec::with_capacity(sorted_object_types.len());
+                        for obj in sorted_object_types {
+                            let mut new_field = field.clone();
+                            if !new_field.selection_set.items.is_empty() {
+                                if let Some(obj_field) = obj.fields.get(&new_field.name) {
+                                    let inner_type_name = obj_field.field_type.inner_type();
+                                    let inner_type_def = state
+                                        .definitions
+                                        .get(inner_type_name)
+                                        .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
+                                            type_name: inner_type_name.to_string(),
+                                        })?;
+                                    handle_selection_set(
+                                        state,
+                                        possible_types,
+                                        inner_type_def,
+                                        &mut new_field.selection_set,
+                                    )?;
                                 }
-                                fragments.push(Selection::InlineFragment(InlineFragment {
-                                    type_condition: Some(TypeCondition::On(obj.name.clone())),
-                                    directives: vec![],
-                                    selection_set: SelectionSet {
-                                        span: Default::default(),
-                                        items: vec![Selection::Field(new_field)],
-                                    },
-                                    position: Default::default(),
-                                }));
                             }
-                            new_items.extend(fragments);
-                            continue;
+                            fragments.push(Selection::InlineFragment(InlineFragment {
+                                type_condition: Some(TypeCondition::On(obj.name.clone())),
+                                directives: vec![],
+                                selection_set: SelectionSet {
+                                    span: Default::default(),
+                                    items: vec![Selection::Field(new_field)],
+                                },
+                                position: Default::default(),
+                            }));
                         }
+                        new_items.extend(fragments);
+                        continue;
                     }
                 }
                 new_items.push(Selection::Field(field));

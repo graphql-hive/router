@@ -568,3 +568,82 @@ fn node_query_with_id_and_cross_type_fragment_overlap() -> Result<(), Box<dyn Er
 
     Ok(())
 }
+
+#[test]
+fn poop1() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          products {
+            id
+            reviews {
+              id
+            }
+          }
+        }
+      ,
+      "#,
+    );
+    let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
+
+    // TODO: this should be batched (turned into a sequence of two fetch steps)
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            products {
+              id
+              __typename
+              ... on Book {
+                __typename
+                id
+              }
+              ... on Magazine {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Parallel {
+          Flatten(path: "products.@") {
+            Fetch(service: "reviews") {
+                ... on Magazine {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Magazine {
+                  reviews {
+                    id
+                  }
+                }
+              }
+            },
+          },
+          Flatten(path: "products.@") {
+            Fetch(service: "reviews") {
+                ... on Book {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Book {
+                  reviews {
+                    id
+                  }
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

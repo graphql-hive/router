@@ -754,4 +754,93 @@ mod tests {
         ",
         );
     }
+
+    #[test]
+    fn type_expansion_3() {
+        let schema_str =
+            std::fs::read_to_string("./fixture/tests/abstract-types.supergraph.graphql")
+                .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        {
+                          products {
+                            id
+                            reviews { id }
+                          }
+                        }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+        query {
+          products {
+            id
+            ... on Book {
+              reviews {
+                id
+              }
+            }
+            ... on Magazine {
+              reviews {
+                id
+              }
+            }
+          }
+        }
+        ",
+        );
+    }
+
+    #[test]
+    fn type_expansion_4() {
+        let schema_str =
+            std::fs::read_to_string("./fixture/tests/simple-interface-object.supergraph.graphql")
+                .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query {
+                          anotherUsers {
+                            id
+                            name
+                            username
+                          }
+                        }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+            query {
+              anotherUsers {
+                id
+                name
+                username
+              }
+            }
+        ",
+        );
+    }
 }
