@@ -13,6 +13,7 @@ use crate::ast::normalization::pipeline::inline_fragment_spreads;
 use crate::ast::normalization::pipeline::merge_fields;
 use crate::ast::normalization::pipeline::merge_inline_fragments;
 use crate::ast::normalization::pipeline::normalize_fields;
+use crate::ast::normalization::pipeline::type_expand;
 use crate::ast::normalization::pipeline::{drop_duplicated_fields, drop_fragment_definitions};
 use crate::state::supergraph_state::SupergraphState;
 use error::NormalizationError;
@@ -38,6 +39,7 @@ pub fn normalize_operation_mut(
     inline_fragment_spreads(&mut ctx)?;
     drop_fragment_definitions(&mut ctx)?;
     flatten_fragments(&mut ctx)?;
+    type_expand(&mut ctx)?;
     merge_inline_fragments(&mut ctx)?;
     merge_fields(&mut ctx)?;
     drop_duplicated_fields(&mut ctx)?;
