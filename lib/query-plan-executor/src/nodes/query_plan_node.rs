@@ -22,7 +22,8 @@ pub trait ExecutableQueryPlanNode {
         schema_metadata: &'a SchemaMetadata,
         operation: &'a OperationDefinition,
         has_introspection: bool,
-    ) -> BoxFuture<'a, ExecutionResult>;
+        expose_query_plan: bool,
+    ) -> BoxFuture<'a, String>;
 }
 
 impl ExecutableQueryPlanNode for QueryPlan {
@@ -41,7 +42,8 @@ impl ExecutableQueryPlanNode for QueryPlan {
         schema_metadata: &'a SchemaMetadata,
         operation: &'a OperationDefinition,
         has_introspection: bool,
-    ) -> BoxFuture<'a, ExecutionResult> {
+        expose_query_plan: bool,
+    ) -> BoxFuture<'a, String> {
         Box::pin(async move {
             let ctx = execution_context::ExecutionContext {
                 subgraph_executor_map,
@@ -52,22 +54,14 @@ impl ExecutableQueryPlanNode for QueryPlan {
             if result.data.is_none() && has_introspection {
                 result.data = Some(Value::Object(Map::new()));
             }
-            if let Some(ref mut data) = result.data {
-                let mut errors = result.errors.take().unwrap_or_default();
-                projection::project_data_by_operation(
-                    data,
-                    &mut errors,
-                    operation,
-                    schema_metadata,
-                    ctx.variables,
+            if expose_query_plan {
+                let extensions = result.extensions.get_or_insert_with(BTreeMap::new);
+                extensions.insert(
+                    "queryPlan".to_string(),
+                    serde_json::to_value(self).expect("Failed to serialize query plan"),
                 );
-                result.errors = if errors.is_empty() {
-                    None
-                } else {
-                    Some(errors)
-                };
             }
-            result
+            projection::project_by_operation(result, operation, schema_metadata, variables)
         })
     }
 }

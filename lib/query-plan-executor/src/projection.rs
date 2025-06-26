@@ -11,7 +11,7 @@ use tracing::{instrument, warn};
 
 use crate::{
     deep_merge::DeepMerge,
-    execution_result::GraphQLError,
+    execution_result::{ExecutionResult, GraphQLError},
     schema_metadata::{EntitySatisfiesTypeCondition, SchemaMetadata},
     TYPENAME_FIELD,
 };
@@ -102,14 +102,14 @@ fn project_selection_set_with_map(
     type_name: &str,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<BTreeMap<String, Value>>,
-) -> Option<Map<String, Value>> {
+) -> Vec<String> {
     let type_name = match obj.get(TYPENAME_FIELD) {
         Some(Value::String(type_name)) => type_name,
         _ => type_name,
     }
     .to_string();
-    let mut new_obj = Map::with_capacity(obj.len().max(selection_set.items.len()));
     let field_map = schema_metadata.type_fields.get(&type_name);
+    let mut items = vec![];
     for selection in &selection_set.items {
         match selection {
             SelectionItem::Field(field) => {
@@ -138,7 +138,7 @@ fn project_selection_set_with_map(
                 }
                 let response_key = field.alias.as_ref().unwrap_or(&field.name).to_string();
                 if field.name == TYPENAME_FIELD {
-                    new_obj.insert(response_key, Value::String(type_name.to_string()));
+                    items.push("\"".to_string() + &response_key + "\":\"" + &type_name + "\"");
                     continue;
                 }
                 let field_map = field_map.unwrap();
@@ -152,46 +152,19 @@ fn project_selection_set_with_map(
                 let field_val = obj.get_mut(&response_key);
                 match (field_type, field_val) {
                     (Some(field_type), Some(field_val)) => {
-                        match field_val {
-                            Value::Object(field_val_map) => {
-                                let new_field_val_map = project_selection_set_with_map(
-                                    field_val_map,
-                                    errors,
-                                    &field.selections,
-                                    field_type,
-                                    schema_metadata,
-                                    variable_values,
-                                );
-                                match new_field_val_map {
-                                    Some(new_field_val_map) => {
-                                        // If the field is an object, merge the projected values
-                                        new_obj
-                                            .insert(response_key, Value::Object(new_field_val_map));
-                                    }
-                                    None => {
-                                        new_obj.insert(response_key, Value::Null);
-                                    }
-                                }
-                            }
-                            field_val => {
-                                project_selection_set(
-                                    field_val,
-                                    errors,
-                                    &field.selections,
-                                    field_type,
-                                    schema_metadata,
-                                    variable_values,
-                                );
-                                new_obj.insert(
-                                    response_key,
-                                    field_val.clone(), // Clone the value to insert
-                                );
-                            }
-                        }
+                        let projected = project_selection_set(
+                            field_val,
+                            errors,
+                            &field.selections,
+                            field_type,
+                            schema_metadata,
+                            variable_values,
+                        );
+                        items.push("\"".to_string() + &response_key + "\":" + &projected);
                     }
                     (Some(_field_type), None) => {
                         // If the field is not found in the object, set it to Null
-                        new_obj.insert(response_key, Value::Null);
+                        items.push("\"".to_string() + &response_key + "\":null");
                     }
                     (None, _) => {
                         // It won't reach here already, as the selection should be validated before projection
@@ -206,7 +179,7 @@ fn project_selection_set_with_map(
                 if schema_metadata
                     .entity_satisfies_type_condition(&type_name, &inline_fragment.type_condition)
                 {
-                    let sub_new_obj = project_selection_set_with_map(
+                    let projected = project_selection_set_with_map(
                         obj,
                         errors,
                         &inline_fragment.selections,
@@ -214,18 +187,12 @@ fn project_selection_set_with_map(
                         schema_metadata,
                         variable_values,
                     );
-                    if let Some(sub_new_obj) = sub_new_obj {
-                        // If the inline fragment projection returns a new object, merge it
-                        new_obj.deep_merge(sub_new_obj);
-                    } else {
-                        // If the inline fragment projection returns None, skip it
-                        continue;
-                    }
+                    items.extend(projected);
                 }
             }
         }
     }
-    Some(new_obj)
+    items
 }
 
 #[instrument(
@@ -243,18 +210,17 @@ fn project_selection_set(
     selection_set: &SelectionSet,
     type_name: &str,
     schema_metadata: &SchemaMetadata,
-    variable_values: &Option<BTreeMap<String, Value>>,
-) {
+    variables: &Option<BTreeMap<String, Value>>,
+) -> String {
     match data {
-        Value::Null => {
-            // If data is Null, no need to project further
-        }
+        Value::Null => "null".to_string(),
+        Value::Bool(true) => "true".to_string(),
+        Value::Bool(false) => "false".to_string(),
+        Value::Number(num) => num.to_string(),
         Value::String(value) => {
             if let Some(enum_values) = schema_metadata.enum_values.get(type_name) {
                 if !enum_values.contains(value) {
-                    // If the value is not a valid enum value, add an error
-                    // and set data to Null
-                    *data = Value::Null; // Set data to Null if the value is not valid
+                    *data = Value::Null;
                     errors.push(GraphQLError {
                         message: format!(
                             "Value is not a valid enum value for type '{}'",
@@ -264,66 +230,81 @@ fn project_selection_set(
                         path: None,
                         extensions: None,
                     });
+                    return "null".to_string(); // Set data to Null if the value is not valid
                 }
-            } // No further processing needed for strings
+            }
+            "\"".to_string() + value + "\"" // Return the string value wrapped in quotes
         }
         Value::Array(arr) => {
-            // If data is an array, project each item in the array
-            for item in arr {
-                project_selection_set(
-                    item,
-                    errors,
-                    selection_set,
-                    type_name,
-                    schema_metadata,
-                    variable_values,
-                );
-            } // No further processing needed for arrays
+            let items = arr
+                .iter_mut()
+                .map(|item| {
+                    project_selection_set(
+                        item,
+                        errors,
+                        selection_set,
+                        type_name,
+                        schema_metadata,
+                        variables,
+                    )
+                })
+                .collect::<Vec<_>>();
+            "[".to_string() + &items.join(",") + "]"
         }
         Value::Object(obj) => {
-            match project_selection_set_with_map(
+            let items = project_selection_set_with_map(
                 obj,
                 errors,
                 selection_set,
                 type_name,
                 schema_metadata,
-                variable_values,
-            ) {
-                Some(new_obj) => {
-                    // If the projection returns a new object, replace the old one
-                    *obj = new_obj;
-                }
-                None => {
-                    // If the projection returns None, set data to Null
-                    *data = Value::Null;
-                }
-            }
+                variables,
+            );
+            "{".to_string() + &items.join(",") + "}"
         }
-        _ => {}
     }
 }
 
 #[instrument(level = "trace", skip_all)]
-pub fn project_data_by_operation(
-    data: &mut Value,
-    errors: &mut Vec<GraphQLError>,
+pub fn project_by_operation(
+    result: ExecutionResult,
     operation: &OperationDefinition,
     schema_metadata: &SchemaMetadata,
-    variable_values: &Option<BTreeMap<String, Value>>,
-) {
+    variables: &Option<BTreeMap<String, Value>>,
+) -> String {
     let root_type_name = match operation.operation_kind {
         Some(OperationKind::Query) => "Query",
         Some(OperationKind::Mutation) => "Mutation",
         Some(OperationKind::Subscription) => "Subscription",
         None => "Query",
     };
-    // Project the data based on the selection set
-    project_selection_set(
-        data,
-        errors,
-        &operation.selection_set,
-        root_type_name,
-        schema_metadata,
-        variable_values,
-    )
+    let mut items = Vec::with_capacity(3);
+    let mut errors = result.errors.unwrap_or_default();
+    if let Some(mut data) = result.data {
+        // Project the data based on the selection set
+        let data_str = project_selection_set(
+            &mut data,
+            &mut errors,
+            &operation.selection_set,
+            root_type_name,
+            schema_metadata,
+            variables,
+        );
+        let data_entry = "\"data\":".to_string() + &data_str;
+        items.push(data_entry);
+    }
+
+    if !errors.is_empty() {
+        let errors_entry = "\"errors\":".to_string() + &serde_json::to_string(&errors).unwrap();
+        items.push(errors_entry);
+    }
+    if result.extensions.is_some() {
+        let extensions = result.extensions.unwrap_or_default();
+        let extensions_entry =
+            "\"extensions\":".to_string() + &serde_json::to_string(&extensions).unwrap();
+        items.push(extensions_entry);
+    }
+
+    let entries = items.join(",");
+    "{".to_string() + &entries + "}"
 }

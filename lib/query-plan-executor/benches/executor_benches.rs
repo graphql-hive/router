@@ -2,6 +2,7 @@
 use criterion::Criterion;
 use criterion::{criterion_group, criterion_main};
 use query_plan_executor::deep_merge::DeepMerge;
+use query_plan_executor::execution_result::ExecutionResult;
 use query_plan_executor::executors::common::SubgraphExecutor;
 use query_plan_executor::executors::map::SubgraphExecutorMap;
 use query_plan_executor::nodes::query_plan_node::ExecutableQueryPlanNode;
@@ -49,6 +50,7 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
                     schema_metadata,
                     operation,
                     has_introspection,
+                    false,
                 )
                 .await;
             black_box(result)
@@ -134,6 +136,7 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
                     schema_metadata,
                     operation,
                     has_introspection,
+                    false,
                 )
                 .await;
             black_box(result)
@@ -204,20 +207,20 @@ fn project_data_by_operation(c: &mut Criterion) {
     let operation = black_box(&normalized_operation);
     c.bench_function("project_data_by_operation", |b| {
         b.iter(|| {
-            let mut data = non_projected_result::get_result().clone();
-            let data = black_box(&mut data);
-            let mut errors = vec![];
-            let errors = black_box(&mut errors);
+            let result = ExecutionResult {
+                data: Some(non_projected_result::get_result().clone()),
+                errors: None,
+                extensions: None,
+            };
             let operation = black_box(&operation);
             let schema_metadata = black_box(&schema_metadata);
-            query_plan_executor::projection::project_data_by_operation(
-                data,
-                errors,
+            let result = query_plan_executor::projection::project_by_operation(
+                result,
                 operation,
                 schema_metadata,
                 &None,
             );
-            black_box(());
+            black_box(result);
         });
     });
 }
@@ -363,6 +366,7 @@ fn query_plan_executor_pipeline_via_http_with_batching(c: &mut Criterion) {
                     schema_metadata,
                     operation,
                     has_introspection,
+                    false,
                 )
                 .await;
             black_box(result)
