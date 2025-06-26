@@ -5,7 +5,7 @@ use crate::{
 use std::error::Error;
 
 #[test]
-fn poop() -> Result<(), Box<dyn Error>> {
+fn requires_with_fragments_on_interfaces() -> Result<(), Box<dyn Error>> {
     init_logger();
     let document = parse_operation(
         r#"
