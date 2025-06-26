@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use graphql_parser::query::{
-    Definition, InlineFragment, Mutation, OperationDefinition, Query, Selection, SelectionSet,
-    Subscription, TypeCondition,
+    Definition, Mutation, OperationDefinition, Query, Selection, SelectionSet, Subscription,
+    TypeCondition,
 };
 
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
         error::NormalizationError,
         utils::{extract_type_condition, vec_to_hashset},
     },
-    state::supergraph_state::{SupergraphDefinition, SupergraphObjectType, SupergraphState},
+    state::supergraph_state::{SupergraphDefinition, SupergraphState},
 };
 
 pub type PossibleTypesMap<'a> = HashMap<&'a str, HashSet<String>>;
@@ -154,48 +154,6 @@ fn handle_selection_set(
 ) -> Result<(), NormalizationError> {
     let old_items = std::mem::take(&mut selection_set.items);
     let mut new_items: Vec<Selection<'static, String>> = Vec::new();
-
-    // Get a list of fields implemented by the interface object
-    let interface_fields: Option<std::collections::HashSet<String>> = match type_def {
-        SupergraphDefinition::Interface(interface_type) => {
-            let interface_object_in_graphs = interface_type
-                .join_type
-                .iter()
-                .filter_map(|jt| match jt.is_interface_object {
-                    true => Some(&jt.graph_id),
-                    false => None,
-                })
-                .collect::<Vec<&String>>();
-
-            if !interface_object_in_graphs.is_empty() {
-                Some(
-                    interface_type
-                        .fields
-                        .iter()
-                        .filter_map(|(name, field)| {
-                            // if a field is contributed by the interface object,
-                            // it will have a single @join__field with no arguments
-                            if field.join_field.iter().all(|j| j.graph_id.is_none())
-                                || field.join_field.iter().any(|jf| {
-                                    !jf.external
-                                        && jf.graph_id.as_ref().is_some_and(|g| {
-                                            interface_object_in_graphs.contains(&g)
-                                        })
-                                })
-                            {
-                                Some(name.clone())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
-                )
-            } else {
-                None
-            }
-        }
-        _ => None,
-    };
 
     for selection in old_items {
         match selection {
