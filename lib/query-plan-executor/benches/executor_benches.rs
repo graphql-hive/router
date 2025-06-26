@@ -235,19 +235,28 @@ fn project_data_by_operation(c: &mut Criterion) {
     });
 }
 
-fn traverse_and_collect(c: &mut Criterion) {
+fn traverse_path(c: &mut Criterion) {
     let path = [
         "users", "@", "reviews", "@", "product", "reviews", "@", "author", "reviews", "@",
         "product",
     ];
     let mut result: Value = non_projected_result::get_result();
-    c.bench_function("traverse_and_collect", |b| {
+    c.bench_function("traverse_path", |b| {
         b.iter(|| {
             let result = black_box(&mut result);
             let data = result.get_mut("data").unwrap();
             let path = black_box(&path);
-            let result = query_plan_executor::traverse_and_collect(data, path);
-            black_box(result);
+            let mut results = vec![];
+            query_plan_executor::traverse_path::traverse_path(
+                data,
+                vec![],
+                path,
+                &mut |path, data| {
+                    results.push((path, data));
+                },
+            );
+            black_box(());
+            black_box(results);
         });
     });
 }
@@ -328,7 +337,10 @@ fn project_requires(c: &mut Criterion) {
     ];
     let mut result: Value = non_projected_result::get_result();
     let data = result.get_mut("data").unwrap();
-    let representations = query_plan_executor::traverse_and_collect(data, &path);
+    let mut representations = vec![];
+    query_plan_executor::traverse_path::traverse_path(data, vec![], &path, &mut |_path, data| {
+        representations.push(data);
+    });
     let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
         .expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
@@ -442,16 +454,17 @@ fn deep_merge_with_simple(c: &mut Criterion) {
 }
 
 fn all_benchmarks(c: &mut Criterion) {
-    deep_merge_with_simple(c);
-    deep_merge_with_complex(c);
-    project_requires(c);
-    traverse_and_collect(c);
-    project_data_by_operation(c);
+    query_plan_execution_without_projection_via_http(c);
+    query_plan_executor_pipeline_via_http(c);
+
     query_plan_executor_without_projection_locally(c);
     query_plan_executor_pipeline_locally(c);
 
-    query_plan_execution_without_projection_via_http(c);
-    query_plan_executor_pipeline_via_http(c);
+    deep_merge_with_simple(c);
+    deep_merge_with_complex(c);
+    project_requires(c);
+    traverse_path(c);
+    project_data_by_operation(c);
 }
 
 criterion_group!(benches, all_benchmarks);

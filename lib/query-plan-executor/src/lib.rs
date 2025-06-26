@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use futures::{stream::FuturesUnordered, StreamExt};
 use query_planner::{
     ast::{
         operation::OperationDefinition, selection_item::SelectionItem, selection_set::SelectionSet,
@@ -22,6 +23,7 @@ pub mod deep_merge;
 pub mod executors;
 pub mod introspection;
 pub mod schema_metadata;
+pub mod traverse_path;
 pub mod validation;
 mod value_from_ast;
 pub mod variables;
@@ -96,41 +98,9 @@ fn process_errors_and_extensions(
     }
 }
 
-#[instrument(
-    level = "debug", 
-    skip_all
-    name = "process_representations_result",
-    fields(
-        representations_count = %result.entities.as_ref().map_or(0, |e| e.len())
-    ),
-)]
-fn process_representations_result(
-    result: ExecuteForRepresentationsResult,
-    representations: &mut Vec<&mut Value>,
-    execution_context: &mut QueryPlanExecutionContext<'_>,
-) {
-    if let Some(entities) = result.entities {
-        trace!(
-            "Processing representations result: {} entities",
-            entities.len()
-        );
-        for (entity, index) in entities.into_iter().zip(result.indexes.into_iter()) {
-            if let Some(representation) = representations.get_mut(index) {
-                trace!(
-                    "Merging entity into representation at index {}: {:?}",
-                    index,
-                    entity
-                );
-                deep_merge::deep_merge(representation, entity);
-            }
-        }
-    }
-    process_errors_and_extensions(execution_context, result.errors, result.extensions);
-}
-
 struct ExecuteForRepresentationsResult {
     entities: Option<Vec<Value>>,
-    indexes: Vec<usize>,
+    paths: Vec<String>,
     errors: Option<Vec<GraphQLError>>,
     extensions: Option<HashMap<String, Value>>,
 }
@@ -141,16 +111,11 @@ trait ExecutableFetchNode {
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
     ) -> ExecutionResult;
-    fn project_representations(
-        &self,
-        execution_context: &QueryPlanExecutionContext<'_>,
-        representations: &[&mut Value],
-    ) -> ProjectRepresentationsResult;
     async fn execute_for_projected_representations(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
         filtered_representations: Vec<Value>,
-        filtered_repr_indexes: Vec<usize>,
+        paths: Vec<String>,
     ) -> ExecuteForRepresentationsResult;
     fn apply_output_rewrites(
         &self,
@@ -175,11 +140,6 @@ impl ExecutablePlanNode for FetchNode {
 
         process_root_result(fetch_result, execution_context, data);
     }
-}
-
-struct ProjectRepresentationsResult {
-    representations: Vec<Value>,
-    indexes: Vec<usize>,
 }
 
 #[async_trait]
@@ -220,41 +180,6 @@ impl ExecutableFetchNode for FetchNode {
         fetch_result
     }
 
-    fn project_representations(
-        &self,
-        execution_context: &QueryPlanExecutionContext<'_>,
-        representations: &[&mut Value],
-    ) -> ProjectRepresentationsResult {
-        let mut filtered_repr_indexes = Vec::new();
-        // 1. Filter representations based on requires (if present)
-        let mut filtered_representations: Vec<Value> = Vec::new();
-        let requires_nodes = self.requires.as_ref().unwrap();
-        for (index, entity) in representations.iter().enumerate() {
-            let entity_projected =
-                execution_context.project_requires(&requires_nodes.items, entity);
-            if !entity_projected.is_null() {
-                filtered_representations.push(entity_projected);
-                filtered_repr_indexes.push(index);
-            }
-        }
-
-        if let Some(input_rewrites) = &self.input_rewrites {
-            for representation in filtered_representations.iter_mut() {
-                for rewrite in input_rewrites {
-                    rewrite.apply(
-                        &execution_context.schema_metadata.possible_types,
-                        representation,
-                    );
-                }
-            }
-        }
-
-        ProjectRepresentationsResult {
-            representations: filtered_representations,
-            indexes: filtered_repr_indexes,
-        }
-    }
-
     #[instrument(
         level = "debug", 
         skip_all,
@@ -267,7 +192,7 @@ impl ExecutableFetchNode for FetchNode {
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
         filtered_representations: Vec<Value>,
-        filtered_repr_indexes: Vec<usize>,
+        paths: Vec<String>,
     ) -> ExecuteForRepresentationsResult {
         // 2. Prepare variables for fetch
         let mut variables = self
@@ -309,7 +234,7 @@ impl ExecutableFetchNode for FetchNode {
         };
         ExecuteForRepresentationsResult {
             entities,
-            indexes: filtered_repr_indexes,
+            paths,
             errors: fetch_result.errors,
             extensions: fetch_result.extensions,
         }
@@ -546,9 +471,8 @@ impl ExecutablePlanNode for ParallelNode {
         data: &mut Value,
     ) {
         // Here we call fetch nodes in parallel and non-fetch nodes sequentially.
-        let mut fetch_jobs = vec![];
-        let mut flatten_jobs = vec![];
-        let mut flatten_paths = vec![];
+        let mut fetch_jobs = FuturesUnordered::new();
+        let mut flatten_jobs = FuturesUnordered::new();
 
         // Collect Fetch node results and non-fetch nodes for sequential execution
         let now = std::time::Instant::now();
@@ -562,7 +486,8 @@ impl ExecutablePlanNode for ParallelNode {
                 PlanNode::Flatten(flatten_node) => {
                     let normalized_path: Vec<&str> =
                         flatten_node.path.iter().map(String::as_str).collect();
-                    let collected_representations = traverse_and_collect(data, &normalized_path);
+                    let mut collected_representations = vec![];
+                    let mut collected_paths = vec![];
                     let fetch_node = match flatten_node.node.as_ref() {
                         PlanNode::Fetch(fetch_node) => fetch_node,
                         _ => {
@@ -573,19 +498,41 @@ impl ExecutablePlanNode for ParallelNode {
                             continue; // Skip if the child node is not a FetchNode
                         }
                     };
-                    let project_result = fetch_node
-                        .project_representations(execution_context, &collected_representations);
+                    let requires_selections = &fetch_node.requires.as_ref().unwrap().items;
+                    traverse_path::traverse_path(
+                        data,
+                        vec![],
+                        normalized_path.as_slice(),
+                        &mut |representation_path, representation| {
+                            // Collect representations for FlattenNode
+                            let mut representation = execution_context
+                                .project_requires(requires_selections, representation);
+                            if !representation.is_null() {
+                                if let Some(input_rewrites) = &fetch_node.input_rewrites {
+                                    for rewrite in input_rewrites {
+                                        rewrite.apply(
+                                            &execution_context.schema_metadata.possible_types,
+                                            &mut representation,
+                                        );
+                                    }
+                                }
+                                collected_representations.push(representation);
+                                collected_paths
+                                    .push("/".to_string() + &representation_path.join("/"));
+                            }
+                        },
+                    );
                     let job = fetch_node.execute_for_projected_representations(
                         execution_context,
-                        project_result.representations,
-                        project_result.indexes,
+                        collected_representations,
+                        collected_paths,
                     );
                     flatten_jobs.push(job);
-                    flatten_paths.push(normalized_path);
                 }
                 _ => {}
             }
         }
+
         trace!(
             "Prepared {} fetch jobs and {} flatten jobs in {:?}",
             fetch_jobs.len(),
@@ -596,27 +543,14 @@ impl ExecutablePlanNode for ParallelNode {
         let mut all_errors = vec![];
         let mut all_extensions = vec![];
 
-        let now = std::time::Instant::now();
-
-        let flatten_results = futures::future::join_all(flatten_jobs).await;
-        let flatten_results_len = flatten_results.len();
-
-        trace!(
-            "Executed {} flatten jobs in {:?}",
-            flatten_results_len,
-            now.elapsed()
-        );
-
-        let now = std::time::Instant::now();
-        for (result, path) in flatten_results.into_iter().zip(flatten_paths) {
+        while let Some(result) = flatten_jobs.next().await {
             // Process FlattenNode results
             if let Some(entities) = result.entities {
-                let mut collected_representations = traverse_and_collect(data, &path);
-                for (entity, index) in entities.into_iter().zip(result.indexes.into_iter()) {
-                    if let Some(representation) = collected_representations.get_mut(index) {
-                        // Merge the entity into the representation
-                        deep_merge::deep_merge(representation, entity);
-                    }
+                for (entity, representation_path) in
+                    entities.into_iter().zip(result.paths.into_iter())
+                {
+                    let target = data.pointer_mut(&representation_path).unwrap();
+                    deep_merge::deep_merge(target, entity);
                 }
             }
             // Extend errors and extensions from the result
@@ -628,42 +562,36 @@ impl ExecutablePlanNode for ParallelNode {
             }
         }
 
-        trace!(
-            "Processed {} flatten results in {:?}",
-            flatten_results_len,
-            now.elapsed()
-        );
+        trace!("Executed flatten jobs in {:?}", now.elapsed());
 
         let now = std::time::Instant::now();
-        let fetch_results = futures::future::join_all(fetch_jobs).await;
-        let fetch_results_len = fetch_results.len();
-        trace!(
-            "Executed {} fetch jobs in {:?}",
-            fetch_results_len,
-            now.elapsed()
-        );
-
-        let now = std::time::Instant::now();
-        // Process results from FetchNode executions
-        for fetch_result in fetch_results {
-            process_root_result(fetch_result, execution_context, data);
-        }
-
-        trace!(
-            "Processed {} fetch results in {:?}",
-            fetch_results_len,
-            now.elapsed()
-        );
-
-        // Process errors and extensions from FlattenNode results
-        if !all_errors.is_empty() {
-            execution_context.errors.extend(all_errors);
-        }
-        if !all_extensions.is_empty() {
-            for extensions in all_extensions {
-                execution_context.extensions.extend(extensions);
+        while let Some(fetch_result) = fetch_jobs.next().await {
+            if let Some(new_data) = fetch_result.data {
+                if data.is_null() {
+                    *data = new_data; // Initialize with new_data
+                } else {
+                    deep_merge::deep_merge(data, new_data);
+                }
+            }
+            // Extend errors and extensions from the fetch result
+            if let Some(errors) = fetch_result.errors {
+                all_errors.extend(errors);
+            }
+            if let Some(extensions) = fetch_result.extensions {
+                all_extensions.push(extensions);
             }
         }
+        trace!("Executed fetch jobs in {:?}", now.elapsed());
+
+        // // Process errors and extensions from FlattenNode results
+        // if !all_errors.is_empty() {
+        //     execution_context.errors.extend(all_errors);
+        // }
+        // if !all_extensions.is_empty() {
+        //     for extensions in all_extensions {
+        //         execution_context.extensions.extend(extensions);
+        //     }
+        // }
     }
 }
 
@@ -681,53 +609,56 @@ impl ExecutablePlanNode for FlattenNode {
         // because `collected_representations` borrows `data_for_flatten`, not `execution_context.data`.
         let normalized_path: Vec<&str> = self.path.iter().map(String::as_str).collect();
         let now = std::time::Instant::now();
-        let mut representations = traverse_and_collect(data, normalized_path.as_slice());
+        let fetch_node = if let PlanNode::Fetch(fetch_node) = self.node.as_ref() {
+            fetch_node
+        } else {
+            unimplemented!("..")
+        };
+        let mut entities_on_data = vec![];
+        let mut filtered_representations = vec![];
+        let requires_nodes = fetch_node.requires.as_ref().unwrap();
+        traverse_path::traverse_path(data, vec![], &normalized_path, &mut |_path, entity| {
+            let mut representation =
+                execution_context.project_requires(&requires_nodes.items, entity);
+            if !representation.is_null() {
+                if let Some(input_rewrites) = &fetch_node.input_rewrites {
+                    for rewrite in input_rewrites {
+                        rewrite.apply(
+                            &execution_context.schema_metadata.possible_types,
+                            &mut representation,
+                        );
+                    }
+                }
+                filtered_representations.push(representation);
+                entities_on_data.push(entity);
+            }
+        });
+        let representations_length = filtered_representations.len();
         trace!(
             "traversed and collected representations: {:?} in {:#?}",
-            representations.len(),
+            representations_length,
             now.elapsed()
         );
-        match self.node.as_ref() {
-            PlanNode::Fetch(fetch_node) => {
-                let now = std::time::Instant::now();
-                let ProjectRepresentationsResult {
-                    representations: filtered_representations,
-                    indexes: filtered_repr_indexes,
-                } = fetch_node.project_representations(execution_context, &representations);
-                trace!(
-                    "projected representations: {:?} in {:#?}",
-                    representations.len(),
-                    now.elapsed()
-                );
 
-                let now = std::time::Instant::now();
-                let result = fetch_node
-                    .execute_for_projected_representations(
-                        execution_context,
-                        filtered_representations,
-                        filtered_repr_indexes,
-                    )
-                    .await;
-                trace!(
-                    "executed projected representations: {:?} in {:?}",
-                    representations.len(),
-                    now.elapsed()
-                );
-                // Process the result
-                process_representations_result(result, &mut representations, execution_context);
-                trace!(
-                    "processed projected representations: {:?} in {:?}",
-                    representations.len(),
-                    now.elapsed()
-                );
-            }
-            _ => {
-                unimplemented!(
-                    "FlattenNode can only execute FetchNode as child node, found: {:?}",
-                    self.node
-                );
+        let now = std::time::Instant::now();
+        let result = fetch_node
+            .execute_for_projected_representations(
+                execution_context,
+                filtered_representations,
+                vec![],
+            )
+            .await;
+        trace!(
+            "executed projected representations: {:?} in {:?}",
+            representations_length,
+            now.elapsed()
+        );
+        if let Some(result_entities) = result.entities {
+            for (entity, source) in entities_on_data.into_iter().zip(result_entities) {
+                deep_merge::deep_merge(entity, source);
             }
         }
+        process_errors_and_extensions(execution_context, result.errors, result.extensions);
     }
 }
 
@@ -972,34 +903,6 @@ fn entity_satisfies_type_condition(
 }
 
 // --- Helper Function for Flatten ---
-
-/// Recursively traverses the data according to the path segments,
-/// handling '@' for array iteration, and collects the final values.current_data.to_vec()
-#[instrument(level = "trace", skip_all, fields(
-    current_type = ?current_data,
-    remaining_path = ?remaining_path
-))]
-pub fn traverse_and_collect<'a>(
-    current_data: &'a mut Value,
-    remaining_path: &[&str],
-) -> Vec<&'a mut Value> {
-    match (current_data, remaining_path) {
-        (Value::Array(arr), []) => arr.iter_mut().collect(), // Base case: No more path segments, return all items in the array
-        (current_data, []) => vec![current_data],            // Base case: No more path segments,
-        (Value::Object(obj), [next_segment, next_remaining_path @ ..]) => {
-            if let Some(next_value) = obj.get_mut(*next_segment) {
-                traverse_and_collect(next_value, next_remaining_path)
-            } else {
-                vec![] // No valid path segment
-            }
-        }
-        (Value::Array(arr), ["@", next_remaining_path @ ..]) => arr
-            .iter_mut()
-            .flat_map(|item| traverse_and_collect(item, next_remaining_path))
-            .collect(),
-        _ => vec![], // No valid path segment
-    }
-}
 
 // --- Helper Functions ---
 
