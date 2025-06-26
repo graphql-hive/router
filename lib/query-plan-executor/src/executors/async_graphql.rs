@@ -25,6 +25,15 @@ impl From<ExecutionRequest> for async_graphql::Request {
         if let Some(variables) = exec_request.variables {
             req = req.variables(async_graphql::Variables::from_json(json!(variables)));
         }
+        if let Some(representations) = exec_request.representations {
+            req.variables.insert(
+                async_graphql::Name::new("representations"),
+                async_graphql::Value::from_json(
+                    serde_json::from_str(&representations).unwrap_or_default(),
+                )
+                .unwrap(),
+            );
+        }
         if let Some(operation_name) = exec_request.operation_name {
             req = req.operation_name(operation_name);
         }
