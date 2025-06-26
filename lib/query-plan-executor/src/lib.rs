@@ -146,7 +146,7 @@ trait ExecutableFetchNode {
     async fn execute_for_projected_representations(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
-        filtered_representations: Vec<Value>,
+        filtered_representations: String,
         filtered_repr_indexes: Vec<usize>,
     ) -> ExecuteForRepresentationsResult;
     fn apply_output_rewrites(
@@ -175,7 +175,7 @@ impl ExecutablePlanNode for FetchNode {
 }
 
 struct ProjectRepresentationsResult {
-    representations: Vec<Value>,
+    representations: String,
     indexes: Vec<usize>,
 }
 
@@ -202,6 +202,7 @@ impl ExecutableFetchNode for FetchNode {
             operation_name: self.operation_name.clone(),
             variables,
             extensions: None,
+            representations: None,
         };
         let mut fetch_result = execution_context
             .subgraph_executor_map
@@ -224,30 +225,30 @@ impl ExecutableFetchNode for FetchNode {
     ) -> ProjectRepresentationsResult {
         let mut filtered_repr_indexes = Vec::new();
         // 1. Filter representations based on requires (if present)
-        let mut filtered_representations: Vec<Value> = Vec::new();
+        let mut filtered_representations = vec![];
         let requires_nodes = self.requires.as_ref().unwrap();
         for (index, entity) in representations.iter().enumerate() {
             let entity_projected =
                 execution_context.project_requires(&requires_nodes.items, entity);
-            if !entity_projected.is_null() {
+            if entity_projected != "null" {
                 filtered_representations.push(entity_projected);
                 filtered_repr_indexes.push(index);
             }
         }
 
-        if let Some(input_rewrites) = &self.input_rewrites {
-            for representation in filtered_representations.iter_mut() {
-                for rewrite in input_rewrites {
-                    rewrite.apply(
-                        &execution_context.schema_metadata.possible_types,
-                        representation,
-                    );
-                }
-            }
-        }
+        // if let Some(input_rewrites) = &self.input_rewrites {
+        //     for representation in filtered_representations.iter_mut() {
+        //         for rewrite in input_rewrites {
+        //             rewrite.apply(
+        //                 &execution_context.schema_metadata.possible_types,
+        //                 representation,
+        //             );
+        //         }
+        //     }
+        // }
 
         ProjectRepresentationsResult {
-            representations: filtered_representations,
+            representations: "[".to_string() + &filtered_representations.join(",") + "]",
             indexes: filtered_repr_indexes,
         }
     }
@@ -263,23 +264,16 @@ impl ExecutableFetchNode for FetchNode {
     async fn execute_for_projected_representations(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
-        filtered_representations: Vec<Value>,
+        filtered_representations: String,
         filtered_repr_indexes: Vec<usize>,
     ) -> ExecuteForRepresentationsResult {
         // 2. Prepare variables for fetch
-        let mut variables = self
-            .prepare_variables_for_fetch_node(execution_context.variable_values)
-            .unwrap_or_default();
-        variables.insert(
-            "representations".to_string(),
-            Value::Array(filtered_representations),
-        );
-
         let execution_request = ExecutionRequest {
             query: self.operation.document_str.clone(),
             operation_name: self.operation_name.clone(),
-            variables: Some(variables),
+            variables: self.prepare_variables_for_fetch_node(execution_context.variable_values),
             extensions: None,
+            representations: Some(filtered_representations),
         };
 
         // 3. Execute the fetch operation
@@ -891,16 +885,13 @@ pub struct GraphQLErrorLocation {
     pub column: usize,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Deserialize, Debug, Clone)]
 pub struct ExecutionRequest {
     pub query: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub variables: Option<HashMap<String, Value>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub extensions: Option<HashMap<String, Value>>,
+    pub representations: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -929,84 +920,76 @@ pub struct QueryPlanExecutionContext<'a> {
 }
 
 impl QueryPlanExecutionContext<'_> {
-    #[instrument(
-        level = "trace",
-        skip_all,
-        fields(
-            requires_selections = ?requires_selections.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
-            entity = ?entity
-        )
-    )]
+    fn project_requires_map(
+        &self,
+        requires_selections: &Vec<SelectionItem>,
+        entity_obj: &Map<String, Value>,
+    ) -> Vec<String> {
+        let mut items = vec![];
+        for requires_selection in requires_selections {
+            match &requires_selection {
+                SelectionItem::Field(requires_selection) => {
+                    let field_name = &requires_selection.name;
+                    let response_key = requires_selection.selection_identifier();
+                    let original = entity_obj
+                        .get(field_name)
+                        .unwrap_or(entity_obj.get(response_key).unwrap_or(&Value::Null));
+                    let projected_value =
+                        self.project_requires(&requires_selection.selections.items, original);
+                    if projected_value != "null" {
+                        items.push("\"".to_string() + response_key + "\":" + &projected_value)
+                    }
+                }
+                SelectionItem::InlineFragment(requires_selection) => {
+                    let type_name = match entity_obj.get(TYPENAME_FIELD) {
+                        Some(Value::String(type_name)) => type_name,
+                        _ => requires_selection.type_condition.as_str(),
+                    };
+                    if entity_satisfies_type_condition(
+                        &self.schema_metadata.possible_types,
+                        type_name,
+                        &requires_selection.type_condition,
+                    ) {
+                        let projected = self
+                            .project_requires_map(&requires_selection.selections.items, entity_obj);
+                        // Merge the projected value into the result
+                        items.extend(projected);
+                        // If the projected value is not an object, it will be ignored
+                    }
+                }
+            }
+        }
+        items
+    }
     pub fn project_requires(
         &self,
         requires_selections: &Vec<SelectionItem>,
         entity: &Value,
-    ) -> Value {
+    ) -> String {
         if requires_selections.is_empty() {
-            return entity.clone(); // No selections to project, return the entity as is
+            return serde_json::to_string(entity).unwrap(); // No selections to project, return the entity as is
         }
         match entity {
-            Value::Null => Value::Null,
-            Value::Array(entity_array) => Value::Array(
-                entity_array
-                    .iter()
-                    .map(|item| self.project_requires(requires_selections, item))
-                    .collect(),
-            ),
+            Value::Null => "null".to_string(),
+            Value::Array(entity_array) => entity_array
+                .iter()
+                .map(|item| self.project_requires(requires_selections, item))
+                .collect::<Vec<String>>()
+                .join(",")
+                .to_string(),
             Value::Object(entity_obj) => {
-                let mut result_map = Map::new();
-                for requires_selection in requires_selections {
-                    match &requires_selection {
-                        SelectionItem::Field(requires_selection) => {
-                            let field_name = &requires_selection.name;
-                            let response_key = requires_selection.selection_identifier();
-                            let original = entity_obj
-                                .get(field_name)
-                                .unwrap_or(entity_obj.get(response_key).unwrap_or(&Value::Null));
-                            let projected_value: Value = self
-                                .project_requires(&requires_selection.selections.items, original);
-                            if !projected_value.is_null() {
-                                result_map.insert(response_key.to_string(), projected_value);
-                            }
-                        }
-                        SelectionItem::InlineFragment(requires_selection) => {
-                            let type_name = match entity_obj.get(TYPENAME_FIELD) {
-                                Some(Value::String(type_name)) => type_name,
-                                _ => requires_selection.type_condition.as_str(),
-                            };
-                            if entity_satisfies_type_condition(
-                                &self.schema_metadata.possible_types,
-                                type_name,
-                                &requires_selection.type_condition,
-                            ) {
-                                let projected = self
-                                    .project_requires(&requires_selection.selections.items, entity);
-                                // Merge the projected value into the result
-                                if let Value::Object(projected_map) = projected {
-                                    deep_merge::deep_merge_objects(&mut result_map, projected_map);
-                                }
-                                // If the projected value is not an object, it will be ignored
-                            }
-                        }
-                        SelectionItem::FragmentSpread(_name_ref) => {
-                            // We only minify the queries to subgraphs, so we never have fragment spreads here
-                            unreachable!(
-                                "Fragment spreads should not exist in FetchNode::requires."
-                            );
-                        }
-                    }
+                let items = self.project_requires_map(requires_selections, entity_obj);
+                if items.is_empty() {
+                    return "null".to_string(); // No items to project, return null
                 }
-                if (result_map.is_empty())
-                    || (result_map.len() == 1 && result_map.contains_key(TYPENAME_FIELD))
-                {
-                    Value::Null
-                } else {
-                    Value::Object(result_map)
-                }
+                // Join the items into a JSON object string
+                let projected_string = items.join(",");
+                "{".to_string() + &projected_string + "}"
             }
-            Value::Bool(bool) => Value::Bool(*bool),
-            Value::Number(num) => Value::Number(num.to_owned()),
-            Value::String(string) => Value::String(string.to_string()),
+            Value::Bool(false) => "false".to_string(),
+            Value::Bool(true) => "true".to_string(),
+            Value::Number(num) => num.to_string(),
+            Value::String(string) => "\"".to_string() + string + "\"",
         }
     }
 }
