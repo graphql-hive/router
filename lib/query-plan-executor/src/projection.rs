@@ -91,7 +91,7 @@ fn project_selection_set(
                     return "null".to_string(); // Set data to Null if the value is not valid
                 }
             }
-            "\"".to_string() + value + "\"" // Return the string value wrapped in quotes
+            serde_json::to_string(value).unwrap() // Return the string value wrapped in quotes
         }
         Value::Array(arr) => {
             let items = arr
