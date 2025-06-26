@@ -326,17 +326,6 @@ fn handle_selection_set(
                 new_items.push(Selection::Field(field));
             }
             Selection::InlineFragment(mut current_fragment) => {
-                // Skip impossible fragments
-                // if the parent is an object type,
-                // and the fragment is for a different object type
-                if let Some(TypeCondition::On(ref cond_type_name)) = current_fragment.type_condition
-                {
-                    if let SupergraphDefinition::Object(parent_obj) = type_def {
-                        if &parent_obj.name != cond_type_name {
-                            continue; // Skips the impossible fragment
-                        }
-                    }
-                }
                 if current_fragment
                     .type_condition
                     .as_ref()
@@ -416,6 +405,28 @@ fn handle_selection_set(
                             }
                         }
                         _ => {
+                            // The inline fragment's type condition
+                            // references an object type
+                            // ```
+                            // ... on ObjectType { ... }
+                            // ```
+                            // We need to check if it's even resolable.
+                            //
+                            // Why we're even here?
+                            // When we turn an inline fragment on an interface or when we perform type expansion,
+                            // we move the selection sets into bunch of inline fragments for object types.
+                            // We may end up in a situation where we have an inline fragment on an object type
+                            // within an inline fragment on an object type.
+                            // They may refer to different object types,
+                            // so we need to drop the inner one.
+                            // It's safe as the inner fragment is preserved in one of the object types fragments.
+                            if matches!(type_def, SupergraphDefinition::Object(_)) {
+                                // Drop the inline fragment as it can't be resolved,
+                                // its type condition is different
+                                // from the object type it's in
+                                continue;
+                            }
+
                             handle_selection_set(
                                 state,
                                 possible_types,

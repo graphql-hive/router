@@ -467,12 +467,15 @@ mod tests {
                 .to_string()
             ),
             @r"
-            query {
-              toasters {
-                id
-                __typename
-              }
+        query {
+          toasters {
+            id
+            ... on Toaster {
+              id
+              __typename
             }
+          }
+        }
         ",
         );
     }
