@@ -58,6 +58,7 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
             operation_name: self.operation_name,
             variables,
             extensions,
+            representations: None,
         };
 
         Ok(execution_request)
