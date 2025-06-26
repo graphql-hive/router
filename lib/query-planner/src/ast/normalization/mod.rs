@@ -396,7 +396,6 @@ mod tests {
         }
         ",
         );
-        let supergraph = SupergraphState::new(&schema);
 
         insta::assert_snapshot!(
             pretty_query(
@@ -435,6 +434,45 @@ mod tests {
             }
           }
         }
+        ",
+        );
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query {
+                          toasters {
+                            ...ToasterFragment
+                            ...NodeFragment
+                          }
+                        }
+
+                        fragment ToasterFragment on Toaster {
+                          id
+                        }
+
+                        fragment NodeFragment on Node {
+                          id
+                          __typename
+                        }
+                  "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+            query {
+              toasters {
+                id
+                __typename
+              }
+            }
         ",
         );
     }
@@ -610,6 +648,105 @@ mod tests {
               }
             }
             ",
+        );
+    }
+
+    #[test]
+    fn type_expansion_2() {
+        let schema_str =
+            std::fs::read_to_string("./fixture/tests/requires-with-fragments.supergraph.graphql")
+                .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                          query {
+                            userFromA {
+                              profile {
+                                displayName
+                                ... on Account {
+                                  accountType
+                                }
+                              }
+                            }
+                          }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+        query {
+          userFromA {
+            profile {
+              displayName
+              ... on AdminAccount {
+                accountType
+              }
+              ... on GuestAccount {
+                accountType
+              }
+            }
+          }
+        }
+        ",
+        );
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                          query {
+                            userFromA {
+                              profile {
+                                displayName
+                                ... on Account {
+                                  accountType
+                                  ... on AdminAccount {
+                                    adminLevel
+                                  }
+                                  ... on GuestAccount {
+                                    guestToken
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+        query {
+          userFromA {
+            profile {
+              displayName
+              ... on AdminAccount {
+                accountType
+                adminLevel
+              }
+              ... on GuestAccount {
+                accountType
+                guestToken
+              }
+            }
+          }
+        }
+        ",
         );
     }
 }

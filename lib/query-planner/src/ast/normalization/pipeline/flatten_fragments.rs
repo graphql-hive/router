@@ -326,6 +326,17 @@ fn handle_selection_set(
                 new_items.push(Selection::Field(field));
             }
             Selection::InlineFragment(mut current_fragment) => {
+                // Skip impossible fragments
+                // if the parent is an object type,
+                // and the fragment is for a different object type
+                if let Some(TypeCondition::On(ref cond_type_name)) = current_fragment.type_condition
+                {
+                    if let SupergraphDefinition::Object(parent_obj) = type_def {
+                        if &parent_obj.name != cond_type_name {
+                            continue; // Skips the impossible fragment
+                        }
+                    }
+                }
                 if current_fragment
                     .type_condition
                     .as_ref()

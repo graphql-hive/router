@@ -1,0 +1,151 @@
+type Query @join__type(graph: A) @join__type(graph: B) {
+  userFromA: User @join__field(graph: A)
+  userFromB: User @join__field(graph: B)
+  alternativeUserFromB: User @join__field(graph: B)
+}
+
+type GuestAccount implements Profile & Account
+  @join__implements(graph: A, interface: "Profile")
+  @join__implements(graph: A, interface: "Account")
+  @join__implements(graph: B, interface: "Profile")
+  @join__implements(graph: B, interface: "Account")
+  @join__type(graph: A)
+  @join__type(graph: B) {
+  displayName: String!
+  accountType: String!
+  guestToken: String!
+}
+
+interface Account implements Profile
+  @join__implements(graph: A, interface: "Profile")
+  @join__implements(graph: B, interface: "Profile")
+  @join__type(graph: A)
+  @join__type(graph: B) {
+  displayName: String!
+  accountType: String!
+}
+
+type AdminAccount implements Profile & Account
+  @join__implements(graph: A, interface: "Profile")
+  @join__implements(graph: A, interface: "Account")
+  @join__implements(graph: B, interface: "Profile")
+  @join__implements(graph: B, interface: "Account")
+  @join__type(graph: A)
+  @join__type(graph: B)
+  @inaccessible {
+  displayName: String!
+  accountType: String!
+  adminLevel: String!
+}
+
+interface Profile @join__type(graph: A) @join__type(graph: B) {
+  displayName: String!
+}
+
+type User @join__type(graph: A, key: "id") @join__type(graph: B, key: "id") {
+  id: ID!
+  profile: Profile @join__field(graph: A) @join__field(graph: B, external: true)
+  permissions: String!
+    @join__field(
+      graph: B
+      requires: """
+      profile {
+        displayName
+        ... on Account {
+          accountType
+          ... on AdminAccount {
+            adminLevel
+          }
+          ... on GuestAccount {
+            guestToken
+          }
+        }
+      }
+      """
+    )
+  basicPermissions: String!
+    @join__field(
+      graph: B
+      requires: """
+      profile {
+        ... on Profile {
+          displayName
+        }
+      }
+      """
+    )
+}
+
+#
+#
+#
+
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION)
+  @link(url: "https://specs.apollo.dev/inaccessible/v0.2", for: SECURITY) {
+  query: Query
+}
+
+directive @inaccessible on FIELD_DEFINITION | OBJECT | INTERFACE | UNION | ARGUMENT_DEFINITION | SCALAR | ENUM | ENUM_VALUE | INPUT_OBJECT | INPUT_FIELD_DEFINITION
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__field(
+  graph: join__Graph
+  requires: join__FieldSet
+  provides: join__FieldSet
+  type: String
+  external: Boolean
+  override: String
+  usedOverridden: Boolean
+) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__implements(
+  graph: join__Graph!
+  interface: String!
+) repeatable on OBJECT | INTERFACE
+
+directive @join__type(
+  graph: join__Graph!
+  key: join__FieldSet
+  extension: Boolean! = false
+  resolvable: Boolean! = true
+  isInterfaceObject: Boolean! = false
+) repeatable on OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | SCALAR
+
+directive @join__unionMember(
+  graph: join__Graph!
+  member: String!
+) repeatable on UNION
+
+directive @link(
+  url: String
+  as: String
+  for: link__Purpose
+  import: [link__Import]
+) repeatable on SCHEMA
+
+scalar join__FieldSet
+
+enum join__Graph {
+  A
+    @join__graph(
+      name: "a"
+      url: "http://localhost:4200/requires-with-fragments/a"
+    )
+  B
+    @join__graph(
+      name: "b"
+      url: "http://localhost:4200/requires-with-fragments/b"
+    )
+}
+
+scalar link__Import
+
+enum link__Purpose {
+  SECURITY
+  EXECUTION
+}
