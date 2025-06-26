@@ -22,9 +22,26 @@ impl HTTPSubgraphExecutor {
         execution_request: ExecutionRequest,
     ) -> Result<ExecutionResult, reqwest::Error> {
         trace!("Executing HTTP request to subgraph at {}", self.endpoint);
+        let mut body =
+            "{\"query\":\"".to_string() + &execution_request.query + "\",\"variables\":{";
+        if let Some(variables) = &execution_request.variables {
+            for (key, value) in variables {
+                body.push_str(
+                    &("\"".to_string()
+                        + key
+                        + "\": "
+                        + &serde_json::to_string(value).unwrap()
+                        + ","),
+                );
+            }
+        }
+        if let Some(representations) = &execution_request.representations {
+            body.push_str(&("\"representations\":".to_string() + representations));
+        }
+        body.push_str("}}");
         self.http_client
             .post(&self.endpoint)
-            .json(&execution_request)
+            .body(body)
             .send()
             .await?
             .json::<ExecutionResult>()
