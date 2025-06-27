@@ -1027,18 +1027,13 @@ fn project_selection_set_with_map(
         _ => type_name,
     }
     .to_string();
+    let field_map = schema_metadata.type_fields.get(&type_name)?;
     let mut new_obj = Map::new();
-    let field_map = schema_metadata.type_fields.get(&type_name);
     for selection in &selection_set.items {
         match selection {
             SelectionItem::Field(field) => {
                 // Get the type fields for the current type
                 // Type is not found in the schema
-                if field_map.is_none() {
-                    // It won't reach here already, as the selection should be validated before projection
-                    warn!("Type {} not found. Skipping projection.", type_name);
-                    continue;
-                }
                 if let Some(ref skip_variable) = field.skip_if {
                     let variable_value = variable_values
                         .as_ref()
@@ -1060,7 +1055,6 @@ fn project_selection_set_with_map(
                     new_obj.insert(response_key, Value::String(type_name.to_string()));
                     continue;
                 }
-                let field_map = field_map.unwrap();
                 let field_type = field_map.get(&field.name);
                 if field.name == "__schema" && type_name == "Query" {
                     obj.insert(
