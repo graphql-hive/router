@@ -118,7 +118,10 @@ fn project_selection_set(
                 schema_metadata,
                 variable_values,
             );
-            "{".to_string() + &items.join(",") + "}"
+            match items {
+                Some(items) => "{".to_string() + &items.join(",") + "}",
+                None => "null".to_string(),
+            }
         }
     }
 }
@@ -139,24 +142,17 @@ fn project_selection_set_with_map(
     type_name: &str,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
-) -> Vec<String> {
+) -> Option<Vec<String>> {
     let type_name = match obj.get(TYPENAME_FIELD) {
         Some(Value::String(type_name)) => type_name,
         _ => type_name,
     }
     .to_string();
-    let field_map = schema_metadata.type_fields.get(&type_name);
+    let field_map = schema_metadata.type_fields.get(&type_name)?;
     let mut items = vec![];
     for selection in &selection_set.items {
         match selection {
             SelectionItem::Field(field) => {
-                // Get the type fields for the current type
-                // Type is not found in the schema
-                if field_map.is_none() {
-                    // It won't reach here already, as the selection should be validated before projection
-                    warn!("Type {} not found. Skipping projection.", type_name);
-                    continue;
-                }
                 if let Some(ref skip_variable) = field.skip_if {
                     let variable_value = variable_values
                         .as_ref()
@@ -178,7 +174,6 @@ fn project_selection_set_with_map(
                     items.push("\"".to_string() + &response_key + "\":\"" + &type_name + "\"");
                     continue;
                 }
-                let field_map = field_map.unwrap();
                 let field_type = field_map.get(&field.name);
                 if field.name == "__schema" && type_name == "Query" {
                     obj.insert(
@@ -226,10 +221,12 @@ fn project_selection_set_with_map(
                         schema_metadata,
                         variable_values,
                     );
-                    items.extend(projected);
+                    if let Some(projected) = projected {
+                        items.extend(projected);
+                    }
                 }
             }
         }
     }
-    items
+    Some(items)
 }
