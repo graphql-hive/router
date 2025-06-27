@@ -972,8 +972,6 @@ fn entity_satisfies_type_condition(
     }
 }
 
-// --- Helper Function for Flatten ---
-
 /// Recursively traverses the data according to the path segments,
 /// handling '@' for array iteration, and collects the final values.current_data.to_vec()
 #[instrument(level = "trace", skip_all, fields(
@@ -984,21 +982,34 @@ pub fn traverse_and_collect<'a>(
     current_data: &'a mut Value,
     remaining_path: &[&str],
 ) -> Vec<&'a mut Value> {
-    match (current_data, remaining_path) {
-        (Value::Array(arr), []) => arr.iter_mut().collect(), // Base case: No more path segments, return all items in the array
-        (current_data, []) => vec![current_data],            // Base case: No more path segments,
-        (Value::Object(obj), [next_segment, next_remaining_path @ ..]) => {
-            if let Some(next_value) = obj.get_mut(*next_segment) {
-                traverse_and_collect(next_value, next_remaining_path)
-            } else {
-                vec![] // No valid path segment
+    let mut collected = Vec::new();
+    traverse_and_collect_mut(current_data, remaining_path, &mut collected);
+    collected
+}
+
+fn traverse_and_collect_mut<'a>(
+    current_data: &'a mut Value,
+    remaining_path: &[&str],
+    collected: &mut Vec<&'a mut Value>,
+) {
+    if remaining_path.is_empty() {
+        collected.push(current_data);
+        return;
+    }
+
+    let key = remaining_path[0];
+    let rest_of_path = &remaining_path[1..];
+
+    if key == "@" {
+        if let Value::Array(list) = current_data {
+            for item in list.iter_mut() {
+                traverse_and_collect_mut(item, rest_of_path, collected);
             }
         }
-        (Value::Array(arr), ["@", next_remaining_path @ ..]) => arr
-            .iter_mut()
-            .flat_map(|item| traverse_and_collect(item, next_remaining_path))
-            .collect(),
-        _ => vec![], // No valid path segment
+    } else if let Value::Object(map) = current_data {
+        if let Some(next_data) = map.get_mut(key) {
+            traverse_and_collect_mut(next_data, rest_of_path, collected);
+        }
     }
 }
 
