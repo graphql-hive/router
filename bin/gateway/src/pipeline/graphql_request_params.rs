@@ -34,7 +34,7 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
         };
 
         let variables = match self.variables.as_deref() {
-            Some(v_str) if !v_str.is_empty() => match serde_json::from_str(v_str) {
+            Some(v_str) if !v_str.is_empty() => match sonic_rs::from_str(v_str) {
                 Ok(vars) => Some(vars),
                 Err(e) => {
                     return Err(PipelineErrorVariant::FailedToParseVariables(e));
@@ -44,7 +44,7 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
         };
 
         let extensions = match self.extensions.as_deref() {
-            Some(e_str) if !e_str.is_empty() => match serde_json::from_str(e_str) {
+            Some(e_str) if !e_str.is_empty() => match sonic_rs::from_str(e_str) {
                 Ok(exts) => Some(exts),
                 Err(e) => {
                     return Err(PipelineErrorVariant::FailedToParseExtensions(e));
@@ -128,7 +128,7 @@ impl GatewayPipelineLayer for GraphQLRequestParamsExtractor {
                     )
                 })?;
 
-                let execution_request = serde_json::from_slice::<ExecutionRequest>(&body_bytes)
+                let execution_request = sonic_rs::from_slice::<ExecutionRequest>(&body_bytes)
                     .map_err(|e| {
                         warn!("Failed to parse body: {}", e);
 

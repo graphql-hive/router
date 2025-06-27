@@ -1595,7 +1595,7 @@ fn process_entity_move_edge(
                 format!("... on {}", output_type_name),
                 "__typename".to_string(),
             ],
-            set_value_to: output_type_name.clone().into(),
+            set_value_to: output_type_name.into(),
         }));
     }
 
@@ -1723,7 +1723,7 @@ fn process_interface_object_type_move_edge(
             format!("... on {}", interface_type_name),
             "__typename".to_string(),
         ],
-        set_value_to: interface_type_name.clone().into(),
+        set_value_to: interface_type_name.into(),
     }));
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;

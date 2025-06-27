@@ -5,12 +5,12 @@ use graphql_parser::{
     schema::{Definition, TypeDefinition},
 };
 use query_planner::consumer_schema::ConsumerSchema;
-use serde_json::{json, Value};
+use sonic_rs::{json, Value};
 
 #[derive(Debug)]
 pub struct SchemaMetadata {
     pub possible_types: HashMap<String, HashSet<String>>,
-    pub enum_values: HashMap<String, Vec<String>>,
+    pub enum_values: HashMap<String, HashSet<String>>,
     pub type_fields: HashMap<String, HashMap<String, String>>,
     pub introspection_schema_root_json: Value,
 }
@@ -23,15 +23,15 @@ impl SchemaWithMetadata for ConsumerSchema {
     fn schema_metadata(&self) -> SchemaMetadata {
         let mut first_possible_types: HashMap<String, Vec<String>> = HashMap::new();
         let mut type_fields: HashMap<String, HashMap<String, String>> = HashMap::new();
-        let mut enum_values: HashMap<String, Vec<String>> = HashMap::new();
+        let mut enum_values: HashMap<String, HashSet<String>> = HashMap::new();
 
         for definition in &self.document.definitions {
             match definition {
                 Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => {
                     let name = enum_type.name.to_string();
-                    let mut values = vec![];
+                    let mut values = HashSet::with_capacity(enum_type.values.len());
                     for enum_value in &enum_type.values {
-                        values.push(enum_value.name.to_string());
+                        values.insert(enum_value.name.to_string());
                     }
                     enum_values.insert(name, values);
                 }

@@ -5,7 +5,7 @@ use axum::body::Body;
 use http::Request;
 use query_plan_executor::variables::collect_variables;
 use query_plan_executor::ExecutionRequest;
-use serde_json::Value;
+use sonic_rs::Value;
 use tracing::{trace, warn};
 
 use crate::pipeline::error::{PipelineError, PipelineErrorVariant};

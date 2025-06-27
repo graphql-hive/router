@@ -23,15 +23,16 @@ impl HTTPSubgraphExecutor {
     ) -> Result<ExecutionResult, reqwest::Error> {
         trace!("Executing HTTP request to subgraph at {}", self.endpoint);
 
+        // TODO: decrease allocations here
         let mut body = "{\"query\":".to_string()
-            + &serde_json::to_string(&execution_request.query).unwrap()
+            + &sonic_rs::to_string(&execution_request.query).unwrap()
             + ",\"variables\":{";
         let variables_added = false;
         if let Some(variables) = &execution_request.variables {
             let variables_entry = variables
                 .iter()
                 .map(|(key, value)| {
-                    "\"".to_string() + key + "\": " + &serde_json::to_string(value).unwrap()
+                    "\"".to_string() + key + "\": " + &sonic_rs::to_string(value).unwrap()
                 })
                 .collect::<Vec<String>>()
                 .join(",");
@@ -45,14 +46,19 @@ impl HTTPSubgraphExecutor {
         }
         body.push_str("}}");
 
-        self.http_client
+        let response = self
+            .http_client
             .post(&self.endpoint)
             .body(body)
             .header("Content-Type", "application/json; charset=utf-8")
             .send()
-            .await?
-            .json::<ExecutionResult>()
-            .await
+            .await?;
+
+        let response_bytes = response.bytes().await?;
+        let execution_result =
+            sonic_rs::from_slice::<ExecutionResult>(&response_bytes).expect("parse(response)");
+
+        Ok(execution_result)
     }
 }
 

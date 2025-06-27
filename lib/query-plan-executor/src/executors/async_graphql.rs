@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use serde_json::json;
+use sonic_rs::{json as sonic_json, JsonContainerTrait, Value as SonicValue}
 
 use crate::{
     executors::common::SubgraphExecutor, ExecutionRequest, ExecutionResult, GraphQLError,
@@ -29,7 +30,7 @@ impl From<ExecutionRequest> for async_graphql::Request {
             req.variables.insert(
                 async_graphql::Name::new("representations"),
                 async_graphql::Value::from_json(
-                    serde_json::from_str(&representations).unwrap_or_default(),
+                    sonic_rs::from_str(&representations).unwrap_or_default(),
                 )
                 .unwrap(),
             );
@@ -41,7 +42,8 @@ impl From<ExecutionRequest> for async_graphql::Request {
             for (key, value) in extensions {
                 req.extensions.insert(
                     key,
-                    async_graphql::Value::from_json(value).unwrap_or_default(),
+                    async_graphql::Value::from_json(json!(sonic_rs::to_string(value)))
+                        .unwrap_or_default(),
                 );
             }
         }
@@ -68,23 +70,21 @@ impl From<&async_graphql::ServerError> for GraphQLError {
                     .path
                     .iter()
                     .map(|s| match s {
-                        async_graphql::PathSegment::Field(name) => {
-                            serde_json::Value::String(name.to_string())
-                        }
+                        async_graphql::PathSegment::Field(name) => SonicValue::from(name),
                         async_graphql::PathSegment::Index(index) => {
-                            serde_json::Value::Number((*index).into())
+                            SonicValue::from(*index)
                         }
                     })
                     .collect(),
             ),
             extensions: error.extensions.as_ref().map(|ext| {
-                let serialized = json!(ext);
+                let serialized = sonic_json!(ext);
                 serialized
                     .as_object()
                     .unwrap()
                     .iter()
                     .map(|(k, v)| (k.to_string(), v.clone()))
-                    .collect::<HashMap<String, serde_json::Value>>()
+                    .collect::<HashMap<String, SonicValue>>()
             }),
         }
     }
@@ -93,7 +93,7 @@ impl From<&async_graphql::ServerError> for GraphQLError {
 impl From<async_graphql::Response> for ExecutionResult {
     fn from(response: async_graphql::Response) -> Self {
         ExecutionResult {
-            data: Some(response.data.into_json().unwrap()),
+            data: Some(sonic_json!(serde_json::to_string(response.data.into_json().unwrap()))),
             errors: Some(
                 response
                     .errors
@@ -106,7 +106,7 @@ impl From<async_graphql::Response> for ExecutionResult {
                     .extensions
                     .into_iter()
                     .map(|(key, value)| (key, value.into_json().unwrap()))
-                    .collect::<HashMap<String, serde_json::Value>>(),
+                    .collect::<HashMap<String, SonicValue>>(),
             ),
         }
     }

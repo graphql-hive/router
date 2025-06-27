@@ -7,7 +7,7 @@ use query_planner::{
     },
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use sonic_rs::{JsonContainerTrait, JsonValueMutTrait, JsonValueTrait, Value};
 use std::collections::HashSet;
 use std::{collections::BTreeSet, fmt::Write};
 use std::{collections::HashMap, vec};
@@ -214,12 +214,15 @@ impl ExecutableFetchNode for FetchNode {
                 &execution_context.schema_metadata.possible_types,
                 &mut data,
             );
-            match data {
-                Value::Object(mut obj) => match obj.remove("_entities") {
-                    Some(Value::Array(arr)) => Some(arr),
-                    _ => None, // If _entities is not found or not an array
-                },
-                _ => None, // If data is not an object
+            match data.as_object_mut() {
+                Some(obj) => {
+                    if let Some(val) = obj.remove(&"_entities").as_array() {
+                        Some(val.to_vec())
+                    } else {
+                        None // If _entities is not found or not an array
+                    }
+                }
+                None => None, // If data is not an object
             }
         } else {
             None
@@ -319,43 +322,46 @@ impl ApplyFetchRewrite for KeyRenamer {
         let current_segment = &path[0];
         let remaining_path = &path[1..];
 
-        match value {
-            Value::Array(arr) => {
-                for item in arr {
-                    self.apply_path(possible_types, item, path);
-                }
+        if let Some(arr) = value.as_array_mut() {
+            for item in arr {
+                self.apply_path(possible_types, item, path);
             }
-            Value::Object(obj) => {
-                let type_condition = current_segment.strip_prefix("... on ");
-                match type_condition {
-                    Some(type_condition) => {
-                        let type_name = match obj.get(TYPENAME_FIELD) {
-                            Some(Value::String(type_name)) => type_name,
-                            _ => type_condition, // Default to type_condition if not found
-                        };
-                        let satisfies_type_condition = type_name == type_condition
-                            || possible_types
-                                .get(type_name)
-                                .is_some_and(|s| s.contains(type_condition));
-                        if satisfies_type_condition {
-                            self.apply_path(possible_types, value, remaining_path)
-                        }
-                    }
-                    _ => {
-                        if remaining_path.is_empty() {
-                            if *current_segment != self.rename_key_to {
-                                if let Some(val) = obj.remove(current_segment) {
-                                    obj.insert(self.rename_key_to.to_string(), val);
-                                }
-                            }
-                        } else if let Some(next_value) = obj.get_mut(current_segment) {
-                            self.apply_path(possible_types, next_value, remaining_path)
-                        }
-                    }
-                }
-            }
-            _ => (),
+            return;
         }
+
+        if let Some(obj) = value.as_object_mut() {
+            let type_condition = current_segment.strip_prefix("... on ");
+            match type_condition {
+                Some(type_condition) => {
+                    let type_name_from_entity =
+                        obj.get(&TYPENAME_FIELD).and_then(sonic_rs::Value::as_str);
+                    let type_name = match type_name_from_entity {
+                        Some(tn_str) => tn_str,
+                        None => type_condition,
+                    };
+                    let satisfies_type_condition = type_name == type_condition
+                        || possible_types
+                            .get(type_name)
+                            .is_some_and(|s| s.contains(type_condition));
+                    if satisfies_type_condition {
+                        self.apply_path(possible_types, value, remaining_path)
+                    }
+                }
+                _ => {
+                    if remaining_path.is_empty() {
+                        if *current_segment != self.rename_key_to {
+                            if let Some(val) = obj.remove(current_segment) {
+                                obj.insert(&self.rename_key_to, val);
+                            }
+                        }
+                    } else if let Some(next_value) = obj.get_mut(current_segment) {
+                        self.apply_path(possible_types, next_value, remaining_path)
+                    }
+                }
+            }
+        }
+
+        ()
     }
 }
 
@@ -376,41 +382,45 @@ impl ApplyFetchRewrite for ValueSetter {
             return;
         }
 
-        match data {
-            Value::Array(arr) => {
-                for data in arr {
-                    // Apply the path to each item in the array
-                    self.apply_path(possible_types, data, path);
-                }
+        if let Some(arr) = data.as_array_mut() {
+            for data in arr {
+                // Apply the path to each item in the array
+                self.apply_path(possible_types, data, path);
             }
-            Value::Object(map) => {
-                let current_key = &path[0];
-                let remaining_path = &path[1..];
+            return;
+        }
 
-                if let Some(type_condition) = current_key.strip_prefix("... on ") {
-                    let type_name = match map.get(TYPENAME_FIELD) {
-                        Some(Value::String(type_name)) => type_name,
-                        _ => type_condition, // Default to type_condition if not found
-                    };
-                    let satisfies_type_condition = type_name == type_condition
-                        || possible_types
-                            .get(type_name)
-                            .is_some_and(|s| s.contains(type_condition));
-                    if satisfies_type_condition {
-                        self.apply_path(possible_types, data, remaining_path)
-                    }
-                } else if let Some(data) = map.get_mut(current_key) {
-                    // If the key exists, apply the remaining path to its value
+        if let Some(obj) = data.as_object_mut() {
+            let current_key = &path[0];
+            let remaining_path = &path[1..];
+
+            if let Some(type_condition) = current_key.strip_prefix("... on ") {
+                let type_name_from_entity =
+                    obj.get(&TYPENAME_FIELD).and_then(sonic_rs::Value::as_str);
+
+                let type_name = match type_name_from_entity {
+                    Some(tn_str) => tn_str,
+                    None => type_condition,
+                };
+                let satisfies_type_condition = type_name == type_condition
+                    || possible_types
+                        .get(type_name)
+                        .is_some_and(|s| s.contains(type_condition));
+                if satisfies_type_condition {
                     self.apply_path(possible_types, data, remaining_path)
                 }
+            } else if let Some(data) = obj.get_mut(current_key) {
+                // If the key exists, apply the remaining path to its value
+                self.apply_path(possible_types, data, remaining_path)
             }
-            _ => {
-                warn!(
-                    "Trying to apply ValueSetter path {:?} to non-object/array type: {:?}",
-                    path, data
-                );
-            }
+
+            return;
         }
+
+        warn!(
+            "Trying to apply ValueSetter path {:?} to non-object/array type: {:?}",
+            path, data
+        );
     }
 }
 
@@ -686,8 +696,8 @@ impl ExecutablePlanNode for ConditionNode {
                 match variable_values.get(&self.condition) {
                     Some(value) => {
                         // Check if the value is a boolean
-                        match value {
-                            Value::Bool(b) => *b,
+                        match value.as_bool() {
+                            Some(b) => b,
                             _ => true, // Default to true if not a boolean
                         }
                     }
@@ -812,97 +822,106 @@ impl QueryPlanExecutionContext<'_> {
         first: bool,
         response_key: Option<&str>,
     ) -> bool {
-        match entity {
-            Value::Null => {
+        if entity.is_null() {
+            return false;
+        }
+
+        if let Some(b) = entity.as_bool() {
+            if !first {
+                buffer.push(',');
+            }
+            if let Some(response_key) = response_key {
+                buffer.push('"');
+                buffer.push_str(response_key);
+                buffer.push('"');
+                buffer.push(':');
+                buffer.push_str(if b { "true" } else { "false" });
+            } else {
+                buffer.push_str(if b { "true" } else { "false" });
+            }
+            return true;
+        }
+
+        if let Some(n) = entity.as_number() {
+            if !first {
+                buffer.push(',');
+            }
+            if let Some(response_key) = response_key {
+                buffer.push('"');
+                buffer.push_str(response_key);
+                buffer.push_str("\":");
+            }
+
+            write!(buffer, "{}", n).unwrap();
+            return true;
+        }
+
+        if let Some(s) = entity.as_str() {
+            if !first {
+                buffer.push(',');
+            }
+            if let Some(response_key) = response_key {
+                buffer.push('"');
+                buffer.push_str(response_key);
+                buffer.push_str("\":");
+            }
+            write_and_escape_string(buffer, s);
+            return true;
+        }
+
+        if let Some(entity_array) = entity.as_array() {
+            if !first {
+                buffer.push(',');
+            }
+            if let Some(response_key) = response_key {
+                buffer.push('"');
+                buffer.push_str(response_key);
+                buffer.push_str("\":[");
+            } else {
+                buffer.push('[');
+            }
+            let mut first = true;
+            for entity_item in entity_array {
+                self.project_requires(requires_selections, entity_item, buffer, first, None);
+                first = false;
+            }
+            buffer.push(']');
+            return true;
+        }
+
+        if let Some(entity_obj) = entity.as_object() {
+            if requires_selections.is_empty() {
+                // It is probably a scalar with an object value, so we write it directly
+                write!(buffer, "{}", sonic_rs::to_string(entity_obj).unwrap()).unwrap();
+                return true;
+            }
+            if entity_obj.is_empty() {
                 return false;
             }
-            Value::Bool(b) => {
-                if !first {
-                    buffer.push(',');
-                }
-                if let Some(response_key) = response_key {
-                    buffer.push('"');
-                    buffer.push_str(response_key);
-                    buffer.push('"');
-                    buffer.push(':');
-                    buffer.push_str(if *b { "true" } else { "false" });
-                } else {
-                    buffer.push_str(if *b { "true" } else { "false" });
-                }
-            }
-            Value::Number(n) => {
-                if !first {
-                    buffer.push(',');
-                }
-                if let Some(response_key) = response_key {
-                    buffer.push('"');
-                    buffer.push_str(response_key);
-                    buffer.push_str("\":");
-                }
 
-                write!(buffer, "{}", n).unwrap()
+            if !first {
+                buffer.push(',');
             }
-            Value::String(s) => {
-                if !first {
-                    buffer.push(',');
-                }
-                if let Some(response_key) = response_key {
-                    buffer.push('"');
-                    buffer.push_str(response_key);
-                    buffer.push_str("\":");
-                }
-                write_and_escape_string(buffer, s);
+            if let Some(response_key) = response_key {
+                buffer.push('"');
+                buffer.push_str(response_key);
+                buffer.push_str("\":{");
+            } else {
+                buffer.push('{');
             }
-            Value::Array(entity_array) => {
-                if !first {
-                    buffer.push(',');
-                }
-                if let Some(response_key) = response_key {
-                    buffer.push('"');
-                    buffer.push_str(response_key);
-                    buffer.push_str("\":[");
-                } else {
-                    buffer.push('[');
-                }
-                let mut first = true;
-                for entity_item in entity_array {
-                    self.project_requires(requires_selections, entity_item, buffer, first, None);
-                    first = false;
-                }
-                buffer.push(']');
-            }
-            Value::Object(entity_obj) => {
-                if requires_selections.is_empty() {
-                    // It is probably a scalar with an object value, so we write it directly
-                    write!(buffer, "{}", serde_json::to_string(entity_obj).unwrap()).unwrap();
-                    return true;
-                }
-                if entity_obj.is_empty() {
-                    return false;
-                }
+            let mut first = true;
+            self.project_requires_map_mut(requires_selections, entity_obj, buffer, &mut first);
+            buffer.push('}');
+            return true;
+        }
 
-                if !first {
-                    buffer.push(',');
-                }
-                if let Some(response_key) = response_key {
-                    buffer.push('"');
-                    buffer.push_str(response_key);
-                    buffer.push_str("\":{");
-                } else {
-                    buffer.push('{');
-                }
-                let mut first = true;
-                self.project_requires_map_mut(requires_selections, entity_obj, buffer, &mut first);
-                buffer.push('}');
-            }
-        };
-        true
+        panic!("Unexpected entity type");
     }
 
     fn project_requires_map_mut(
         &self,
         requires_selections: &Vec<SelectionItem>,
-        entity_obj: &Map<String, Value>,
+        entity_obj: &sonic_rs::Object,
         buffer: &mut String,
         first: &mut bool,
     ) {
@@ -914,16 +933,16 @@ impl QueryPlanExecutionContext<'_> {
 
                     let original = entity_obj
                         .get(field_name)
-                        .unwrap_or(entity_obj.get(response_key).unwrap_or(&Value::Null));
+                        .or_else(|| entity_obj.get(&response_key));
 
-                    if original.is_null() {
+                    if original.is_none() || original.is_some_and(|v| v.is_null()) {
                         continue;
                     }
 
                     // To avoid writing empty fields, we write to a temporary buffer first
                     self.project_requires(
                         &requires_selection.selections.items,
-                        original,
+                        original.unwrap(),
                         buffer,
                         *first,
                         Some(response_key),
@@ -931,10 +950,14 @@ impl QueryPlanExecutionContext<'_> {
                     *first = false;
                 }
                 SelectionItem::InlineFragment(requires_selection) => {
-                    let type_name = match entity_obj.get(TYPENAME_FIELD) {
-                        Some(Value::String(type_name)) => type_name,
-                        _ => requires_selection.type_condition.as_str(),
+                    let type_name_from_entity = entity_obj
+                        .get(&TYPENAME_FIELD)
+                        .and_then(sonic_rs::Value::as_str);
+                    let type_name = match type_name_from_entity {
+                        Some(tn_str) => tn_str,
+                        None => requires_selection.type_condition.as_str(),
                     };
+
                     let satisfies_type_condition = type_name == requires_selection.type_condition
                         || self
                             .schema_metadata
@@ -971,13 +994,13 @@ pub fn traverse_and_callback<'a, Callback>(
     let rest_of_path = &remaining_path[1..];
 
     if key == "@" {
-        if let Value::Array(list) = current_data {
+        if let Some(list) = current_data.as_array_mut() {
             for item in list.iter_mut() {
                 traverse_and_callback(item, rest_of_path, callback);
             }
         }
-    } else if let Value::Object(map) = current_data {
-        if let Some(next_data) = map.get_mut(key) {
+    } else if let Some(map) = current_data.as_object_mut() {
+        if let Some(next_data) = map.get_mut(&key) {
             traverse_and_callback(next_data, rest_of_path, callback);
         }
     }
@@ -1001,7 +1024,7 @@ pub async fn execute_query_plan(
     has_introspection: bool,
     expose_query_plan: bool,
 ) -> String {
-    let mut result_data = Value::Null; // Initialize data as Null
+    let mut result_data = Value::new_null(); // Initialize data as Null
     let mut result_errors = vec![]; // Initial errors are empty
     #[allow(unused_mut)]
     let mut result_extensions = HashMap::new(); // Initial extensions are empty
@@ -1018,12 +1041,12 @@ pub async fn execute_query_plan(
     result_errors = execution_context.errors; // Get the final errors from the execution context
     result_extensions = execution_context.extensions; // Get the final extensions from the execution context
     if result_data.is_null() && has_introspection {
-        result_data = Value::Object(Map::new()); // Ensure data is an empty object if it was null
+        result_data = Value::new_object(); // Ensure data is an empty object if it was null
     }
     if expose_query_plan {
         result_extensions.insert(
             "queryPlan".to_string(),
-            serde_json::to_value(query_plan).unwrap(),
+            sonic_rs::to_value(query_plan).unwrap(),
         );
     }
     projection::project_by_operation(

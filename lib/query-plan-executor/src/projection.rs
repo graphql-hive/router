@@ -7,7 +7,7 @@ use query_planner::{
     },
     state::supergraph_state::OperationKind,
 };
-use serde_json::{Map, Value};
+use sonic_rs::{JsonValueMutTrait, JsonValueTrait, Value};
 use tracing::{instrument, warn};
 
 use crate::{
@@ -54,7 +54,7 @@ pub fn project_by_operation(
         write!(
             buffer,
             ",\"errors\":{}",
-            serde_json::to_string(&errors).unwrap()
+            sonic_rs::to_string(&errors).unwrap()
         )
         .unwrap();
     }
@@ -62,7 +62,7 @@ pub fn project_by_operation(
         write!(
             buffer,
             ",\"extensions\":{}",
-            serde_json::to_string(&extensions).unwrap()
+            sonic_rs::to_string(&extensions).unwrap()
         )
         .unwrap();
     }
@@ -89,66 +89,83 @@ fn project_selection_set(
     variable_values: &Option<HashMap<String, Value>>,
     buffer: &mut String,
 ) {
-    match data {
-        Value::Null => buffer.push_str("null"),
-        Value::Bool(true) => buffer.push_str("true"),
-        Value::Bool(false) => buffer.push_str("false"),
-        Value::Number(num) => write!(buffer, "{}", num).unwrap(),
-        Value::String(value) => {
-            if let Some(enum_values) = schema_metadata.enum_values.get(type_name) {
-                if !enum_values.contains(value) {
-                    *data = Value::Null;
-                    errors.push(GraphQLError {
-                        message: format!(
-                            "Value is not a valid enum value for type '{}'",
-                            type_name
-                        ),
-                        locations: None,
-                        path: None,
-                        extensions: None,
-                    });
-                    buffer.push_str("null");
-                    return;
-                }
-            }
-            write_and_escape_string(buffer, value);
+    if data.is_null() {
+        buffer.push_str("null");
+        return;
+    }
+
+    if let Some(b) = data.as_bool() {
+        if b {
+            buffer.push_str("true");
+        } else {
+            buffer.push_str("false");
         }
-        Value::Array(arr) => {
-            buffer.push('[');
-            let mut first = true;
-            for item in arr.iter_mut() {
-                if !first {
-                    buffer.push(',');
-                }
-                project_selection_set(
-                    item,
-                    errors,
-                    selection_set,
-                    type_name,
-                    schema_metadata,
-                    variable_values,
-                    buffer,
-                );
-                first = false;
+        return;
+    }
+
+    if let Some(num) = data.as_number() {
+        write!(buffer, "{}", num).unwrap();
+        return;
+    }
+
+    if let Some(value) = data.as_str() {
+        if let Some(enum_values) = schema_metadata.enum_values.get(type_name) {
+            if !enum_values.contains(value) {
+                *data = Value::new_null();
+                errors.push(GraphQLError {
+                    message: format!("Value is not a valid enum value for type '{}'", type_name),
+                    locations: None,
+                    path: None,
+                    extensions: None,
+                });
+                buffer.push_str("null");
+                return;
             }
-            buffer.push(']');
         }
-        Value::Object(obj) => {
-            buffer.push('{');
-            let mut first = true;
-            project_selection_set_with_map(
-                obj,
+        write_and_escape_string(buffer, value);
+        return;
+    }
+
+    if let Some(arr) = data.as_array_mut() {
+        buffer.push('[');
+        let mut first = true;
+        for item in arr.iter_mut() {
+            if !first {
+                buffer.push(',');
+            }
+            project_selection_set(
+                item,
                 errors,
                 selection_set,
                 type_name,
                 schema_metadata,
                 variable_values,
                 buffer,
-                &mut first,
             );
-            buffer.push('}');
+            first = false;
         }
+        buffer.push(']');
+        return;
     }
+
+    if let Some(obj) = data.as_object_mut() {
+        buffer.push('{');
+        let mut first = true;
+        project_selection_set_with_map(
+            obj,
+            errors,
+            selection_set,
+            type_name,
+            schema_metadata,
+            variable_values,
+            buffer,
+            &mut first,
+        );
+        buffer.push('}');
+        return;
+    }
+
+    panic!("Unexpected data type {}", data);
 }
 
 #[instrument(
@@ -163,7 +180,7 @@ fn project_selection_set(
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 fn project_selection_set_with_map(
-    obj: &mut Map<String, Value>,
+    obj: &mut sonic_rs::Object,
     errors: &mut Vec<GraphQLError>,
     selection_set: &SelectionSet,
     type_name: &str,
@@ -172,11 +189,11 @@ fn project_selection_set_with_map(
     buffer: &mut String,
     first: &mut bool,
 ) {
-    let type_name = match obj.get(TYPENAME_FIELD) {
-        Some(Value::String(type_name)) => type_name,
-        _ => type_name,
-    }
-    .to_string();
+    let type_name = obj
+        .get(&TYPENAME_FIELD)
+        .and_then(sonic_rs::Value::as_str)
+        .unwrap_or(type_name)
+        .to_string();
     let field_map = schema_metadata.type_fields.get(&type_name);
     let possible_types_of_type = schema_metadata.possible_types.get(&type_name);
 
@@ -187,7 +204,7 @@ fn project_selection_set_with_map(
                     let variable_value = variable_values
                         .as_ref()
                         .and_then(|vars| vars.get(skip_variable));
-                    if variable_value == Some(&Value::Bool(true)) {
+                    if variable_value == Some(&true.into()) {
                         continue; // Skip this field if the variable is true
                     }
                 }
@@ -195,7 +212,7 @@ fn project_selection_set_with_map(
                     let variable_value = variable_values
                         .as_ref()
                         .and_then(|vars| vars.get(include_variable));
-                    if variable_value != Some(&Value::Bool(true)) {
+                    if variable_value != Some(&true.into()) {
                         continue; // Skip this field if the variable is not true
                     }
                 }
@@ -225,7 +242,7 @@ fn project_selection_set_with_map(
 
                 if field.name == "__schema" && type_name == "Query" {
                     obj.insert(
-                        response_key.to_string(),
+                        response_key,
                         schema_metadata.introspection_schema_root_json.clone(),
                     );
                 }
