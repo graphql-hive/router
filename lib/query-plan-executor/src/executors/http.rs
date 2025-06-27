@@ -22,8 +22,9 @@ impl HTTPSubgraphExecutor {
         execution_request: ExecutionRequest,
     ) -> Result<ExecutionResult, reqwest::Error> {
         trace!("Executing HTTP request to subgraph at {}", self.endpoint);
-        let mut body =
-            "{\"query\":\"".to_string() + &execution_request.query + "\",\"variables\":{";
+        let mut body = "{\"query\":\"".to_string()
+            + &serde_json::to_string(&execution_request.query).unwrap()
+            + "\",\"variables\":{";
         if let Some(variables) = &execution_request.variables {
             for (key, value) in variables {
                 body.push_str(
@@ -42,6 +43,7 @@ impl HTTPSubgraphExecutor {
         self.http_client
             .post(&self.endpoint)
             .body(body)
+            .header("Content-Type", "application/json; charset=utf-8")
             .send()
             .await?
             .json::<ExecutionResult>()
