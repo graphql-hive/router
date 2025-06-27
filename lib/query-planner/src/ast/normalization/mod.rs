@@ -13,6 +13,7 @@ use crate::ast::normalization::pipeline::inline_fragment_spreads;
 use crate::ast::normalization::pipeline::merge_fields;
 use crate::ast::normalization::pipeline::merge_inline_fragments;
 use crate::ast::normalization::pipeline::normalize_fields;
+use crate::ast::normalization::pipeline::type_expand;
 use crate::ast::normalization::pipeline::{drop_duplicated_fields, drop_fragment_definitions};
 use crate::state::supergraph_state::SupergraphState;
 use error::NormalizationError;
@@ -38,6 +39,7 @@ pub fn normalize_operation_mut(
     inline_fragment_spreads(&mut ctx)?;
     drop_fragment_definitions(&mut ctx)?;
     flatten_fragments(&mut ctx)?;
+    type_expand(&mut ctx)?;
     merge_inline_fragments(&mut ctx)?;
     merge_fields(&mut ctx)?;
     drop_duplicated_fields(&mut ctx)?;
@@ -749,6 +751,95 @@ mod tests {
             }
           }
         }
+        ",
+        );
+    }
+
+    #[test]
+    fn type_expansion_3() {
+        let schema_str =
+            std::fs::read_to_string("./fixture/tests/abstract-types.supergraph.graphql")
+                .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        {
+                          products {
+                            id
+                            reviews { id }
+                          }
+                        }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+        query {
+          products {
+            id
+            ... on Book {
+              reviews {
+                id
+              }
+            }
+            ... on Magazine {
+              reviews {
+                id
+              }
+            }
+          }
+        }
+        ",
+        );
+    }
+
+    #[test]
+    fn type_expansion_4() {
+        let schema_str =
+            std::fs::read_to_string("./fixture/tests/simple-interface-object.supergraph.graphql")
+                .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query {
+                          anotherUsers {
+                            id
+                            name
+                            username
+                          }
+                        }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+            query {
+              anotherUsers {
+                id
+                name
+                username
+              }
+            }
         ",
         );
     }
