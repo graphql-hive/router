@@ -11,7 +11,8 @@ use serde_json::{Map, Value};
 use tracing::{instrument, warn};
 
 use crate::{
-    entity_satisfies_type_condition, schema_metadata::SchemaMetadata, GraphQLError, TYPENAME_FIELD,
+    entity_satisfies_type_condition, json_writer::write_and_escape_string,
+    schema_metadata::SchemaMetadata, GraphQLError, TYPENAME_FIELD,
 };
 
 #[instrument(level = "trace", skip_all)]
@@ -105,8 +106,7 @@ fn project_selection_set(
                     return;
                 }
             }
-            // Use serde_json to handle proper string escaping
-            write!(buffer, "{}", serde_json::to_string(value).unwrap()).unwrap();
+            write_and_escape_string(buffer, value);
         }
         Value::Array(arr) => {
             buffer.push('[');
