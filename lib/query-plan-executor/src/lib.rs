@@ -874,12 +874,6 @@ impl QueryPlanExecutionContext<'_> {
         entity: &Value,
         buffer: &mut String,
     ) {
-        if requires_selections.is_empty() {
-            // No selections, so serialize the entity directly into the buffer.
-            write!(buffer, "{}", serde_json::to_string(entity).unwrap()).unwrap();
-            return;
-        }
-
         match entity {
             Value::Null => buffer.push_str("null"),
             Value::Bool(b) => write!(buffer, "{}", b).unwrap(),
@@ -898,6 +892,11 @@ impl QueryPlanExecutionContext<'_> {
                 buffer.push(']');
             }
             Value::Object(entity_obj) => {
+                if requires_selections.is_empty() {
+                    // It is probably a scalar with an object value, so we write it directly
+                    write!(buffer, "{}", serde_json::to_string(entity_obj).unwrap()).unwrap();
+                    return;
+                }
                 buffer.push('{');
                 let mut first = true;
                 self.project_requires_map_mut(requires_selections, entity_obj, buffer, &mut first);
