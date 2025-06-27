@@ -11,8 +11,8 @@ use serde_json::{Map, Value};
 use tracing::{instrument, warn};
 
 use crate::{
-    entity_satisfies_type_condition, json_writer::write_and_escape_string,
-    schema_metadata::SchemaMetadata, GraphQLError, TYPENAME_FIELD,
+    json_writer::write_and_escape_string, schema_metadata::SchemaMetadata, GraphQLError,
+    TYPENAME_FIELD,
 };
 
 #[instrument(level = "trace", skip_all)]
@@ -173,6 +173,7 @@ fn project_selection_set_with_map(
     }
     .to_string();
     let field_map = schema_metadata.type_fields.get(&type_name);
+    let implemented_interfaces = schema_metadata.possible_types.get(&type_name);
 
     for selection in &selection_set.items {
         match selection {
@@ -246,11 +247,11 @@ fn project_selection_set_with_map(
                 }
             }
             SelectionItem::InlineFragment(inline_fragment) => {
-                if entity_satisfies_type_condition(
-                    &schema_metadata.possible_types,
-                    &type_name,
-                    &inline_fragment.type_condition,
-                ) {
+                let type_condition = &inline_fragment.type_condition;
+                let satisfies_type_condition = &type_name == type_condition
+                    || implemented_interfaces.map_or(false, |s| s.contains(type_condition));
+
+                if satisfies_type_condition {
                     project_selection_set_with_map(
                         obj,
                         errors,
