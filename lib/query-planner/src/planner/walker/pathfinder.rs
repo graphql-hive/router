@@ -63,7 +63,7 @@ pub enum NavigationTarget<'a> {
     ConcreteType(&'a str),
 }
 
-#[instrument(level = "trace",skip(graph, excluded), ret(), fields(
+#[instrument(level = "trace",skip(graph, excluded, target), fields(
   path = path.pretty_print(graph),
   current_cost = path.cost
 ))]
@@ -217,7 +217,7 @@ pub fn find_indirect_paths(
     Ok(best_paths)
 }
 
-#[instrument(level = "trace",skip(graph), ret(), fields(
+#[instrument(level = "trace",skip(graph, target), fields(
     path = path.pretty_print(graph),
     current_cost = path.cost,
 ))]
@@ -264,8 +264,6 @@ pub fn find_direct_paths(
                     }
                 }
             }
-
-            Ok(result)
         }
         NavigationTarget::ConcreteType(type_name) => {
             let edges_iter = graph
@@ -306,13 +304,18 @@ pub fn find_direct_paths(
                     }
                 }
             }
-
-            Ok(result)
         }
     }
+
+    trace!(
+        "Finished finding direct paths, found total of {}",
+        result.len()
+    );
+
+    Ok(result)
 }
 
-#[instrument(level = "trace",skip_all, ret(), fields(
+#[instrument(level = "trace",skip_all, fields(
   path = path.pretty_print(graph),
   edge = edge_ref.weight().display_name(),
 ))]
@@ -433,7 +436,7 @@ pub struct MoveRequirement {
 type FieldRequirementsResult = Option<(Vec<OperationPath>, Vec<MoveRequirement>)>;
 type FragmentRequirementsResult = Option<(Vec<OperationPath>, Vec<MoveRequirement>)>;
 
-#[instrument(level = "trace", skip_all, ret())]
+#[instrument(level = "trace", skip_all, fields(field = field.name))]
 fn validate_field_requirement(
     graph: &Graph,
     move_requirement: &MoveRequirement, // Contains Rc<Vec<OperationPath>>
@@ -511,6 +514,8 @@ fn validate_field_requirement(
 
     Ok(Some((next_paths, next_requirements)))
 }
+
+#[instrument(level = "trace", skip_all, fields(type_condition = fragment_selection.type_condition))]
 fn validate_fragment_requirement(
     graph: &Graph,
     requirement: &MoveRequirement,

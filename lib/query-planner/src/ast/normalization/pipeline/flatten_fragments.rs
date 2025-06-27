@@ -405,6 +405,28 @@ fn handle_selection_set(
                             }
                         }
                         _ => {
+                            // The inline fragment's type condition
+                            // references an object type
+                            // ```
+                            // ... on ObjectType { ... }
+                            // ```
+                            // We need to check if it's even resolable.
+                            //
+                            // Why we're even here?
+                            // When we turn an inline fragment on an interface or when we perform type expansion,
+                            // we move the selection sets into bunch of inline fragments for object types.
+                            // We may end up in a situation where we have an inline fragment on an object type
+                            // within an inline fragment on an object type.
+                            // They may refer to different object types,
+                            // so we need to drop the inner one.
+                            // It's safe as the inner fragment is preserved in one of the object types fragments.
+                            if matches!(type_def, SupergraphDefinition::Object(_)) {
+                                // Drop the inline fragment as it can't be resolved,
+                                // its type condition is different
+                                // from the object type it's in
+                                continue;
+                            }
+
                             handle_selection_set(
                                 state,
                                 possible_types,

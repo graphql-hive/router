@@ -11,6 +11,7 @@ mod overrides;
 mod provides;
 mod requires;
 mod requires_circular;
+mod requires_fragments;
 mod requires_provides;
 mod requires_requires;
 mod root_types;
