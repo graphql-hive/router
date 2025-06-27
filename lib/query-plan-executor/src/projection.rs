@@ -155,6 +155,8 @@ fn project_selection_set(
         obj = ?obj
     )
 )]
+// TODO: simplfy args
+#[allow(clippy::too_many_arguments)]
 fn project_selection_set_with_map(
     obj: &mut Map<String, Value>,
     errors: &mut Vec<GraphQLError>,
