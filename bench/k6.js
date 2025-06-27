@@ -7,9 +7,19 @@ const endpoint = __ENV.GATEWAY_ENDPOINT || "http://0.0.0.0:4000/graphql";
 const vus = __ENV.BENCH_VUS ? parseInt(__ENV.BENCH_VUS) : 50;
 const duration = __ENV.BENCH_OVER_TIME || "30s";
 
+// Apollo: 642.824925/s
+// Hive:   832.384019/s
+
 export const options = {
+<<<<<<< HEAD
   vus,
   duration,
+=======
+  // vus: vus,
+  // duration: time,
+  vus: 1,
+  iterations: 10,
+>>>>>>> e782aaf (Use HashSet for possible types and inline)
 };
 
 export function setup() {
