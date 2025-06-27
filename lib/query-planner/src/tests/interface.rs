@@ -570,7 +570,7 @@ fn node_query_with_id_and_cross_type_fragment_overlap() -> Result<(), Box<dyn Er
 }
 
 #[test]
-fn poop1() -> Result<(), Box<dyn Error>> {
+fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
     init_logger();
     let document = parse_operation(
         r#"
