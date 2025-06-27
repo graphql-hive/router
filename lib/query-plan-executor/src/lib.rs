@@ -1033,8 +1033,6 @@ fn entity_satisfies_type_condition(
     }
 }
 
-// --- Helper Function for Flatten ---
-
 /// Recursively traverses the data according to the path segments,
 /// handling '@' for array iteration, and collects the final values.current_data.to_vec()
 #[instrument(level = "trace", skip_all, fields(
@@ -1045,57 +1043,33 @@ pub fn traverse_and_collect<'a>(
     current_data: &'a mut Value,
     remaining_path: &[FlattenNodePathSegment],
 ) -> Vec<&'a mut Value> {
-    // If the path is empty, we're done traversing.
-    let Some((segment, remaining_path)) = remaining_path.split_first() else {
-        return match current_data {
-            // If the final result is an array, return all its items.
-            Value::Array(arr) => arr.iter_mut().collect(),
-            // Otherwise, return the value itself in a vector.
-            _ => vec![current_data],
-        };
-    };
+    let mut collected = Vec::new();
+    traverse_and_collect_mut(current_data, remaining_path, &mut collected);
+    collected
+}
 
-    match segment {
-        FlattenNodePathSegment::Field(field) => {
-            // Attempt to access a field on an object
-            match current_data.get_mut(field) {
-                Some(next_value) => traverse_and_collect(next_value, remaining_path),
-                // Either the field doesn't exist, or it's is not an object
-                None => vec![],
+fn traverse_and_collect_mut<'a>(
+    current_data: &'a mut Value,
+    remaining_path: &[&str],
+    collected: &mut Vec<&'a mut Value>,
+) {
+    if remaining_path.is_empty() {
+        collected.push(current_data);
+        return;
+    }
+
+    let key = remaining_path[0];
+    let rest_of_path = &remaining_path[1..];
+
+    if key == "@" {
+        if let Value::Array(list) = current_data {
+            for item in list.iter_mut() {
+                traverse_and_collect_mut(item, rest_of_path, collected);
             }
         }
-
-        FlattenNodePathSegment::List => {
-            match current_data {
-                Value::Array(arr) => arr
-                    .iter_mut()
-                    .flat_map(|item| traverse_and_collect(item, remaining_path))
-                    .collect(),
-                // List is only valid for arrays
-                _ => vec![],
-            }
-        }
-
-        FlattenNodePathSegment::Cast(type_name) => {
-            match current_data {
-                Value::Object(_) => {
-                    // For a single object, a missing `__typename` is a pass-through
-                    if contains_typename(current_data, type_name, true) {
-                        traverse_and_collect(current_data, remaining_path)
-                    } else {
-                        vec![]
-                    }
-                }
-                Value::Array(arr) => {
-                    // Filter an array based on matching `__typename`
-                    arr.iter_mut()
-                        .filter(|item| contains_typename(item, type_name, false))
-                        .flat_map(|item| traverse_and_collect(item, remaining_path))
-                        .collect()
-                }
-                // Cast is only valid for objects and arrays
-                _ => vec![],
-            }
+    } else if let Value::Object(map) = current_data {
+        if let Some(next_data) = map.get_mut(key) {
+            traverse_and_collect_mut(next_data, rest_of_path, collected);
         }
     }
 }
