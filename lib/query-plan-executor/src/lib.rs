@@ -812,9 +812,6 @@ impl QueryPlanExecutionContext<'_> {
         first: bool,
         response_key: Option<&str>,
     ) -> bool {
-        if entity.is_null() {
-            return false;
-        }
         match entity {
             Value::Null => {
                 return false;
@@ -849,10 +846,14 @@ impl QueryPlanExecutionContext<'_> {
                 write_and_escape_string(buffer, s);
             }
             Value::Array(entity_array) => {
-                if let Some(response_key) = response_key {
-                    write!(buffer, "\"{}\":", response_key).unwrap();
+                if !first {
+                    buffer.push(',');
                 }
-                buffer.push('[');
+                if let Some(response_key) = response_key {
+                    write!(buffer, "\"{}\":[", response_key).unwrap();
+                } else {
+                    buffer.push('[');
+                }
                 let mut first = true;
                 for entity_item in entity_array {
                     self.project_requires(requires_selections, entity_item, buffer, first, None);
@@ -870,8 +871,13 @@ impl QueryPlanExecutionContext<'_> {
                     return false;
                 }
 
+                if !first {
+                    buffer.push(',');
+                }
                 if let Some(response_key) = response_key {
                     write!(buffer, "\"{}\":{{", response_key).unwrap();
+                } else {
+                    buffer.push('{');
                 }
                 let mut first = true;
                 self.project_requires_map_mut(requires_selections, entity_obj, buffer, &mut first);
