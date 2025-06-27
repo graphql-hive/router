@@ -1,6 +1,4 @@
-///
-/// I took it from https://github.com/zotta/json-writer-rs/blob/f45e2f25cede0e06be76a94f6e45608780a835d4/src/lib.rs#L853
-///
+//! I took it from https://github.com/zotta/json-writer-rs/blob/f45e2f25cede0e06be76a94f6e45608780a835d4/src/lib.rs#L853
 
 const fn get_replacements() -> [u8; 256] {
     // NOTE: Only characters smaller than 128 are allowed here.
@@ -24,14 +22,13 @@ const fn get_replacements() -> [u8; 256] {
     result[b'\t' as usize] = b't';
     result[0] = b'u';
 
-    return result;
+    result
 }
+
 static REPLACEMENTS: [u8; 256] = get_replacements();
 static HEX: [u8; 16] = *b"0123456789ABCDEF";
 
-///
 /// Escapes and append part of string
-///
 #[inline(always)]
 pub fn write_and_escape_string(output_buffer: &mut String, input: &str) {
     output_buffer.push('"');
