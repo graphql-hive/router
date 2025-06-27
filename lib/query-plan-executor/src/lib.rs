@@ -411,11 +411,11 @@ impl ApplyFetchRewrite for KeyRenamer {
                             Some(Value::String(type_name)) => type_name,
                             _ => type_condition, // Default to type_condition if not found
                         };
-                        if entity_satisfies_type_condition(
-                            possible_types,
-                            type_name,
-                            type_condition,
-                        ) {
+                        let satisfies_type_condition = type_name == type_condition
+                            || possible_types
+                                .get(type_name)
+                                .is_some_and(|s| s.contains(type_condition));
+                        if satisfies_type_condition {
                             self.apply_path(possible_types, value, remaining_path)
                         }
                     }
@@ -471,11 +471,11 @@ impl ApplyFetchRewrite for ValueSetter {
                             Some(Value::String(type_name)) => type_name,
                             _ => type_condition, // Default to type_condition if not found
                         };
-                        if entity_satisfies_type_condition(
-                            possible_types,
-                            type_name,
-                            type_condition,
-                        ) {
+                        let satisfies_type_condition = type_name == type_condition
+                            || possible_types
+                                .get(type_name)
+                                .is_some_and(|s| s.contains(type_condition));
+                        if satisfies_type_condition {
                             self.apply_path(possible_types, data, remaining_path)
                         }
                     }
@@ -997,7 +997,7 @@ impl QueryPlanExecutionContext<'_> {
                             .schema_metadata
                             .possible_types
                             .get(type_condition)
-                            .map_or(false, |s| s.contains(type_name));
+                            .is_some_and(|s| s.contains(type_name));
 
                     if satisfies_type_condition {
                         self.project_requires_map_mut(
@@ -1008,36 +1008,6 @@ impl QueryPlanExecutionContext<'_> {
                         );
                     }
                 }
-            }
-        }
-    }
-}
-
-#[instrument(
-    level = "trace",
-    skip_all,
-    name = "entity_satisfies_type_condition",
-    fields(
-        type_name = %type_name,
-        type_condition = %type_condition,
-    )
-)]
-fn entity_satisfies_type_condition(
-    possible_types: &HashMap<String, HashSet<String>>,
-    type_name: &str,
-    type_condition: &str,
-) -> bool {
-    if type_name == type_condition {
-        true
-    } else {
-        let possible_types_for_type_condition = possible_types.get(type_condition);
-        match possible_types_for_type_condition {
-            Some(possible_types_for_type_condition) => {
-                possible_types_for_type_condition.contains(&type_name.to_string())
-            }
-            None => {
-                // If no possible types are found, return false
-                false
             }
         }
     }
