@@ -944,6 +944,10 @@ impl QueryPlanExecutionContext<'_> {
         parent_response_key: Option<&str>,
         parent_first: bool,
     ) {
+        let type_name = match entity_obj.get(TYPENAME_FIELD) {
+            Some(Value::String(tn)) => tn.as_str(),
+            _ => "", // TODO: improve it
+        };
         for requires_selection in requires_selections {
             match &requires_selection {
                 SelectionItem::Field(requires_selection) => {
@@ -991,16 +995,15 @@ impl QueryPlanExecutionContext<'_> {
                     *first = false;
                 }
                 SelectionItem::InlineFragment(requires_selection) => {
-                    let type_name = match entity_obj.get(TYPENAME_FIELD) {
-                        Some(Value::String(type_name)) => type_name,
-                        _ => requires_selection.type_condition.as_str(),
-                    };
-                    let satisfies_type_condition = type_name == requires_selection.type_condition
+                    let type_condition = &requires_selection.type_condition;
+
+                    let satisfies_type_condition = type_name == type_condition
                         || self
                             .schema_metadata
                             .possible_types
-                            .get(type_name)
-                            .is_some_and(|s| s.contains(&requires_selection.type_condition));
+                            .get(type_condition)
+                            .map_or(false, |s| s.contains(type_name));
+
                     if satisfies_type_condition {
                         self.project_requires_map_mut(
                             &requires_selection.selections.items,
