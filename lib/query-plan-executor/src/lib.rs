@@ -96,6 +96,42 @@ fn process_errors_and_extensions(
         execution_context.extensions.extend(extensions);
     }
 }
+<<<<<<< HEAD
+=======
+
+#[instrument(
+    level = "debug",
+    skip_all
+    name = "process_representations_result",
+    fields(
+        representations_count = %result.entities.as_ref().map_or(0, |e| e.len())
+    ),
+)]
+fn process_representations_result(
+    result: ExecuteForRepresentationsResult,
+    representations: &mut Vec<&mut Value>,
+    execution_context: &mut QueryPlanExecutionContext<'_>,
+) {
+    if let Some(entities) = result.entities {
+        trace!(
+            "Processing representations result: {} entities",
+            entities.len()
+        );
+        for (entity, index) in entities.into_iter().zip(result.indexes.into_iter()) {
+            if let Some(representation) = representations.get_mut(index) {
+                trace!(
+                    "Merging entity into representation at index {}: {:?}",
+                    index,
+                    entity
+                );
+                deep_merge::deep_merge(representation, entity);
+            }
+        }
+    }
+    process_errors_and_extensions(execution_context, result.errors, result.extensions);
+}
+
+>>>>>>> 64a26c9 (Improve `project_requires` method (#210))
 struct ExecuteForRepresentationsResult {
     entities: Option<Vec<Value>>,
     indexes: BTreeSet<usize>,
