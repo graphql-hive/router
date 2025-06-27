@@ -821,9 +821,13 @@ impl QueryPlanExecutionContext<'_> {
                     buffer.push(',');
                 }
                 if let Some(response_key) = response_key {
-                    write!(buffer, "\"{}\":{}", response_key, b).unwrap();
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push('"');
+                    buffer.push(':');
+                    buffer.push_str(if *b { "true" } else { "false" });
                 } else {
-                    write!(buffer, "{}", b).unwrap()
+                    buffer.push_str(if *b { "true" } else { "false" });
                 }
             }
             Value::Number(n) => {
@@ -831,17 +835,21 @@ impl QueryPlanExecutionContext<'_> {
                     buffer.push(',');
                 }
                 if let Some(response_key) = response_key {
-                    write!(buffer, "\"{}\":{}", response_key, n).unwrap();
-                } else {
-                    write!(buffer, "{}", n).unwrap()
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push_str("\":");
                 }
+
+                write!(buffer, "{}", n).unwrap()
             }
             Value::String(s) => {
                 if !first {
                     buffer.push(',');
                 }
                 if let Some(response_key) = response_key {
-                    write!(buffer, "\"{}\":", response_key).unwrap();
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push_str("\":");
                 }
                 write_and_escape_string(buffer, s);
             }
@@ -850,7 +858,9 @@ impl QueryPlanExecutionContext<'_> {
                     buffer.push(',');
                 }
                 if let Some(response_key) = response_key {
-                    write!(buffer, "\"{}\":[", response_key).unwrap();
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push_str("\":[");
                 } else {
                     buffer.push('[');
                 }
@@ -875,7 +885,9 @@ impl QueryPlanExecutionContext<'_> {
                     buffer.push(',');
                 }
                 if let Some(response_key) = response_key {
-                    write!(buffer, "\"{}\":{{", response_key).unwrap();
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push_str("\":{");
                 } else {
                     buffer.push('{');
                 }
