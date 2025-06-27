@@ -12,10 +12,14 @@ use std::fmt::Write;
 use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
-use crate::{executors::map::SubgraphExecutorMap, schema_metadata::SchemaMetadata};
+use crate::{
+    executors::map::SubgraphExecutorMap, json_writer::write_and_escape_string,
+    schema_metadata::SchemaMetadata,
+};
 pub mod deep_merge;
 pub mod executors;
 pub mod introspection;
+mod json_writer;
 pub mod projection;
 pub mod schema_metadata;
 pub mod validation;
@@ -880,7 +884,7 @@ impl QueryPlanExecutionContext<'_> {
             Value::Null => buffer.push_str("null"),
             Value::Bool(b) => write!(buffer, "{}", b).unwrap(),
             Value::Number(n) => write!(buffer, "{}", n).unwrap(),
-            Value::String(s) => write!(buffer, "{}", serde_json::to_string(s).unwrap()).unwrap(),
+            Value::String(s) => write_and_escape_string(buffer, s),
             Value::Array(entity_array) => {
                 buffer.push('[');
                 let mut first = true;
