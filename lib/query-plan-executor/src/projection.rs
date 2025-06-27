@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write;
 
 use query_planner::{
     ast::{
@@ -28,33 +29,44 @@ pub fn project_by_operation(
         Some(OperationKind::Subscription) => "Subscription",
         None => "Query",
     };
-    // Project the data based on the selection set
-    let data = project_selection_set(
+
+    // We may want to remove it, but let's see.
+    let mut buffer = String::with_capacity(4096);
+
+    write!(buffer, "{{\"data\":").unwrap();
+    project_selection_set(
         data,
         errors,
         &operation.selection_set,
         root_type_name,
         schema_metadata,
         variable_values,
+        &mut buffer,
     );
-    let mut items = "{\"data\":".to_string() + &data;
+
     if !errors.is_empty() {
-        let errors_entry = ",\"errors\":".to_string() + &serde_json::to_string(&errors).unwrap();
-        items.push_str(&errors_entry);
+        write!(
+            buffer,
+            ",\"errors\":{}",
+            serde_json::to_string(&errors).unwrap()
+        )
+        .unwrap();
     }
     if !extensions.is_empty() {
-        let extensions_entry =
-            ",\"extensions\":".to_string() + &serde_json::to_string(&extensions).unwrap();
-        items.push_str(&extensions_entry);
+        write!(
+            buffer,
+            ",\"extensions\":{}",
+            serde_json::to_string(&extensions).unwrap()
+        )
+        .unwrap();
     }
 
-    items.push('}');
-
-    items
+    buffer.push('}');
+    buffer
 }
 
 #[instrument(
-    level = "trace", 
+    level = "trace",
     skip_all,
     fields(
         type_name = %type_name,
@@ -69,12 +81,13 @@ fn project_selection_set(
     type_name: &str,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
-) -> String {
+    buffer: &mut String,
+) {
     match data {
-        Value::Null => "null".to_string(),
-        Value::Bool(true) => "true".to_string(),
-        Value::Bool(false) => "false".to_string(),
-        Value::Number(num) => num.to_string(),
+        Value::Null => buffer.push_str("null"),
+        Value::Bool(true) => buffer.push_str("true"),
+        Value::Bool(false) => buffer.push_str("false"),
+        Value::Number(num) => write!(buffer, "{}", num).unwrap(),
         Value::String(value) => {
             if let Some(enum_values) = schema_metadata.enum_values.get(type_name) {
                 if !enum_values.contains(value) {
@@ -88,46 +101,53 @@ fn project_selection_set(
                         path: None,
                         extensions: None,
                     });
-                    return "null".to_string(); // Set data to Null if the value is not valid
+                    buffer.push_str("null");
+                    return;
                 }
             }
-            serde_json::to_string(value).unwrap() // Return the string value wrapped in quotes
+            // Use serde_json to handle proper string escaping
+            write!(buffer, "{}", serde_json::to_string(value).unwrap()).unwrap();
         }
         Value::Array(arr) => {
-            let items: Vec<String> = arr
-                .iter_mut()
-                .map(|item| {
-                    project_selection_set(
-                        item,
-                        errors,
-                        selection_set,
-                        type_name,
-                        schema_metadata,
-                        variable_values,
-                    )
-                })
-                .collect();
-            "[".to_string() + &items.join(",") + "]"
+            buffer.push('[');
+            let mut first = true;
+            for item in arr.iter_mut() {
+                if !first {
+                    buffer.push(',');
+                }
+                project_selection_set(
+                    item,
+                    errors,
+                    selection_set,
+                    type_name,
+                    schema_metadata,
+                    variable_values,
+                    buffer,
+                );
+                first = false;
+            }
+            buffer.push(']');
         }
         Value::Object(obj) => {
-            let items = project_selection_set_with_map(
+            buffer.push('{');
+            let mut first = true;
+            project_selection_set_with_map(
                 obj,
                 errors,
                 selection_set,
                 type_name,
                 schema_metadata,
                 variable_values,
+                buffer,
+                &mut first,
             );
-            match items {
-                Some(items) => "{".to_string() + &items.join(",") + "}",
-                None => "null".to_string(),
-            }
+            buffer.push('}');
         }
     }
 }
 
 #[instrument(
-    level = "trace", 
+    level = "trace",
     skip_all,
     fields(
         type_name = %type_name,
@@ -135,6 +155,8 @@ fn project_selection_set(
         obj = ?obj
     )
 )]
+// TODO: simplfy args
+#[allow(clippy::too_many_arguments)]
 fn project_selection_set_with_map(
     obj: &mut Map<String, Value>,
     errors: &mut Vec<GraphQLError>,
@@ -142,14 +164,16 @@ fn project_selection_set_with_map(
     type_name: &str,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
-) -> Option<Vec<String>> {
+    buffer: &mut String,
+    first: &mut bool,
+) {
     let type_name = match obj.get(TYPENAME_FIELD) {
         Some(Value::String(type_name)) => type_name,
         _ => type_name,
     }
     .to_string();
-    let field_map = schema_metadata.type_fields.get(&type_name)?;
-    let mut items = vec![];
+    let field_map = schema_metadata.type_fields.get(&type_name);
+
     for selection in &selection_set.items {
         match selection {
             SelectionItem::Field(field) => {
@@ -169,34 +193,48 @@ fn project_selection_set_with_map(
                         continue; // Skip this field if the variable is not true
                     }
                 }
-                let response_key = field.alias.as_ref().unwrap_or(&field.name).to_string();
+
+                let response_key = field.alias.as_ref().unwrap_or(&field.name);
+
+                if !*first {
+                    buffer.push(',');
+                }
+                *first = false;
+
                 if field.name == TYPENAME_FIELD {
-                    items.push("\"".to_string() + &response_key + "\":\"" + &type_name + "\"");
+                    write!(buffer, "\"{}\":\"{}\"", response_key, type_name).unwrap();
                     continue;
                 }
+
+                write!(buffer, "\"{}\":", response_key).unwrap();
+
+                let field_map = field_map.unwrap();
                 let field_type = field_map.get(&field.name);
+
                 if field.name == "__schema" && type_name == "Query" {
                     obj.insert(
                         response_key.to_string(),
                         schema_metadata.introspection_schema_root_json.clone(),
                     );
                 }
-                let field_val = obj.get_mut(&response_key);
+
+                let field_val = obj.get_mut(response_key);
+
                 match (field_type, field_val) {
                     (Some(field_type), Some(field_val)) => {
-                        let projected = project_selection_set(
+                        project_selection_set(
                             field_val,
                             errors,
                             &field.selections,
                             field_type,
                             schema_metadata,
                             variable_values,
+                            buffer,
                         );
-                        items.push("\"".to_string() + &response_key + "\":" + &projected);
                     }
                     (Some(_field_type), None) => {
                         // If the field is not found in the object, set it to Null
-                        items.push("\"".to_string() + &response_key + "\":null");
+                        buffer.push_str("null");
                     }
                     (None, _) => {
                         // It won't reach here already, as the selection should be validated before projection
@@ -213,20 +251,18 @@ fn project_selection_set_with_map(
                     &type_name,
                     &inline_fragment.type_condition,
                 ) {
-                    let projected = project_selection_set_with_map(
+                    project_selection_set_with_map(
                         obj,
                         errors,
                         &inline_fragment.selections,
                         &type_name,
                         schema_metadata,
                         variable_values,
+                        buffer,
+                        first,
                     );
-                    if let Some(projected) = projected {
-                        items.extend(projected);
-                    }
                 }
             }
         }
     }
-    Some(items)
 }
