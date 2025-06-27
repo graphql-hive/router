@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use query_planner::planner::plan_nodes::FlattenNodePathSegment;
 use serde_json::json;
 
@@ -36,9 +38,15 @@ fn array_cast_test() {
     });
 
     let mut result = vec![];
-    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
-        result.push(value);
-    });
+    traverse_and_callback(
+        &mut data,
+        &path,
+        &SchemaMetadata::default(),
+        VecDeque::new(),
+        &mut |value, _path| {
+            result.push(value);
+        },
+    );
     let expected = json!([{
         "id": "p4",
         "__typename": "Magazine",
@@ -61,9 +69,16 @@ fn simple_field_access() {
     let mut data = json!({"a": 1, "b": 2});
 
     let mut result = vec![];
-    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
-        result.push(value);
-    });
+
+    traverse_and_callback(
+        &mut data,
+        &path,
+        &SchemaMetadata::default(),
+        VecDeque::new(),
+        &mut |value, _path| {
+            result.push(value);
+        },
+    );
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         serde_json::to_string_pretty(&json!([1])).unwrap_or_default()
@@ -79,9 +94,16 @@ fn nested_field_access() {
     let mut data = json!({"a": {"b": 3}});
 
     let mut result = vec![];
-    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
-        result.push(value);
-    });
+
+    traverse_and_callback(
+        &mut data,
+        &path,
+        &SchemaMetadata::default(),
+        VecDeque::new(),
+        &mut |value, _path| {
+            result.push(value);
+        },
+    );
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         serde_json::to_string_pretty(&json!([3])).unwrap_or_default()
@@ -97,9 +119,16 @@ fn simple_list_access() {
     let mut data = json!({"a": [1, 2, 3]});
 
     let mut result = vec![];
-    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
-        result.push(value);
-    });
+
+    traverse_and_callback(
+        &mut data,
+        &path,
+        &SchemaMetadata::default(),
+        VecDeque::new(),
+        &mut |value, _path| {
+            result.push(value);
+        },
+    );
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         serde_json::to_string_pretty(&json!([1, 2, 3])).unwrap_or_default()
@@ -116,9 +145,16 @@ fn field_access_in_list() {
     let mut data = json!({"a": [{"b": 1}, {"b": 2}]});
 
     let mut result = vec![];
-    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
-        result.push(value);
-    });
+
+    traverse_and_callback(
+        &mut data,
+        &path,
+        &SchemaMetadata::default(),
+        VecDeque::new(),
+        &mut |value, _path| {
+            result.push(value);
+        },
+    );
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         serde_json::to_string_pretty(&json!([1, 2])).unwrap_or_default()
@@ -140,9 +176,16 @@ fn cast_in_list_with_field_access() {
     ]});
 
     let mut result = vec![];
-    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
-        result.push(value);
-    });
+
+    traverse_and_callback(
+        &mut data,
+        &path,
+        &SchemaMetadata::default(),
+        VecDeque::new(),
+        &mut |value, _path| {
+            result.push(value);
+        },
+    );
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         serde_json::to_string_pretty(&json!([1, 3])).unwrap_or_default()
@@ -171,9 +214,16 @@ fn filter_list_by_cast() {
     });
 
     let mut result = vec![];
-    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
-        result.push(value);
-    });
+
+    traverse_and_callback(
+        &mut data,
+        &path,
+        &SchemaMetadata::default(),
+        VecDeque::new(),
+        &mut |value, _path| {
+            result.push(value);
+        },
+    );
     let expected = json!([
         {
             "__typename": "Movie",
@@ -192,9 +242,16 @@ fn invalid_field() {
     let mut data = json!({"a": 1});
 
     let mut result = vec![];
-    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
-        result.push(value);
-    });
+
+    traverse_and_callback(
+        &mut data,
+        &path,
+        &SchemaMetadata::default(),
+        VecDeque::new(),
+        &mut |value, _path| {
+            result.push(value);
+        },
+    );
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         "[]"
@@ -210,9 +267,16 @@ fn invalid_nested_field() {
     let mut data = json!({"a": {"b": 1}});
 
     let mut result = vec![];
-    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
-        result.push(value);
-    });
+
+    traverse_and_callback(
+        &mut data,
+        &path,
+        &SchemaMetadata::default(),
+        VecDeque::new(),
+        &mut |value, _path| {
+            result.push(value);
+        },
+    );
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         "[]"
@@ -225,9 +289,16 @@ fn initial_data_is_array() {
     let mut data = json!([1, 2, 3]);
 
     let mut result = vec![];
-    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
-        result.push(value);
-    });
+
+    traverse_and_callback(
+        &mut data,
+        &path,
+        &SchemaMetadata::default(),
+        VecDeque::new(),
+        &mut |value, _path| {
+            result.push(value);
+        },
+    );
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         serde_json::to_string_pretty(&json!([1, 2, 3])).unwrap_or_default()
@@ -243,9 +314,16 @@ fn initial_data_is_array_with_field_access() {
     let mut data = json!([{"a": 1}, {"a": 2}]);
 
     let mut result = vec![];
-    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
-        result.push(value);
-    });
+
+    traverse_and_callback(
+        &mut data,
+        &path,
+        &SchemaMetadata::default(),
+        VecDeque::new(),
+        &mut |value, _path| {
+            result.push(value);
+        },
+    );
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         serde_json::to_string_pretty(&json!([1, 2])).unwrap_or_default()
@@ -261,9 +339,16 @@ fn cast_on_object_without_typename() {
     let mut data = json!({"a": 1});
 
     let mut result = vec![];
-    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
-        result.push(value);
-    });
+
+    traverse_and_callback(
+        &mut data,
+        &path,
+        &SchemaMetadata::default(),
+        VecDeque::new(),
+        &mut |value, _path| {
+            result.push(value);
+        },
+    );
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         serde_json::to_string_pretty(&json!([1])).unwrap_or_default()
@@ -283,9 +368,16 @@ fn no_match_on_cast() {
     ]});
 
     let mut result = vec![];
-    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
-        result.push(value);
-    });
+
+    traverse_and_callback(
+        &mut data,
+        &path,
+        &SchemaMetadata::default(),
+        VecDeque::new(),
+        &mut |value, _path| {
+            result.push(value);
+        },
+    );
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         "[]"
