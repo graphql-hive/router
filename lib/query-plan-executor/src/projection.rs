@@ -173,7 +173,7 @@ fn project_selection_set_with_map(
     }
     .to_string();
     let field_map = schema_metadata.type_fields.get(&type_name);
-    let implemented_interfaces = schema_metadata.possible_types.get(&type_name);
+    let possible_types_of_type = schema_metadata.possible_types.get(&type_name);
 
     for selection in &selection_set.items {
         match selection {
@@ -249,7 +249,7 @@ fn project_selection_set_with_map(
             SelectionItem::InlineFragment(inline_fragment) => {
                 let type_condition = &inline_fragment.type_condition;
                 let satisfies_type_condition = &type_name == type_condition
-                    || implemented_interfaces.map_or(false, |s| s.contains(type_condition));
+                    || possible_types_of_type.is_some_and(|s| s.contains(type_condition));
 
                 if satisfies_type_condition {
                     project_selection_set_with_map(
