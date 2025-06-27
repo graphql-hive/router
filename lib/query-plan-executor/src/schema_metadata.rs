@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use graphql_parser::{
     query::Type,
@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 #[derive(Debug)]
 pub struct SchemaMetadata {
-    pub possible_types: HashMap<String, Vec<String>>,
+    pub possible_types: HashMap<String, HashSet<String>>,
     pub enum_values: HashMap<String, Vec<String>>,
     pub type_fields: HashMap<String, HashMap<String, String>>,
     pub introspection_schema_root_json: Value,
@@ -77,16 +77,16 @@ impl SchemaWithMetadata for ConsumerSchema {
             }
         }
 
-        let mut final_possible_types: HashMap<String, Vec<String>> = HashMap::new();
+        let mut final_possible_types: HashMap<String, HashSet<String>> = HashMap::new();
         // Re-iterate over the possible_types
         for (definition_name_of_x, first_possible_types_of_x) in &first_possible_types {
-            let mut possible_types_of_x: Vec<String> = Vec::new();
+            let mut possible_types_of_x: HashSet<String> = HashSet::new();
             for definition_name_of_y in first_possible_types_of_x {
-                possible_types_of_x.push(definition_name_of_y.to_string());
+                possible_types_of_x.insert(definition_name_of_y.to_string());
                 let possible_types_of_y = first_possible_types.get(definition_name_of_y);
                 if let Some(possible_types_of_y) = possible_types_of_y {
                     for definition_name_of_z in possible_types_of_y {
-                        possible_types_of_x.push(definition_name_of_z.to_string());
+                        possible_types_of_x.insert(definition_name_of_z.to_string());
                     }
                 }
             }
