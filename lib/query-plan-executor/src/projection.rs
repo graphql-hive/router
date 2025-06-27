@@ -94,7 +94,7 @@ fn project_selection_set(
             serde_json::to_string(value).unwrap() // Return the string value wrapped in quotes
         }
         Value::Array(arr) => {
-            let items = arr
+            let items: Vec<String> = arr
                 .iter_mut()
                 .map(|item| {
                     project_selection_set(
@@ -106,7 +106,7 @@ fn project_selection_set(
                         variable_values,
                     )
                 })
-                .collect::<Vec<_>>();
+                .collect();
             "[".to_string() + &items.join(",") + "]"
         }
         Value::Object(obj) => {
