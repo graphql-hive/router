@@ -497,16 +497,16 @@ impl ExecutablePlanNode for ParallelNode {
                     let requires_nodes = fetch_node.requires.as_ref().unwrap();
                     let mut index = 0;
                     let mut indexes = BTreeSet::new();
+                    representations.push('[');
                     traverse_and_callback(data, &normalized_path, &mut |entity| {
-                        let entity_projected =
-                            execution_context.project_requires(&requires_nodes.items, entity);
-                        if entity_projected != "null" {
-                            if representations.is_empty() {
-                                representations.push('[');
-                            } else {
-                                representations.push(',');
-                            }
-                            representations.push_str(&entity_projected);
+                        let is_projected = execution_context.project_requires(
+                            &requires_nodes.items,
+                            entity,
+                            &mut representations,
+                            indexes.is_empty(),
+                            None,
+                        );
+                        if is_projected {
                             indexes.insert(index);
                         }
                         index += 1;
@@ -635,17 +635,19 @@ impl ExecutablePlanNode for FlattenNode {
             }
         };
         let requires_nodes = fetch_node.requires.as_ref().unwrap();
+        filtered_representations.push('[');
+        let mut first = true;
         traverse_and_callback(data, normalized_path.as_slice(), &mut |entity| {
-            let entity_projected =
-                execution_context.project_requires(&requires_nodes.items, entity);
-            if entity_projected != "null" {
-                if filtered_representations.is_empty() {
-                    filtered_representations.push('[');
-                } else {
-                    filtered_representations.push(',');
-                }
-                filtered_representations.push_str(&entity_projected);
+            let entity_projected = execution_context.project_requires(
+                &requires_nodes.items,
+                entity,
+                &mut filtered_representations,
+                first,
+                None,
+            );
+            if entity_projected {
                 representations.push(entity);
+                first = false;
             }
         });
         filtered_representations.push(']');
@@ -806,32 +808,54 @@ impl QueryPlanExecutionContext<'_> {
         &self,
         requires_selections: &Vec<SelectionItem>,
         entity: &Value,
-    ) -> String {
-        // Pre-allocate a buffer, but we can do it without I think
-        let mut buffer = String::with_capacity(1024);
-        self.project_requires_mut(requires_selections, entity, &mut buffer);
-        buffer
-    }
-
-    fn project_requires_mut(
-        &self,
-        requires_selections: &Vec<SelectionItem>,
-        entity: &Value,
         buffer: &mut String,
-    ) {
+        first: bool,
+        response_key: Option<&str>,
+    ) -> bool {
+        if entity.is_null() {
+            return false;
+        }
         match entity {
-            Value::Null => buffer.push_str("null"),
-            Value::Bool(b) => write!(buffer, "{}", b).unwrap(),
-            Value::Number(n) => write!(buffer, "{}", n).unwrap(),
-            Value::String(s) => write_and_escape_string(buffer, s),
+            Value::Null => {
+                return false;
+            }
+            Value::Bool(b) => {
+                if !first {
+                    buffer.push(',');
+                }
+                if let Some(response_key) = response_key {
+                    write!(buffer, "\"{}\":{}", response_key, b).unwrap();
+                } else {
+                    write!(buffer, "{}", b).unwrap()
+                }
+            }
+            Value::Number(n) => {
+                if !first {
+                    buffer.push(',');
+                }
+                if let Some(response_key) = response_key {
+                    write!(buffer, "\"{}\":{}", response_key, n).unwrap();
+                } else {
+                    write!(buffer, "{}", n).unwrap()
+                }
+            }
+            Value::String(s) => {
+                if !first {
+                    buffer.push(',');
+                }
+                if let Some(response_key) = response_key {
+                    write!(buffer, "\"{}\":", response_key).unwrap();
+                }
+                write_and_escape_string(buffer, s);
+            }
             Value::Array(entity_array) => {
+                if let Some(response_key) = response_key {
+                    write!(buffer, "\"{}\":", response_key).unwrap();
+                }
                 buffer.push('[');
                 let mut first = true;
                 for entity_item in entity_array {
-                    if !first {
-                        buffer.push(',');
-                    }
-                    self.project_requires_mut(requires_selections, entity_item, buffer);
+                    self.project_requires(requires_selections, entity_item, buffer, first, None);
                     first = false;
                 }
                 buffer.push(']');
@@ -840,14 +864,21 @@ impl QueryPlanExecutionContext<'_> {
                 if requires_selections.is_empty() {
                     // It is probably a scalar with an object value, so we write it directly
                     write!(buffer, "{}", serde_json::to_string(entity_obj).unwrap()).unwrap();
-                    return;
+                    return true;
                 }
-                buffer.push('{');
+                if entity_obj.is_empty() {
+                    return false;
+                }
+
+                if let Some(response_key) = response_key {
+                    write!(buffer, "\"{}\":{{", response_key).unwrap();
+                }
                 let mut first = true;
                 self.project_requires_map_mut(requires_selections, entity_obj, buffer, &mut first);
                 buffer.push('}');
             }
-        }
+        };
+        true
     }
 
     fn project_requires_map_mut(
@@ -857,45 +888,41 @@ impl QueryPlanExecutionContext<'_> {
         buffer: &mut String,
         first: &mut bool,
     ) {
-        let type_name = match entity_obj.get(TYPENAME_FIELD) {
-            Some(Value::String(tn)) => tn.as_str(),
-            _ => "", // TODO: improve it
-        };
         for requires_selection in requires_selections {
             match &requires_selection {
                 SelectionItem::Field(requires_selection) => {
                     let field_name = &requires_selection.name;
                     let response_key = requires_selection.selection_identifier();
+
                     let original = entity_obj
                         .get(field_name)
                         .unwrap_or(entity_obj.get(response_key).unwrap_or(&Value::Null));
 
+                    if original.is_null() {
+                        continue;
+                    }
+
                     // To avoid writing empty fields, we write to a temporary buffer first
-                    let mut temp_buffer = String::new();
-                    self.project_requires_mut(
+                    self.project_requires(
                         &requires_selection.selections.items,
                         original,
-                        &mut temp_buffer,
+                        buffer,
+                        *first,
+                        Some(response_key),
                     );
-
-                    if temp_buffer != "null" && !temp_buffer.is_empty() {
-                        if !*first {
-                            buffer.push(',');
-                        }
-                        write!(buffer, "\"{}\":{}", response_key, temp_buffer).unwrap();
-                        *first = false;
-                    }
+                    *first = false;
                 }
                 SelectionItem::InlineFragment(requires_selection) => {
-                    let type_condition = &requires_selection.type_condition;
-
-                    let satisfies_type_condition = type_name == type_condition
+                    let type_name = match entity_obj.get(TYPENAME_FIELD) {
+                        Some(Value::String(type_name)) => type_name,
+                        _ => requires_selection.type_condition.as_str(),
+                    };
+                    let satisfies_type_condition = type_name == requires_selection.type_condition
                         || self
                             .schema_metadata
                             .possible_types
-                            .get(type_condition)
-                            .is_some_and(|s| s.contains(type_name));
-
+                            .get(type_name)
+                            .is_some_and(|s| s.contains(&requires_selection.type_condition));
                     if satisfies_type_condition {
                         self.project_requires_map_mut(
                             &requires_selection.selections.items,

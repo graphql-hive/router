@@ -408,11 +408,22 @@ fn project_requires(c: &mut Criterion) {
     c.bench_function("project_requires", |b| {
         b.iter(|| {
             let execution_context = black_box(&execution_context);
+            let mut buffer = String::with_capacity(1024);
+            let mut first = true;
             for representation in black_box(&representations) {
-                let requires =
-                    execution_context.project_requires(&requires_selections, representation);
+                let requires = execution_context.project_requires(
+                    &requires_selections,
+                    representation,
+                    &mut buffer,
+                    first,
+                    None,
+                );
+                if requires {
+                    first = false;
+                }
                 black_box(requires);
             }
+            black_box(buffer)
         });
     });
 }
