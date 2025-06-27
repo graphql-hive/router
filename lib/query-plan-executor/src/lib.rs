@@ -8,6 +8,7 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::fmt::Write;
 use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
@@ -852,12 +853,62 @@ pub struct QueryPlanExecutionContext<'a> {
 }
 
 impl QueryPlanExecutionContext<'_> {
-    fn project_requires_map(
+    pub fn project_requires(
+        &self,
+        requires_selections: &Vec<SelectionItem>,
+        entity: &Value,
+    ) -> String {
+        // Pre-allocate a buffer, but we can do it without I think
+        let mut buffer = String::with_capacity(1024);
+        self.project_requires_mut(requires_selections, entity, &mut buffer);
+        buffer
+    }
+
+    fn project_requires_mut(
+        &self,
+        requires_selections: &Vec<SelectionItem>,
+        entity: &Value,
+        buffer: &mut String,
+    ) {
+        if requires_selections.is_empty() {
+            // No selections, so serialize the entity directly into the buffer.
+            write!(buffer, "{}", serde_json::to_string(entity).unwrap()).unwrap();
+            return;
+        }
+
+        match entity {
+            Value::Null => buffer.push_str("null"),
+            Value::Bool(b) => write!(buffer, "{}", b).unwrap(),
+            Value::Number(n) => write!(buffer, "{}", n).unwrap(),
+            Value::String(s) => write!(buffer, "{}", serde_json::to_string(s).unwrap()).unwrap(),
+            Value::Array(entity_array) => {
+                buffer.push('[');
+                let mut first = true;
+                for entity_item in entity_array {
+                    if !first {
+                        buffer.push(',');
+                    }
+                    self.project_requires_mut(requires_selections, entity_item, buffer);
+                    first = false;
+                }
+                buffer.push(']');
+            }
+            Value::Object(entity_obj) => {
+                buffer.push('{');
+                let mut first = true;
+                self.project_requires_map_mut(requires_selections, entity_obj, buffer, &mut first);
+                buffer.push('}');
+            }
+        }
+    }
+
+    fn project_requires_map_mut(
         &self,
         requires_selections: &Vec<SelectionItem>,
         entity_obj: &Map<String, Value>,
-    ) -> Vec<String> {
-        let mut items = vec![];
+        buffer: &mut String,
+        first: &mut bool,
+    ) {
         for requires_selection in requires_selections {
             match &requires_selection {
                 SelectionItem::Field(requires_selection) => {
@@ -866,10 +917,21 @@ impl QueryPlanExecutionContext<'_> {
                     let original = entity_obj
                         .get(field_name)
                         .unwrap_or(entity_obj.get(response_key).unwrap_or(&Value::Null));
-                    let projected_value =
-                        self.project_requires(&requires_selection.selections.items, original);
-                    if projected_value != "null" && !projected_value.is_empty() {
-                        items.push("\"".to_string() + response_key + "\":" + &projected_value)
+
+                    // To avoid writing empty fields, we write to a temporary buffer first
+                    let mut temp_buffer = String::new();
+                    self.project_requires_mut(
+                        &requires_selection.selections.items,
+                        original,
+                        &mut temp_buffer,
+                    );
+
+                    if temp_buffer != "null" && !temp_buffer.is_empty() {
+                        if !*first {
+                            buffer.push(',');
+                        }
+                        write!(buffer, "\"{}\":{}", response_key, temp_buffer).unwrap();
+                        *first = false;
                     }
                 }
                 SelectionItem::InlineFragment(requires_selection) => {
@@ -882,54 +944,15 @@ impl QueryPlanExecutionContext<'_> {
                         type_name,
                         &requires_selection.type_condition,
                     ) {
-                        let projected = self
-                            .project_requires_map(&requires_selection.selections.items, entity_obj);
-                        // Merge the projected value into the result
-                        if !projected.is_empty() {
-                            items.extend(projected);
-                        }
-                        // If the projected value is not an object, it will be ignored
+                        self.project_requires_map_mut(
+                            &requires_selection.selections.items,
+                            entity_obj,
+                            buffer,
+                            first,
+                        );
                     }
                 }
             }
-        }
-        items
-    }
-    pub fn project_requires(
-        &self,
-        requires_selections: &Vec<SelectionItem>,
-        entity: &Value,
-    ) -> String {
-        if requires_selections.is_empty() {
-            return serde_json::to_string(entity).unwrap(); // No selections to project, return the entity as is
-        }
-        match entity {
-            Value::Null => "null".to_string(),
-            Value::Array(entity_array) => {
-                let mut items = Vec::with_capacity(entity_array.len());
-                for entity_item in entity_array {
-                    let projected_value = self.project_requires(requires_selections, entity_item);
-                    if projected_value != "null" && !projected_value.is_empty() {
-                        items.push(projected_value);
-                    }
-                }
-                "[".to_string() + &items.join(",") + "]"
-            }
-            Value::Object(entity_obj) => {
-                let items = self.project_requires_map(requires_selections, entity_obj);
-
-                if items.is_empty() {
-                    return "null".to_string(); // No items to project, return null
-                }
-
-                // Join the items into a JSON object string
-                let projected_string = items.join(",");
-                "{".to_string() + &projected_string + "}"
-            }
-            Value::Bool(false) => "false".to_string(),
-            Value::Bool(true) => "true".to_string(),
-            Value::Number(num) => num.to_string(),
-            Value::String(string) => serde_json::to_string(string).unwrap(),
         }
     }
 }
