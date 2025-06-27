@@ -906,16 +906,14 @@ impl QueryPlanExecutionContext<'_> {
         match entity {
             Value::Null => "null".to_string(),
             Value::Array(entity_array) => {
-                let mut items = Vec::with_capacity(entity_array.len() + 2);
-                items.push("[".to_string());
+                let mut items = Vec::with_capacity(entity_array.len());
                 for entity_item in entity_array {
                     let projected_value = self.project_requires(requires_selections, entity_item);
                     if projected_value != "null" && !projected_value.is_empty() {
                         items.push(projected_value);
                     }
                 }
-                items.push("]".to_string());
-                items.join(",")
+                "[".to_string() + &items.join(",") + "]"
             }
             Value::Object(entity_obj) => {
                 let items = self.project_requires_map(requires_selections, entity_obj);
