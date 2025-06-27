@@ -264,14 +264,14 @@ fn process_inline_fragment<'a>(
     process_selection_set(graph, &fragment.selections, &next_paths)
 }
 
-#[instrument(level = "trace",skip(graph, field, paths), fields(
+#[instrument(level = "trace", skip(graph, field, paths), fields(
   field_name = &field.name,
   leaf = field.is_leaf()
 ))]
 fn process_field<'a>(
     graph: &'a Graph,
     field: &'a FieldSelection,
-    paths: &Vec<OperationPath>,
+    paths: &[OperationPath],
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
     let mut next_stack_to_resolve: ResolutionStack = vec![];
     let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
@@ -295,12 +295,10 @@ fn process_field<'a>(
 
         let excluded = ExcludedFromLookup::new();
         let direct_paths = find_direct_paths(graph, path, &NavigationTarget::Field(field))?;
-
         trace!("Direct paths found: {}", direct_paths.len());
 
         if !direct_paths.is_empty() {
             advanced = true;
-
             for direct_path in direct_paths {
                 tracker.add(&direct_path)?;
             }
@@ -308,25 +306,27 @@ fn process_field<'a>(
 
         let indirect_paths =
             find_indirect_paths(graph, path, &NavigationTarget::Field(field), &excluded)?;
-
         trace!("Indirect paths found: {}", indirect_paths.len());
 
         if !indirect_paths.is_empty() {
             advanced = true;
-
             for indirect_path in indirect_paths {
                 tracker.add(&indirect_path)?;
             }
         }
 
-        match advanced {
-            true => trace!("advanced: {}", path.pretty_print(graph)),
-            false => trace!("failed to advance: {}", path.pretty_print(graph)),
-        };
+        trace!(
+            "{}: {}",
+            if advanced {
+                "advanced"
+            } else {
+                "failed to advance"
+            },
+            path.pretty_print(graph)
+        );
     }
 
     let next_paths = tracker.get_best_paths();
-
     if next_paths.is_empty() {
         return Err(WalkOperationError::NoPathsFound(field.name.to_string()));
     }
@@ -335,11 +335,9 @@ fn process_field<'a>(
         paths_per_leaf.push(find_best_paths(next_paths));
     } else {
         trace!("Found {} paths", next_paths.len());
-
-        for next_selection_items in field.selections.items.iter() {
+        for next_selection_items in &field.selections.items {
             next_stack_to_resolve.push((next_selection_items, next_paths.clone()));
         }
     }
-
     Ok((next_stack_to_resolve, paths_per_leaf))
 }

@@ -78,11 +78,11 @@ pub fn create_normalized_document<'a, 'd>(
 #[cfg(test)]
 mod tests {
     use graphql_parser::parse_query;
-    use graphql_parser::parse_schema;
 
     use crate::ast::normalization::normalize_operation;
     use crate::ast::selection_item::SelectionItem;
     use crate::state::supergraph_state::SupergraphState;
+    use crate::utils::parsing::parse_schema;
 
     fn pretty_query(query_str: String) -> String {
         format!("{}", parse_query::<&str>(&query_str).unwrap())
@@ -99,8 +99,7 @@ mod tests {
               words(len: Int, sep: String): String
             }
           "#,
-        )
-        .expect("to parse");
+        );
 
         let supergraph = SupergraphState::new(&schema);
 
@@ -147,8 +146,7 @@ mod tests {
                 words(len: Int, sep: String): String
               }
             "#,
-        )
-        .expect("to parse");
+        );
 
         let supergraph = SupergraphState::new(&schema);
 
@@ -187,8 +185,7 @@ mod tests {
                 words: String
               }
             "#,
-        )
-        .expect("to parse");
+        );
 
         let supergraph = SupergraphState::new(&schema);
 
@@ -229,8 +226,7 @@ mod tests {
                 words(len: Int, sep: String): String
               }
             "#,
-        )
-        .expect("to parse");
+        );
         let supergraph = SupergraphState::new(&schema);
 
         insta::assert_snapshot!(
@@ -327,8 +323,7 @@ mod tests {
                 oven: Oven
               }
             "#,
-        )
-        .expect("to parse");
+        );
         let supergraph = SupergraphState::new(&schema);
 
         insta::assert_snapshot!(
@@ -453,8 +448,7 @@ mod tests {
                 words(len: Int, sep: String): String
               }
             "#,
-        )
-        .expect("to parse");
+        );
 
         let supergraph = SupergraphState::new(&schema);
         let r = normalize_operation(
@@ -510,8 +504,7 @@ mod tests {
                     name: String
                   }
                 "#,
-        )
-        .expect("to parse");
+        );
         let supergraph = SupergraphState::new(&schema);
 
         insta::assert_snapshot!(
@@ -539,6 +532,81 @@ mod tests {
               createProduct(name: $name) {
                 id
                 name
+              }
+            }
+            ",
+        );
+    }
+
+    #[test]
+    fn type_expansion() {
+        let schema_str = std::fs::read_to_string(
+            "./fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
+        )
+        .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                          query nodeid($id: ID!) {
+                            node(id: $id) {
+                              id
+                            }
+                          }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+        query nodeid($id: ID!) {
+          node(id: $id) {
+            ... on Account {
+              id
+            }
+            ... on Chat {
+              id
+            }
+          }
+        }
+        ",
+        );
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                          query nodeid($id: ID!) {
+                            node(id: $id) {
+                              ... on Chat {
+                                id
+                              }
+                            }
+                          }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+            query nodeid($id: ID!) {
+              node(id: $id) {
+                ... on Chat {
+                  id
+                }
               }
             }
             ",

@@ -10,6 +10,8 @@ pub enum WalkOperationError {
     GraphFailure(Box<GraphError>),
     #[error("Tail node missing info")]
     TailMissingInfo(NodeIndex),
+    #[error("Type Definition of '{0}' not found in Supergraph")]
+    TypeNotFound(String),
     #[error("No paths found for selection item: {0}")]
     NoPathsFound(String),
 }
