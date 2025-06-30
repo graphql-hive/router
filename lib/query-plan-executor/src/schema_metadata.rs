@@ -23,13 +23,11 @@ pub struct PossibleTypes {
 }
 
 impl PossibleTypes {
-    pub fn entity_satisfies_type_condition(&self, entity_type: &str, type_condition: &str) -> bool {
-        if entity_type == type_condition {
+    pub fn entity_satisfies_type_condition(&self, type_name: &str, type_condition: &str) -> bool {
+        if type_name == type_condition {
             true
         } else if let Some(possible_types_of_type) = self.map.get(type_condition) {
-            possible_types_of_type.contains(entity_type)
-        } else if let Some(possible_types_of_type) = self.map.get(entity_type) {
-            possible_types_of_type.contains(type_condition)
+            possible_types_of_type.contains(type_name)
         } else {
             false
         }
