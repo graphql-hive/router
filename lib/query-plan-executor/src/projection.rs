@@ -274,11 +274,9 @@ fn project_selection_set_with_map(
                 }
             }
             SelectionItem::InlineFragment(inline_fragment) => {
-                let type_condition = &inline_fragment.type_condition;
-
                 if schema_metadata
                     .possible_types
-                    .entity_satisfies_type_condition(&type_name, type_condition)
+                    .entity_satisfies_type_condition(&type_name, &inline_fragment.type_condition)
                 {
                     project_selection_set_with_map(
                         obj,
