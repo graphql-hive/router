@@ -182,15 +182,17 @@ fn project_selection_set_with_map(
         _ => type_name,
     }
     .to_string();
-    let field_map = schema_metadata.type_fields.get(&type_name);
-    if field_map.is_none() {
-        warn!(
-            "No fields found for type {}. Skipping projection.",
-            type_name
-        );
-        return false;
-    }
-    let field_map = field_map.unwrap();
+    let field_map = match schema_metadata.type_fields.get(&type_name) {
+        Some(field_map) => field_map,
+        None => {
+            // If the type is not found, we can't project anything
+            warn!(
+                "Type {} not found in schema metadata. Skipping projection.",
+                type_name
+            );
+            return false;
+        }
+    };
     let possible_types_of_type = schema_metadata.possible_types.get(&type_name);
 
     for selection in &selection_set.items {
