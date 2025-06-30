@@ -910,6 +910,7 @@ impl QueryPlanExecutionContext<'_> {
                         None,
                     );
                     if projected {
+                        // Only update `first` if we actually write something
                         first = false;
                     }
                 }
@@ -936,10 +937,10 @@ impl QueryPlanExecutionContext<'_> {
                     parent_first,
                 );
                 if first {
-                    // No fields were projected, so we don't write the object
+                    // If no fields were projected, "first" is still true,
+                    // so we skip writing the closing brace
                     return false;
-                }
-                if !first {
+                } else {
                     buffer.push('}');
                 }
             }
@@ -956,10 +957,6 @@ impl QueryPlanExecutionContext<'_> {
         parent_response_key: Option<&str>,
         parent_first: bool,
     ) {
-        let type_name = match entity_obj.get(TYPENAME_FIELD) {
-            Some(Value::String(tn)) => tn.as_str(),
-            _ => "", // TODO: improve it
-        };
         for requires_selection in requires_selections {
             match &requires_selection {
                 SelectionItem::Field(requires_selection) => {
@@ -1009,12 +1006,17 @@ impl QueryPlanExecutionContext<'_> {
                 SelectionItem::InlineFragment(requires_selection) => {
                     let type_condition = &requires_selection.type_condition;
 
+                    let type_name = match entity_obj.get(TYPENAME_FIELD) {
+                        Some(Value::String(tn)) => tn.as_str(),
+                        _ => type_condition,
+                    };
+
                     let satisfies_type_condition = type_name == type_condition
                         || self
                             .schema_metadata
                             .possible_types
                             .get(type_condition)
-                            .map_or(false, |s| s.contains(type_name));
+                            .is_some_and(|s| s.contains(type_name));
 
                     if satisfies_type_condition {
                         self.project_requires_map_mut(
@@ -1046,6 +1048,7 @@ pub fn traverse_and_callback<'a, Callback>(
     if remaining_path.is_empty() {
         if let Value::Array(arr) = current_data {
             // If the path is empty, we call the callback on each item in the array
+            // We iterate because we want the entity objects directly
             for item in arr.iter_mut() {
                 callback(item);
             }
