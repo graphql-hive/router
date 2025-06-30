@@ -927,10 +927,6 @@ impl QueryPlanExecutionContext<'_> {
         parent_response_key: Option<&str>,
         parent_first: bool,
     ) {
-        let type_name = match entity_obj.get(TYPENAME_FIELD) {
-            Some(Value::String(tn)) => tn.as_str(),
-            _ => "", // TODO: improve it
-        };
         for requires_selection in requires_selections {
             match &requires_selection {
                 SelectionItem::Field(requires_selection) => {
