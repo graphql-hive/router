@@ -30,7 +30,7 @@ echo "Starting Hive RS"
 ../target/release/gateway ./supergraph.graphql &
 GATEWAY_PID=$!
 sleep 5
-k6 run k6.js > summaries/hive-rs.log
+k6 run k6.js > ./summaries/hive-rs.log
 kill_process "$GATEWAY_PID"
 echo "Finished Hive RS"
 
@@ -43,7 +43,7 @@ for dir in ./others/*; do
         ./run.sh &
         GATEWAY_PID=$!
         sleep 5
-        k6 run k6.js > "summaries/$dir.log"
+        k6 run k6.js > "./summaries/$dir.log"
         kill_process "$GATEWAY_PID"
         echo "Finished $dir"
       fi
