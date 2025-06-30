@@ -874,6 +874,7 @@ impl QueryPlanExecutionContext<'_> {
                         None,
                     );
                     if projected {
+                        // Only update `first` if we actually write something
                         first = false;
                     }
                 }
@@ -900,10 +901,10 @@ impl QueryPlanExecutionContext<'_> {
                     parent_first,
                 );
                 if first {
-                    // No fields were projected, so we don't write the object
+                    // If no fields were projected, "first" is still true,
+                    // so we skip writing the closing brace
                     return false;
-                }
-                if !first {
+                } else {
                     buffer.push('}');
                 }
             }
@@ -1003,6 +1004,7 @@ pub fn traverse_and_callback<'a, Callback>(
     if remaining_path.is_empty() {
         if let Value::Array(arr) = current_data {
             // If the path is empty, we call the callback on each item in the array
+            // We iterate because we want the entity objects directly
             for item in arr.iter_mut() {
                 callback(item);
             }
