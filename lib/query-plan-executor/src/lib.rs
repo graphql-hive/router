@@ -335,8 +335,8 @@ impl ApplyFetchRewrite for KeyRenamer {
                         };
                         let satisfies_type_condition = type_name == type_condition
                             || possible_types
-                                .get(type_name)
-                                .is_some_and(|s| s.contains(type_condition));
+                                .get(type_condition)
+                                .is_some_and(|s| s.contains(type_name));
                         if satisfies_type_condition {
                             self.apply_path(possible_types, value, remaining_path)
                         }
@@ -394,8 +394,8 @@ impl ApplyFetchRewrite for ValueSetter {
                     };
                     let satisfies_type_condition = type_name == type_condition
                         || possible_types
-                            .get(type_name)
-                            .is_some_and(|s| s.contains(type_condition));
+                            .get(type_condition)
+                            .is_some_and(|s| s.contains(type_name));
                     if satisfies_type_condition {
                         self.apply_path(possible_types, data, remaining_path)
                     }
@@ -638,6 +638,11 @@ impl ExecutablePlanNode for FlattenNode {
         filtered_representations.push('[');
         let mut first = true;
         traverse_and_callback(data, normalized_path.as_slice(), &mut |entity| {
+            if let Some(input_rewrites) = &fetch_node.input_rewrites {
+                for input_rewrite in input_rewrites {
+                    input_rewrite.apply(&execution_context.schema_metadata.possible_types, entity);
+                }
+            }
             let entity_projected = execution_context.project_requires(
                 &requires_nodes.items,
                 entity,
@@ -987,7 +992,6 @@ impl QueryPlanExecutionContext<'_> {
                             .possible_types
                             .get(type_condition)
                             .is_some_and(|s| s.contains(type_name));
-
                     if satisfies_type_condition {
                         self.project_requires_map_mut(
                             &requires_selection.selections.items,

@@ -196,7 +196,6 @@ fn project_selection_set_with_map(
             return false;
         }
     };
-    let possible_types_of_type = schema_metadata.possible_types.get(&type_name);
 
     for selection in &selection_set.items {
         match selection {
@@ -278,8 +277,9 @@ fn project_selection_set_with_map(
             }
             SelectionItem::InlineFragment(inline_fragment) => {
                 let type_condition = &inline_fragment.type_condition;
+                let possible_types_of_type = schema_metadata.possible_types.get(type_condition);
                 let satisfies_type_condition = &type_name == type_condition
-                    || possible_types_of_type.is_some_and(|s| s.contains(type_condition));
+                    || possible_types_of_type.is_some_and(|s| s.contains(&type_name));
 
                 if satisfies_type_condition {
                     project_selection_set_with_map(
