@@ -10,7 +10,7 @@ use query_planner::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashSet;
-use std::fmt::Write;
+use std::{collections::BTreeSet, fmt::Write};
 use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
@@ -97,42 +97,9 @@ fn process_errors_and_extensions(
         execution_context.extensions.extend(extensions);
     }
 }
-
-#[instrument(
-    level = "debug",
-    skip_all
-    name = "process_representations_result",
-    fields(
-        representations_count = %result.entities.as_ref().map_or(0, |e| e.len())
-    ),
-)]
-fn process_representations_result(
-    result: ExecuteForRepresentationsResult,
-    representations: &mut Vec<&mut Value>,
-    execution_context: &mut QueryPlanExecutionContext<'_>,
-) {
-    if let Some(entities) = result.entities {
-        trace!(
-            "Processing representations result: {} entities",
-            entities.len()
-        );
-        for (entity, index) in entities.into_iter().zip(result.indexes.into_iter()) {
-            if let Some(representation) = representations.get_mut(index) {
-                trace!(
-                    "Merging entity into representation at index {}: {:?}",
-                    index,
-                    entity
-                );
-                deep_merge::deep_merge(representation, entity);
-            }
-        }
-    }
-    process_errors_and_extensions(execution_context, result.errors, result.extensions);
-}
-
 struct ExecuteForRepresentationsResult {
     entities: Option<Vec<Value>>,
-    indexes: Vec<usize>,
+    indexes: BTreeSet<usize>,
     errors: Option<Vec<GraphQLError>>,
     extensions: Option<HashMap<String, Value>>,
 }
@@ -143,16 +110,11 @@ trait ExecutableFetchNode {
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
     ) -> ExecutionResult;
-    fn project_representations(
-        &self,
-        execution_context: &QueryPlanExecutionContext<'_>,
-        representations: &[&mut Value],
-    ) -> ProjectRepresentationsResult;
     async fn execute_for_projected_representations(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
         filtered_representations: String,
-        filtered_repr_indexes: Vec<usize>,
+        indexes: BTreeSet<usize>,
     ) -> ExecuteForRepresentationsResult;
     fn apply_output_rewrites(
         &self,
@@ -177,11 +139,6 @@ impl ExecutablePlanNode for FetchNode {
 
         process_root_result(fetch_result, execution_context, data);
     }
-}
-
-struct ProjectRepresentationsResult {
-    representations: String,
-    indexes: Vec<usize>,
 }
 
 #[async_trait]
@@ -223,41 +180,6 @@ impl ExecutableFetchNode for FetchNode {
         fetch_result
     }
 
-    fn project_representations(
-        &self,
-        execution_context: &QueryPlanExecutionContext<'_>,
-        representations: &[&mut Value],
-    ) -> ProjectRepresentationsResult {
-        let mut filtered_repr_indexes = Vec::new();
-        // 1. Filter representations based on requires (if present)
-        let mut filtered_representations = vec![];
-        let requires_nodes = self.requires.as_ref().unwrap();
-        for (index, entity) in representations.iter().enumerate() {
-            let entity_projected =
-                execution_context.project_requires(&requires_nodes.items, entity);
-            if entity_projected != "null" {
-                filtered_representations.push(entity_projected);
-                filtered_repr_indexes.push(index);
-            }
-        }
-
-        // if let Some(input_rewrites) = &self.input_rewrites {
-        //     for representation in filtered_representations.iter_mut() {
-        //         for rewrite in input_rewrites {
-        //             rewrite.apply(
-        //                 &execution_context.schema_metadata.possible_types,
-        //                 representation,
-        //             );
-        //         }
-        //     }
-        // }
-
-        ProjectRepresentationsResult {
-            representations: "[".to_string() + &filtered_representations.join(",") + "]",
-            indexes: filtered_repr_indexes,
-        }
-    }
-
     #[instrument(
         level = "debug",
         skip_all,
@@ -270,7 +192,7 @@ impl ExecutableFetchNode for FetchNode {
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
         filtered_representations: String,
-        filtered_repr_indexes: Vec<usize>,
+        indexes: BTreeSet<usize>,
     ) -> ExecuteForRepresentationsResult {
         // 2. Prepare variables for fetch
         let execution_request = ExecutionRequest {
@@ -305,7 +227,7 @@ impl ExecutableFetchNode for FetchNode {
         };
         ExecuteForRepresentationsResult {
             entities,
-            indexes: filtered_repr_indexes,
+            indexes,
             errors: fetch_result.errors,
             extensions: fetch_result.extensions,
         }
@@ -629,16 +551,53 @@ impl ExecutablePlanNode for ParallelNode {
         // Collect Fetch node results and non-fetch nodes for sequential execution
         let now = std::time::Instant::now();
         for node in &self.nodes {
-            let res = create_execution_step(node, execution_context, data);
-
-            if let Some(fetch_job) = res.fetch_job {
-                fetch_jobs.push(fetch_job);
-            }
-            if let Some(flatten_job) = res.flatten_job {
-                flatten_jobs.push(flatten_job);
-            }
-            if let Some(flatten_path) = res.flatten_path {
-                flatten_paths.push(flatten_path);
+            match node {
+                PlanNode::Fetch(fetch_node) => {
+                    // Execute FetchNode in parallel
+                    let job = fetch_node.execute_for_root(execution_context);
+                    fetch_jobs.push(job);
+                }
+                PlanNode::Flatten(flatten_node) => {
+                    let normalized_path: Vec<&str> =
+                        flatten_node.path.iter().map(String::as_str).collect();
+                    let mut representations = String::with_capacity(1024);
+                    let fetch_node = match flatten_node.node.as_ref() {
+                        PlanNode::Fetch(fetch_node) => fetch_node,
+                        _ => {
+                            warn!(
+                                "FlattenNode can only execute FetchNode as child node, found: {:?}",
+                                flatten_node.node
+                            );
+                            continue; // Skip if the child node is not a FetchNode
+                        }
+                    };
+                    let requires_nodes = fetch_node.requires.as_ref().unwrap();
+                    let mut index = 0;
+                    let mut indexes = BTreeSet::new();
+                    representations.push('[');
+                    traverse_and_callback(data, &normalized_path, &mut |entity| {
+                        let is_projected = execution_context.project_requires(
+                            &requires_nodes.items,
+                            entity,
+                            &mut representations,
+                            indexes.is_empty(),
+                            None,
+                        );
+                        if is_projected {
+                            indexes.insert(index);
+                        }
+                        index += 1;
+                    });
+                    representations.push(']');
+                    let job = fetch_node.execute_for_projected_representations(
+                        execution_context,
+                        representations,
+                        indexes,
+                    );
+                    flatten_jobs.push(job);
+                    flatten_paths.push(normalized_path);
+                }
+                _ => {}
             }
         }
         trace!(
@@ -665,14 +624,18 @@ impl ExecutablePlanNode for ParallelNode {
         let now = std::time::Instant::now();
         for (result, path) in flatten_results.into_iter().zip(flatten_paths) {
             // Process FlattenNode results
-            if let Some(entities) = result.entities {
-                let mut collected_representations = traverse_and_collect(data, &path);
-                for (entity, index) in entities.into_iter().zip(result.indexes.into_iter()) {
-                    if let Some(representation) = collected_representations.get_mut(index) {
-                        // Merge the entity into the representation
-                        deep_merge::deep_merge(representation, entity);
+            if let Some(mut entities) = result.entities {
+                let mut index_of_traverse = 0;
+                let mut index_of_entities = 0;
+                traverse_and_callback(data, &path, &mut |target| {
+                    if result.indexes.contains(&index_of_traverse) {
+                        let entity = entities.get_mut(index_of_entities).unwrap().take();
+                        // Merge the entity into the target
+                        deep_merge::deep_merge(target, entity);
+                        index_of_entities += 1;
                     }
-                }
+                    index_of_traverse += 1;
+                });
             }
             // Extend errors and extensions from the result
             if let Some(errors) = result.errors {
@@ -736,51 +699,51 @@ impl ExecutablePlanNode for FlattenNode {
         // because `collected_representations` borrows `data_for_flatten`, not `execution_context.data`.
         let normalized_path: Vec<&str> = self.path.iter().map(String::as_str).collect();
         let now = std::time::Instant::now();
-        let mut representations = traverse_and_collect(data, normalized_path.as_slice());
+        let mut representations = vec![];
+        let mut filtered_representations = String::with_capacity(1024);
+        let fetch_node = match self.node.as_ref() {
+            PlanNode::Fetch(fetch_node) => fetch_node,
+            _ => {
+                warn!(
+                    "FlattenNode can only execute FetchNode as child node, found: {:?}",
+                    self.node
+                );
+                return; // Skip if the child node is not a FetchNode
+            }
+        };
+        let requires_nodes = fetch_node.requires.as_ref().unwrap();
+        filtered_representations.push('[');
+        let mut first = true;
+        traverse_and_callback(data, normalized_path.as_slice(), &mut |entity| {
+            let entity_projected = execution_context.project_requires(
+                &requires_nodes.items,
+                entity,
+                &mut filtered_representations,
+                first,
+                None,
+            );
+            if entity_projected {
+                representations.push(entity);
+                first = false;
+            }
+        });
+        filtered_representations.push(']');
         trace!(
             "traversed and collected representations: {:?} in {:#?}",
             representations.len(),
             now.elapsed()
         );
-        match self.node.as_ref() {
-            PlanNode::Fetch(fetch_node) => {
-                let now = std::time::Instant::now();
-                let ProjectRepresentationsResult {
-                    representations: filtered_representations,
-                    indexes: filtered_repr_indexes,
-                } = fetch_node.project_representations(execution_context, &representations);
-                trace!(
-                    "projected representations: {:?} in {:#?}",
-                    representations.len(),
-                    now.elapsed()
-                );
-
-                let now = std::time::Instant::now();
-                let result = fetch_node
-                    .execute_for_projected_representations(
-                        execution_context,
-                        filtered_representations,
-                        filtered_repr_indexes,
-                    )
-                    .await;
-                trace!(
-                    "executed projected representations: {:?} in {:?}",
-                    representations.len(),
-                    now.elapsed()
-                );
-                // Process the result
-                process_representations_result(result, &mut representations, execution_context);
-                trace!(
-                    "processed projected representations: {:?} in {:?}",
-                    representations.len(),
-                    now.elapsed()
-                );
-            }
-            _ => {
-                unimplemented!(
-                    "FlattenNode can only execute FetchNode as child node, found: {:?}",
-                    self.node
-                );
+        let result = fetch_node
+            .execute_for_projected_representations(
+                execution_context,
+                filtered_representations,
+                BTreeSet::new(),
+            )
+            .await;
+        if let Some(entities) = result.entities {
+            for (entity, target) in entities.into_iter().zip(representations.iter_mut()) {
+                // Merge the entity into the representation
+                deep_merge::deep_merge(target, entity);
             }
         }
     }
@@ -908,32 +871,65 @@ impl QueryPlanExecutionContext<'_> {
         &self,
         requires_selections: &Vec<SelectionItem>,
         entity: &Value,
-    ) -> String {
-        // Pre-allocate a buffer, but we can do it without I think
-        let mut buffer = String::with_capacity(1024);
-        self.project_requires_mut(requires_selections, entity, &mut buffer);
-        buffer
-    }
-
-    fn project_requires_mut(
-        &self,
-        requires_selections: &Vec<SelectionItem>,
-        entity: &Value,
         buffer: &mut String,
-    ) {
+        first: bool,
+        response_key: Option<&str>,
+    ) -> bool {
         match entity {
-            Value::Null => buffer.push_str("null"),
-            Value::Bool(b) => write!(buffer, "{}", b).unwrap(),
-            Value::Number(n) => write!(buffer, "{}", n).unwrap(),
-            Value::String(s) => write_and_escape_string(buffer, s),
+            Value::Null => {
+                return false;
+            }
+            Value::Bool(b) => {
+                if !first {
+                    buffer.push(',');
+                }
+                if let Some(response_key) = response_key {
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push('"');
+                    buffer.push(':');
+                    buffer.push_str(if *b { "true" } else { "false" });
+                } else {
+                    buffer.push_str(if *b { "true" } else { "false" });
+                }
+            }
+            Value::Number(n) => {
+                if !first {
+                    buffer.push(',');
+                }
+                if let Some(response_key) = response_key {
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push_str("\":");
+                }
+
+                write!(buffer, "{}", n).unwrap()
+            }
+            Value::String(s) => {
+                if !first {
+                    buffer.push(',');
+                }
+                if let Some(response_key) = response_key {
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push_str("\":");
+                }
+                write_and_escape_string(buffer, s);
+            }
             Value::Array(entity_array) => {
-                buffer.push('[');
+                if !first {
+                    buffer.push(',');
+                }
+                if let Some(response_key) = response_key {
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push_str("\":[");
+                } else {
+                    buffer.push('[');
+                }
                 let mut first = true;
                 for entity_item in entity_array {
-                    if !first {
-                        buffer.push(',');
-                    }
-                    self.project_requires_mut(requires_selections, entity_item, buffer);
+                    self.project_requires(requires_selections, entity_item, buffer, first, None);
                     first = false;
                 }
                 buffer.push(']');
@@ -941,15 +937,31 @@ impl QueryPlanExecutionContext<'_> {
             Value::Object(entity_obj) => {
                 if requires_selections.is_empty() {
                     // It is probably a scalar with an object value, so we write it directly
-                    write!(buffer, "{}", serde_json::to_string(entity_obj).unwrap()).unwrap();
-                    return;
+                    buffer.push_str(
+                        &serde_json::to_string(entity_obj).unwrap()
+                    );
+                    return true;
                 }
-                buffer.push('{');
+                if entity_obj.is_empty() {
+                    return false;
+                }
+
+                if !first {
+                    buffer.push(',');
+                }
+                if let Some(response_key) = response_key {
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push_str("\":{");
+                } else {
+                    buffer.push('{');
+                }
                 let mut first = true;
                 self.project_requires_map_mut(requires_selections, entity_obj, buffer, &mut first);
                 buffer.push('}');
             }
-        }
+        };
+        true
     }
 
     fn project_requires_map_mut(
@@ -959,45 +971,41 @@ impl QueryPlanExecutionContext<'_> {
         buffer: &mut String,
         first: &mut bool,
     ) {
-        let type_name = match entity_obj.get(TYPENAME_FIELD) {
-            Some(Value::String(tn)) => tn.as_str(),
-            _ => "", // TODO: improve it
-        };
         for requires_selection in requires_selections {
             match &requires_selection {
                 SelectionItem::Field(requires_selection) => {
                     let field_name = &requires_selection.name;
                     let response_key = requires_selection.selection_identifier();
+
                     let original = entity_obj
                         .get(field_name)
                         .unwrap_or(entity_obj.get(response_key).unwrap_or(&Value::Null));
 
+                    if original.is_null() {
+                        continue;
+                    }
+
                     // To avoid writing empty fields, we write to a temporary buffer first
-                    let mut temp_buffer = String::new();
-                    self.project_requires_mut(
+                    self.project_requires(
                         &requires_selection.selections.items,
                         original,
-                        &mut temp_buffer,
+                        buffer,
+                        *first,
+                        Some(response_key),
                     );
-
-                    if temp_buffer != "null" && !temp_buffer.is_empty() {
-                        if !*first {
-                            buffer.push(',');
-                        }
-                        write!(buffer, "\"{}\":{}", response_key, temp_buffer).unwrap();
-                        *first = false;
-                    }
+                    *first = false;
                 }
                 SelectionItem::InlineFragment(requires_selection) => {
-                    let type_condition = &requires_selection.type_condition;
-
-                    let satisfies_type_condition = type_name == type_condition
+                    let type_name = match entity_obj.get(TYPENAME_FIELD) {
+                        Some(Value::String(type_name)) => type_name,
+                        _ => requires_selection.type_condition.as_str(),
+                    };
+                    let satisfies_type_condition = type_name == requires_selection.type_condition
                         || self
                             .schema_metadata
                             .possible_types
-                            .get(type_condition)
-                            .is_some_and(|s| s.contains(type_name));
-
+                            .get(type_name)
+                            .is_some_and(|s| s.contains(&requires_selection.type_condition));
                     if satisfies_type_condition {
                         self.project_requires_map_mut(
                             &requires_selection.selections.items,
@@ -1012,28 +1020,15 @@ impl QueryPlanExecutionContext<'_> {
     }
 }
 
-/// Recursively traverses the data according to the path segments,
-/// handling '@' for array iteration, and collects the final values.current_data.to_vec()
-#[instrument(level = "trace", skip_all, fields(
-    current_type = ?current_data,
-    remaining_path = ?remaining_path
-))]
-pub fn traverse_and_collect<'a>(
+pub fn traverse_and_callback<'a, Callback>(
     current_data: &'a mut Value,
     remaining_path: &[&str],
-) -> Vec<&'a mut Value> {
-    let mut collected = Vec::new();
-    traverse_and_collect_mut(current_data, remaining_path, &mut collected);
-    collected
-}
-
-fn traverse_and_collect_mut<'a>(
-    current_data: &'a mut Value,
-    remaining_path: &[&str],
-    collected: &mut Vec<&'a mut Value>,
-) {
+    callback: &mut Callback,
+) where
+    Callback: FnMut(&'a mut Value),
+{
     if remaining_path.is_empty() {
-        collected.push(current_data);
+        callback(current_data);
         return;
     }
 
@@ -1043,12 +1038,12 @@ fn traverse_and_collect_mut<'a>(
     if key == "@" {
         if let Value::Array(list) = current_data {
             for item in list.iter_mut() {
-                traverse_and_collect_mut(item, rest_of_path, collected);
+                traverse_and_callback(item, rest_of_path, callback);
             }
         }
     } else if let Value::Object(map) = current_data {
         if let Some(next_data) = map.get_mut(key) {
-            traverse_and_collect_mut(next_data, rest_of_path, collected);
+            traverse_and_callback(next_data, rest_of_path, callback);
         }
     }
 }

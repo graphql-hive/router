@@ -251,8 +251,12 @@ fn traverse_and_collect(c: &mut Criterion) {
             let result = black_box(&mut result);
             let data = result.get_mut("data").unwrap();
             let path = black_box(&path);
-            let result = query_plan_executor::traverse_and_collect(data, path);
-            black_box(result);
+            let mut results = vec![];
+            query_plan_executor::traverse_and_callback(data, path, &mut |data| {
+                results.push(data);
+            });
+            black_box(());
+            black_box(results);
         });
     });
 }
@@ -333,7 +337,10 @@ fn project_requires(c: &mut Criterion) {
     ];
     let mut result: Value = non_projected_result::get_result();
     let data = result.get_mut("data").unwrap();
-    let representations = query_plan_executor::traverse_and_collect(data, &path);
+    let mut representations = vec![];
+    query_plan_executor::traverse_and_callback(data, &path, &mut |data| {
+        representations.push(data);
+    });
     let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
         .expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
@@ -403,11 +410,22 @@ fn project_requires(c: &mut Criterion) {
     c.bench_function("project_requires", |b| {
         b.iter(|| {
             let execution_context = black_box(&execution_context);
+            let mut buffer = String::with_capacity(1024);
+            let mut first = true;
             for representation in black_box(&representations) {
-                let requires =
-                    execution_context.project_requires(&requires_selections, representation);
+                let requires = execution_context.project_requires(
+                    &requires_selections,
+                    representation,
+                    &mut buffer,
+                    first,
+                    None,
+                );
+                if requires {
+                    first = false;
+                }
                 black_box(requires);
             }
+            black_box(buffer)
         });
     });
 }
