@@ -151,6 +151,9 @@ fn project_selection_set(
             // If first is mutated, it means we added "{"
             if !first {
                 buffer.push('}');
+            } else {
+                // If first is still true, it means we didn't add anything, so we should just send an empty object
+                buffer.push_str("{}");
             }
         }
     }
