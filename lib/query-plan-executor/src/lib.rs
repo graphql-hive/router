@@ -874,9 +874,7 @@ impl QueryPlanExecutionContext<'_> {
             Value::Object(entity_obj) => {
                 if requires_selections.is_empty() {
                     // It is probably a scalar with an object value, so we write it directly
-                    buffer.push_str(
-                        &serde_json::to_string(entity_obj).unwrap()
-                    );
+                    buffer.push_str(&serde_json::to_string(entity_obj).unwrap());
                     return true;
                 }
                 if entity_obj.is_empty() {
