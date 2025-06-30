@@ -673,14 +673,8 @@ impl ExecutablePlanNode for FlattenNode {
                 deep_merge::deep_merge(target, entity);
             }
         }
-        if let Some(errors) = result.errors {
-            // Extend errors from the result
-            execution_context.errors.extend(errors);
-        }
-        if let Some(extensions) = result.extensions {
-            // Extend extensions from the result
-            execution_context.extensions.extend(extensions);
-        }
+
+        process_errors_and_extensions(execution_context, result.errors, result.extensions);
     }
 }
 
