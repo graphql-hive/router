@@ -134,9 +134,8 @@ fn project_selection_set(
             buffer.push(']');
         }
         Value::Object(obj) => {
-            buffer.push('{');
             let mut first = true;
-            project_selection_set_with_map(
+            let is_projected = project_selection_set_with_map(
                 obj,
                 errors,
                 selection_set,
@@ -146,7 +145,13 @@ fn project_selection_set(
                 buffer,
                 &mut first,
             );
-            buffer.push('}');
+            if !is_projected {
+                buffer.push_str("null");
+            } else
+            // If first is mutated, it means we added "{"
+            if !first {
+                buffer.push('}');
+            }
         }
     }
 }
@@ -171,13 +176,21 @@ fn project_selection_set_with_map(
     variable_values: &Option<HashMap<String, Value>>,
     buffer: &mut String,
     first: &mut bool,
-) {
+) -> bool {
     let type_name = match obj.get(TYPENAME_FIELD) {
         Some(Value::String(type_name)) => type_name,
         _ => type_name,
     }
     .to_string();
     let field_map = schema_metadata.type_fields.get(&type_name);
+    if field_map.is_none() {
+        warn!(
+            "No fields found for type {}. Skipping projection.",
+            type_name
+        );
+        return false;
+    }
+    let field_map = field_map.unwrap();
     let possible_types_of_type = schema_metadata.possible_types.get(&type_name);
 
     for selection in &selection_set.items {
@@ -202,7 +215,9 @@ fn project_selection_set_with_map(
 
                 let response_key = field.alias.as_ref().unwrap_or(&field.name);
 
-                if !*first {
+                if *first {
+                    buffer.push('{');
+                } else {
                     buffer.push(',');
                 }
                 *first = false;
@@ -220,7 +235,6 @@ fn project_selection_set_with_map(
                 buffer.push_str(response_key);
                 buffer.push_str("\":");
 
-                let field_map = field_map.unwrap();
                 let field_type = field_map.get(&field.name);
 
                 if field.name == "__schema" && type_name == "Query" {
@@ -283,4 +297,5 @@ fn project_selection_set_with_map(
             }
         }
     }
+    true
 }
