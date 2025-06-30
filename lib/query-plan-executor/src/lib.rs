@@ -821,9 +821,13 @@ impl QueryPlanExecutionContext<'_> {
                     buffer.push(',');
                 }
                 if let Some(response_key) = response_key {
-                    write!(buffer, "\"{}\":{}", response_key, b).unwrap();
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push('"');
+                    buffer.push(':');
+                    buffer.push_str(if *b { "true" } else { "false" });
                 } else {
-                    write!(buffer, "{}", b).unwrap()
+                    buffer.push_str(if *b { "true" } else { "false" });
                 }
             }
             Value::Number(n) => {
@@ -831,17 +835,21 @@ impl QueryPlanExecutionContext<'_> {
                     buffer.push(',');
                 }
                 if let Some(response_key) = response_key {
-                    write!(buffer, "\"{}\":{}", response_key, n).unwrap();
-                } else {
-                    write!(buffer, "{}", n).unwrap()
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push_str("\":");
                 }
+
+                write!(buffer, "{}", n).unwrap()
             }
             Value::String(s) => {
                 if !first {
                     buffer.push(',');
                 }
                 if let Some(response_key) = response_key {
-                    write!(buffer, "\"{}\":", response_key).unwrap();
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push_str("\":");
                 }
                 write_and_escape_string(buffer, s);
             }
@@ -850,7 +858,9 @@ impl QueryPlanExecutionContext<'_> {
                     buffer.push(',');
                 }
                 if let Some(response_key) = response_key {
-                    write!(buffer, "\"{}\":[", response_key).unwrap();
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push_str("\":[");
                 } else {
                     buffer.push('[');
                 }
@@ -864,7 +874,9 @@ impl QueryPlanExecutionContext<'_> {
             Value::Object(entity_obj) => {
                 if requires_selections.is_empty() {
                     // It is probably a scalar with an object value, so we write it directly
-                    write!(buffer, "{}", serde_json::to_string(entity_obj).unwrap()).unwrap();
+                    buffer.push_str(
+                        &serde_json::to_string(entity_obj).unwrap()
+                    );
                     return true;
                 }
                 if entity_obj.is_empty() {
@@ -875,7 +887,9 @@ impl QueryPlanExecutionContext<'_> {
                     buffer.push(',');
                 }
                 if let Some(response_key) = response_key {
-                    write!(buffer, "\"{}\":{{", response_key).unwrap();
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push_str("\":{");
                 } else {
                     buffer.push('{');
                 }
