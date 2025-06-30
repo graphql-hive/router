@@ -936,6 +936,7 @@ impl QueryPlanExecutionContext<'_> {
                             buffer.push_str("\":");
                         }
                         buffer.push('{');
+                        // Write __typename only if the object has other fields
                         if let Some(Value::String(type_name)) = entity_obj.get(TYPENAME_FIELD) {
                             buffer.push_str("\"__typename\":");
                             write_and_escape_string(buffer, type_name);
