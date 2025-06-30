@@ -991,7 +991,7 @@ impl QueryPlanExecutionContext<'_> {
                             .schema_metadata
                             .possible_types
                             .entity_satisfies_type_condition(
-                                &requires_selection.type_condition,
+                                type_condition,
                                 type_name,
                             )
                     {
