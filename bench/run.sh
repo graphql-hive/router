@@ -23,6 +23,8 @@ trap cleanup EXIT INT
 
 cargo build -r -p gateway -p subgraphs
 
+mkdir -p summaries
+
 ../target/release/subgraphs &
 SUBGRAPHS_PID=$!
 
