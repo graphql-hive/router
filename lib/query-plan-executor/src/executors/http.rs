@@ -26,11 +26,12 @@ impl HTTPSubgraphExecutor {
         let mut body = "{\"query\":".to_string()
             + &serde_json::to_string(&execution_request.query).unwrap()
             + ",\"variables\":{";
-        let variables_added = false;
+        let mut variables_added = false;
         if let Some(variables) = &execution_request.variables {
             let variables_entry = variables
                 .iter()
                 .map(|(key, value)| {
+                    variables_added = true;
                     "\"".to_string() + key + "\": " + &serde_json::to_string(value).unwrap()
                 })
                 .collect::<Vec<String>>()
