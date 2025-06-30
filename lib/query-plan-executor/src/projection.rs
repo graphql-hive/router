@@ -34,7 +34,12 @@ pub fn project_by_operation(
     // We may want to remove it, but let's see.
     let mut buffer = String::with_capacity(4096);
 
-    write!(buffer, "{{\"data\":").unwrap();
+    buffer.push('{');
+    buffer.push('"');
+    buffer.push_str("data");
+    buffer.push('"');
+    buffer.push(':');
+
     project_selection_set(
         data,
         errors,
@@ -203,11 +208,17 @@ fn project_selection_set_with_map(
                 *first = false;
 
                 if field.name == TYPENAME_FIELD {
-                    write!(buffer, "\"{}\":\"{}\"", response_key, type_name).unwrap();
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push_str("\":\"");
+                    buffer.push_str(&type_name);
+                    buffer.push('"');
                     continue;
                 }
 
-                write!(buffer, "\"{}\":", response_key).unwrap();
+                buffer.push('"');
+                buffer.push_str(response_key);
+                buffer.push_str("\":");
 
                 let field_map = field_map.unwrap();
                 let field_type = field_map.get(&field.name);
