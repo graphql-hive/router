@@ -9,11 +9,7 @@ use query_planner::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashSet;
-<<<<<<< HEAD
 use std::{collections::BTreeSet, fmt::Write};
-=======
-use std::fmt::Write;
->>>>>>> e782aaf (Use HashSet for possible types and inline)
 use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
@@ -677,14 +673,8 @@ impl ExecutablePlanNode for FlattenNode {
                 deep_merge::deep_merge(target, entity);
             }
         }
-        if let Some(errors) = result.errors {
-            // Extend errors from the result
-            execution_context.errors.extend(errors);
-        }
-        if let Some(extensions) = result.extensions {
-            // Extend extensions from the result
-            execution_context.extensions.extend(extensions);
-        }
+
+        process_errors_and_extensions(execution_context, result.errors, result.extensions);
     }
 }
 
@@ -937,10 +927,6 @@ impl QueryPlanExecutionContext<'_> {
         parent_response_key: Option<&str>,
         parent_first: bool,
     ) {
-        let type_name = match entity_obj.get(TYPENAME_FIELD) {
-            Some(Value::String(tn)) => tn.as_str(),
-            _ => "", // TODO: improve it
-        };
         for requires_selection in requires_selections {
             match &requires_selection {
                 SelectionItem::Field(requires_selection) => {
