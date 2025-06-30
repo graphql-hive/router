@@ -26,20 +26,22 @@ impl HTTPSubgraphExecutor {
         let mut body = "{\"query\":".to_string()
             + &serde_json::to_string(&execution_request.query).unwrap()
             + ",\"variables\":{";
-        let mut variables_added = false;
+        let mut first_variable = true;
         if let Some(variables) = &execution_request.variables {
-            let variables_entry = variables
-                .iter()
-                .map(|(key, value)| {
-                    variables_added = true;
-                    "\"".to_string() + key + "\": " + &serde_json::to_string(value).unwrap()
-                })
-                .collect::<Vec<String>>()
-                .join(",");
-            body.push_str(&variables_entry);
+            for (variable_name, variable_value) in variables {
+                if !first_variable {
+                    body.push(',');
+                }
+                first_variable = false;
+                body.push('"');
+                body.push_str(variable_name);
+                body.push_str("\":");
+                let value_str = serde_json::to_string(variable_value).unwrap();
+                body.push_str(&value_str);
+            }
         }
         if let Some(representations) = &execution_request.representations {
-            if variables_added {
+            if !first_variable {
                 body.push(',');
             }
             body.push_str(&("\"representations\":".to_string() + representations));
