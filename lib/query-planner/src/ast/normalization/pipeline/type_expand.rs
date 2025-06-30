@@ -252,10 +252,17 @@ fn handle_type_expansion_candidate<'a>(
     let should_expand = possible_object_types.iter().any(|obj| {
         // Expand if any object type implementing the interface:
         // 1. Does not have the field.
-        // 2. Has the field, but it's marked as external.
+        // 2. Has the field, but it's marked as external or is overridden.
         match obj.fields.get(&field.name) {
             None => true,
-            Some(obj_field) => obj_field.join_field.iter().any(|jf| jf.external),
+            Some(obj_field) => obj_field.join_field.iter().any(|jf| {
+                jf.external
+                    || jf.used_overridden
+                    || jf
+                        .override_value
+                        .as_ref()
+                        .is_some_and(|name| state.subgraph_exists_by_name(name))
+            }),
         }
     });
 
