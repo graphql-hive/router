@@ -881,19 +881,19 @@ impl QueryPlanExecutionContext<'_> {
                     return false;
                 }
 
-                if !first {
-                    buffer.push(',');
-                }
-                if let Some(response_key) = response_key {
-                    buffer.push('"');
-                    buffer.push_str(response_key);
-                    buffer.push_str("\":{");
-                } else {
-                    buffer.push('{');
-                }
+                let parent_first = first;
                 let mut first = true;
-                self.project_requires_map_mut(requires_selections, entity_obj, buffer, &mut first);
-                buffer.push('}');
+                self.project_requires_map_mut(
+                    requires_selections,
+                    entity_obj,
+                    buffer,
+                    &mut first,
+                    response_key,
+                    parent_first,
+                );
+                if !first {
+                    buffer.push('}');
+                }
             }
         };
         true
@@ -905,12 +905,18 @@ impl QueryPlanExecutionContext<'_> {
         entity_obj: &Map<String, Value>,
         buffer: &mut String,
         first: &mut bool,
+        parent_response_key: Option<&str>,
+        parent_first: bool,
     ) {
         for requires_selection in requires_selections {
             match &requires_selection {
                 SelectionItem::Field(requires_selection) => {
                     let field_name = &requires_selection.name;
                     let response_key = requires_selection.selection_identifier();
+                    if response_key == TYPENAME_FIELD {
+                        // Skip __typename field, it is handled separately
+                        continue;
+                    }
 
                     let original = entity_obj
                         .get(field_name)
@@ -918,6 +924,24 @@ impl QueryPlanExecutionContext<'_> {
 
                     if original.is_null() {
                         continue;
+                    }
+
+                    if *first {
+                        if !parent_first {
+                            buffer.push(',');
+                        }
+                        if let Some(parent_response_key) = parent_response_key {
+                            buffer.push('"');
+                            buffer.push_str(parent_response_key);
+                            buffer.push_str("\":");
+                        }
+                        buffer.push('{');
+                        // Write __typename only if the object has other fields
+                        if let Some(Value::String(type_name)) = entity_obj.get(TYPENAME_FIELD) {
+                            buffer.push_str("\"__typename\":");
+                            write_and_escape_string(buffer, type_name);
+                            buffer.push(',');
+                        }
                     }
 
                     // To avoid writing empty fields, we write to a temporary buffer first
@@ -947,6 +971,8 @@ impl QueryPlanExecutionContext<'_> {
                             entity_obj,
                             buffer,
                             first,
+                            parent_response_key,
+                            parent_first,
                         );
                     }
                 }
