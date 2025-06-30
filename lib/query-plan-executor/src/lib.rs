@@ -448,7 +448,7 @@ impl ExecutablePlanNode for ParallelNode {
                 PlanNode::Flatten(flatten_node) => {
                     let normalized_path: Vec<&str> =
                         flatten_node.path.iter().map(String::as_str).collect();
-                    let mut representations = String::with_capacity(1024);
+                    let mut filtered_representations = String::with_capacity(1024);
                     let fetch_node = match flatten_node.node.as_ref() {
                         PlanNode::Fetch(fetch_node) => fetch_node,
                         _ => {
@@ -462,24 +462,43 @@ impl ExecutablePlanNode for ParallelNode {
                     let requires_nodes = fetch_node.requires.as_ref().unwrap();
                     let mut index = 0;
                     let mut indexes = BTreeSet::new();
-                    representations.push('[');
+                    filtered_representations.push('[');
                     traverse_and_callback(data, &normalized_path, &mut |entity| {
-                        let is_projected = execution_context.project_requires(
-                            &requires_nodes.items,
-                            entity,
-                            &mut representations,
-                            indexes.is_empty(),
-                            None,
-                        );
+                        let is_projected = if let Some(input_rewrites) = &fetch_node.input_rewrites
+                        {
+                            // We need to own the value and not modify the original entity
+                            let mut entity_owned = entity.to_owned();
+                            for input_rewrite in input_rewrites {
+                                input_rewrite.apply(
+                                    &execution_context.schema_metadata.possible_types,
+                                    &mut entity_owned,
+                                );
+                            }
+                            execution_context.project_requires(
+                                &requires_nodes.items,
+                                &entity_owned,
+                                &mut filtered_representations,
+                                indexes.is_empty(),
+                                None,
+                            )
+                        } else {
+                            execution_context.project_requires(
+                                &requires_nodes.items,
+                                entity,
+                                &mut filtered_representations,
+                                indexes.is_empty(),
+                                None,
+                            )
+                        };
                         if is_projected {
                             indexes.insert(index);
                         }
                         index += 1;
                     });
-                    representations.push(']');
+                    filtered_representations.push(']');
                     let job = fetch_node.execute_for_projected_representations(
                         execution_context,
-                        representations,
+                        filtered_representations,
                         indexes,
                     );
                     flatten_jobs.push(job);
@@ -603,19 +622,32 @@ impl ExecutablePlanNode for FlattenNode {
         filtered_representations.push('[');
         let mut first = true;
         traverse_and_callback(data, normalized_path.as_slice(), &mut |entity| {
-            if let Some(input_rewrites) = &fetch_node.input_rewrites {
+            let is_projected = if let Some(input_rewrites) = &fetch_node.input_rewrites {
+                // We need to own the value and not modify the original entity
+                let mut entity_owned = entity.to_owned();
                 for input_rewrite in input_rewrites {
-                    input_rewrite.apply(&execution_context.schema_metadata.possible_types, entity);
+                    input_rewrite.apply(
+                        &execution_context.schema_metadata.possible_types,
+                        &mut entity_owned,
+                    );
                 }
-            }
-            let entity_projected = execution_context.project_requires(
-                &requires_nodes.items,
-                entity,
-                &mut filtered_representations,
-                first,
-                None,
-            );
-            if entity_projected {
+                execution_context.project_requires(
+                    &requires_nodes.items,
+                    &entity_owned,
+                    &mut filtered_representations,
+                    first,
+                    None,
+                )
+            } else {
+                execution_context.project_requires(
+                    &requires_nodes.items,
+                    entity,
+                    &mut filtered_representations,
+                    first,
+                    None,
+                )
+            };
+            if is_projected {
                 representations.push(entity);
                 first = false;
             }
@@ -950,6 +982,7 @@ impl QueryPlanExecutionContext<'_> {
                         Some(Value::String(type_name)) => type_name,
                         _ => type_condition,
                     };
+                    // For projection, both sides of the condition are valid
                     if self
                         .schema_metadata
                         .possible_types
@@ -957,6 +990,13 @@ impl QueryPlanExecutionContext<'_> {
                             type_name,
                            type_condition,
                         )
+                        || self
+                            .schema_metadata
+                            .possible_types
+                            .entity_satisfies_type_condition(
+                                &requires_selection.type_condition,
+                                type_name,
+                            )
                     {
                         self.project_requires_map_mut(
                             &requires_selection.selections.items,

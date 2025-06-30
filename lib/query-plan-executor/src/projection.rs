@@ -264,6 +264,10 @@ fn project_selection_set_with_map(
                         buffer,
                     );
                 } else {
+                    println!(
+                        "Field '{}' not found in object of type '{}'. Setting to null.\n {:#?}",
+                        response_key, type_name, obj
+                    );
                     // If the field is not found in the object, set it to Null
                     buffer.push_str("null");
                     continue;
