@@ -8,14 +8,14 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::HashSet;
 use std::{collections::BTreeSet, fmt::Write};
 use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
 use crate::{
-    executors::map::SubgraphExecutorMap, json_writer::write_and_escape_string,
-    schema_metadata::SchemaMetadata,
+    executors::map::SubgraphExecutorMap,
+    json_writer::write_and_escape_string,
+    schema_metadata::{PossibleTypes, SchemaMetadata},
 };
 pub mod deep_merge;
 pub mod executors;
@@ -115,11 +115,7 @@ trait ExecutableFetchNode {
         filtered_representations: String,
         indexes: BTreeSet<usize>,
     ) -> ExecuteForRepresentationsResult;
-    fn apply_output_rewrites(
-        &self,
-        possible_types: &HashMap<String, HashSet<String>>,
-        data: &mut Value,
-    );
+    fn apply_output_rewrites(&self, possible_types: &PossibleTypes, data: &mut Value);
     fn prepare_variables_for_fetch_node(
         &self,
         variable_values: &Option<HashMap<String, Value>>,
@@ -232,11 +228,7 @@ impl ExecutableFetchNode for FetchNode {
         }
     }
 
-    fn apply_output_rewrites(
-        &self,
-        possible_types: &HashMap<String, HashSet<String>>,
-        data: &mut Value,
-    ) {
+    fn apply_output_rewrites(&self, possible_types: &PossibleTypes, data: &mut Value) {
         if let Some(output_rewrites) = &self.output_rewrites {
             for rewrite in output_rewrites {
                 rewrite.apply(possible_types, data);
@@ -276,28 +268,18 @@ impl ExecutableFetchNode for FetchNode {
 }
 
 trait ApplyFetchRewrite {
-    fn apply(&self, possible_types: &HashMap<String, HashSet<String>>, value: &mut Value);
-    fn apply_path(
-        &self,
-        possible_types: &HashMap<String, HashSet<String>>,
-        value: &mut Value,
-        path: &[String],
-    );
+    fn apply(&self, possible_types: &PossibleTypes, value: &mut Value);
+    fn apply_path(&self, possible_types: &PossibleTypes, value: &mut Value, path: &[String]);
 }
 
 impl ApplyFetchRewrite for FetchRewrite {
-    fn apply(&self, possible_types: &HashMap<String, HashSet<String>>, value: &mut Value) {
+    fn apply(&self, possible_types: &PossibleTypes, value: &mut Value) {
         match self {
             FetchRewrite::KeyRenamer(renamer) => renamer.apply(possible_types, value),
             FetchRewrite::ValueSetter(setter) => setter.apply(possible_types, value),
         }
     }
-    fn apply_path(
-        &self,
-        possible_types: &HashMap<String, HashSet<String>>,
-        value: &mut Value,
-        path: &[String],
-    ) {
+    fn apply_path(&self, possible_types: &PossibleTypes, value: &mut Value, path: &[String]) {
         match self {
             FetchRewrite::KeyRenamer(renamer) => renamer.apply_path(possible_types, value, path),
             FetchRewrite::ValueSetter(setter) => setter.apply_path(possible_types, value, path),
@@ -306,16 +288,11 @@ impl ApplyFetchRewrite for FetchRewrite {
 }
 
 impl ApplyFetchRewrite for KeyRenamer {
-    fn apply(&self, possible_types: &HashMap<String, HashSet<String>>, value: &mut Value) {
+    fn apply(&self, possible_types: &PossibleTypes, value: &mut Value) {
         self.apply_path(possible_types, value, &self.path)
     }
     // Applies key rename operation on a Value (mutably)
-    fn apply_path(
-        &self,
-        possible_types: &HashMap<String, HashSet<String>>,
-        value: &mut Value,
-        path: &[String],
-    ) {
+    fn apply_path(&self, possible_types: &PossibleTypes, value: &mut Value, path: &[String]) {
         let current_segment = &path[0];
         let remaining_path = &path[1..];
 
@@ -333,11 +310,8 @@ impl ApplyFetchRewrite for KeyRenamer {
                             Some(Value::String(type_name)) => type_name,
                             _ => type_condition, // Default to type_condition if not found
                         };
-                        let satisfies_type_condition = type_name == type_condition
-                            || possible_types
-                                .get(type_condition)
-                                .is_some_and(|s| s.contains(type_name));
-                        if satisfies_type_condition {
+                        if possible_types.entity_satisfies_type_condition(type_name, type_condition)
+                        {
                             self.apply_path(possible_types, value, remaining_path)
                         }
                     }
@@ -360,17 +334,12 @@ impl ApplyFetchRewrite for KeyRenamer {
 }
 
 impl ApplyFetchRewrite for ValueSetter {
-    fn apply(&self, possible_types: &HashMap<String, HashSet<String>>, data: &mut Value) {
+    fn apply(&self, possible_types: &PossibleTypes, data: &mut Value) {
         self.apply_path(possible_types, data, &self.path)
     }
 
     // Applies value setting on a Value (returns a new Value)
-    fn apply_path(
-        &self,
-        possible_types: &HashMap<String, HashSet<String>>,
-        data: &mut Value,
-        path: &[String],
-    ) {
+    fn apply_path(&self, possible_types: &PossibleTypes, data: &mut Value, path: &[String]) {
         if path.is_empty() {
             *data = self.set_value_to.to_owned();
             return;
@@ -392,11 +361,7 @@ impl ApplyFetchRewrite for ValueSetter {
                         Some(Value::String(type_name)) => type_name,
                         _ => type_condition, // Default to type_condition if not found
                     };
-                    let satisfies_type_condition = type_name == type_condition
-                        || possible_types
-                            .get(type_condition)
-                            .is_some_and(|s| s.contains(type_name));
-                    if satisfies_type_condition {
+                    if possible_types.entity_satisfies_type_condition(type_name, type_condition) {
                         self.apply_path(possible_types, data, remaining_path)
                     }
                 } else if let Some(data) = map.get_mut(current_key) {
@@ -985,14 +950,14 @@ impl QueryPlanExecutionContext<'_> {
                         Some(Value::String(type_name)) => type_name,
                         _ => type_condition,
                     };
-
-                    let satisfies_type_condition = type_name == type_condition
-                        || self
-                            .schema_metadata
-                            .possible_types
-                            .get(type_condition)
-                            .is_some_and(|s| s.contains(type_name));
-                    if satisfies_type_condition {
+                    if self
+                        .schema_metadata
+                        .possible_types
+                        .entity_satisfies_type_condition(
+                            type_name,
+                           type_condition,
+                        )
+                    {
                         self.project_requires_map_mut(
                             &requires_selection.selections.items,
                             entity_obj,
