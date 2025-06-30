@@ -902,7 +902,13 @@ impl QueryPlanExecutionContext<'_> {
                 }
                 let mut first = true;
                 for entity_item in entity_array {
-                    let projected = self.project_requires(requires_selections, entity_item, buffer, first, None);
+                    let projected = self.project_requires(
+                        requires_selections,
+                        entity_item,
+                        buffer,
+                        first,
+                        None,
+                    );
                     if projected {
                         first = false;
                     }
