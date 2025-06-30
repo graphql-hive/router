@@ -902,8 +902,10 @@ impl QueryPlanExecutionContext<'_> {
                 }
                 let mut first = true;
                 for entity_item in entity_array {
-                    self.project_requires(requires_selections, entity_item, buffer, first, None);
-                    first = false;
+                    let projected = self.project_requires(requires_selections, entity_item, buffer, first, None);
+                    if projected {
+                        first = false;
+                    }
                 }
                 buffer.push(']');
             }
@@ -927,6 +929,10 @@ impl QueryPlanExecutionContext<'_> {
                     response_key,
                     parent_first,
                 );
+                if first {
+                    // No fields were projected, so we don't write the object
+                    return false;
+                }
                 if !first {
                     buffer.push('}');
                 }
@@ -1032,7 +1038,15 @@ pub fn traverse_and_callback<'a, Callback>(
     Callback: FnMut(&'a mut Value),
 {
     if remaining_path.is_empty() {
-        callback(current_data);
+        if let Value::Array(arr) = current_data {
+            // If the path is empty, we call the callback on each item in the array
+            for item in arr.iter_mut() {
+                callback(item);
+            }
+        } else {
+            // If the path is empty and current_data is not an array, just call the callback
+            callback(current_data);
+        }
         return;
     }
 
