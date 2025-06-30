@@ -239,7 +239,10 @@ fn project_selection_set_with_map(
                 buffer.push_str(response_key);
                 buffer.push_str("\":");
 
-                let field_type = field_map.get(&field.name);
+                let field_type: &str = field_map
+                    .get(&field.name)
+                    .map(|s| s.as_str())
+                    .unwrap_or("Any");
 
                 if field.name == "__schema" && type_name == "Query" {
                     obj.insert(
@@ -250,38 +253,29 @@ fn project_selection_set_with_map(
 
                 let field_val = obj.get_mut(response_key);
 
-                match (field_type, field_val) {
-                    (Some(field_type), Some(field_val)) => {
-                        project_selection_set(
-                            field_val,
-                            errors,
-                            &field.selections,
-                            field_type,
-                            schema_metadata,
-                            variable_values,
-                            buffer,
-                        );
-                    }
-                    (Some(_field_type), None) => {
-                        // If the field is not found in the object, set it to Null
-                        buffer.push_str("null");
-                    }
-                    (None, _) => {
-                        // It won't reach here already, as the selection should be validated before projection
-                        warn!(
-                            "Field {} not found in type {}. Skipping projection.",
-                            field.name, type_name
-                        );
-                    }
+                if let Some(field_val) = field_val {
+                    project_selection_set(
+                        field_val,
+                        errors,
+                        &field.selections,
+                        field_type,
+                        schema_metadata,
+                        variable_values,
+                        buffer,
+                    );
+                } else {
+                    // If the field is not found in the object, set it to Null
+                    buffer.push_str("null");
+                    continue;
                 }
             }
             SelectionItem::InlineFragment(inline_fragment) => {
                 let type_condition = &inline_fragment.type_condition;
-                let possible_types_of_type = schema_metadata.possible_types.get(type_condition);
-                let satisfies_type_condition = &type_name == type_condition
-                    || possible_types_of_type.is_some_and(|s| s.contains(&type_name));
 
-                if satisfies_type_condition {
+                if schema_metadata
+                    .possible_types
+                    .entity_satisfies_type_condition(&type_name, type_condition)
+                {
                     project_selection_set_with_map(
                         obj,
                         errors,
