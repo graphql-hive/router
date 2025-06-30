@@ -9,6 +9,8 @@ pub struct HTTPSubgraphExecutor {
     pub http_client: reqwest::Client,
 }
 
+const FIRST_VARIABLE_STR: &str = ",\"variables\":{";
+
 impl HTTPSubgraphExecutor {
     pub fn new(endpoint: String, http_client: reqwest::Client) -> Self {
         HTTPSubgraphExecutor {
@@ -23,16 +25,17 @@ impl HTTPSubgraphExecutor {
     ) -> Result<ExecutionResult, reqwest::Error> {
         trace!("Executing HTTP request to subgraph at {}", self.endpoint);
 
-        let mut body = "{\"query\":".to_string()
-            + &serde_json::to_string(&execution_request.query).unwrap()
-            + ",\"variables\":{";
+        let mut body =
+            "{\"query\":".to_string() + &serde_json::to_string(&execution_request.query).unwrap();
         let mut first_variable = true;
         if let Some(variables) = &execution_request.variables {
             for (variable_name, variable_value) in variables {
-                if !first_variable {
+                if first_variable {
+                    body.push_str(FIRST_VARIABLE_STR);
+                    first_variable = false;
+                } else {
                     body.push(',');
                 }
-                first_variable = false;
                 body.push('"');
                 body.push_str(variable_name);
                 body.push_str("\":");
@@ -41,12 +44,20 @@ impl HTTPSubgraphExecutor {
             }
         }
         if let Some(representations) = &execution_request.representations {
-            if !first_variable {
+            if first_variable {
+                body.push_str(FIRST_VARIABLE_STR);
+                first_variable = false;
+            } else {
                 body.push(',');
             }
-            body.push_str(&("\"representations\":".to_string() + representations));
+            body.push_str("\"representations\":");
+            body.push_str(representations);
         }
-        body.push_str("}}");
+        // "first_variable" should be still true if there are no variables
+        if !first_variable {
+            body.push('}');
+        }
+        body.push('}');
 
         self.http_client
             .post(&self.endpoint)
