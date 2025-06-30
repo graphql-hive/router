@@ -40,14 +40,15 @@ for dir in ./others/*; do
   if [ -d "$dir" ]; then
     (
       if [ -f "$dir/run.sh" ]; then
-        echo "Running $dir"
+        GATEWAY_NAME=$(basename "$dir")
+        echo "Running $GATEWAY_NAME"
         cd "$dir"
         ./run.sh &
         GATEWAY_PID=$!
         sleep 5
-        k6 run k6.js > "./summaries/$dir.log"
+        k6 run k6.js > "../summaries/$GATEWAY_NAME.log"
         kill_process "$GATEWAY_PID"
-        echo "Finished $dir"
+        echo "Finished $GATEWAY_NAME"
       fi
     )
   fi
