@@ -983,10 +983,7 @@ impl QueryPlanExecutionContext<'_> {
                         || self
                             .schema_metadata
                             .possible_types
-                            .entity_satisfies_type_condition(
-                                type_condition,
-                                type_name,
-                            )
+                            .entity_satisfies_type_condition(type_condition, type_name)
                     {
                         self.project_requires_map_mut(
                             &requires_selection.selections.items,
