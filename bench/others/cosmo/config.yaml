@@ -1,5 +1,0 @@
-router_config_path: config.json
-listen_addr: 0.0.0.0:4000
-log_level: error
-graph:
-  token: ""
