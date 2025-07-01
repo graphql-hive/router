@@ -1,7 +1,10 @@
+use std::collections::HashMap;
+
 use axum::body::{to_bytes, Body};
 use axum::extract::Query;
 use http::{Method, Request};
-use query_plan_executor::ExecutionRequest;
+use serde::Deserialize;
+use serde_json::Value;
 use tracing::{trace, warn};
 
 use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
@@ -22,6 +25,17 @@ struct GETQueryParams {
     pub operation_name: Option<String>,
     pub variables: Option<String>,
     pub extensions: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionRequest {
+    pub query: String,
+    pub operation_name: Option<String>,
+    pub variables: Option<HashMap<String, Value>>,
+    // TODO: We don't use extensions yet, but we definitely will in the future.
+    #[allow(dead_code)]
+    pub extensions: Option<HashMap<String, Value>>,
 }
 
 impl TryInto<ExecutionRequest> for GETQueryParams {
@@ -58,7 +72,6 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
             operation_name: self.operation_name,
             variables,
             extensions,
-            representations: None,
         };
 
         Ok(execution_request)

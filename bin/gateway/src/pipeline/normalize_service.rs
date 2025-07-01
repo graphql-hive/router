@@ -3,7 +3,6 @@ use std::sync::Arc;
 use axum::body::Body;
 use http::Request;
 use query_plan_executor::introspection::filter_introspection_fields_in_operation;
-use query_plan_executor::ExecutionRequest;
 use query_planner::ast::document::NormalizedDocument;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
@@ -12,6 +11,7 @@ use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
 use crate::pipeline::gateway_layer::{
     GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer,
 };
+use crate::pipeline::graphql_request_params::ExecutionRequest;
 use crate::pipeline::http_request_params::HttpRequestParams;
 use crate::pipeline::parser_service::GraphQLParserPayload;
 use crate::shared_state::GatewaySharedState;

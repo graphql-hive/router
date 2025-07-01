@@ -1,13 +1,13 @@
 use axum::body::Body;
 use graphql_parser::query::Document;
 use http::Request;
-use query_plan_executor::ExecutionRequest;
 use query_planner::utils::parsing::safe_parse_operation;
 
 use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
 use crate::pipeline::gateway_layer::{
     GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer,
 };
+use crate::pipeline::graphql_request_params::ExecutionRequest;
 use crate::pipeline::http_request_params::HttpRequestParams;
 use tracing::{error, trace};
 

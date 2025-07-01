@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 use tracing::{error, instrument, trace};
 
-use crate::{executors::common::SubgraphExecutor, ExecutionRequest, ExecutionResult};
+use crate::{
+    executors::common::SubgraphExecutor, json_writer::write_and_escape_string, ExecutionResult,
+    SubgraphExecutionRequest,
+};
 
 #[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
@@ -19,14 +22,16 @@ impl HTTPSubgraphExecutor {
         }
     }
 
-    async fn _execute(
+    async fn _execute<'a>(
         &self,
-        execution_request: ExecutionRequest,
+        execution_request: SubgraphExecutionRequest<'a>,
     ) -> Result<ExecutionResult, String> {
         trace!("Executing HTTP request to subgraph at {}", self.endpoint);
 
-        let mut body =
-            "{\"query\":".to_string() + &serde_json::to_string(&execution_request.query).unwrap();
+        // We may want to remove it, but let's see.
+        let mut body = String::with_capacity(4096);
+        body.push_str("{\"query\":");
+        write_and_escape_string(&mut body, execution_request.query);
         let mut first_variable = true;
         if let Some(variables) = &execution_request.variables {
             for (variable_name, variable_value) in variables {
@@ -87,7 +92,10 @@ impl HTTPSubgraphExecutor {
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
     #[instrument(level = "trace", skip(self), name = "http_subgraph_execute", fields(endpoint = %self.endpoint))]
-    async fn execute(&self, execution_request: ExecutionRequest) -> ExecutionResult {
+    async fn execute<'a>(
+        &self,
+        execution_request: SubgraphExecutionRequest<'a>,
+    ) -> ExecutionResult {
         self._execute(execution_request).await.unwrap_or_else(|e| {
             error!(e);
             ExecutionResult::from_error_message(e)
