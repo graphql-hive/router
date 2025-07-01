@@ -1,7 +1,0 @@
-#!/bin/sh
-
-FEDERATED_GRAPH_NAME=production \
-TRACING_ENABLED=false \
-METRICS_OTLP_ENABLED=false \
-GRAPHQL_METRICS_ENABLED=false \
-./cosmo
