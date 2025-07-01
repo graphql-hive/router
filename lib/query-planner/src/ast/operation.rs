@@ -1,9 +1,6 @@
 use std::fmt::Display;
 
-use crate::{
-    ast::hash::{ast_hash, shape_hash},
-    state::supergraph_state::TypeNode,
-};
+use crate::{ast::hash::ast_hash, state::supergraph_state::TypeNode};
 use graphql_parser::query as parser;
 use serde::{Deserialize, Serialize};
 
@@ -36,9 +33,6 @@ impl OperationDefinition {
     }
     pub fn hash(&self) -> u64 {
         ast_hash(self)
-    }
-    pub fn unordered_hash(&self) -> u64 {
-        shape_hash(self)
     }
 }
 
