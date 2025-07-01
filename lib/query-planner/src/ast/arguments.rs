@@ -7,7 +7,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use super::value::Value;
-use graphql_parser::query::Value as ParserValue;
+use graphql_parser::query::{Text as ParserText, Value as ParserValue};
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct ArgumentsMap {
@@ -52,27 +52,14 @@ impl From<Vec<(String, Value)>> for ArgumentsMap {
     }
 }
 
-impl From<&Vec<(String, ParserValue<'_, String>)>> for ArgumentsMap {
-    fn from(args: &Vec<(String, ParserValue<'_, String>)>) -> Self {
+impl<'a, T: ParserText<'a>> From<Vec<(T::Value, ParserValue<'a, T>)>> for ArgumentsMap
+where
+    T::Value: AsRef<str>,
+{
+    fn from(args: Vec<(T::Value, ParserValue<'a, T>)>) -> Self {
         let arguments_map = args
-            .iter()
-            .map(|(key, value)| (key.clone(), Value::from(value)))
-            .collect();
-        Self { arguments_map }
-    }
-}
-
-impl From<Vec<(String, ParserValue<'_, String>)>> for ArgumentsMap {
-    fn from(value: Vec<(String, ParserValue<'_, String>)>) -> Self {
-        (&value).into()
-    }
-}
-
-impl From<&mut Vec<(String, ParserValue<'_, String>)>> for ArgumentsMap {
-    fn from(args: &mut Vec<(String, ParserValue<'_, String>)>) -> Self {
-        let arguments_map = args
-            .iter()
-            .map(|(key, value)| (key.clone(), Value::from(value)))
+            .into_iter()
+            .map(|(key, value)| (key.as_ref().to_string(), (&value).into()))
             .collect();
         Self { arguments_map }
     }
@@ -107,6 +94,10 @@ impl ArgumentsMap {
 
     pub fn values(&self) -> impl Iterator<Item = &Value> {
         self.arguments_map.values()
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.arguments_map.keys()
     }
 }
 

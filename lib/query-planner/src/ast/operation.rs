@@ -1,6 +1,9 @@
 use std::fmt::Display;
 
-use crate::{ast::hash::ast_hash, state::supergraph_state::TypeNode};
+use crate::{
+    ast::hash::{ast_hash, shape_hash},
+    state::supergraph_state::TypeNode,
+};
 use graphql_parser::query as parser;
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +36,9 @@ impl OperationDefinition {
     }
     pub fn hash(&self) -> u64 {
         ast_hash(self)
+    }
+    pub fn unordered_hash(&self) -> u64 {
+        shape_hash(self)
     }
 }
 
@@ -128,11 +134,11 @@ impl Display for VariableDefinition {
     }
 }
 
-impl From<parser::OperationDefinition<'_, String>> for OperationDefinition {
-    fn from(value: parser::OperationDefinition<'_, String>) -> Self {
+impl<'a, T: parser::Text<'a>> From<parser::OperationDefinition<'a, T>> for OperationDefinition {
+    fn from(value: parser::OperationDefinition<'a, T>) -> Self {
         match value {
             parser::OperationDefinition::Query(query) => OperationDefinition {
-                name: query.name,
+                name: query.name.map(|n| n.as_ref().to_string()),
                 operation_kind: Some(OperationKind::Query),
                 variable_definitions: match query.variable_definitions.len() {
                     0 => None,
@@ -153,7 +159,7 @@ impl From<parser::OperationDefinition<'_, String>> for OperationDefinition {
                 selection_set: s.into(),
             },
             parser::OperationDefinition::Mutation(mutation) => OperationDefinition {
-                name: mutation.name,
+                name: mutation.name.map(|n| n.as_ref().to_string()),
                 operation_kind: Some(OperationKind::Mutation),
                 variable_definitions: match mutation.variable_definitions.len() {
                     0 => None,
@@ -168,7 +174,7 @@ impl From<parser::OperationDefinition<'_, String>> for OperationDefinition {
                 selection_set: mutation.selection_set.into(),
             },
             parser::OperationDefinition::Subscription(subscription) => OperationDefinition {
-                name: subscription.name,
+                name: subscription.name.map(|n| n.as_ref().to_string()),
                 operation_kind: Some(OperationKind::Subscription),
                 variable_definitions: match subscription.variable_definitions.len() {
                     0 => None,
@@ -186,20 +192,20 @@ impl From<parser::OperationDefinition<'_, String>> for OperationDefinition {
     }
 }
 
-impl From<&parser::VariableDefinition<'_, String>> for VariableDefinition {
-    fn from(value: &parser::VariableDefinition<'_, String>) -> Self {
+impl<'a, T: parser::Text<'a>> From<&parser::VariableDefinition<'a, T>> for VariableDefinition {
+    fn from(value: &parser::VariableDefinition<'a, T>) -> Self {
         VariableDefinition {
-            name: value.name.clone(),
+            name: value.name.as_ref().to_string(),
             variable_type: (&value.var_type).into(),
             default_value: value.default_value.as_ref().map(|v| v.into()),
         }
     }
 }
 
-impl From<parser::VariableDefinition<'_, String>> for VariableDefinition {
-    fn from(value: parser::VariableDefinition<'_, String>) -> Self {
+impl<'a, T: parser::Text<'a>> From<parser::VariableDefinition<'a, T>> for VariableDefinition {
+    fn from(value: parser::VariableDefinition<'a, T>) -> Self {
         VariableDefinition {
-            name: value.name,
+            name: value.name.as_ref().to_string(),
             variable_type: (&value.var_type).into(),
             default_value: value.default_value.as_ref().map(|v| v.into()),
         }

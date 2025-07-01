@@ -5,7 +5,7 @@ use std::{
     mem,
 };
 
-use graphql_parser::query::Value as ParserValue;
+use graphql_parser::query::{Text as ParserText, Value as ParserValue};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -48,24 +48,24 @@ impl Value {
     }
 }
 
-impl From<&ParserValue<'_, String>> for Value {
-    fn from(value: &ParserValue<'_, String>) -> Self {
+impl<'a, T: ParserText<'a>> From<&ParserValue<'a, T>> for Value {
+    fn from(value: &ParserValue<'a, T>) -> Self {
         match value {
-            ParserValue::Variable(name) => Value::Variable(name.to_owned()),
+            ParserValue::Variable(name) => Value::Variable(name.as_ref().to_string()),
             // TODO: Consider `TryFrom` and handle this in a better way
             ParserValue::Int(i) => {
                 Value::Int(i.as_i64().expect("GraphQL integer value out of i64 range"))
             }
             ParserValue::Float(f) => Value::Float(*f),
-            ParserValue::String(s) => Value::String(s.to_owned()),
+            ParserValue::String(s) => Value::String(s.to_string()),
             ParserValue::Boolean(b) => Value::Boolean(*b),
             ParserValue::Null => Value::Null,
-            ParserValue::Enum(e) => Value::Enum(e.to_owned()),
+            ParserValue::Enum(e) => Value::Enum(e.as_ref().to_string()),
             ParserValue::List(l) => Value::List(l.iter().map(Value::from).collect()),
             ParserValue::Object(o) => {
                 let mut map = BTreeMap::new();
                 for (k, v) in o {
-                    map.insert(k.to_string(), Value::from(v));
+                    map.insert(k.as_ref().to_string(), Value::from(v));
                 }
                 Value::Object(map)
             }
@@ -73,10 +73,10 @@ impl From<&ParserValue<'_, String>> for Value {
     }
 }
 
-impl From<&mut ParserValue<'_, String>> for Value {
-    fn from(value: &mut ParserValue<'_, String>) -> Self {
+impl<'a, T: ParserText<'a>> From<&mut ParserValue<'a, T>> for Value {
+    fn from(value: &mut ParserValue<'a, T>) -> Self {
         match value {
-            ParserValue::Variable(name) => Value::Variable(mem::take(name)),
+            ParserValue::Variable(name) => Value::Variable(name.as_ref().to_owned()),
             // TODO: Consider `TryFrom` and handle this in a better way
             ParserValue::Int(i) => {
                 Value::Int(i.as_i64().expect("GraphQL integer value out of i64 range"))
@@ -85,12 +85,12 @@ impl From<&mut ParserValue<'_, String>> for Value {
             ParserValue::String(s) => Value::String(mem::take(s)),
             ParserValue::Boolean(b) => Value::Boolean(mem::take(b)),
             ParserValue::Null => Value::Null,
-            ParserValue::Enum(e) => Value::Enum(mem::take(e)),
+            ParserValue::Enum(e) => Value::Enum(e.as_ref().to_owned()),
             ParserValue::List(l) => Value::List(l.iter_mut().map(Value::from).collect()),
             ParserValue::Object(o) => {
                 let mut map = BTreeMap::new();
                 for (k, v) in o {
-                    map.insert(k.to_string(), Value::from(v));
+                    map.insert(k.as_ref().to_string(), Value::from(v));
                 }
                 Value::Object(map)
             }

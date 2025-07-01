@@ -699,12 +699,12 @@ impl Display for TypeNode {
     }
 }
 
-impl From<&input::Type<'_, String>> for TypeNode {
-    fn from(input_type: &input::Type<'_, String>) -> Self {
+impl<'a, T: input::Text<'a>> From<&input::Type<'a, T>> for TypeNode {
+    fn from(input_type: &input::Type<'a, T>) -> Self {
         match input_type {
             input::Type::ListType(inner) => TypeNode::List(Box::new(inner.as_ref().into())),
             input::Type::NonNullType(inner) => TypeNode::NonNull(Box::new(inner.as_ref().into())),
-            input::Type::NamedType(name) => TypeNode::Named(name.to_string()),
+            input::Type::NamedType(name) => TypeNode::Named(name.as_ref().to_string()),
         }
     }
 }
