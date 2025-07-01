@@ -72,6 +72,7 @@ impl ASTHash for SelectionItem {
         match self {
             SelectionItem::Field(field) => field.ast_hash(hasher),
             SelectionItem::InlineFragment(frag) => frag.ast_hash(hasher),
+            SelectionItem::FragmentSpread(name) => name.hash(hasher),
         }
     }
 }

@@ -65,5 +65,8 @@ pub fn build_query_plan(
     let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
 
-    Ok(build_query_plan_from_fetch_graph(fetch_graph)?)
+    Ok(build_query_plan_from_fetch_graph(
+        fetch_graph,
+        &supergraph_state,
+    )?)
 }

@@ -1,6 +1,9 @@
 use std::fmt::Display;
 
-use crate::{ast::hash::ast_hash, state::supergraph_state::TypeNode};
+use crate::{
+    ast::{document::Document, hash::ast_hash},
+    state::supergraph_state::TypeNode,
+};
 use graphql_parser::query as parser;
 use serde::{Deserialize, Serialize};
 
@@ -38,21 +41,21 @@ impl OperationDefinition {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SubgraphFetchOperation {
-    pub operation_def: OperationDefinition,
-    pub operation_str: String,
+    pub document: Document,
+    pub document_str: String,
 }
 
 impl SubgraphFetchOperation {
     pub fn get_inner_selection_set(&self) -> &SelectionSet {
-        if let SelectionItem::Field(field) = &self.operation_def.selection_set.items[0] {
+        if let SelectionItem::Field(field) = &self.document.operation.selection_set.items[0] {
             if field.name == "_entities" {
                 return &field.selections;
             } else {
-                return &self.operation_def.selection_set;
+                return &self.document.operation.selection_set;
             }
         }
 
-        &self.operation_def.selection_set
+        &self.document.operation.selection_set
     }
 }
 
@@ -61,14 +64,14 @@ impl Serialize for SubgraphFetchOperation {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.operation_def.to_string())
+        serializer.serialize_str(&self.document.to_string())
     }
 }
 
 impl PrettyDisplay for SubgraphFetchOperation {
     fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
         let indent = get_indent(depth);
-        let kind: &str = match &self.operation_def.operation_kind {
+        let kind: &str = match &self.document.operation.operation_kind {
             Some(kind) => match kind {
                 OperationKind::Query => "",
                 OperationKind::Mutation => "mutation ",
@@ -78,7 +81,15 @@ impl PrettyDisplay for SubgraphFetchOperation {
         };
         writeln!(f, "{indent}  {kind}{{")?;
         self.get_inner_selection_set().pretty_fmt(f, depth + 2)?;
-        writeln!(f, "{indent}  }}")
+        writeln!(f, "{indent}  }}")?;
+
+        if !self.document.fragments.is_empty() {
+            for fragment in &self.document.fragments {
+                fragment.pretty_fmt(f, depth)?;
+            }
+        }
+
+        Ok(())
     }
 }
 

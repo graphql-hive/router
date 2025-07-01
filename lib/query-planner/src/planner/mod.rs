@@ -96,7 +96,7 @@ impl Planner {
         let query_tree = find_best_combination(&self.graph, best_paths_per_leaf).unwrap();
         let mut fetch_graph = build_fetch_graph_from_query_tree(&self.graph, query_tree)?;
         add_variables_to_fetch_steps(&mut fetch_graph, &normalized_operation.variable_definitions)?;
-        let query_plan = build_query_plan_from_fetch_graph(fetch_graph)?;
+        let query_plan = build_query_plan_from_fetch_graph(fetch_graph, &self.supergraph)?;
 
         Ok(query_plan)
     }

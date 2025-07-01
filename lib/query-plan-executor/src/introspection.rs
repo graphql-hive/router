@@ -537,6 +537,10 @@ fn filter_introspection_selections(
                         Some(item.clone())
                     }
                 }
+                SelectionItem::FragmentSpread(_name_ref) => {
+                    // TODO: implement
+                    None
+                }
             }
         })
         .collect();

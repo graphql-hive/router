@@ -42,12 +42,14 @@ fn query_plan_pipeline(c: &mut Criterion) {
         b.iter(|| {
             let bb_graph = black_box(&graph);
             let bb_operation = black_box(&operation);
+            let bb_supergraph_state = black_box(&supergraph_state);
 
             let best_paths_per_leaf = walk_operation(bb_graph, bb_operation)
                 .expect("walk_operation failed during benchmark");
             let query_tree = find_best_combination(bb_graph, best_paths_per_leaf).unwrap();
             let fetch_graph = build_fetch_graph_from_query_tree(bb_graph, query_tree).unwrap();
-            let query_plan = build_query_plan_from_fetch_graph(fetch_graph).unwrap();
+            let query_plan =
+                build_query_plan_from_fetch_graph(fetch_graph, bb_supergraph_state).unwrap();
             black_box(query_plan);
         })
     });

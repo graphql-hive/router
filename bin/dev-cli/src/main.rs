@@ -129,9 +129,18 @@ fn process_fetch_graph(supergraph_path: &str, operation_path: &str) -> FetchGrap
 }
 
 fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
-    let fetch_graph = process_fetch_graph(supergraph_path, operation_path);
+    let supergraph_sdl =
+        std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
+    let parsed_schema = parse_schema(&supergraph_sdl);
+    let supergraph = SupergraphState::new(&parsed_schema);
+    let graph = Graph::graph_from_supergraph_state(&supergraph).expect("failed to create graph");
+    let operation = get_operation(operation_path, &supergraph);
+    let best_paths_per_leaf = walk_operation(&graph, &operation).unwrap();
+    let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
+    let fetch_graph =
+        build_fetch_graph_from_query_tree(&graph, query_tree).expect("failed to build fetch graph");
 
-    build_query_plan_from_fetch_graph(fetch_graph).expect("failed to build query plan")
+    build_query_plan_from_fetch_graph(fetch_graph, &supergraph).expect("failed to build query plan")
 }
 
 fn process_merged_tree(supergraph_path: &str, operation_path: &str) -> (Graph, QueryTree) {

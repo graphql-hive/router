@@ -415,6 +415,9 @@ pub fn can_satisfy_edge(
                             }
                         };
                     }
+                    SelectionItem::FragmentSpread(_) => {
+                        // No processing needed for FragmentSpread
+                    }
                 }
             }
 

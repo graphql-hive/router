@@ -221,6 +221,7 @@ pub fn find_selection_set_by_path<'a>(
                                     None
                                 }
                             }
+                            SelectionItem::FragmentSpread(_) => None,
                         });
 
                 match next_selection_set_option {
@@ -247,6 +248,7 @@ pub fn find_selection_set_by_path<'a>(
                                 }
                             }
                             SelectionItem::InlineFragment(..) => None,
+                            SelectionItem::FragmentSpread(_) => None,
                         });
 
                 match next_selection_set_option {
@@ -289,6 +291,7 @@ pub fn find_selection_set_by_path_mut<'a>(
                                     None
                                 }
                             }
+                            SelectionItem::FragmentSpread(_) => None,
                         });
 
                 match next_selection_set_option {
@@ -316,6 +319,7 @@ pub fn find_selection_set_by_path_mut<'a>(
                                 }
                             }
                             SelectionItem::InlineFragment(..) => None,
+                            SelectionItem::FragmentSpread(_) => None,
                         });
 
                 match next_selection_set_option {

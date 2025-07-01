@@ -1,5 +1,7 @@
 pub mod document;
+pub mod fragment;
 pub mod hash;
+pub mod minification;
 pub mod normalization;
 pub mod operation;
 pub mod selection_item;

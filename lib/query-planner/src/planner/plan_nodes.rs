@@ -1,13 +1,14 @@
 use super::fetch::fetch_graph::FetchStepData;
 use crate::{
     ast::{
+        minification::minify_operation,
         operation::{OperationDefinition, SubgraphFetchOperation, VariableDefinition},
         selection_item::SelectionItem,
         selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
         type_aware_selection::TypeAwareSelection,
         value::Value,
     },
-    state::supergraph_state::{OperationKind, TypeNode},
+    state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
 use serde::{Deserialize, Serialize};
@@ -161,7 +162,10 @@ fn create_input_selection_set(input_selections: &TypeAwareSelection) -> Selectio
     }
 }
 
-fn create_output_operation(step: &FetchStepData) -> SubgraphFetchOperation {
+fn create_output_operation(
+    step: &FetchStepData,
+    supergraph: &SupergraphState,
+) -> SubgraphFetchOperation {
     let type_aware_selection = &step.output;
     let mut variables = vec![VariableDefinition {
         name: "representations".to_string(),
@@ -201,10 +205,13 @@ fn create_output_operation(step: &FetchStepData) -> SubgraphFetchOperation {
             })],
         },
     };
-    let operation_str = operation_def.to_string();
+
+    let document = minify_operation(operation_def, supergraph).expect("Failed to minify");
+
+    let document_str = document.to_string();
     SubgraphFetchOperation {
-        operation_def,
-        operation_str,
+        document: document,
+        document_str: document_str,
     }
 }
 
@@ -224,8 +231,8 @@ impl From<&FetchStepData> for OperationKind {
     }
 }
 
-impl From<&FetchStepData> for FetchNode {
-    fn from(step: &FetchStepData) -> Self {
+impl FetchNode {
+    pub fn from_fetch_step(step: &FetchStepData, supergraph: &SupergraphState) -> Self {
         match !step.is_entity_call() {
             true => {
                 let operation_def = OperationDefinition {
@@ -234,16 +241,18 @@ impl From<&FetchStepData> for FetchNode {
                     selection_set: step.output.selection_set.clone(),
                     variable_definitions: step.variable_definitions.clone(),
                 };
+                let document =
+                    minify_operation(operation_def, supergraph).expect("Failed to minify");
+                let document_str = document.to_string();
 
-                let operation_str = operation_def.to_string();
                 FetchNode {
                     service_name: step.service_name.0.clone(),
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(step.into()),
                     operation_name: None,
                     operation: SubgraphFetchOperation {
-                        operation_def,
-                        operation_str,
+                        document,
+                        document_str,
                     },
                     requires: None,
                     input_rewrites: step.input_rewrites.clone(),
@@ -255,7 +264,7 @@ impl From<&FetchStepData> for FetchNode {
                 variable_usages: step.variable_usages.clone(),
                 operation_kind: Some(OperationKind::Query),
                 operation_name: None,
-                operation: create_output_operation(step),
+                operation: create_output_operation(step, supergraph),
                 requires: Some(create_input_selection_set(&step.input)),
                 input_rewrites: step.input_rewrites.clone(),
                 output_rewrites: None,
@@ -264,15 +273,57 @@ impl From<&FetchStepData> for FetchNode {
     }
 }
 
-impl From<&FetchStepData> for PlanNode {
-    fn from(step: &FetchStepData) -> Self {
+// impl From<&FetchStepData> for FetchNode {
+//     fn from(step: &FetchStepData) -> Self {
+//         match !step.is_entity_call() {
+//             true => {
+//                 let operation_def = OperationDefinition {
+//                     name: None,
+//                     operation_kind: Some(step.into()),
+//                     selection_set: step.output.selection_set.clone(),
+//                     variable_definitions: step.variable_definitions.clone(),
+//                 };
+
+//                 let operation_str = operation_def.to_string();
+//                 FetchNode {
+//                     service_name: step.service_name.0.clone(),
+//                     variable_usages: step.variable_usages.clone(),
+//                     operation_kind: Some(step.into()),
+//                     operation_name: None,
+//                     operation: SubgraphFetchOperation {
+//                         document: operation_def,
+//                         document_str: operation_str,
+//                     },
+//                     requires: None,
+//                     input_rewrites: step.input_rewrites.clone(),
+//                     output_rewrites: None,
+//                 }
+//             }
+//             false => FetchNode {
+//                 service_name: step.service_name.0.clone(),
+//                 variable_usages: step.variable_usages.clone(),
+//                 operation_kind: Some(OperationKind::Query),
+//                 operation_name: None,
+//                 operation: create_output_operation(step),
+//                 requires: Some(create_input_selection_set(&step.input)),
+//                 input_rewrites: step.input_rewrites.clone(),
+//                 output_rewrites: None,
+//             },
+//         }
+//     }
+// }
+
+impl PlanNode {
+    pub fn from_fetch_step(step: &FetchStepData, supergraph: &SupergraphState) -> Self {
         if step.response_path.is_empty() {
-            PlanNode::Fetch(step.into())
+            PlanNode::Fetch(FetchNode::from_fetch_step(step, supergraph))
         } else {
             PlanNode::Flatten(FlattenNode {
                 // it's cheaper to clone response_path (Arc etc), rather then cloning the step
                 path: step.response_path.clone().into(),
-                node: Box::new(PlanNode::Fetch(step.into())),
+                node: Box::new(PlanNode::Fetch(FetchNode::from_fetch_step(
+                    step, supergraph,
+                ))),
             })
         }
     }

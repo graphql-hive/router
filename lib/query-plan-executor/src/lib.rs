@@ -97,7 +97,7 @@ fn process_errors_and_extensions(
 }
 
 #[instrument(
-    level = "debug", 
+    level = "debug",
     skip_all
     name = "process_representations_result",
     fields(
@@ -185,13 +185,13 @@ struct ProjectRepresentationsResult {
 #[async_trait]
 impl ExecutableFetchNode for FetchNode {
     #[instrument(
-        level = "trace", 
+        level = "trace",
         skip_all,
         name="FetchNode::execute_for_root",
         fields(
             service_name = self.service_name,
             operation_name = ?self.operation_name,
-            operation_str = %self.operation.operation_str,
+            operation_str = %self.operation.document_str,
         )
     )]
     async fn execute_for_root(
@@ -201,7 +201,7 @@ impl ExecutableFetchNode for FetchNode {
         let variables = self.prepare_variables_for_fetch_node(execution_context.variable_values);
 
         let execution_request = ExecutionRequest {
-            query: self.operation.operation_str.clone(),
+            query: self.operation.document_str.clone(),
             operation_name: self.operation_name.clone(),
             variables,
             extensions: None,
@@ -256,7 +256,7 @@ impl ExecutableFetchNode for FetchNode {
     }
 
     #[instrument(
-        level = "debug", 
+        level = "debug",
         skip_all,
         name = "execute_for_projected_representations",
         fields(
@@ -279,7 +279,7 @@ impl ExecutableFetchNode for FetchNode {
         );
 
         let execution_request = ExecutionRequest {
-            query: self.operation.operation_str.clone(),
+            query: self.operation.document_str.clone(),
             operation_name: self.operation_name.clone(),
             variables: Some(variables),
             extensions: None,
@@ -924,6 +924,9 @@ impl QueryPlanExecutionContext<'_> {
                                 // If the projected value is not an object, it will be ignored
                             }
                         }
+                        SelectionItem::FragmentSpread(_name_ref) => {
+                            // TODO: implement
+                        }
                     }
                 }
                 if (result_map.is_empty())
@@ -1006,7 +1009,7 @@ pub fn traverse_and_collect<'a>(
 // --- Main Function (for testing) ---
 
 #[instrument(
-    level = "trace", 
+    level = "trace",
     skip_all,
     fields(
         type_name = %type_name,
@@ -1138,13 +1141,16 @@ fn project_selection_set_with_map(
                     }
                 }
             }
+            SelectionItem::FragmentSpread(_name_ref) => {
+                // TODO: implement
+            }
         }
     }
     Some(new_obj)
 }
 
 #[instrument(
-    level = "trace", 
+    level = "trace",
     skip_all,
     fields(
         type_name = %type_name,
@@ -1244,7 +1250,7 @@ pub fn project_data_by_operation(
 }
 
 #[instrument(
-    level = "trace", 
+    level = "trace",
     skip_all,
     fields(
         query_plan = ?query_plan,
