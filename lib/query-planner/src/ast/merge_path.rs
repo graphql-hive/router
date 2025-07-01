@@ -41,6 +41,10 @@ impl MergePath {
         }
     }
 
+    pub fn last(&self) -> Option<&Segment> {
+        self.inner.last()
+    }
+
     pub fn join(&self, sep: &str) -> String {
         if self.inner.is_empty() {
             return String::new();
