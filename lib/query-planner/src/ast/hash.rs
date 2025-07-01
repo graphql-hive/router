@@ -8,11 +8,9 @@ use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, Selecti
 use crate::ast::value::Value;
 use crate::state::supergraph_state::{self, OperationKind};
 
-type ASTHasher = DefaultHasher;
-
 /// Order-dependent hashing
 pub trait ASTHash {
-    fn ast_hash(&self, hasher: &mut ASTHasher);
+    fn ast_hash<H: Hasher>(&self, hasher: &mut H);
 }
 
 pub fn ast_hash(query: &OperationDefinition) -> u64 {
@@ -25,7 +23,7 @@ pub fn ast_hash(query: &OperationDefinition) -> u64 {
 // `Pos`
 
 impl ASTHash for &OperationKind {
-    fn ast_hash(&self, hasher: &mut ASTHasher) {
+    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
         match self {
             OperationKind::Query => "Query".hash(hasher),
             OperationKind::Mutation => "Mutation".hash(hasher),
@@ -35,7 +33,7 @@ impl ASTHash for &OperationKind {
 }
 
 impl ASTHash for OperationDefinition {
-    fn ast_hash(&self, hasher: &mut ASTHasher) {
+    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
         self.operation_kind
             .as_ref()
             .or(Some(&supergraph_state::OperationKind::Query))
@@ -50,7 +48,7 @@ impl ASTHash for OperationDefinition {
 }
 
 impl<T: ASTHash> ASTHash for Option<T> {
-    fn ast_hash(&self, hasher: &mut ASTHasher) {
+    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
         match self {
             None => false.hash(hasher),
             Some(t) => {
@@ -62,7 +60,7 @@ impl<T: ASTHash> ASTHash for Option<T> {
 }
 
 impl ASTHash for SelectionSet {
-    fn ast_hash(&self, hasher: &mut ASTHasher) {
+    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
         for item in &self.items {
             item.ast_hash(hasher);
         }
@@ -70,7 +68,7 @@ impl ASTHash for SelectionSet {
 }
 
 impl ASTHash for SelectionItem {
-    fn ast_hash(&self, hasher: &mut ASTHasher) {
+    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
         match self {
             SelectionItem::Field(field) => field.ast_hash(hasher),
             SelectionItem::InlineFragment(frag) => frag.ast_hash(hasher),
@@ -79,7 +77,7 @@ impl ASTHash for SelectionItem {
 }
 
 impl ASTHash for &FieldSelection {
-    fn ast_hash(&self, hasher: &mut ASTHasher) {
+    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
         self.name.hash(hasher);
         self.selections.ast_hash(hasher);
         if let Some(args) = &self.arguments {
@@ -89,23 +87,30 @@ impl ASTHash for &FieldSelection {
 }
 
 impl ASTHash for &InlineFragmentSelection {
-    fn ast_hash(&self, hasher: &mut ASTHasher) {
+    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
         self.type_condition.hash(hasher);
         self.selections.ast_hash(hasher);
     }
 }
 
 impl ASTHash for ArgumentsMap {
-    fn ast_hash(&self, hasher: &mut ASTHasher) {
-        for (name, value) in self {
-            name.hash(hasher);
-            value.ast_hash(hasher);
+    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
+        // Order does not matter for hashing
+        // The order of arguments does not matter.
+        // To achieve order-insensitivity, we get all keys, sort them, and then
+        // hash them with their values in that order.
+        let mut keys: Vec<_> = self.keys().collect();
+        keys.sort_unstable();
+        for key in keys {
+            key.hash(hasher);
+            // We can unwrap here because we are iterating over existing keys
+            self.get_argument(key).unwrap().ast_hash(hasher);
         }
     }
 }
 
 impl ASTHash for Value {
-    fn ast_hash(&self, hasher: &mut ASTHasher) {
+    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
         match self {
             Value::List(values) => {
                 for value in values {
