@@ -89,13 +89,14 @@ impl SafeSelectionSetMerger {
             for (target_item_idx, target_item) in target.items.iter_mut().enumerate() {
                 match (source_item, target_item) {
                     (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) => {
-                        // TODO: better comparison of names + aliases.
-                        // We have a possible case of `some_original_field` and `some_original_field: a` that could be seems as
-                        // identical here, but it's really isn't for the merging comparison (and is relevant for the conflict resolution flow).
                         if source_field.selection_identifier()
                             == target_field.selection_identifier()
                         {
-                            if source_field.arguments_hash() == target_field.arguments_hash() {
+                            let has_conflict = source_field.arguments_hash()
+                                != target_field.arguments_hash()
+                                || source_field.alias != target_field.alias;
+
+                            if !has_conflict {
                                 trace!(
                                     "found a matching field {}, will proceed with merging",
                                     source_field.name,
@@ -271,6 +272,17 @@ mod tests {
         merger.merge_selection_set(&mut a, &b, (true, false), false);
 
         insta::assert_snapshot!(a, @"{a b}");
+    }
+
+    #[test]
+    fn mix_field_name_and_alias() {
+        let mut a = parse_selection_set("{ a }");
+        let b = parse_selection_set("{ a: b }");
+
+        let mut merger = SafeSelectionSetMerger::default();
+        merger.merge_selection_set(&mut a, &b, (true, false), false);
+
+        insta::assert_snapshot!(a, @"{_internal_qp_alias_0: a a: b}");
     }
 
     #[test]
