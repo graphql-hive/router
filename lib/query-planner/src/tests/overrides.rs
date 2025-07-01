@@ -159,3 +159,56 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
     "#);
     Ok(())
 }
+
+#[test]
+fn override_object_field_but_interface_is_requested() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          feed {
+            id
+            createdAt
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/override-type-interface.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            feed {
+              id
+              __typename
+              ... on ImagePost {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "feed.@") {
+          Fetch(service: "b") {
+              ... on ImagePost {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on ImagePost {
+                createdAt
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}

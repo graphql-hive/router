@@ -581,6 +581,7 @@ impl Graph {
 
         for (def_name, definition) in state.definitions.iter() {
             for graph_id in definition.subgraphs().iter() {
+                let graph_name = state.resolve_graph_id(graph_id)?;
                 if !definition.is_defined_in_subgraph(graph_id) {
                     continue;
                 }
@@ -638,6 +639,34 @@ impl Graph {
                               "[ ] Field '{}.{}/{}' does is not available in the subgraph, skipping edge creation (type: {})",
                               def_name, field_name, graph_id, target_type
                           );
+                        continue;
+                    }
+
+                    // A field is considered "overridden" if its resolution is handled by a different subgraph.
+                    // This prevents the current subgraph from creating a resolvable edge for a field it no longer owns.
+                    let is_overridden = maybe_join_field
+                        // If another subgraph provides the implementation for a field from an interface
+                        // that this type implements, the `used_overridden` flag is set to true.
+                          .is_some_and(|join_field| join_field.used_overridden)
+                        ||
+                        // The field is marked with `@override(from: "...")`. If the `from` argument
+                        // matches the current subgraph's name, it tells us that another subgraph
+                        // has taken over the resolution of this field.
+                            field_definition.join_field.iter().any(|join_field| {
+                            join_field
+                                .override_value
+                                .as_ref()
+                                .is_some_and(|name| name == &graph_name.0)
+                        });
+
+                    if is_overridden {
+                        trace!(
+                            "[ ] Field '{}.{}/{}' is overriden by some other subgraph, skipping edge creation",
+                            def_name,
+                            field_name,
+                            graph_id
+                        );
+
                         continue;
                     }
 

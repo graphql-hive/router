@@ -99,6 +99,10 @@ impl SupergraphState {
             .ok_or_else(|| SupergraphStateError::SubgraphNotFound(subgraph_id.to_string()))
     }
 
+    pub fn subgraph_exists_by_name(&self, name: &str) -> bool {
+        self.subgraph_endpoint_map.contains_key(name)
+    }
+
     pub fn is_scalar_type(&self, type_name: &str) -> bool {
         if BUILDIB_SCALARS.contains(&type_name) {
             return true;
