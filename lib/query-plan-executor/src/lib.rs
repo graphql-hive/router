@@ -986,10 +986,7 @@ impl QueryPlanExecutionContext<'_> {
                     if self
                         .schema_metadata
                         .possible_types
-                        .entity_satisfies_type_condition(
-                            type_name,
-                           type_condition,
-                        )
+                        .entity_satisfies_type_condition(type_name, type_condition)
                         || self
                             .schema_metadata
                             .possible_types
