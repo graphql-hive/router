@@ -1,5 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use graphql_parser::query::Document;
+use query_planner::ast::minification::minify_operation;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
 use query_planner::graph::Graph;
@@ -61,6 +62,15 @@ fn query_plan_pipeline(c: &mut Criterion) {
                 black_box(&supergraph_state),
                 black_box(Some("TestQuery")),
             );
+            black_box(op);
+        })
+    });
+
+    c.bench_function("minification", |b| {
+        b.iter(|| {
+            let bb_supergraph_state = black_box(&supergraph_state);
+            let bb_operation = black_box(operation.clone());
+            let op = minify_operation(bb_operation, bb_supergraph_state).unwrap();
             black_box(op);
         })
     });
