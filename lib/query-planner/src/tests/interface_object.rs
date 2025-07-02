@@ -359,11 +359,11 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
             {
               ... on NodeWithName {
                 __typename
+                name
                 ... on User {
                   age
                   name
                 }
-                name
               }
             }
           },
@@ -409,7 +409,7 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
               "kind": "Fetch",
               "serviceName": "a",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename ...on User{age name} name}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename name ...on User{age name}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -524,14 +524,14 @@ fn interface_field_with_inline_fragment_resolving_remote_interface_object_field(
           {
             users {
               __typename
+              id
+              name
               ... on User {
                 __typename
                 age
                 id
                 name
               }
-              id
-              name
             }
           }
         },
@@ -701,8 +701,8 @@ fn interface_object_field_local_with_remote_typename() -> Result<(), Box<dyn Err
           {
             accounts {
               __typename
-              name
               id
+              name
             }
           }
         },

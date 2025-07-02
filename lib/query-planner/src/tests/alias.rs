@@ -57,8 +57,8 @@ fn aliasing_both_parent_and_leaf() -> Result<(), Box<dyn Error>> {
             {
               ... on Product {
                 price {
-                  pricing: amount
                   currency
+                  pricing: amount
                 }
               }
             }
