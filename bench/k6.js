@@ -57,7 +57,7 @@ export function handleSummary(data) {
       },
     });
   }
-  return handleBenchmarkSummary(data, { vus, time });
+  return handleBenchmarkSummary(data, { vus, duration });
 }
 
 let identifiersMap = {};

@@ -22,10 +22,10 @@ impl SubgraphExecutorMap {
     }
 
     #[instrument(level = "trace", name = "subgraph_execute", skip_all, fields(subgraph_name = %subgraph_name, execution_request = ?execution_request))]
-    pub async fn execute(
+    pub async fn execute<'a>(
         &self,
         subgraph_name: &str,
-        execution_request: crate::ExecutionRequest,
+        execution_request: crate::SubgraphExecutionRequest<'a>,
     ) -> crate::ExecutionResult {
         match self.inner.get(subgraph_name) {
             Some(executor) => executor.execute(execution_request).await,

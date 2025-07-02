@@ -117,10 +117,10 @@ trait ExecutableFetchNode {
         indexes: BTreeSet<usize>,
     ) -> ExecuteForRepresentationsResult;
     fn apply_output_rewrites(&self, possible_types: &PossibleTypes, data: &mut Value);
-    fn prepare_variables_for_fetch_node(
-        &self,
-        variable_values: &Option<HashMap<String, Value>>,
-    ) -> Option<HashMap<String, Value>>;
+    fn prepare_variables_for_fetch_node<'a>(
+        &'a self,
+        variable_values: &'a Option<HashMap<String, Value>>,
+    ) -> Option<HashMap<&'a str, &'a Value>>;
 }
 
 #[async_trait]
@@ -155,9 +155,9 @@ impl ExecutableFetchNode for FetchNode {
     ) -> ExecutionResult {
         let variables = self.prepare_variables_for_fetch_node(execution_context.variable_values);
 
-        let execution_request = ExecutionRequest {
-            query: self.operation.document_str.clone(),
-            operation_name: self.operation_name.clone(),
+        let execution_request = SubgraphExecutionRequest {
+            query: &self.operation.document_str,
+            operation_name: self.operation_name.as_deref(),
             variables,
             extensions: None,
             representations: None,
@@ -191,9 +191,9 @@ impl ExecutableFetchNode for FetchNode {
         indexes: BTreeSet<usize>,
     ) -> ExecuteForRepresentationsResult {
         // 2. Prepare variables for fetch
-        let execution_request = ExecutionRequest {
-            query: self.operation.document_str.clone(),
-            operation_name: self.operation_name.clone(),
+        let execution_request = SubgraphExecutionRequest {
+            query: &self.operation.document_str,
+            operation_name: self.operation_name.as_deref(),
             variables: self.prepare_variables_for_fetch_node(execution_context.variable_values),
             extensions: None,
             representations: Some(filtered_representations),
@@ -242,10 +242,10 @@ impl ExecutableFetchNode for FetchNode {
         skip(self, variable_values),
         name = "prepare_variables_for_fetch_node"
     )]
-    fn prepare_variables_for_fetch_node(
-        &self,
-        variable_values: &Option<HashMap<String, Value>>,
-    ) -> Option<HashMap<String, Value>> {
+    fn prepare_variables_for_fetch_node<'a>(
+        &'a self,
+        variable_values: &'a Option<HashMap<String, Value>>,
+    ) -> Option<HashMap<&'a str, &'a Value>> {
         match (&self.variable_usages, variable_values) {
             (Some(ref variable_usages), Some(variable_values)) => {
                 if variable_usages.is_empty() || variable_values.is_empty() {
@@ -257,7 +257,7 @@ impl ExecutableFetchNode for FetchNode {
                             .filter_map(|variable_name| {
                                 variable_values
                                     .get(variable_name)
-                                    .map(|v| (variable_name.to_string(), v.clone()))
+                                    .map(|v| (variable_name.as_str(), v))
                             })
                             .collect(),
                     )
@@ -764,12 +764,11 @@ pub struct GraphQLErrorLocation {
     pub column: usize,
 }
 
-#[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecutionRequest {
-    pub query: String,
-    pub operation_name: Option<String>,
-    pub variables: Option<HashMap<String, Value>>,
+#[derive(Debug, Clone)]
+pub struct SubgraphExecutionRequest<'a> {
+    pub query: &'a str,
+    pub operation_name: Option<&'a str>,
+    pub variables: Option<HashMap<&'a str, &'a Value>>,
     pub extensions: Option<HashMap<String, Value>>,
     pub representations: Option<String>,
 }

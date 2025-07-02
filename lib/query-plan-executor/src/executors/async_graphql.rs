@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::{
-    executors::common::SubgraphExecutor, ExecutionRequest, ExecutionResult, GraphQLError,
-    GraphQLErrorLocation,
+    executors::common::SubgraphExecutor, ExecutionResult, GraphQLError, GraphQLErrorLocation,
+    SubgraphExecutionRequest,
 };
 
 #[async_trait]
@@ -13,14 +13,17 @@ impl<Executor> SubgraphExecutor for Executor
 where
     Executor: async_graphql::Executor,
 {
-    async fn execute(&self, execution_request: ExecutionRequest) -> ExecutionResult {
+    async fn execute<'a>(
+        &self,
+        execution_request: SubgraphExecutionRequest<'a>,
+    ) -> ExecutionResult {
         let response: async_graphql::Response = self.execute(execution_request.into()).await;
         response.into()
     }
 }
 
-impl From<ExecutionRequest> for async_graphql::Request {
-    fn from(exec_request: ExecutionRequest) -> Self {
+impl<'a> From<SubgraphExecutionRequest<'a>> for async_graphql::Request {
+    fn from(exec_request: SubgraphExecutionRequest) -> Self {
         let mut req = async_graphql::Request::new(exec_request.query);
         if let Some(variables) = exec_request.variables {
             req = req.variables(async_graphql::Variables::from_json(json!(variables)));
