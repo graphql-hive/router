@@ -15,8 +15,6 @@ pub struct SchemaMetadata {
     pub introspection_schema_root_json: Value,
 }
 
-impl SchemaMetadata {}
-
 #[derive(Debug)]
 pub struct PossibleTypes {
     map: HashMap<String, HashSet<String>>,
