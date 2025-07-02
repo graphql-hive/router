@@ -273,46 +273,6 @@ impl FetchNode {
     }
 }
 
-// impl From<&FetchStepData> for FetchNode {
-//     fn from(step: &FetchStepData) -> Self {
-//         match !step.is_entity_call() {
-//             true => {
-//                 let operation_def = OperationDefinition {
-//                     name: None,
-//                     operation_kind: Some(step.into()),
-//                     selection_set: step.output.selection_set.clone(),
-//                     variable_definitions: step.variable_definitions.clone(),
-//                 };
-
-//                 let operation_str = operation_def.to_string();
-//                 FetchNode {
-//                     service_name: step.service_name.0.clone(),
-//                     variable_usages: step.variable_usages.clone(),
-//                     operation_kind: Some(step.into()),
-//                     operation_name: None,
-//                     operation: SubgraphFetchOperation {
-//                         document: operation_def,
-//                         document_str: operation_str,
-//                     },
-//                     requires: None,
-//                     input_rewrites: step.input_rewrites.clone(),
-//                     output_rewrites: None,
-//                 }
-//             }
-//             false => FetchNode {
-//                 service_name: step.service_name.0.clone(),
-//                 variable_usages: step.variable_usages.clone(),
-//                 operation_kind: Some(OperationKind::Query),
-//                 operation_name: None,
-//                 operation: create_output_operation(step),
-//                 requires: Some(create_input_selection_set(&step.input)),
-//                 input_rewrites: step.input_rewrites.clone(),
-//                 output_rewrites: None,
-//             },
-//         }
-//     }
-// }
-
 impl PlanNode {
     pub fn from_fetch_step(step: &FetchStepData, supergraph: &SupergraphState) -> Self {
         if step.response_path.is_empty() {
