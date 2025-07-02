@@ -264,21 +264,15 @@ fn project_selection_set_with_map(
                         buffer,
                     );
                 } else {
-                    println!(
-                        "Field '{}' not found in object of type '{}'. Setting to null.\n {:#?}",
-                        response_key, type_name, obj
-                    );
                     // If the field is not found in the object, set it to Null
                     buffer.push_str("null");
                     continue;
                 }
             }
             SelectionItem::InlineFragment(inline_fragment) => {
-                let type_condition = &inline_fragment.type_condition;
-
                 if schema_metadata
                     .possible_types
-                    .entity_satisfies_type_condition(&type_name, type_condition)
+                    .entity_satisfies_type_condition(&type_name, &inline_fragment.type_condition)
                 {
                     project_selection_set_with_map(
                         obj,
