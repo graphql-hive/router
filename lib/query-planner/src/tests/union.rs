@@ -150,9 +150,9 @@ fn union_member_entity_call() -> Result<(), Box<dyn Error>> {
               __typename
               ... on Book {
                 __typename
-                title
                 aTitle
                 id
+                title
               }
             }
           }
@@ -219,15 +219,15 @@ fn union_member_entity_call_many_local() -> Result<(), Box<dyn Error>> {
             viewer {
               song {
                 __typename
-                ... on Song {
-                  title
-                  aTitle
-                }
                 ... on Book {
                   __typename
-                  title
                   aTitle
                   id
+                  title
+                }
+                ... on Song {
+                  aTitle
+                  title
                 }
               }
             }
@@ -326,51 +326,46 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
           Fetch(service: "b") {
             {
               viewer {
-                media {
-                  __typename
-                  ... on Book {
-                    bTitle
-                  }
-                }
                 book {
-                  __typename
-                  ... on Book {
-                    bTitle
-                  }
-                }
+    ...a            }
+                media {
+    ...a            }
+              }
+            }
+            fragment a on ViewerMedia {
+              __typename
+              ... on Book {
+                bTitle
               }
             }
           },
           Fetch(service: "a") {
             {
               viewer {
-                media {
-                  __typename
-                  ... on Book {
-                    aTitle
-                    title
-                  }
-                }
                 book {
-                  __typename
-                  ... on Book {
-                    aTitle
-                    title
-                  }
-                }
+    ...a            }
+                media {
+    ...a            }
                 song {
                   __typename
-                  ... on Song {
-                    title
-                    aTitle
-                  }
                   ... on Book {
                     __typename
-                    title
                     aTitle
                     id
+                    title
+                  }
+                  ... on Song {
+                    aTitle
+                    title
                   }
                 }
+              }
+            }
+            fragment a on ViewerMedia {
+              __typename
+              ... on Book {
+                aTitle
+                title
               }
             }
           },

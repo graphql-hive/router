@@ -31,11 +31,12 @@ fn node_query_with_aliases_on_interface_field() -> Result<(), Box<dyn Error>> {
       Fetch(service: "a") {
         {
           account: node(id: "a1") {
-            __typename
-          }
+    ...a      }
           chat: node(id: "c1") {
-            __typename
-          }
+    ...a      }
+        }
+        fragment a on Node {
+          __typename
         }
       },
     },
@@ -549,16 +550,14 @@ fn node_query_with_id_and_cross_type_fragment_overlap() -> Result<(), Box<dyn Er
         Fetch(service: "a") {
           {
             account: node(id: "a1") {
-              __typename
-              ... on Account {
-                id
-              }
-            }
+    ...a        }
             chat: node(id: "c1") {
-              __typename
-              ... on Account {
-                id
-              }
+    ...a        }
+          }
+          fragment a on Node {
+            __typename
+            ... on Account {
+              id
             }
           }
         },
@@ -594,8 +593,8 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
         Fetch(service: "products") {
           {
             products {
-              id
               __typename
+              id
               ... on Book {
                 __typename
                 id

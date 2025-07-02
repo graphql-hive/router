@@ -125,11 +125,11 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
       Fetch(service: "category") {
         {
           products {
-            id
             categories {
               id
               name
             }
+            id
           }
         }
       },
@@ -142,7 +142,7 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "category",
         "operationKind": "query",
-        "operation": "query{products{id categories{id name}}}"
+        "operation": "query{products{categories{id name} id}}"
       }
     }
     "#);
@@ -180,8 +180,8 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
           media {
             __typename
             ... on Book {
-              title
               id
+              title
             }
             ... on Movie {
               id
@@ -198,7 +198,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "b",
         "operationKind": "query",
-        "operation": "query{media{__typename ...on Book{title id} ...on Movie{id}}}"
+        "operation": "query{media{__typename ...on Book{id title} ...on Movie{id}}}"
       }
     }
     "#);
@@ -232,8 +232,8 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
             media {
               __typename
               ... on Book {
-                title
                 id
+                title
               }
               ... on Movie {
                 __typename
@@ -269,7 +269,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{media{__typename ...on Book{title id} ...on Movie{__typename id}}}"
+            "operation": "query{media{__typename ...on Book{id title} ...on Movie{__typename id}}}"
           },
           {
             "kind": "Flatten",

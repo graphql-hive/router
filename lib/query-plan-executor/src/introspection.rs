@@ -537,6 +537,12 @@ fn filter_introspection_selections(
                         Some(item.clone())
                     }
                 }
+                SelectionItem::FragmentSpread(_name_ref) => {
+                    // We only minify the queries to subgraphs, so we never have a fragment spread here.
+                    // In this projection, we expect only inline fragments and fields
+                    // as it's the query produced by the ast normalization process.
+                    None
+                }
             }
         })
         .collect();

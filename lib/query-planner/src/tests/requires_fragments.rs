@@ -30,15 +30,15 @@ fn requires_with_fragments_on_interfaces() -> Result<(), Box<dyn Error>> {
               __typename
               id
               profile {
-                displayName
                 __typename
-                ... on GuestAccount {
-                  guestToken
-                  accountType
-                }
+                displayName
                 ... on AdminAccount {
-                  adminLevel
                   accountType
+                  adminLevel
+                }
+                ... on GuestAccount {
+                  accountType
+                  guestToken
                 }
               }
             }

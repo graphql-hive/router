@@ -25,21 +25,21 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r###"
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
         Fetch(service: "b") {
           {
             products {
               __typename
-              upc
-              name
-              price(currency: "USD")
-              weight
               _internal_qp_alias_0: price(currency: "EUR")
               category {
                 averagePrice(currency: "USD")
               }
+              name
+              price(currency: "USD")
+              upc
+              weight
             }
           }
         },
@@ -58,8 +58,8 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                shippingEstimate
                 isExpensiveCategory
+                shippingEstimate
                 shippingEstimateEUR
               }
             }
@@ -67,9 +67,9 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
         },
       },
     },
-    "###);
+    "#);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -79,7 +79,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{products{__typename upc name price(currency: \"USD\") weight _internal_qp_alias_0: price(currency: \"EUR\") category{averagePrice(currency: \"USD\")}}}"
+            "operation": "query{products{__typename _internal_qp_alias_0: price(currency: \"EUR\") category{averagePrice(currency: \"USD\")} name price(currency: \"USD\") upc weight}}"
           },
           {
             "kind": "Flatten",
@@ -91,7 +91,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "a",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate isExpensiveCategory shippingEstimateEUR}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensiveCategory shippingEstimate shippingEstimateEUR}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -136,7 +136,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
         ]
       }
     }
-    "###);
+    "#);
 
     Ok(())
 }
@@ -820,8 +820,8 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             test {
-              id
               __typename
+              id
             }
           }
         },
@@ -834,8 +834,8 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Test {
-                otherField(arg: 2)
                 _internal_qp_alias_0: otherField(arg: 3)
+                otherField(arg: 2)
               }
             }
           },
@@ -886,7 +886,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "query{test{id __typename}}"
+            "operation": "query{test{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -897,7 +897,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{otherField(arg: 2) _internal_qp_alias_0: otherField(arg: 3)}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{_internal_qp_alias_0: otherField(arg: 3) otherField(arg: 2)}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1037,8 +1037,8 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
             } =>
             {
               ... on Test {
-                _internal_qp_alias_1: otherField(arg: 2)
                 _internal_qp_alias_0: otherField(arg: 3)
+                _internal_qp_alias_1: otherField(arg: 2)
                 otherField(arg: 1)
               }
             }
@@ -1101,7 +1101,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{_internal_qp_alias_1: otherField(arg: 2) _internal_qp_alias_0: otherField(arg: 3) otherField(arg: 1)}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{_internal_qp_alias_0: otherField(arg: 3) _internal_qp_alias_1: otherField(arg: 2) otherField(arg: 1)}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1368,8 +1368,8 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             test {
-              id
               __typename
+              id
             }
           }
         },
@@ -1416,7 +1416,7 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "query{test{id __typename}}"
+            "operation": "query{test{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -1601,8 +1601,8 @@ fn arguments_in_different_levels() -> Result<(), Box<dyn Error>> {
         {
           album(id: "5") {
             albumType
-            name
             genres
+            name
             tracks(limit: 5, offset: 10) {
               edges {
                 node {
@@ -1623,7 +1623,7 @@ fn arguments_in_different_levels() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "spotify",
         "operationKind": "query",
-        "operation": "query{album(id: \"5\"){albumType name genres tracks(limit: 5, offset: 10){edges{node{name}}}}}"
+        "operation": "query{album(id: \"5\"){albumType genres name tracks(limit: 5, offset: 10){edges{node{name}}}}}"
       }
     }
     "#);
@@ -1660,8 +1660,8 @@ fn arguments_and_variables() -> Result<(), Box<dyn Error>> {
         {
           album(id: $id) {
             albumType
-            name
             genres
+            name
             tracks(limit: $limit, offset: 10) {
               edges {
                 node {
@@ -1685,7 +1685,7 @@ fn arguments_and_variables() -> Result<(), Box<dyn Error>> {
           "limit"
         ],
         "operationKind": "query",
-        "operation": "query{album(id: $id){albumType name genres tracks(limit: $limit, offset: 10){edges{node{name}}}}}"
+        "operation": "query{album(id: $id){albumType genres name tracks(limit: $limit, offset: 10){edges{node{name}}}}}"
       }
     }
     "#);
@@ -1729,15 +1729,14 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
         Fetch(service: "d") {
           {
             firstProduct: productFromD(id: "1") {
-              __typename
-              id
-              name
-            }
+    ...a        }
             secondProduct: productFromD(id: "2") {
-              __typename
-              id
-              name
-            }
+    ...a        }
+          }
+          fragment a on Product {
+            __typename
+            id
+            name
           }
         },
         Parallel {
@@ -1881,15 +1880,14 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
         Fetch(service: "d") {
           {
             firstProduct: productFromD(id: "1") {
-              __typename
-              id
-              name
-            }
+    ...a        }
             secondProduct: productFromD(id: $secondProductId) {
-              __typename
-              id
-              name
-            }
+    ...a        }
+          }
+          fragment a on Product {
+            __typename
+            id
+            name
           }
         },
         Parallel {
@@ -2007,7 +2005,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               "secondProductId"
             ],
             "operationKind": "query",
-            "operation": "query{firstProduct: productFromD(id: \"1\"){__typename id name} secondProduct: productFromD(id: $secondProductId){__typename id name}}"
+            "operation": "query{firstProduct: productFromD(id: \"1\"){...a} secondProduct: productFromD(id: $secondProductId){...a}}\n\nfragment a on Product {__typename id name}\n"
           },
           {
             "kind": "Parallel",

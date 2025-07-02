@@ -27,8 +27,8 @@ fn one() -> Result<(), Box<dyn Error>> {
           {
             product {
               __typename
-              id
               hasDiscount
+              id
             }
           }
         },
@@ -75,7 +75,7 @@ fn one() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{product{__typename id hasDiscount}}"
+            "operation": "query{product{__typename hasDiscount id}}"
           },
           {
             "kind": "Flatten",
@@ -172,8 +172,8 @@ fn one_with_one_local() -> Result<(), Box<dyn Error>> {
           {
             product {
               __typename
-              id
               hasDiscount
+              id
             }
           }
         },
@@ -236,7 +236,7 @@ fn one_with_one_local() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{product{__typename id hasDiscount}}"
+            "operation": "query{product{__typename hasDiscount id}}"
           },
           {
             "kind": "Parallel",
@@ -366,8 +366,8 @@ fn two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>> {
           {
             product {
               __typename
-              id
               hasDiscount
+              id
             }
           }
         },
@@ -396,8 +396,8 @@ fn two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                canAffordWithDiscount2
                 canAffordWithDiscount
+                canAffordWithDiscount2
               }
             }
           },
@@ -415,7 +415,7 @@ fn two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{product{__typename id hasDiscount}}"
+            "operation": "query{product{__typename hasDiscount id}}"
           },
           {
             "kind": "Flatten",
@@ -458,7 +458,7 @@ fn two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "d",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{canAffordWithDiscount2 canAffordWithDiscount}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{canAffordWithDiscount canAffordWithDiscount2}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -740,8 +740,8 @@ fn another_two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>>
             } =>
             {
               ... on Product {
-                canAfford2
                 canAfford
+                canAfford2
               }
             }
           },
@@ -830,7 +830,7 @@ fn another_two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>>
               "kind": "Fetch",
               "serviceName": "d",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{canAfford2 canAfford}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{canAfford canAfford2}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -884,8 +884,8 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
           {
             product {
               __typename
-              id
               hasDiscount
+              id
             }
           }
         },
@@ -980,7 +980,7 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{product{__typename id hasDiscount}}"
+            "operation": "query{product{__typename hasDiscount id}}"
           },
           {
             "kind": "Parallel",
@@ -1179,8 +1179,8 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
           {
             product {
               __typename
-              id
               hasDiscount
+              id
             }
           }
         },
@@ -1241,8 +1241,8 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                canAffordWithAndWithoutDiscount2
                 canAffordWithAndWithoutDiscount
+                canAffordWithAndWithoutDiscount2
               }
             }
           },
@@ -1260,7 +1260,7 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{product{__typename id hasDiscount}}"
+            "operation": "query{product{__typename hasDiscount id}}"
           },
           {
             "kind": "Parallel",
@@ -1368,7 +1368,7 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "d",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{canAffordWithAndWithoutDiscount2 canAffordWithAndWithoutDiscount}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{canAffordWithAndWithoutDiscount canAffordWithAndWithoutDiscount2}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1433,8 +1433,8 @@ fn many() -> Result<(), Box<dyn Error>> {
           {
             product {
               __typename
-              id
               hasDiscount
+              id
             }
           }
         },
@@ -1480,8 +1480,8 @@ fn many() -> Result<(), Box<dyn Error>> {
               } =>
               {
                 ... on Product {
-                  canAffordWithDiscount2
                   canAffordWithDiscount
+                  canAffordWithDiscount2
                 }
               }
             },
@@ -1512,8 +1512,8 @@ fn many() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                canAfford2
                 canAfford
+                canAfford2
               }
             }
           },
@@ -1531,7 +1531,7 @@ fn many() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{product{__typename id hasDiscount}}"
+            "operation": "query{product{__typename hasDiscount id}}"
           },
           {
             "kind": "Parallel",
@@ -1610,7 +1610,7 @@ fn many() -> Result<(), Box<dyn Error>> {
                   "kind": "Fetch",
                   "serviceName": "d",
                   "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{canAffordWithDiscount2 canAffordWithDiscount}}}",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{canAffordWithDiscount canAffordWithDiscount2}}}",
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -1676,7 +1676,7 @@ fn many() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "d",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{canAfford2 canAfford}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{canAfford canAfford2}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",

@@ -106,6 +106,9 @@ fn process_selection<'a>(
             paths_per_leaf.extend(new_paths_per_leaf);
             stack_to_resolve.extend(next_selection_items);
         }
+        SelectionItem::FragmentSpread(_) => {
+            // No processing needed for FragmentSpread
+        }
     }
 
     Ok((stack_to_resolve, paths_per_leaf))

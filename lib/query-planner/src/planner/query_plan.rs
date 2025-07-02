@@ -2,6 +2,8 @@ use std::collections::{HashMap, VecDeque};
 
 use petgraph::{graph::NodeIndex, visit::EdgeRef};
 
+use crate::state::supergraph_state::SupergraphState;
+
 use super::{
     error::QueryPlanError,
     fetch::fetch_graph::FetchGraph,
@@ -70,6 +72,7 @@ impl<'a> InDegree<'a> {
 #[tracing::instrument(level = "trace", skip_all)]
 pub fn build_query_plan_from_fetch_graph(
     fetch_graph: FetchGraph,
+    supergraph: &SupergraphState,
 ) -> Result<QueryPlan, QueryPlanError> {
     let root_index = fetch_graph.root_index.ok_or(QueryPlanError::NoRoot)?;
 
@@ -105,7 +108,7 @@ pub fn build_query_plan_from_fetch_graph(
                 )))?;
 
             let step_data = fetch_graph.get_step_data(step_index)?;
-            current_wave_nodes.push(step_data.into());
+            current_wave_nodes.push(PlanNode::from_fetch_step(step_data, supergraph));
             planned_nodes_count += 1;
             in_degrees.mark_as_processed(step_index);
 

@@ -3,7 +3,7 @@ use crate::{
 };
 use graphql_parser::query as query_ast;
 
-use super::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
+use super::selection_set::{FieldSelection, InlineFragmentSelection};
 use core::panic;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -17,6 +17,7 @@ use std::{
 pub enum SelectionItem {
     Field(FieldSelection),
     InlineFragment(InlineFragmentSelection),
+    FragmentSpread(String),
 }
 
 impl Hash for SelectionItem {
@@ -24,6 +25,7 @@ impl Hash for SelectionItem {
         match self {
             SelectionItem::Field(field) => field.hash(state),
             SelectionItem::InlineFragment(fragment) => fragment.hash(state),
+            SelectionItem::FragmentSpread(name) => name.hash(state),
         }
     }
 }
@@ -35,6 +37,7 @@ impl Display for SelectionItem {
             SelectionItem::InlineFragment(fragment_selection) => {
                 write!(f, "{}", fragment_selection)
             }
+            SelectionItem::FragmentSpread(name) => write!(f, "...{}", name),
         }
     }
 }
@@ -46,6 +49,7 @@ impl PrettyDisplay for SelectionItem {
             SelectionItem::InlineFragment(fragment_selection) => {
                 fragment_selection.pretty_fmt(f, depth)?
             }
+            SelectionItem::FragmentSpread(name) => write!(f, "...{}", name)?,
         }
 
         Ok(())
@@ -58,7 +62,7 @@ impl Ord for SelectionItem {
             (
                 SelectionItem::Field(FieldSelection { .. }),
                 SelectionItem::Field(FieldSelection { .. }),
-            ) => self.sort_key().cmp(&other.sort_key()),
+            ) => self.sort_key().cmp(other.sort_key()),
             (
                 SelectionItem::InlineFragment(InlineFragmentSelection {
                     type_condition: a, ..
@@ -75,6 +79,9 @@ impl Ord for SelectionItem {
                 SelectionItem::InlineFragment(InlineFragmentSelection { .. }),
                 SelectionItem::Field(FieldSelection { .. }),
             ) => std::cmp::Ordering::Greater,
+            (SelectionItem::FragmentSpread(a), SelectionItem::FragmentSpread(b)) => a.cmp(b),
+            (SelectionItem::FragmentSpread(_), _) => std::cmp::Ordering::Less,
+            (_, SelectionItem::FragmentSpread(_)) => std::cmp::Ordering::Greater,
         }
     }
 }
@@ -90,6 +97,7 @@ impl SelectionItem {
         match self {
             SelectionItem::Field(field_selection) => field_selection.variable_usages(),
             SelectionItem::InlineFragment(_fragment_selection) => BTreeSet::new(),
+            SelectionItem::FragmentSpread(_fragment_spread) => BTreeSet::new(),
         }
     }
 
@@ -99,24 +107,15 @@ impl SelectionItem {
             SelectionItem::InlineFragment(InlineFragmentSelection { selections, .. }) => {
                 Some(&selections.items)
             }
+            SelectionItem::FragmentSpread(_fragment_spread) => None,
         }
     }
 
-    pub fn selection_set(&self) -> &SelectionSet {
+    pub fn sort_key(&self) -> &str {
         match self {
-            SelectionItem::Field(FieldSelection { selections, .. }) => selections,
-            SelectionItem::InlineFragment(InlineFragmentSelection { selections, .. }) => selections,
-        }
-    }
-
-    pub fn sort_key(&self) -> String {
-        match self {
-            SelectionItem::Field(FieldSelection {
-                name: field_name, ..
-            }) => field_name.to_string(),
-            SelectionItem::InlineFragment(InlineFragmentSelection { type_condition, .. }) => {
-                type_condition.to_string()
-            }
+            SelectionItem::Field(field) => field.selection_identifier(),
+            SelectionItem::InlineFragment(frag) => frag.type_condition.as_str(),
+            SelectionItem::FragmentSpread(name) => name,
         }
     }
 
@@ -156,6 +155,7 @@ impl SelectionItem {
                     selections: fragment_selection.selections.strip_for_plan_input(),
                 })
             }
+            SelectionItem::FragmentSpread(name) => SelectionItem::FragmentSpread(name.clone()),
         }
     }
 }
@@ -177,6 +177,10 @@ impl Debug for SelectionItem {
                 .debug_struct("SelectionItem::Fragment")
                 .field("type_name", type_condition)
                 .field("selections", selections)
+                .finish(),
+            SelectionItem::FragmentSpread(name) => f
+                .debug_struct("SelectionItem::FragmentSpread")
+                .field("name", name)
                 .finish(),
         }
     }
@@ -202,8 +206,8 @@ impl PartialEq for SelectionItem {
 
 impl Eq for SelectionItem {}
 
-impl From<query_ast::Selection<'_, String>> for SelectionItem {
-    fn from(value: query_ast::Selection<'_, String>) -> Self {
+impl<'a, T: query_ast::Text<'a>> From<query_ast::Selection<'a, T>> for SelectionItem {
+    fn from(value: query_ast::Selection<'a, T>) -> Self {
         match value {
             query_ast::Selection::Field(field) => SelectionItem::Field(field.into()),
             query_ast::Selection::InlineFragment(fragment) => {
@@ -216,46 +220,42 @@ impl From<query_ast::Selection<'_, String>> for SelectionItem {
     }
 }
 
-impl From<query_ast::Field<'_, String>> for FieldSelection {
-    fn from(field: query_ast::Field<'_, String>) -> Self {
+impl<'a, T: query_ast::Text<'a>> From<query_ast::Field<'a, T>> for FieldSelection {
+    fn from(field: query_ast::Field<'a, T>) -> Self {
         let mut skip_if: Option<String> = None;
         let mut include_if: Option<String> = None;
         for directive in &field.directives {
-            match directive.name.as_str() {
+            match directive.name.as_ref() {
                 "skip" => {
-                    let if_arg =
-                        directive
-                            .arguments
-                            .iter()
-                            .find_map(|(name, value)| match name == "if" {
-                                true => Some(value),
-                                false => None,
-                            });
+                    let if_arg = directive.arguments.iter().find_map(|(name, value)| {
+                        match name.as_ref() == "if" {
+                            true => Some(value),
+                            false => None,
+                        }
+                    });
                     match if_arg {
                         Some(query_ast::Value::Boolean(true)) => {
                             continue;
                         }
                         Some(query_ast::Value::Variable(var_name)) => {
-                            skip_if = Some(var_name.to_string());
+                            skip_if = Some(var_name.as_ref().to_string());
                         }
                         _ => {}
                     }
                 }
                 "include" => {
-                    let if_arg =
-                        directive
-                            .arguments
-                            .iter()
-                            .find_map(|(name, value)| match name == "if" {
-                                true => Some(value),
-                                false => None,
-                            });
+                    let if_arg = directive.arguments.iter().find_map(|(name, value)| {
+                        match name.as_ref() == "if" {
+                            true => Some(value),
+                            false => None,
+                        }
+                    });
                     match if_arg {
                         Some(query_ast::Value::Boolean(false)) => {
                             continue;
                         }
                         Some(query_ast::Value::Variable(var_name)) => {
-                            include_if = Some(var_name.to_string());
+                            include_if = Some(var_name.as_ref().to_string());
                         }
                         _ => {}
                     }
@@ -265,8 +265,8 @@ impl From<query_ast::Field<'_, String>> for FieldSelection {
         }
 
         Self {
-            name: field.name,
-            alias: field.alias,
+            name: field.name.as_ref().to_string(),
+            alias: field.alias.map(|alias| alias.as_ref().to_string()),
             arguments: match field.arguments.len() {
                 0 => None,
                 _ => Some(field.arguments.into()),
@@ -278,8 +278,10 @@ impl From<query_ast::Field<'_, String>> for FieldSelection {
     }
 }
 
-impl From<query_ast::InlineFragment<'_, String>> for InlineFragmentSelection {
-    fn from(value: query_ast::InlineFragment<'_, String>) -> Self {
+impl<'a, T: query_ast::Text<'a>> From<query_ast::InlineFragment<'a, T>>
+    for InlineFragmentSelection
+{
+    fn from(value: query_ast::InlineFragment<'a, T>) -> Self {
         Self {
             type_condition: extract_type_condition(
                 &value

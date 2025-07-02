@@ -1,6 +1,9 @@
 use std::fmt::Display;
 
-use crate::{ast::hash::ast_hash, state::supergraph_state::TypeNode};
+use crate::{
+    ast::{document::Document, hash::ast_hash},
+    state::supergraph_state::TypeNode,
+};
 use graphql_parser::query as parser;
 use serde::{Deserialize, Serialize};
 
@@ -38,21 +41,21 @@ impl OperationDefinition {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SubgraphFetchOperation {
-    pub operation_def: OperationDefinition,
-    pub operation_str: String,
+    pub document: Document,
+    pub document_str: String,
 }
 
 impl SubgraphFetchOperation {
     pub fn get_inner_selection_set(&self) -> &SelectionSet {
-        if let SelectionItem::Field(field) = &self.operation_def.selection_set.items[0] {
+        if let SelectionItem::Field(field) = &self.document.operation.selection_set.items[0] {
             if field.name == "_entities" {
                 return &field.selections;
             } else {
-                return &self.operation_def.selection_set;
+                return &self.document.operation.selection_set;
             }
         }
 
-        &self.operation_def.selection_set
+        &self.document.operation.selection_set
     }
 }
 
@@ -61,14 +64,14 @@ impl Serialize for SubgraphFetchOperation {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.operation_def.to_string())
+        serializer.serialize_str(&self.document.to_string())
     }
 }
 
 impl PrettyDisplay for SubgraphFetchOperation {
     fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
         let indent = get_indent(depth);
-        let kind: &str = match &self.operation_def.operation_kind {
+        let kind: &str = match &self.document.operation.operation_kind {
             Some(kind) => match kind {
                 OperationKind::Query => "",
                 OperationKind::Mutation => "mutation ",
@@ -78,7 +81,15 @@ impl PrettyDisplay for SubgraphFetchOperation {
         };
         writeln!(f, "{indent}  {kind}{{")?;
         self.get_inner_selection_set().pretty_fmt(f, depth + 2)?;
-        writeln!(f, "{indent}  }}")
+        writeln!(f, "{indent}  }}")?;
+
+        if !self.document.fragments.is_empty() {
+            for fragment in &self.document.fragments {
+                fragment.pretty_fmt(f, depth)?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -128,11 +139,11 @@ impl Display for VariableDefinition {
     }
 }
 
-impl From<parser::OperationDefinition<'_, String>> for OperationDefinition {
-    fn from(value: parser::OperationDefinition<'_, String>) -> Self {
+impl<'a, T: parser::Text<'a>> From<parser::OperationDefinition<'a, T>> for OperationDefinition {
+    fn from(value: parser::OperationDefinition<'a, T>) -> Self {
         match value {
             parser::OperationDefinition::Query(query) => OperationDefinition {
-                name: query.name,
+                name: query.name.map(|n| n.as_ref().to_string()),
                 operation_kind: Some(OperationKind::Query),
                 variable_definitions: match query.variable_definitions.len() {
                     0 => None,
@@ -153,7 +164,7 @@ impl From<parser::OperationDefinition<'_, String>> for OperationDefinition {
                 selection_set: s.into(),
             },
             parser::OperationDefinition::Mutation(mutation) => OperationDefinition {
-                name: mutation.name,
+                name: mutation.name.map(|n| n.as_ref().to_string()),
                 operation_kind: Some(OperationKind::Mutation),
                 variable_definitions: match mutation.variable_definitions.len() {
                     0 => None,
@@ -168,7 +179,7 @@ impl From<parser::OperationDefinition<'_, String>> for OperationDefinition {
                 selection_set: mutation.selection_set.into(),
             },
             parser::OperationDefinition::Subscription(subscription) => OperationDefinition {
-                name: subscription.name,
+                name: subscription.name.map(|n| n.as_ref().to_string()),
                 operation_kind: Some(OperationKind::Subscription),
                 variable_definitions: match subscription.variable_definitions.len() {
                     0 => None,
@@ -186,20 +197,20 @@ impl From<parser::OperationDefinition<'_, String>> for OperationDefinition {
     }
 }
 
-impl From<&parser::VariableDefinition<'_, String>> for VariableDefinition {
-    fn from(value: &parser::VariableDefinition<'_, String>) -> Self {
+impl<'a, T: parser::Text<'a>> From<&parser::VariableDefinition<'a, T>> for VariableDefinition {
+    fn from(value: &parser::VariableDefinition<'a, T>) -> Self {
         VariableDefinition {
-            name: value.name.clone(),
+            name: value.name.as_ref().to_string(),
             variable_type: (&value.var_type).into(),
             default_value: value.default_value.as_ref().map(|v| v.into()),
         }
     }
 }
 
-impl From<parser::VariableDefinition<'_, String>> for VariableDefinition {
-    fn from(value: parser::VariableDefinition<'_, String>) -> Self {
+impl<'a, T: parser::Text<'a>> From<parser::VariableDefinition<'a, T>> for VariableDefinition {
+    fn from(value: parser::VariableDefinition<'a, T>) -> Self {
         VariableDefinition {
-            name: value.name,
+            name: value.name.as_ref().to_string(),
             variable_type: (&value.var_type).into(),
             default_value: value.default_value.as_ref().map(|v| v.into()),
         }

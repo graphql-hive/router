@@ -184,8 +184,8 @@ fn override_object_field_but_interface_is_requested() -> Result<(), Box<dyn Erro
         Fetch(service: "a") {
           {
             feed {
-              id
               __typename
+              id
               ... on ImagePost {
                 __typename
                 id

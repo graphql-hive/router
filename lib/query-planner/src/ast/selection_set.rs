@@ -15,8 +15,8 @@ pub struct SelectionSet {
     pub items: Vec<SelectionItem>,
 }
 
-impl From<query_ast::SelectionSet<'_, String>> for SelectionSet {
-    fn from(selection_set: query_ast::SelectionSet<'_, String>) -> Self {
+impl<'a, T: query_ast::Text<'a>> From<query_ast::SelectionSet<'a, T>> for SelectionSet {
+    fn from(selection_set: query_ast::SelectionSet<'a, T>) -> Self {
         Self {
             items: selection_set
                 .items
@@ -96,7 +96,7 @@ impl Serialize for SelectionSet {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct FieldSelection {
     pub name: String,
     #[serde(skip_serializing_if = "SelectionSet::is_empty")]

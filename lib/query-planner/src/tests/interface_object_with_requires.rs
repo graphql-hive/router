@@ -470,54 +470,54 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-      QueryPlan {
-        Sequence {
-          Fetch(service: "b") {
-            {
-              anotherUsers {
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {
+            anotherUsers {
+              __typename
+              id
+            }
+          }
+        },
+        Flatten(path: "anotherUsers.@") {
+          Fetch(service: "a") {
+              ... on NodeWithName {
                 __typename
                 id
               }
+            } =>
+            {
+              ... on NodeWithName {
+                __typename
+                id
+                name
+                ... on User {
+                  age
+                  name
+                }
+              }
             }
           },
-          Flatten(path: "anotherUsers.@") {
-            Fetch(service: "a") {
-                ... on NodeWithName {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on NodeWithName {
-                  __typename
-                  id
-                  name
-                  ... on User {
-                    age
-                    name
-                  }
-                }
+        },
+        Flatten(path: "anotherUsers.@") {
+          Fetch(service: "b") {
+              ... on NodeWithName {
+                __typename
+                name
+                id
               }
-            },
-          },
-          Flatten(path: "anotherUsers.@") {
-            Fetch(service: "b") {
-                ... on NodeWithName {
-                  __typename
-                  name
-                  id
-                }
-              } =>
-              {
-                ... on NodeWithName {
-                  username
-                  id
-                }
+            } =>
+            {
+              ... on NodeWithName {
+                id
+                username
               }
-            },
+            }
           },
         },
       },
+    },
     "#);
 
     insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
@@ -582,7 +582,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{username id}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{id username}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -656,14 +656,14 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
           {
             users {
               __typename
+              id
+              name
               ... on User {
                 __typename
                 age
                 id
                 name
               }
-              id
-              name
             }
           }
         },
@@ -696,7 +696,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "query{users{__typename ...on User{__typename age id name} id name}}",
+            "operation": "query{users{__typename id name ...on User{__typename age id name}}}",
             "inputRewrites": [
               {
                 "ValueSetter": {
