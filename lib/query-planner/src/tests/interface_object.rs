@@ -49,6 +49,7 @@ fn interface_object_field_local() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "anotherUsers.@") {
           Fetch(service: "a") {
+            {
               ... on NodeWithName {
                 __typename
                 id
@@ -104,6 +105,7 @@ fn interface_object_field_remote() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "users.@") {
           Fetch(service: "b") {
+            {
               ... on NodeWithName {
                 __typename
                 id
@@ -166,6 +168,7 @@ fn interface_object_field_local_object_type() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "anotherUsers.@") {
           Fetch(service: "a") {
+            {
               ... on NodeWithName {
                 __typename
                 id
@@ -269,6 +272,7 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field_simple
         },
         Flatten(path: "anotherUsers.@") {
           Fetch(service: "a") {
+            {
               ... on NodeWithName {
                 __typename
                 id
@@ -283,6 +287,7 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field_simple
         },
         Flatten(path: "anotherUsers.@") {
           Fetch(service: "b") {
+            {
               ... on User {
                 __typename
                 id
@@ -351,6 +356,7 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
         },
         Flatten(path: "anotherUsers.@") {
           Fetch(service: "a") {
+            {
               ... on NodeWithName {
                 __typename
                 id
@@ -370,6 +376,7 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
         },
         Flatten(path: "anotherUsers.@") {
           Fetch(service: "b") {
+            {
               ... on User {
                 __typename
                 id
@@ -537,6 +544,7 @@ fn interface_field_with_inline_fragment_resolving_remote_interface_object_field(
         },
         Flatten(path: "users.@") {
           Fetch(service: "b") {
+            {
               ... on User {
                 __typename
                 id
@@ -635,6 +643,7 @@ fn interface_object_field_with_inline_fragment_requiring_typename_check(
         },
         Flatten(path: "accounts.@") {
           Fetch(service: "a") {
+            {
               ... on Account {
                 __typename
                 id
@@ -649,6 +658,7 @@ fn interface_object_field_with_inline_fragment_requiring_typename_check(
         },
         Flatten(path: "accounts.@") {
           Fetch(service: "b") {
+            {
               ... on Admin {
                 __typename
                 id
@@ -708,6 +718,7 @@ fn interface_object_field_local_with_remote_typename() -> Result<(), Box<dyn Err
         },
         Flatten(path: "accounts.@") {
           Fetch(service: "a") {
+            {
               ... on Account {
                 __typename
                 id
@@ -768,6 +779,7 @@ fn interface_object_inline_fragment_with_remote_typename() -> Result<(), Box<dyn
         },
         Flatten(path: "accounts.@") {
           Fetch(service: "a") {
+            {
               ... on Account {
                 __typename
                 id
@@ -825,6 +837,7 @@ fn interface_object_local_id_remote_field() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "accounts.@") {
           Fetch(service: "c") {
+            {
               ... on Account {
                 __typename
                 id
@@ -884,6 +897,7 @@ fn interface_object_local_id_remote_field_with_inline_fragment() -> Result<(), B
         },
         Flatten(path: "accounts.@") {
           Fetch(service: "a") {
+            {
               ... on Account {
                 __typename
                 id

@@ -86,6 +86,7 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "aFeed.@") {
           Fetch(service: "b") {
+            {
               ... on Post {
                 __typename
                 id
@@ -195,6 +196,7 @@ fn override_object_field_but_interface_is_requested() -> Result<(), Box<dyn Erro
         },
         Flatten(path: "feed.@") {
           Fetch(service: "b") {
+            {
               ... on ImagePost {
                 __typename
                 id

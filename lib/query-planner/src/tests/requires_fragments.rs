@@ -46,6 +46,7 @@ fn requires_with_fragments_on_interfaces() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "userFromA") {
           Fetch(service: "b") {
+            {
               ... on User {
                 __typename
                 profile {

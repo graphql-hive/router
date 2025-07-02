@@ -324,6 +324,7 @@ fn object_query_with_nested_object_field() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "chat") {
           Fetch(service: "a") {
+            {
               ... on Chat {
                 __typename
                 id
@@ -382,6 +383,7 @@ fn object_query_with_nested_list_field() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "account") {
           Fetch(service: "b") {
+            {
               ... on Account {
                 __typename
                 id
@@ -609,6 +611,7 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
         Parallel {
           Flatten(path: "products.@") {
             Fetch(service: "reviews") {
+              {
                 ... on Magazine {
                   __typename
                   id
@@ -625,6 +628,7 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "products.@") {
             Fetch(service: "reviews") {
+              {
                 ... on Book {
                   __typename
                   id

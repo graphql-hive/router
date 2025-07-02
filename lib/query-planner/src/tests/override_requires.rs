@@ -68,6 +68,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
         Parallel {
           Flatten(path: "userInC") {
             Fetch(service: "b") {
+              {
                 ... on User {
                   __typename
                   id
@@ -82,6 +83,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "userInB") {
             Fetch(service: "c") {
+              {
                 ... on User {
                   __typename
                   name
@@ -97,6 +99,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "userInB") {
             Fetch(service: "a") {
+              {
                 ... on User {
                   __typename
                   name
@@ -112,6 +115,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "userInA") {
             Fetch(service: "b") {
+              {
                 ... on User {
                   __typename
                   id
@@ -128,6 +132,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
         Parallel {
           Flatten(path: "userInC") {
             Fetch(service: "c") {
+              {
                 ... on User {
                   __typename
                   name
@@ -143,6 +148,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "userInC") {
             Fetch(service: "a") {
+              {
                 ... on User {
                   __typename
                   name
@@ -158,6 +164,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "userInA") {
             Fetch(service: "c") {
+              {
                 ... on User {
                   __typename
                   name
@@ -173,6 +180,7 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "userInA") {
             Fetch(service: "a") {
+              {
                 ... on User {
                   __typename
                   name
@@ -513,6 +521,7 @@ fn override_with_requires_cname_in_c() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "userInC") {
           Fetch(service: "b") {
+            {
               ... on User {
                 __typename
                 id
@@ -527,6 +536,7 @@ fn override_with_requires_cname_in_c() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "userInC") {
           Fetch(service: "c") {
+            {
               ... on User {
                 __typename
                 name
@@ -651,6 +661,7 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "userInA") {
           Fetch(service: "b") {
+            {
               ... on User {
                 __typename
                 id
@@ -665,6 +676,7 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "userInA") {
           Fetch(service: "c") {
+            {
               ... on User {
                 __typename
                 name
@@ -789,6 +801,7 @@ fn override_with_requires_aname_in_a() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "userInA") {
           Fetch(service: "b") {
+            {
               ... on User {
                 __typename
                 id
@@ -803,6 +816,7 @@ fn override_with_requires_aname_in_a() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "userInA") {
           Fetch(service: "a") {
+            {
               ... on User {
                 __typename
                 name

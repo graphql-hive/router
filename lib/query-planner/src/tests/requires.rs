@@ -34,6 +34,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products.@") {
           Fetch(service: "products") {
+            {
               ... on Product {
                 __typename
                 upc
@@ -50,6 +51,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
         Parallel {
           Flatten(path: "products.@") {
             Fetch(service: "inventory") {
+              {
                 ... on Product {
                   __typename
                   price: _internal_qp_alias_0
@@ -65,6 +67,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "products.@") {
             Fetch(service: "inventory") {
+              {
                 ... on Product {
                   __typename
                   price
@@ -231,6 +234,7 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products.@") {
           Fetch(service: "products") {
+            {
               ... on Product {
                 __typename
                 upc
@@ -245,6 +249,7 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
+            {
               ... on Product {
                 __typename
                 price
@@ -372,6 +377,7 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
+            {
               ... on Product {
                 __typename
                 price
@@ -471,6 +477,7 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
+            {
               ... on Product {
                 __typename
                 price
@@ -569,6 +576,7 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
+            {
               ... on Product {
                 __typename
                 price
@@ -674,6 +682,7 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
+            {
               ... on Product {
                 __typename
                 price
@@ -781,6 +790,7 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products.@") {
           Fetch(service: "inventory") {
+            {
               ... on Product {
                 __typename
                 price
@@ -894,6 +904,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "b.a.@") {
           Fetch(service: "a") {
+            {
               ... on A {
                 __typename
                 id
@@ -908,6 +919,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "b.a.@") {
           Fetch(service: "b") {
+            {
               ... on A {
                 __typename
                 name
@@ -1053,6 +1065,7 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "feed.@") {
           Fetch(service: "b") {
+            {
               ... on Post {
                 __typename
                 id
@@ -1070,6 +1083,7 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "feed.@.comments.@") {
           Fetch(service: "a") {
+            {
               ... on Comment {
                 __typename
                 id
@@ -1084,6 +1098,7 @@ fn deep_requires() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "feed.@") {
           Fetch(service: "b") {
+            {
               ... on Post {
                 __typename
                 comments {

@@ -42,6 +42,7 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "me") {
           Fetch(service: "reviews") {
+            {
               ... on User {
                 __typename
                 id
@@ -66,6 +67,7 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "me.reviews.@.product") {
           Fetch(service: "inventory") {
+            {
               ... on Product {
                 __typename
                 upc
