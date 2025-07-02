@@ -34,6 +34,7 @@ fn testing() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products") {
           Fetch(service: "info") {
+            {
               ... on Product {
                 __typename
                 id
@@ -49,6 +50,7 @@ fn testing() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products") {
           Fetch(service: "cost") {
+            {
               ... on Product {
                 __typename
                 uuid
@@ -176,6 +178,7 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products.@") {
           Fetch(service: "c") {
+            {
               ... on Product {
                 __typename
                 id
@@ -285,6 +288,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
         Parallel {
           Flatten(path: "productFromD") {
             Fetch(service: "a") {
+              {
                 ... on Product {
                   __typename
                   id
@@ -301,6 +305,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "productFromD") {
             Fetch(service: "b") {
+              {
                 ... on Product {
                   __typename
                   id
@@ -319,6 +324,7 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "productFromD.category") {
           Fetch(service: "c") {
+            {
               ... on Category {
                 __typename
                 id
@@ -483,6 +489,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "topProducts.products.@") {
           Fetch(service: "link") {
+            {
               ... on Product {
                 __typename
                 id
@@ -497,6 +504,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "topProducts.products.@") {
           Fetch(service: "price") {
+            {
               ... on Product {
                 __typename
                 id

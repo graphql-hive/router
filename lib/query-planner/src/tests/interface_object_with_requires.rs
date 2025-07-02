@@ -36,6 +36,7 @@ fn interface_object_requiring_interface_fields() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "anotherUsers.@") {
           Fetch(service: "a") {
+            {
               ... on NodeWithName {
                 __typename
                 id
@@ -50,6 +51,7 @@ fn interface_object_requiring_interface_fields() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "anotherUsers.@") {
           Fetch(service: "b") {
+            {
               ... on NodeWithName {
                 __typename
                 name
@@ -193,6 +195,7 @@ fn interface_field_from_remote_graph_with_requires() -> Result<(), Box<dyn Error
         },
         Flatten(path: "users.@") {
           Fetch(service: "b") {
+            {
               ... on NodeWithName {
                 __typename
                 name
@@ -317,6 +320,7 @@ fn inline_fragment_on_interface_object_for_remote_type_field() -> Result<(), Box
         },
         Flatten(path: "anotherUsers.@") {
           Fetch(service: "a") {
+            {
               ... on NodeWithName {
                 __typename
                 id
@@ -482,6 +486,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
         },
         Flatten(path: "anotherUsers.@") {
           Fetch(service: "a") {
+            {
               ... on NodeWithName {
                 __typename
                 id
@@ -502,6 +507,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
         },
         Flatten(path: "anotherUsers.@") {
           Fetch(service: "b") {
+            {
               ... on NodeWithName {
                 __typename
                 name
@@ -669,6 +675,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
         },
         Flatten(path: "users.@") {
           Fetch(service: "b") {
+            {
               ... on NodeWithName {
                 __typename
                 name

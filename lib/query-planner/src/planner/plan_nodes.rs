@@ -332,6 +332,7 @@ impl PrettyDisplay for FetchNode {
         let indent = get_indent(depth);
         writeln!(f, "{indent}Fetch(service: \"{}\") {{", self.service_name)?;
         if let Some(requires) = &self.requires {
+            writeln!(f, "{indent}  {{")?;
             requires.pretty_fmt(f, depth + 2)?;
             writeln!(f, "{indent}  }} =>")?;
         }

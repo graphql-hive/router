@@ -34,6 +34,7 @@ fn one() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "product") {
           Fetch(service: "c") {
+            {
               ... on Product {
                 __typename
                 hasDiscount
@@ -49,6 +50,7 @@ fn one() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "product") {
           Fetch(service: "d") {
+            {
               ... on Product {
                 __typename
                 isExpensiveWithDiscount
@@ -180,6 +182,7 @@ fn one_with_one_local() -> Result<(), Box<dyn Error>> {
         Parallel {
           Flatten(path: "product") {
             Fetch(service: "c") {
+              {
                 ... on Product {
                   __typename
                   hasDiscount
@@ -195,6 +198,7 @@ fn one_with_one_local() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "product") {
             Fetch(service: "d") {
+              {
                 ... on Product {
                   __typename
                   id
@@ -210,6 +214,7 @@ fn one_with_one_local() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "product") {
           Fetch(service: "d") {
+            {
               ... on Product {
                 __typename
                 isExpensiveWithDiscount
@@ -373,6 +378,7 @@ fn two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "product") {
           Fetch(service: "c") {
+            {
               ... on Product {
                 __typename
                 hasDiscount
@@ -388,6 +394,7 @@ fn two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "product") {
           Fetch(service: "d") {
+            {
               ... on Product {
                 __typename
                 isExpensiveWithDiscount
@@ -517,6 +524,7 @@ fn one_more() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "product") {
           Fetch(service: "a") {
+            {
               ... on Product {
                 __typename
                 id
@@ -531,6 +539,7 @@ fn one_more() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "product") {
           Fetch(service: "c") {
+            {
               ... on Product {
                 __typename
                 price
@@ -546,6 +555,7 @@ fn one_more() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "product") {
           Fetch(service: "d") {
+            {
               ... on Product {
                 __typename
                 isExpensive
@@ -703,6 +713,7 @@ fn another_two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>>
         },
         Flatten(path: "product") {
           Fetch(service: "a") {
+            {
               ... on Product {
                 __typename
                 id
@@ -717,6 +728,7 @@ fn another_two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>>
         },
         Flatten(path: "product") {
           Fetch(service: "c") {
+            {
               ... on Product {
                 __typename
                 price
@@ -732,6 +744,7 @@ fn another_two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>>
         },
         Flatten(path: "product") {
           Fetch(service: "d") {
+            {
               ... on Product {
                 __typename
                 isExpensive
@@ -892,6 +905,7 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
         Parallel {
           Flatten(path: "product") {
             Fetch(service: "c") {
+              {
                 ... on Product {
                   __typename
                   hasDiscount
@@ -907,6 +921,7 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "product") {
             Fetch(service: "a") {
+              {
                 ... on Product {
                   __typename
                   id
@@ -923,6 +938,7 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
         Parallel {
           Flatten(path: "product") {
             Fetch(service: "d") {
+              {
                 ... on Product {
                   __typename
                   isExpensiveWithDiscount
@@ -938,6 +954,7 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "product") {
             Fetch(service: "c") {
+              {
                 ... on Product {
                   __typename
                   price
@@ -954,6 +971,7 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "product") {
           Fetch(service: "d") {
+            {
               ... on Product {
                 __typename
                 isExpensive
@@ -1187,6 +1205,7 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
         Parallel {
           Flatten(path: "product") {
             Fetch(service: "c") {
+              {
                 ... on Product {
                   __typename
                   hasDiscount
@@ -1202,6 +1221,7 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "product") {
             Fetch(service: "a") {
+              {
                 ... on Product {
                   __typename
                   id
@@ -1217,6 +1237,7 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "product") {
           Fetch(service: "c") {
+            {
               ... on Product {
                 __typename
                 price
@@ -1232,6 +1253,7 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "product") {
           Fetch(service: "d") {
+            {
               ... on Product {
                 __typename
                 isExpensive
@@ -1441,6 +1463,7 @@ fn many() -> Result<(), Box<dyn Error>> {
         Parallel {
           Flatten(path: "product") {
             Fetch(service: "c") {
+              {
                 ... on Product {
                   __typename
                   hasDiscount
@@ -1456,6 +1479,7 @@ fn many() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "product") {
             Fetch(service: "a") {
+              {
                 ... on Product {
                   __typename
                   id
@@ -1472,6 +1496,7 @@ fn many() -> Result<(), Box<dyn Error>> {
         Parallel {
           Flatten(path: "product") {
             Fetch(service: "d") {
+              {
                 ... on Product {
                   __typename
                   isExpensiveWithDiscount
@@ -1488,6 +1513,7 @@ fn many() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "product") {
             Fetch(service: "c") {
+              {
                 ... on Product {
                   __typename
                   price
@@ -1504,6 +1530,7 @@ fn many() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "product") {
           Fetch(service: "d") {
+            {
               ... on Product {
                 __typename
                 isExpensive

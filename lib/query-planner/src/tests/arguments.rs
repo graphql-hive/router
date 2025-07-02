@@ -45,6 +45,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products.@") {
           Fetch(service: "a") {
+            {
               ... on Product {
                 __typename
                 price
@@ -178,6 +179,7 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "feed.@") {
           Fetch(service: "d") {
+            {
               ... on Post {
                 __typename
                 id
@@ -198,6 +200,7 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "feed.@._internal_qp_alias_0.@") {
           Fetch(service: "c") {
+            {
               ... on Comment {
                 __typename
                 id
@@ -212,6 +215,7 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "feed.@") {
           Fetch(service: "d") {
+            {
               ... on Post {
                 __typename
                 comments: _internal_qp_alias_0 {
@@ -389,6 +393,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
         },
         Flatten(path: "feed.@") {
           Fetch(service: "d") {
+            {
               ... on Post {
                 __typename
                 id
@@ -409,6 +414,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
         },
         Flatten(path: "feed.@._internal_qp_alias_0.@") {
           Fetch(service: "c") {
+            {
               ... on Comment {
                 __typename
                 id
@@ -423,6 +429,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
         },
         Flatten(path: "feed.@") {
           Fetch(service: "d") {
+            {
               ... on Post {
                 __typename
                 comments: _internal_qp_alias_0 {
@@ -614,6 +621,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
         },
         Flatten(path: "feed.@") {
           Fetch(service: "d") {
+            {
               ... on Post {
                 __typename
                 id
@@ -634,6 +642,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
         },
         Flatten(path: "feed.@._internal_qp_alias_0.@") {
           Fetch(service: "c") {
+            {
               ... on Comment {
                 __typename
                 id
@@ -648,6 +657,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
         },
         Flatten(path: "feed.@") {
           Fetch(service: "d") {
+            {
               ... on Post {
                 __typename
                 comments: _internal_qp_alias_0 {
@@ -827,6 +837,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "test") {
           Fetch(service: "b") {
+            {
               ... on Test {
                 __typename
                 id
@@ -843,6 +854,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
         Parallel {
           Flatten(path: "test") {
             Fetch(service: "a") {
+              {
                 ... on Test {
                   __typename
                   otherField: _internal_qp_alias_0
@@ -858,6 +870,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "test") {
             Fetch(service: "a") {
+              {
                 ... on Test {
                   __typename
                   otherField
@@ -1030,6 +1043,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
         },
         Flatten(path: "test") {
           Fetch(service: "b") {
+            {
               ... on Test {
                 __typename
                 id
@@ -1047,6 +1061,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
         Parallel {
           Flatten(path: "test") {
             Fetch(service: "a") {
+              {
                 ... on Test {
                   __typename
                   otherField: _internal_qp_alias_0
@@ -1062,6 +1077,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
           },
           Flatten(path: "test") {
             Fetch(service: "a") {
+              {
                 ... on Test {
                   __typename
                   otherField: _internal_qp_alias_1
@@ -1221,7 +1237,7 @@ fn multiple_plain_field_and_requires_with_args_that_does_not_conflicts_should_me
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r###"
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
@@ -1234,6 +1250,7 @@ fn multiple_plain_field_and_requires_with_args_that_does_not_conflicts_should_me
         },
         Flatten(path: "test") {
           Fetch(service: "b") {
+            {
               ... on Test {
                 __typename
                 id
@@ -1248,6 +1265,7 @@ fn multiple_plain_field_and_requires_with_args_that_does_not_conflicts_should_me
         },
         Flatten(path: "test") {
           Fetch(service: "a") {
+            {
               ... on Test {
                 __typename
                 otherField
@@ -1263,7 +1281,7 @@ fn multiple_plain_field_and_requires_with_args_that_does_not_conflicts_should_me
         },
       },
     },
-    "###);
+    "#);
 
     insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
@@ -1375,6 +1393,7 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "test") {
           Fetch(service: "b") {
+            {
               ... on Test {
                 __typename
                 id
@@ -1389,6 +1408,7 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "test") {
           Fetch(service: "a") {
+            {
               ... on Test {
                 __typename
                 otherField
@@ -1517,6 +1537,7 @@ fn requires_with_arguments() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "feed.@") {
           Fetch(service: "b") {
+            {
               ... on Post {
                 __typename
                 id
@@ -1534,6 +1555,7 @@ fn requires_with_arguments() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "feed.@.comments.@") {
           Fetch(service: "a") {
+            {
               ... on Comment {
                 __typename
                 id
@@ -1548,6 +1570,7 @@ fn requires_with_arguments() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "feed.@") {
           Fetch(service: "b") {
+            {
               ... on Post {
                 __typename
                 comments {
@@ -1742,6 +1765,7 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
         Parallel {
           Flatten(path: "secondProduct") {
             Fetch(service: "a") {
+              {
                 ... on Product {
                   __typename
                   id
@@ -1758,6 +1782,7 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "secondProduct") {
             Fetch(service: "b") {
+              {
                 ... on Product {
                   __typename
                   id
@@ -1775,6 +1800,7 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "firstProduct") {
             Fetch(service: "a") {
+              {
                 ... on Product {
                   __typename
                   id
@@ -1791,6 +1817,7 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "firstProduct") {
             Fetch(service: "b") {
+              {
                 ... on Product {
                   __typename
                   id
@@ -1810,6 +1837,7 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
         Parallel {
           Flatten(path: "secondProduct.category") {
             Fetch(service: "c") {
+              {
                 ... on Category {
                   __typename
                   id
@@ -1824,6 +1852,7 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "firstProduct.category") {
             Fetch(service: "c") {
+              {
                 ... on Category {
                   __typename
                   id
@@ -1893,6 +1922,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
         Parallel {
           Flatten(path: "secondProduct") {
             Fetch(service: "a") {
+              {
                 ... on Product {
                   __typename
                   id
@@ -1909,6 +1939,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "secondProduct") {
             Fetch(service: "b") {
+              {
                 ... on Product {
                   __typename
                   id
@@ -1926,6 +1957,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "firstProduct") {
             Fetch(service: "a") {
+              {
                 ... on Product {
                   __typename
                   id
@@ -1942,6 +1974,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "firstProduct") {
             Fetch(service: "b") {
+              {
                 ... on Product {
                   __typename
                   id
@@ -1961,6 +1994,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
         Parallel {
           Flatten(path: "secondProduct.category") {
             Fetch(service: "c") {
+              {
                 ... on Category {
                   __typename
                   id
@@ -1975,6 +2009,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
           },
           Flatten(path: "firstProduct.category") {
             Fetch(service: "c") {
+              {
                 ... on Category {
                   __typename
                   id

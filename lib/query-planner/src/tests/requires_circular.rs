@@ -34,6 +34,7 @@ fn requires_circular_1() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "feed.@") {
           Fetch(service: "b") {
+            {
               ... on Post {
                 __typename
                 id
@@ -51,6 +52,7 @@ fn requires_circular_1() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "feed.@.author") {
           Fetch(service: "a") {
+            {
               ... on Author {
                 __typename
                 id
@@ -65,6 +67,7 @@ fn requires_circular_1() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "feed.@") {
           Fetch(service: "b") {
+            {
               ... on Post {
                 __typename
                 author {
@@ -117,6 +120,7 @@ fn requires_circular_2() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "feed.@") {
           Fetch(service: "b") {
+            {
               ... on Post {
                 __typename
                 id
@@ -134,6 +138,7 @@ fn requires_circular_2() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "feed.@.author") {
           Fetch(service: "a") {
+            {
               ... on Author {
                 __typename
                 id
@@ -148,6 +153,7 @@ fn requires_circular_2() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "feed.@") {
           Fetch(service: "b") {
+            {
               ... on Post {
                 __typename
                 author {
@@ -165,6 +171,7 @@ fn requires_circular_2() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "feed.@") {
           Fetch(service: "a") {
+            {
               ... on Post {
                 __typename
                 byNovice

@@ -35,6 +35,7 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products.@") {
           Fetch(service: "reviews") {
+            {
               ... on Product {
                 __typename
                 upc
@@ -244,6 +245,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "media") {
           Fetch(service: "c") {
+            {
               ... on Movie {
                 __typename
                 id

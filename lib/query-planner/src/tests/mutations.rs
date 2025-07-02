@@ -38,6 +38,7 @@ fn mutations() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "addProduct") {
           Fetch(service: "b") {
+            {
               ... on Product {
                 __typename
                 price

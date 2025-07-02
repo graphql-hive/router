@@ -34,6 +34,7 @@ fn aliasing_both_parent_and_leaf() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "allProducts") {
           Fetch(service: "info") {
+            {
               ... on Product {
                 __typename
                 id
@@ -49,6 +50,7 @@ fn aliasing_both_parent_and_leaf() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "allProducts") {
           Fetch(service: "cost") {
+            {
               ... on Product {
                 __typename
                 uuid

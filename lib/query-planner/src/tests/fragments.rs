@@ -36,6 +36,7 @@ fn simple_inline_fragment() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products") {
           Fetch(service: "info") {
+            {
               ... on Product {
                 __typename
                 id
@@ -51,6 +52,7 @@ fn simple_inline_fragment() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products") {
           Fetch(service: "cost") {
+            {
               ... on Product {
                 __typename
                 uuid
@@ -107,6 +109,7 @@ fn fragment_spread() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products") {
           Fetch(service: "info") {
+            {
               ... on Product {
                 __typename
                 id
@@ -122,6 +125,7 @@ fn fragment_spread() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "products") {
           Fetch(service: "cost") {
+            {
               ... on Product {
                 __typename
                 uuid

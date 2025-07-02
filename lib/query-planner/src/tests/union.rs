@@ -159,6 +159,7 @@ fn union_member_entity_call() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "aMedia") {
           Fetch(service: "b") {
+            {
               ... on Book {
                 __typename
                 id
@@ -235,6 +236,7 @@ fn union_member_entity_call_many_local() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "viewer.song") {
           Fetch(service: "b") {
+            {
               ... on Book {
                 __typename
                 id
@@ -372,6 +374,7 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
         },
         Flatten(path: "viewer.song") {
           Fetch(service: "b") {
+            {
               ... on Book {
                 __typename
                 id
