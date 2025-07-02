@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use futures::{stream::FuturesUnordered, FutureExt, StreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use query_planner::{
     ast::{operation::OperationDefinition, selection_item::SelectionItem},
     planner::plan_nodes::{
@@ -9,7 +9,7 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::{collections::BTreeSet, fmt::Write, future::Future, pin::Pin};
+use std::{collections::BTreeSet, fmt::Write};
 use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
@@ -441,16 +441,13 @@ impl ExecutablePlanNode for ParallelNode {
         let mut all_extensions = vec![];
 
         {
-            // Here we call fetch nodes in parallel and non-fetch nodes sequentially.
-            let mut jobs: FuturesUnordered<Pin<Box<dyn Future<Output = ParallelJob> + Send>>> =
-                FuturesUnordered::new();
+            let mut jobs: FuturesUnordered<BoxFuture<ParallelJob>> = FuturesUnordered::new();
 
-            // Collect Fetch node results and non-fetch nodes for sequential execution
+            // Collect Fetch node results and flatten nodes for parallel execution
             let now = std::time::Instant::now();
             for node in &self.nodes {
                 match node {
                     PlanNode::Fetch(fetch_node) => {
-                        // Execute FetchNode in parallel
                         let job = fetch_node.execute_for_root(execution_context);
                         jobs.push(Box::pin(job.map(ParallelJob::Root)));
                     }
@@ -540,8 +537,6 @@ impl ExecutablePlanNode for ParallelNode {
                         }
                     }
                     ParallelJob::Flatten((result, path)) => {
-                        // Process FlattenNode results
-                        // Process FlattenNode results
                         if let Some(mut entities) = result.entities {
                             let mut index_of_traverse = 0;
                             let mut index_of_entities = 0;
