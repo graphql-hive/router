@@ -1049,6 +1049,10 @@ impl QueryPlanExecutionContext<'_> {
                         );
                     }
                 }
+                SelectionItem::FragmentSpread(_name_ref) => {
+                    // We only minify the queries to subgraphs, so we never have fragment spreads here
+                    unreachable!("Fragment spreads should not exist in FetchNode::requires.");
+                }
             }
         }
     }
