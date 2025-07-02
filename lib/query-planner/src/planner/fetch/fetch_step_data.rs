@@ -5,7 +5,7 @@ use tracing::trace;
 
 use crate::{
     ast::{
-        merge_path::MergePath,
+        merge_path::{Condition, MergePath},
         operation::VariableDefinition,
         safe_merge::AliasesRecords,
         type_aware_selection::{find_arguments_conflicts, TypeAwareSelection},
@@ -25,6 +25,7 @@ pub struct FetchStepData {
     pub output: TypeAwareSelection,
     pub kind: FetchStepKind,
     pub used_for_requires: bool,
+    pub condition: Option<Condition>,
     pub variable_usages: Option<BTreeSet<String>>,
     pub variable_definitions: Option<Vec<VariableDefinition>>,
     pub mutation_field_position: MutationFieldPosition,
@@ -53,6 +54,13 @@ impl Display for FetchStepData {
 
         if self.used_for_requires {
             write!(f, " [@requires]")?;
+        }
+
+        if let Some(condition) = &self.condition {
+            match condition {
+                Condition::Include(var_name) => write!(f, " [@include(if: ${})]", var_name)?,
+                Condition::Skip(var_name) => write!(f, " [@skip(if: ${})]", var_name)?,
+            }
         }
 
         Ok(())
@@ -102,6 +110,11 @@ impl FetchStepData {
         }
 
         if self.service_name != other.service_name {
+            return false;
+        }
+
+        // We allow to merge root with entity calls by adding an inline fragment with the @include/@skip
+        if self.is_entity_call() && other.is_entity_call() && self.condition != other.condition {
             return false;
         }
 

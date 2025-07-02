@@ -2,7 +2,9 @@ use graphql_parser::query::{
     Definition, Field, Mutation, OperationDefinition, Query, Selection, SelectionSet, Subscription,
 };
 
-use crate::ast::normalization::{context::NormalizationContext, error::NormalizationError};
+use crate::ast::normalization::context::NormalizationContext;
+use crate::ast::normalization::error::NormalizationError;
+use crate::utils::ast::equal_directives_arr;
 
 pub fn merge_fields(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     for definition in &mut ctx.document.definitions {
@@ -43,7 +45,7 @@ fn fields_equal<'a>(a: &Field<'a, String>, b: &Field<'a, String>) -> bool {
         return false;
     }
 
-    if a.directives != b.directives {
+    if !equal_directives_arr(&a.directives, &b.directives) {
         return false;
     }
 

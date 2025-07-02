@@ -1,4 +1,4 @@
-use crate::ast::merge_path::{MergePath, Segment};
+use crate::ast::merge_path::{Condition, MergePath, Segment};
 use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
 use crate::ast::type_aware_selection::TypeAwareSelection;
@@ -243,6 +243,7 @@ fn create_noop_fetch_step(fetch_graph: &mut FetchGraph, created_from_requires: b
             type_name: "*".to_string(),
         },
         used_for_requires: created_from_requires,
+        condition: None,
         kind: FetchStepKind::Root,
         input_rewrites: None,
         output_rewrites: None,
@@ -259,6 +260,7 @@ fn create_fetch_step_for_entity_call(
     input_type_name: &str,
     output_type_name: &str,
     response_path: &MergePath,
+    condition: Option<&Condition>,
     used_for_requires: bool,
 ) -> NodeIndex {
     fetch_graph.add_step(FetchStepData {
@@ -275,6 +277,7 @@ fn create_fetch_step_for_entity_call(
             type_name: output_type_name.to_string(),
         },
         used_for_requires,
+        condition: condition.cloned(),
         kind: FetchStepKind::Entity,
         input_rewrites: None,
         output_rewrites: None,
@@ -304,6 +307,7 @@ fn create_fetch_step_for_root_move(
             type_name: type_name.to_string(),
         },
         used_for_requires: false,
+        condition: None,
         kind: FetchStepKind::Root,
         variable_usages: None,
         variable_definitions: None,
@@ -329,6 +333,7 @@ fn ensure_fetch_step_for_subgraph(
     response_path: &MergePath,
     key: Option<&TypeAwareSelection>,
     requires: Option<&TypeAwareSelection>,
+    condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<NodeIndex, FetchGraphError> {
     let matching_child_index = if requires.is_some() {
@@ -347,6 +352,10 @@ fn ensure_fetch_step_for_subgraph(
                     }
 
                     if fetch_step.response_path != *response_path {
+                        return None;
+                    }
+
+                    if fetch_step.condition.as_ref() != condition {
                         return None;
                     }
 
@@ -388,6 +397,7 @@ fn ensure_fetch_step_for_subgraph(
                 input_type_name,
                 output_type_name,
                 response_path,
+                condition,
                 created_from_requires || requires.is_some(),
             );
             if let Some(selection) = key {
@@ -416,6 +426,7 @@ fn ensure_fetch_step_for_requirement(
     subgraph_name: &SubgraphName,
     type_name: &String,
     response_path: &MergePath,
+    condition: Option<&Condition>,
     requirement: &TypeAwareSelection,
 ) -> Result<NodeIndex, FetchGraphError> {
     let matching_child_index =
@@ -424,6 +435,10 @@ fn ensure_fetch_step_for_requirement(
             .find_map(|to_child_edge_ref| {
                 if let Ok(fetch_step) = fetch_graph.get_step_data(to_child_edge_ref.target()) {
                     if fetch_step.service_name != *subgraph_name {
+                        return None;
+                    }
+
+                    if fetch_step.condition.as_ref() != condition {
                         return None;
                     }
 
@@ -461,6 +476,7 @@ fn ensure_fetch_step_for_requirement(
                 type_name,
                 type_name,
                 response_path,
+                condition,
                 true,
             );
 
@@ -493,6 +509,7 @@ fn process_children_for_fetch_steps(
     response_path: &MergePath,
     fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
+    condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     if query_node.children.is_empty() {
@@ -509,6 +526,7 @@ fn process_children_for_fetch_steps(
             response_path,
             fetch_path,
             requiring_fetch_step_index,
+            condition,
             created_from_requires,
         )?);
     }
@@ -516,6 +534,8 @@ fn process_children_for_fetch_steps(
     Ok(leaf_fetch_step_indexes)
 }
 
+// TODO: simplfy args
+#[allow(clippy::too_many_arguments)]
 #[instrument(level = "trace",skip_all, fields(
   count = query_node.requirements.len()
 ))]
@@ -525,6 +545,7 @@ fn process_requirements_for_fetch_steps(
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
     requiring_fetch_step_index: Option<NodeIndex>,
+    condition: Option<&Condition>,
     response_path: &MergePath,
     fetch_path: &MergePath,
 ) -> Result<(), FetchGraphError> {
@@ -541,6 +562,7 @@ fn process_requirements_for_fetch_steps(
             response_path,
             fetch_path,
             requiring_fetch_step_index,
+            condition,
             true,
         )?;
     }
@@ -559,6 +581,7 @@ fn process_noop_edge(
     response_path: &MergePath,
     fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
+    condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     // We're at the root
@@ -573,6 +596,7 @@ fn process_noop_edge(
         response_path,
         fetch_path,
         requiring_fetch_step_index,
+        condition,
         created_from_requires,
     )
 }
@@ -612,6 +636,7 @@ fn process_entity_move_edge(
     fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
     edge_index: EdgeIndex,
+    condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let edge = graph.edge(edge_index)?;
@@ -653,6 +678,7 @@ fn process_entity_move_edge(
         response_path,
         Some(&requirement),
         None,
+        condition,
         created_from_requires,
     )?;
 
@@ -698,6 +724,7 @@ fn process_entity_move_edge(
         query_node,
         parent_fetch_step_index,
         Some(fetch_step_index),
+        condition,
         response_path,
         fetch_path,
     )?;
@@ -710,6 +737,7 @@ fn process_entity_move_edge(
         response_path,
         &MergePath::default(),
         requiring_fetch_step_index,
+        condition,
         created_from_requires,
     )
 }
@@ -731,6 +759,7 @@ fn process_interface_object_type_move_edge(
     requiring_fetch_step_index: Option<NodeIndex>,
     edge_index: EdgeIndex,
     object_type_name: &str,
+    condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     if fetch_graph.parents_of(parent_fetch_step_index).count() != 1 {
@@ -775,6 +804,7 @@ fn process_interface_object_type_move_edge(
         response_path,
         Some(&requirement),
         None,
+        condition,
         created_from_requires,
     )?;
 
@@ -819,6 +849,7 @@ fn process_interface_object_type_move_edge(
         object_type_name,
         interface_type_name,
         response_path,
+        condition,
         false,
     );
     let step_for_requirements = fetch_graph.get_step_data_mut(step_for_requirements_index)?;
@@ -852,6 +883,7 @@ fn process_interface_object_type_move_edge(
         response_path,
         &MergePath::default(),
         None,
+        condition,
         true,
     )?;
 
@@ -872,6 +904,7 @@ fn process_interface_object_type_move_edge(
         response_path,
         &MergePath::default(),
         requiring_fetch_step_index,
+        condition,
         created_from_requires,
     )
 }
@@ -908,6 +941,7 @@ fn process_subgraph_entrypoint_edge(
         &MergePath::default(),
         &MergePath::default(),
         None,
+        None,
         created_from_requires,
     )
 }
@@ -931,6 +965,7 @@ fn process_abstract_edge(
     fetch_path: &MergePath,
     target_type_name: &String,
     edge_index: &EdgeIndex,
+    condition: Option<&Condition>,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     let head_index = graph.get_edge_head(edge_index)?;
     let head = graph.node(head_index)?;
@@ -953,6 +988,8 @@ fn process_abstract_edge(
                     SelectionItem::InlineFragment(InlineFragmentSelection {
                         type_condition: target_type_name.clone(),
                         selections: SelectionSet::default(),
+                        skip_if: None,
+                        include_if: None,
                     }),
                 ],
             },
@@ -962,8 +999,8 @@ fn process_abstract_edge(
         false,
     );
 
-    let child_response_path = response_path.push(Segment::Cast(target_type_name.clone()));
-    let child_fetch_path = fetch_path.push(Segment::Cast(target_type_name.clone()));
+    let child_response_path = response_path.push(Segment::Cast(target_type_name.clone(), None));
+    let child_fetch_path = fetch_path.push(Segment::Cast(target_type_name.clone(), None));
 
     process_children_for_fetch_steps(
         graph,
@@ -973,6 +1010,7 @@ fn process_abstract_edge(
         &child_response_path,
         &child_fetch_path,
         requiring_fetch_step_index,
+        condition,
         false,
     )
 }
@@ -1000,6 +1038,7 @@ fn process_plain_field_edge(
     response_path: &MergePath,
     fetch_path: &MergePath,
     field_move: &FieldMove,
+    condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     if let Some(requiring_fetch_step_index) = requiring_fetch_step_index {
@@ -1041,10 +1080,16 @@ fn process_plain_field_edge(
         .selection_arguments()
         .map(|a| a.hash_u64())
         .unwrap_or(0);
-    let mut child_response_path =
-        response_path.push(Segment::Field(child_segment.to_string(), segment_args_hash));
-    let mut child_fetch_path =
-        fetch_path.push(Segment::Field(child_segment.to_string(), segment_args_hash));
+    let mut child_response_path = response_path.push(Segment::Field(
+        child_segment.to_string(),
+        segment_args_hash,
+        None,
+    ));
+    let mut child_fetch_path = fetch_path.push(Segment::Field(
+        child_segment.to_string(),
+        segment_args_hash,
+        None,
+    ));
 
     if field_move.is_list {
         child_response_path = child_response_path.push(Segment::List);
@@ -1059,6 +1104,7 @@ fn process_plain_field_edge(
         &child_response_path,
         &child_fetch_path,
         requiring_fetch_step_index,
+        condition,
         created_from_requires,
     )
 }
@@ -1078,6 +1124,7 @@ fn process_requires_field_edge(
     requiring_fetch_step_index: Option<NodeIndex>,
     field_move: &FieldMove,
     edge_index: EdgeIndex,
+    condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     if fetch_graph.parents_of(parent_fetch_step_index).count() != 1 {
@@ -1096,6 +1143,9 @@ fn process_requires_field_edge(
         .requirements
         .as_ref()
         .ok_or(FetchGraphError::MissingRequires)?;
+
+    let condition = query_node.condition.as_ref().or(condition);
+    trace!("Condition: {:?}", condition);
 
     let tail_node_index = graph.get_edge_tail(&edge_index)?;
     let tail_node = graph.node(tail_node_index)?;
@@ -1147,6 +1197,7 @@ fn process_requires_field_edge(
         head_subgraph_name,
         head_type_name,
         response_path,
+        condition,
         requires,
     )?;
 
@@ -1190,6 +1241,7 @@ fn process_requires_field_edge(
         head_type_name,
         head_type_name,
         response_path,
+        condition,
         true,
     );
     let step_for_requirements = fetch_graph.get_step_data_mut(step_for_requirements_index)?;
@@ -1209,9 +1261,10 @@ fn process_requires_field_edge(
 
     fetch_graph.connect(real_parent_fetch_step_index, step_for_requirements_index);
 
-    let mut child_response_path = response_path.push(Segment::Field(field_move.name.clone(), 0));
+    let mut child_response_path =
+        response_path.push(Segment::Field(field_move.name.clone(), 0, None));
     let mut child_fetch_path =
-        MergePath::default().push(Segment::Field(field_move.name.clone(), 0));
+        MergePath::default().push(Segment::Field(field_move.name.clone(), 0, None));
 
     if field_move.is_list {
         child_response_path = child_response_path.push(Segment::List);
@@ -1227,6 +1280,7 @@ fn process_requires_field_edge(
         response_path,
         &MergePath::default(),
         None,
+        condition,
         true,
     )?;
 
@@ -1267,6 +1321,7 @@ fn process_requires_field_edge(
         &child_response_path,
         &child_fetch_path,
         requiring_fetch_step_index,
+        condition,
         created_from_requires,
     )
 }
@@ -1354,6 +1409,7 @@ fn process_query_node(
     response_path: &MergePath,
     fetch_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
+    condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     if let Some(edge_index) = query_node.edge_from_parent {
@@ -1390,6 +1446,7 @@ fn process_query_node(
                 fetch_path,
                 requiring_fetch_step_index,
                 edge_index,
+                condition,
                 created_from_requires,
             ),
             Edge::FieldMove(field) => match field.requirements.is_some() {
@@ -1402,6 +1459,7 @@ fn process_query_node(
                     requiring_fetch_step_index,
                     field,
                     edge_index,
+                    condition,
                     created_from_requires,
                 ),
                 false => process_plain_field_edge(
@@ -1413,6 +1471,7 @@ fn process_query_node(
                     response_path,
                     fetch_path,
                     field,
+                    condition,
                     created_from_requires,
                 ),
             },
@@ -1426,6 +1485,7 @@ fn process_query_node(
                 fetch_path,
                 type_name,
                 &edge_index,
+                condition,
             ),
             Edge::InterfaceObjectTypeMove(InterfaceObjectTypeMove {
                 object_type_name, ..
@@ -1439,6 +1499,7 @@ fn process_query_node(
                 requiring_fetch_step_index,
                 edge_index,
                 object_type_name,
+                condition,
                 created_from_requires,
             ),
         }
@@ -1451,6 +1512,7 @@ fn process_query_node(
             response_path,
             fetch_path,
             requiring_fetch_step_index,
+            condition,
             created_from_requires,
         )
     }
@@ -1489,6 +1551,7 @@ pub fn build_fetch_graph_from_query_tree(
         None,
         &MergePath::default(),
         &MergePath::default(),
+        None,
         None,
         false,
     )?;

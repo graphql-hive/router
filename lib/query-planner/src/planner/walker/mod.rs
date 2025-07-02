@@ -141,9 +141,11 @@ fn process_inline_fragment<'a>(
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
     trace!(
-        "Processing inline fragment '{}' on type '{}' through {} possible paths",
+        "Processing inline fragment '{}' on type '{}' (skip: {:?}, include: {:?}) through {} possible paths",
         fragment.selections,
         fragment.type_condition,
+        fragment.include_if,
+        fragment.skip_if,
         paths.len()
     );
 

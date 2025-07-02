@@ -1,8 +1,9 @@
 use std::{fmt::Display, hash::Hash};
 
 use crate::ast::{
-    merge_path::Segment,
+    merge_path::{Condition, Segment},
     safe_merge::{AliasesRecords, SafeSelectionSetMerger},
+    selection_set::{FieldSelection, InlineFragmentSelection},
 };
 
 use super::{merge_path::MergePath, selection_item::SelectionItem, selection_set::SelectionSet};
@@ -106,7 +107,8 @@ impl TypeAwareSelection {
     pub fn has_typename_at_path(&self, lookup_path: &MergePath) -> bool {
         find_selection_set_by_path(
             &self.selection_set,
-            &lookup_path.push(Segment::Field("__typename".to_string(), 0)),
+            // TODO: condition
+            &lookup_path.push(Segment::Field("__typename".to_string(), 0, None)),
         )
         .is_some()
     }
@@ -207,7 +209,7 @@ pub fn find_selection_set_by_path<'a>(
             Segment::List => {
                 continue;
             }
-            Segment::Cast(type_name) => {
+            Segment::Cast(type_name, condition) => {
                 let next_selection_set_option =
                     current_selection_set
                         .items
@@ -215,7 +217,9 @@ pub fn find_selection_set_by_path<'a>(
                         .find_map(|item| match item {
                             SelectionItem::Field(_) => None,
                             SelectionItem::InlineFragment(f) => {
-                                if f.type_condition.eq(type_name) {
+                                if f.type_condition.eq(type_name)
+                                    && fragment_condition_equal(condition, f)
+                                {
                                     Some(&f.selections)
                                 } else {
                                     None
@@ -233,14 +237,16 @@ pub fn find_selection_set_by_path<'a>(
                     }
                 }
             }
-            Segment::Field(field_name, args_hash) => {
+            Segment::Field(field_name, args_hash, condition) => {
                 let next_selection_set_option =
                     current_selection_set
                         .items
                         .iter()
                         .find_map(|item| match item {
                             SelectionItem::Field(field) => {
-                                if &field.name == field_name && field.arguments_hash() == *args_hash
+                                if &field.name == field_name
+                                    && field.arguments_hash() == *args_hash
+                                    && field_condition_equal(condition, field)
                                 {
                                     Some(&field.selections)
                                 } else {
@@ -277,7 +283,7 @@ pub fn find_selection_set_by_path_mut<'a>(
             Segment::List => {
                 continue;
             }
-            Segment::Cast(type_name) => {
+            Segment::Cast(type_name, condition) => {
                 let next_selection_set_option =
                     current_selection_set
                         .items
@@ -285,7 +291,9 @@ pub fn find_selection_set_by_path_mut<'a>(
                         .find_map(|item| match item {
                             SelectionItem::Field(_) => None,
                             SelectionItem::InlineFragment(f) => {
-                                if f.type_condition.eq(type_name) {
+                                if f.type_condition.eq(type_name)
+                                    && fragment_condition_equal(condition, f)
+                                {
                                     Some(&mut f.selections)
                                 } else {
                                     None
@@ -303,7 +311,7 @@ pub fn find_selection_set_by_path_mut<'a>(
                     }
                 }
             }
-            Segment::Field(field_name, args_hash) => {
+            Segment::Field(field_name, args_hash, condition) => {
                 let next_selection_set_option =
                     current_selection_set
                         .items
@@ -312,6 +320,7 @@ pub fn find_selection_set_by_path_mut<'a>(
                             SelectionItem::Field(field) => {
                                 if field.selection_identifier() == field_name
                                     && field.arguments_hash() == *args_hash
+                                    && field_condition_equal(condition, field)
                                 {
                                     Some(&mut field.selections)
                                 } else {
@@ -379,4 +388,28 @@ pub fn find_arguments_conflicts(
             None
         })
         .collect()
+}
+
+fn field_condition_equal(cond: &Option<Condition>, field: &FieldSelection) -> bool {
+    match cond {
+        Some(cond) => match cond {
+            Condition::Include(var_name) => {
+                field.include_if.as_ref().is_some_and(|v| v == var_name)
+            }
+            Condition::Skip(var_name) => field.skip_if.as_ref().is_some_and(|v| v == var_name),
+        },
+        None => field.include_if.is_none() && field.skip_if.is_none(),
+    }
+}
+
+fn fragment_condition_equal(cond: &Option<Condition>, fragment: &InlineFragmentSelection) -> bool {
+    match cond {
+        Some(cond) => match cond {
+            Condition::Include(var_name) => {
+                fragment.include_if.as_ref().is_some_and(|v| v == var_name)
+            }
+            Condition::Skip(var_name) => fragment.skip_if.as_ref().is_some_and(|v| v == var_name),
+        },
+        None => fragment.include_if.is_none() && fragment.skip_if.is_none(),
+    }
 }

@@ -7,6 +7,7 @@ pub mod utils;
 
 use crate::ast::document::NormalizedDocument;
 use crate::ast::normalization::context::{NormalizationContext, RootTypes};
+use crate::ast::normalization::pipeline::drop_skipped_fields;
 use crate::ast::normalization::pipeline::drop_unused_operations;
 use crate::ast::normalization::pipeline::flatten_fragments;
 use crate::ast::normalization::pipeline::inline_fragment_spreads;
@@ -35,6 +36,7 @@ pub fn normalize_operation_mut(
     };
 
     drop_unused_operations(&mut ctx)?;
+    drop_skipped_fields(&mut ctx)?;
     normalize_fields(&mut ctx)?;
     inline_fragment_spreads(&mut ctx)?;
     drop_fragment_definitions(&mut ctx)?;
@@ -840,6 +842,289 @@ mod tests {
                 username
               }
             }
+        ",
+        );
+    }
+
+    #[test]
+    fn static_skip_include_test() {
+        let schema_str =
+            std::fs::read_to_string("./fixture/tests/requires-with-fragments.supergraph.graphql")
+                .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query {
+                          userFromA @include(if: true) {
+                            profile {
+                              displayName @include(if: false)
+                              ... on Account @skip(if: false) {
+                                accountType
+                              }
+                            }
+                          }
+                        }
+                      "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+      query {
+        userFromA {
+          profile {
+            ... on AdminAccount {
+              accountType
+            }
+            ... on GuestAccount {
+              accountType
+            }
+          }
+        }
+      }
+      ",
+        );
+    }
+
+    #[test]
+    fn static_skip_include_test_2() {
+        let schema_str =
+            std::fs::read_to_string("./fixture/tests/requires-with-fragments.supergraph.graphql")
+                .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query {
+                          userFromA {
+                            profile {
+                              displayName @include(if: false)
+                              ... on Account {
+                                accountType
+                                ... on AdminAccount @skip(if: true) {
+                                  adminLevel
+                                }
+                                ... on GuestAccount {
+                                  guestToken
+                                }
+                              }
+                            }
+                          }
+                        }
+                      "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+      query {
+        userFromA {
+          profile {
+            ... on AdminAccount {
+              accountType
+            }
+            ... on GuestAccount {
+              accountType
+              guestToken
+            }
+          }
+        }
+      }
+      ",
+        );
+    }
+
+    #[test]
+    fn type_expansion_skip_include_test_1() {
+        let schema_str =
+            std::fs::read_to_string("./fixture/tests/requires-with-fragments.supergraph.graphql")
+                .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query($guest: Boolean!) {
+                          userFromA {
+                            profile {
+                              displayName @include(if: $guest)
+                              ... on Account @skip(if: $guest) {
+                                accountType
+                                ... on AdminAccount @skip(if: $guest) {
+                                  adminLevel
+                                }
+                                ... on GuestAccount {
+                                  guestToken
+                                }
+                              }
+                            }
+                          }
+                        }
+                      "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+      query($guest: Boolean!) {
+        userFromA {
+          profile {
+            displayName @include(if: $guest)
+            ... on AdminAccount @skip(if: $guest) {
+              accountType
+              adminLevel
+            }
+            ... on GuestAccount @skip(if: $guest) {
+              accountType
+              guestToken
+            }
+          }
+        }
+      }
+      ",
+        );
+    }
+
+    #[test]
+    fn type_expansion_skip_include_test_2() {
+        let schema_str =
+            std::fs::read_to_string("./fixture/tests/requires-with-fragments.supergraph.graphql")
+                .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query($guest: Boolean!) {
+                          userFromA {
+                            profile {
+                              displayName @include(if: $guest)
+                              ... on Account {
+                                accountType
+                                ... on AdminAccount @skip(if: $guest) {
+                                  adminLevel
+                                }
+                                ... on GuestAccount {
+                                  guestToken
+                                }
+                              }
+                            }
+                          }
+                        }
+                      "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+        query($guest: Boolean!) {
+          userFromA {
+            profile {
+              displayName @include(if: $guest)
+              ... on AdminAccount {
+                accountType
+              }
+              ... on AdminAccount @skip(if: $guest) {
+                adminLevel
+              }
+              ... on GuestAccount {
+                accountType
+                guestToken
+              }
+            }
+          }
+        }
+        ",
+        );
+    }
+
+    #[test]
+    fn type_expansion_skip_include_test_3() {
+        let schema_str =
+            std::fs::read_to_string("./fixture/tests/requires-with-fragments.supergraph.graphql")
+                .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query($guest: Boolean!) {
+                          userFromA {
+                            profile {
+                              displayName @include(if: $guest)
+                              ... on Account {
+                                accountType @skip(if: $guest)
+                                ... on AdminAccount @skip(if: $guest) {
+                                  adminLevel
+                                }
+                                ... on GuestAccount {
+                                  guestToken
+                                }
+                              }
+                            }
+                          }
+                        }
+                      "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+        query($guest: Boolean!) {
+          userFromA {
+            profile {
+              displayName @include(if: $guest)
+              ... on AdminAccount {
+                accountType @skip(if: $guest)
+              }
+              ... on AdminAccount @skip(if: $guest) {
+                adminLevel
+              }
+              ... on GuestAccount {
+                accountType @skip(if: $guest)
+                guestToken
+              }
+            }
+          }
+        }
         ",
         );
     }

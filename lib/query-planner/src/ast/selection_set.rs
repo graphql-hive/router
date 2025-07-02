@@ -207,6 +207,10 @@ impl FieldSelection {
 pub struct InlineFragmentSelection {
     pub type_condition: String,
     pub selections: SelectionSet,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_if: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_if: Option<String>,
 }
 
 impl Hash for InlineFragmentSelection {
@@ -228,6 +232,14 @@ impl Display for FieldSelection {
             write!(f, "({})", arguments)?;
         }
 
+        if let Some(skip_if) = &self.skip_if {
+            write!(f, " @skip(if: ${})", skip_if)?;
+        }
+
+        if let Some(include_if) = &self.include_if {
+            write!(f, " @include(if: ${})", include_if)?;
+        }
+
         write!(f, "{}", self.selections)
     }
 }
@@ -245,6 +257,14 @@ impl PrettyDisplay for FieldSelection {
             Some(arguments) => format!("({})", arguments),
             None => String::new(),
         };
+
+        if let Some(skip_if) = &self.skip_if {
+            write!(f, " @skip(if: ${})", skip_if)?;
+        }
+
+        if let Some(include_if) = &self.include_if {
+            write!(f, " @include(if: ${})", include_if)?;
+        }
 
         if self.is_leaf() {
             return writeln!(f, "{indent}{}{}{}", alias_str, self.name, args_str);
@@ -269,6 +289,12 @@ impl PrettyDisplay for SelectionSet {
 impl Display for InlineFragmentSelection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "...on {}", self.type_condition)?;
+        if let Some(skip_if) = &self.skip_if {
+            write!(f, " @skip(if: ${})", skip_if)?;
+        }
+        if let Some(include_if) = &self.include_if {
+            write!(f, " @include(if: ${})", include_if)?;
+        }
         write!(f, "{}", self.selections)
     }
 }
@@ -276,7 +302,17 @@ impl Display for InlineFragmentSelection {
 impl PrettyDisplay for InlineFragmentSelection {
     fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
         let indent = get_indent(depth);
-        writeln!(f, "{indent}... on {} {{", self.type_condition)?;
+
+        write!(f, "{indent}... on {} ", self.type_condition)?;
+        if let Some(skip_if) = &self.skip_if {
+            write!(f, "@skip(if: ${}) ", skip_if)?;
+        }
+        if let Some(include_if) = &self.include_if {
+            write!(f, "@include(if: ${}) ", include_if)?;
+        }
+
+        writeln!(f, "{{")?;
+
         self.selections.pretty_fmt(f, depth + 1)?;
         writeln!(f, "{indent}}}")
     }

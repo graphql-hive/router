@@ -153,6 +153,8 @@ impl SelectionItem {
                 SelectionItem::InlineFragment(InlineFragmentSelection {
                     type_condition: fragment_selection.type_condition.clone(),
                     selections: fragment_selection.selections.strip_for_plan_input(),
+                    skip_if: fragment_selection.skip_if.clone(),
+                    include_if: fragment_selection.include_if.clone(),
                 })
             }
             SelectionItem::FragmentSpread(name) => SelectionItem::FragmentSpread(name.clone()),
@@ -173,10 +175,14 @@ impl Debug for SelectionItem {
             SelectionItem::InlineFragment(InlineFragmentSelection {
                 type_condition,
                 selections,
+                skip_if,
+                include_if,
             }) => f
                 .debug_struct("SelectionItem::Fragment")
                 .field("type_name", type_condition)
                 .field("selections", selections)
+                .field("skip_if", skip_if)
+                .field("include_if", include_if)
                 .finish(),
             SelectionItem::FragmentSpread(name) => f
                 .debug_struct("SelectionItem::FragmentSpread")
@@ -282,13 +288,57 @@ impl<'a, T: query_ast::Text<'a>> From<query_ast::InlineFragment<'a, T>>
     for InlineFragmentSelection
 {
     fn from(value: query_ast::InlineFragment<'a, T>) -> Self {
+        let mut skip_if: Option<String> = None;
+        let mut include_if: Option<String> = None;
+        for directive in &value.directives {
+            match directive.name.as_ref() {
+                "skip" => {
+                    let if_arg = directive.arguments.iter().find_map(|(name, value)| {
+                        match name.as_ref() == "if" {
+                            true => Some(value),
+                            false => None,
+                        }
+                    });
+                    match if_arg {
+                        Some(query_ast::Value::Boolean(true)) => {
+                            continue;
+                        }
+                        Some(query_ast::Value::Variable(var_name)) => {
+                            skip_if = Some(var_name.as_ref().to_string());
+                        }
+                        _ => {}
+                    }
+                }
+                "include" => {
+                    let if_arg = directive.arguments.iter().find_map(|(name, value)| {
+                        match name.as_ref() == "if" {
+                            true => Some(value),
+                            false => None,
+                        }
+                    });
+                    match if_arg {
+                        Some(query_ast::Value::Boolean(false)) => {
+                            continue;
+                        }
+                        Some(query_ast::Value::Variable(var_name)) => {
+                            include_if = Some(var_name.as_ref().to_string());
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
         Self {
             type_condition: extract_type_condition(
                 &value
                     .type_condition
                     .expect("expected a type condition after normalization"),
-            ),
+            )
+            .to_string(),
             selections: value.selection_set.into(),
+            skip_if,
+            include_if,
         }
     }
 }

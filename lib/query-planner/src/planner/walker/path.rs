@@ -6,6 +6,7 @@ use petgraph::{
     visit::EdgeRef,
 };
 
+use crate::ast::merge_path::Condition;
 use crate::{
     ast::arguments::ArgumentsMap,
     ast::selection_set::FieldSelection,
@@ -36,6 +37,7 @@ pub struct PathSegment {
     cumulative_cost: u64,
     pub requirement_tree: Option<Arc<QueryTreeNode>>,
     pub selection_attributes: Option<SelectionAttributes>,
+    pub condition: Option<Condition>,
 }
 
 impl PathSegment {
@@ -47,6 +49,7 @@ impl PathSegment {
             cumulative_cost: edge.weight().cost(),
             requirement_tree: None,
             selection_attributes: None,
+            condition: None,
         }
     }
 }
@@ -128,6 +131,7 @@ impl OperationPath {
                 alias: f.alias.clone(),
                 arguments: f.arguments.clone(),
             }),
+            condition: field.and_then(|f| f.into()),
         };
         let new_segment = Arc::new(new_segment_data);
 
@@ -257,6 +261,7 @@ impl OperationPath {
                 requirement_tree: original_segment.requirement_tree.clone(),
                 tail_node: original_segment.tail_node,
                 selection_attributes: original_segment.selection_attributes.clone(),
+                condition: original_segment.condition.clone(),
             };
 
             previous_new_segment = Some(Arc::new(new_segment_data));
