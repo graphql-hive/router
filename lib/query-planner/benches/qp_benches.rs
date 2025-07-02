@@ -67,12 +67,16 @@ fn query_plan_pipeline(c: &mut Criterion) {
     });
 
     c.bench_function("minification", |b| {
-        b.iter(|| {
-            let bb_supergraph_state = black_box(&supergraph_state);
-            let bb_operation = black_box(operation.clone());
-            let op = minify_operation(bb_operation, bb_supergraph_state).unwrap();
-            black_box(op);
-        })
+        b.iter_batched(
+            || operation.clone(),
+            |cloned_operation| {
+                let bb_supergraph_state = black_box(&supergraph_state);
+                let bb_operation = black_box(cloned_operation);
+                let op = minify_operation(bb_operation, bb_supergraph_state).unwrap();
+                black_box(op);
+            },
+            criterion::BatchSize::SmallInput,
+        )
     });
 }
 

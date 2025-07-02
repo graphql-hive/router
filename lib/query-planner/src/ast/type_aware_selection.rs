@@ -188,11 +188,9 @@ fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_firs
     if !pending_items.is_empty() {
         if as_first {
             let mut new_items = pending_items;
-            new_items.reserve(target.items.len());
             new_items.append(&mut target.items);
             target.items = new_items;
         } else {
-            target.items.reserve(pending_items.len());
             target.items.extend(pending_items);
         }
     }
