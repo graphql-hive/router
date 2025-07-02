@@ -22,7 +22,7 @@ impl HTTPSubgraphExecutor {
     async fn _execute(
         &self,
         execution_request: ExecutionRequest,
-    ) -> Result<ExecutionResult, reqwest::Error> {
+    ) -> Result<ExecutionResult, String> {
         trace!("Executing HTTP request to subgraph at {}", self.endpoint);
 
         let mut body =
@@ -39,7 +39,9 @@ impl HTTPSubgraphExecutor {
                 body.push('"');
                 body.push_str(variable_name);
                 body.push_str("\":");
-                let value_str = serde_json::to_string(variable_value).unwrap();
+                let value_str = serde_json::to_string(variable_value).map_err(|err| {
+                    format!("Failed to serialize variable '{}': {}", variable_name, err)
+                })?;
                 body.push_str(&value_str);
             }
         }
@@ -64,9 +66,21 @@ impl HTTPSubgraphExecutor {
             .body(body)
             .header("Content-Type", "application/json; charset=utf-8")
             .send()
-            .await?
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to send request to subgraph {}: {}",
+                    self.endpoint, e
+                )
+            })?
             .json::<ExecutionResult>()
             .await
+            .map_err(|e| {
+                format!(
+                    "Failed to parse response from subgraph {}: {}",
+                    self.endpoint, e
+                )
+            })
     }
 }
 
@@ -75,13 +89,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
     #[instrument(level = "trace", skip(self), name = "http_subgraph_execute", fields(endpoint = %self.endpoint))]
     async fn execute(&self, execution_request: ExecutionRequest) -> ExecutionResult {
         self._execute(execution_request).await.unwrap_or_else(|e| {
-            error!("Failed to execute request to subgraph: {}", e);
-            trace!("network error: {:?}", e);
-
-            ExecutionResult::from_error_message(format!(
-                "Error executing subgraph {}: {}",
-                self.endpoint, e
-            ))
+            error!(e);
+            ExecutionResult::from_error_message(e)
         })
     }
 }
