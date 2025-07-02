@@ -22,7 +22,7 @@ impl Stats {
             contains_duplicates: false,
         };
 
-        walk_and_collect_stats(&mut stats, supergraph, &selection_set, root_type_name)?;
+        walk_and_collect_stats(&mut stats, supergraph, selection_set, root_type_name)?;
         Ok(stats)
     }
 

@@ -36,7 +36,7 @@ pub fn transform_operation(
         &mut fragments,
         &mut next_fragment_name_idx,
         &mut operation.selection_set,
-        &root_type_name,
+        root_type_name,
     )?;
 
     let mut fragments_vec: Vec<FragmentDefinition> = fragments.into_values().collect();
@@ -253,7 +253,7 @@ pub fn get_or_create_fragment(
     type_name: &str,
     selection_set: &mut SelectionSet,
 ) -> Result<String, MinificationError> {
-    if let Some(existing_frag) = fragments.get(&id) {
+    if let Some(existing_frag) = fragments.get(id) {
         return Ok(existing_frag.name.clone());
     }
 
@@ -263,7 +263,7 @@ pub fn get_or_create_fragment(
         type_condition: type_name.to_string(),
         selection_set: SelectionSet::default(),
     };
-    fragments.insert(id.clone(), placeholder);
+    fragments.insert(*id, placeholder);
 
     let new_items = transform_selection_set_items(
         supergraph,
@@ -271,12 +271,12 @@ pub fn get_or_create_fragment(
         fragments,
         next_fragment_name_idx,
         selection_set,
-        &type_name,
+        type_name,
     )?;
 
     // Replace the placeholder with the final fragment
     fragments.insert(
-        id.clone(),
+        *id,
         FragmentDefinition {
             name: fragment_name.clone(),
             type_condition: type_name.to_string(),

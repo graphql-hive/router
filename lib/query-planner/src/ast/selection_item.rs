@@ -62,7 +62,7 @@ impl Ord for SelectionItem {
             (
                 SelectionItem::Field(FieldSelection { .. }),
                 SelectionItem::Field(FieldSelection { .. }),
-            ) => self.sort_key().cmp(&other.sort_key()),
+            ) => self.sort_key().cmp(other.sort_key()),
             (
                 SelectionItem::InlineFragment(InlineFragmentSelection {
                     type_condition: a, ..

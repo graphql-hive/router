@@ -210,8 +210,8 @@ fn create_output_operation(
 
     let document_str = document.to_string();
     SubgraphFetchOperation {
-        document: document,
-        document_str: document_str,
+        document,
+        document_str,
     }
 }
 

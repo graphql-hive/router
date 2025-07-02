@@ -11,8 +11,8 @@ pub fn sort_operation(operation: OperationDefinition) -> OperationDefinition {
 fn sort_selection_set_mut(selection_set: &mut SelectionSet) {
     selection_set.items.sort();
 
-    for mut item in &mut selection_set.items {
-        sort_selection_item_mut(&mut item);
+    for item in &mut selection_set.items {
+        sort_selection_item_mut(item);
     }
 }
 

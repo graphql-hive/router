@@ -97,6 +97,7 @@ impl Serialize for SelectionSet {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Default)]
 pub struct FieldSelection {
     pub name: String,
     #[serde(skip_serializing_if = "SelectionSet::is_empty")]
@@ -111,18 +112,6 @@ pub struct FieldSelection {
     pub include_if: Option<String>,
 }
 
-impl Default for FieldSelection {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            selections: SelectionSet::default(),
-            alias: None,
-            arguments: None,
-            skip_if: None,
-            include_if: None,
-        }
-    }
-}
 
 impl Hash for FieldSelection {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
