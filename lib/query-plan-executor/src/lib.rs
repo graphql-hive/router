@@ -925,7 +925,10 @@ impl QueryPlanExecutionContext<'_> {
                             }
                         }
                         SelectionItem::FragmentSpread(_name_ref) => {
-                            // TODO: implement
+                            // We only minify the queries to subgraphs, so we never have fragment spreads here
+                            unreachable!(
+                                "Fragment spreads should not exist in FetchNode::requires."
+                            );
                         }
                     }
                 }
@@ -1142,7 +1145,10 @@ fn project_selection_set_with_map(
                 }
             }
             SelectionItem::FragmentSpread(_name_ref) => {
-                // TODO: implement
+                // We only minify the queries to subgraphs, so we never have fragment spreads here.
+                // In this projection, we expect only inline fragments and fields
+                // as it's the query produced by the ast normalization process.
+                unreachable!("Fragment spreads should not exist in the final response projection.");
             }
         }
     }
