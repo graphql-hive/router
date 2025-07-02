@@ -81,7 +81,7 @@ pub fn project_by_operation(
     )
 )]
 fn project_selection_set(
-    data: &mut Value,
+    data: &Value,
     errors: &mut Vec<GraphQLError>,
     selection_set: &SelectionSet,
     type_name: &str,
@@ -97,7 +97,6 @@ fn project_selection_set(
         Value::String(value) => {
             if let Some(enum_values) = schema_metadata.enum_values.get(type_name) {
                 if !enum_values.contains(value) {
-                    *data = Value::Null;
                     errors.push(GraphQLError {
                         message: format!(
                             "Value is not a valid enum value for type '{}'",
@@ -116,7 +115,7 @@ fn project_selection_set(
         Value::Array(arr) => {
             buffer.push('[');
             let mut first = true;
-            for item in arr.iter_mut() {
+            for item in arr.iter() {
                 if !first {
                     buffer.push(',');
                 }
@@ -171,7 +170,7 @@ fn project_selection_set(
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 fn project_selection_set_with_map(
-    obj: &mut Map<String, Value>,
+    obj: &Map<String, Value>,
     errors: &mut Vec<GraphQLError>,
     selection_set: &SelectionSet,
     type_name: &str,
@@ -183,9 +182,8 @@ fn project_selection_set_with_map(
     let type_name = match obj.get(TYPENAME_FIELD) {
         Some(Value::String(type_name)) => type_name,
         _ => type_name,
-    }
-    .to_string();
-    let field_map = match schema_metadata.type_fields.get(&type_name) {
+    };
+    let field_map = match schema_metadata.type_fields.get(type_name) {
         Some(field_map) => field_map,
         None => {
             // If the type is not found, we can't project anything
@@ -230,7 +228,7 @@ fn project_selection_set_with_map(
                     buffer.push('"');
                     buffer.push_str(response_key);
                     buffer.push_str("\":\"");
-                    buffer.push_str(&type_name);
+                    buffer.push_str(type_name);
                     buffer.push('"');
                     continue;
                 }
@@ -244,14 +242,11 @@ fn project_selection_set_with_map(
                     .map(|s| s.as_str())
                     .unwrap_or("Any");
 
-                if field.name == "__schema" && type_name == "Query" {
-                    obj.insert(
-                        response_key.to_string(),
-                        schema_metadata.introspection_schema_root_json.clone(),
-                    );
-                }
-
-                let field_val = obj.get_mut(response_key);
+                let field_val = if field.name == "__schema" && type_name == "Query" {
+                    Some(&schema_metadata.introspection_schema_root_json)
+                } else {
+                    obj.get(response_key)
+                };
 
                 if let Some(field_val) = field_val {
                     project_selection_set(
@@ -272,13 +267,13 @@ fn project_selection_set_with_map(
             SelectionItem::InlineFragment(inline_fragment) => {
                 if schema_metadata
                     .possible_types
-                    .entity_satisfies_type_condition(&type_name, &inline_fragment.type_condition)
+                    .entity_satisfies_type_condition(type_name, &inline_fragment.type_condition)
                 {
                     project_selection_set_with_map(
                         obj,
                         errors,
                         &inline_fragment.selections,
-                        &type_name,
+                        type_name,
                         schema_metadata,
                         variable_values,
                         buffer,

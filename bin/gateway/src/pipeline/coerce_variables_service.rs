@@ -4,7 +4,6 @@ use std::sync::Arc;
 use axum::body::Body;
 use http::Request;
 use query_plan_executor::variables::collect_variables;
-use query_plan_executor::ExecutionRequest;
 use serde_json::Value;
 use tracing::{trace, warn};
 
@@ -12,6 +11,7 @@ use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
 use crate::pipeline::gateway_layer::{
     GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer,
 };
+use crate::pipeline::graphql_request_params::ExecutionRequest;
 use crate::pipeline::http_request_params::HttpRequestParams;
 use crate::pipeline::normalize_service::GraphQLNormalizationPayload;
 use crate::shared_state::GatewaySharedState;
