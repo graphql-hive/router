@@ -117,7 +117,7 @@ impl GatewayPipelineLayer for GraphQLRequestParamsExtractor {
                     }
                 }
 
-                let (mut parts, body) = req.into_parts();
+                let (parts, body) = req.into_parts();
                 let body_bytes = to_bytes(body, MAX_BODY_SIZE).await.map_err(|err| {
                     warn!("Failed to read body bytes: {}", err);
 
@@ -138,7 +138,6 @@ impl GatewayPipelineLayer for GraphQLRequestParamsExtractor {
                     })?;
 
                 trace!("Body is parsed, will proceed");
-                parts.extensions.insert(execution_request.clone());
                 req = Request::from_parts(parts, Body::from(body_bytes));
 
                 execution_request
