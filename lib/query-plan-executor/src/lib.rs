@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use query_planner::{
-    ast::{operation::OperationDefinition, selection_item::SelectionItem},
+    ast::{
+        operation::OperationDefinition, selection_item::SelectionItem, selection_set::SelectionSet,
+    },
     planner::plan_nodes::{
         ConditionNode, FetchNode, FetchRewrite, FlattenNode, KeyRenamer, ParallelNode, PlanNode,
         QueryPlan, SequenceNode, ValueSetter,
@@ -132,8 +134,8 @@ impl ExecutablePlanNode for FetchNode {
         data: &mut Value,
     ) {
         let fetch_result = self.execute_for_root(execution_context).await;
-
-        process_root_result(fetch_result, execution_context, data);
+        let selection_set = &self.operation.document.operation.selection_set;
+        process_root_result(fetch_result, execution_context, data, selection_set);
     }
 }
 
@@ -405,13 +407,14 @@ fn process_root_result(
     fetch_result: ExecutionResult,
     execution_context: &mut QueryPlanExecutionContext<'_>,
     data: &mut Value,
+    selection_set: &SelectionSet,
 ) {
     // 4. Process the response
     if let Some(new_data) = fetch_result.data {
         if data.is_null() {
             *data = new_data; // Initialize with new_data
         } else {
-            deep_merge::deep_merge(data, new_data);
+            deep_merge::deep_merge(data, new_data, selection_set);
         }
     }
 
@@ -423,8 +426,14 @@ fn process_root_result(
 }
 
 enum ParallelJob<'a> {
-    Root(ExecutionResult),
-    Flatten((ExecuteForRepresentationsResult, Vec<&'a str>)),
+    Root(ExecutionResult, &'a SelectionSet),
+    Flatten(
+        (
+            ExecuteForRepresentationsResult,
+            Vec<&'a str>,
+            &'a SelectionSet,
+        ),
+    ),
 }
 
 #[async_trait]
@@ -449,7 +458,10 @@ impl ExecutablePlanNode for ParallelNode {
                 match node {
                     PlanNode::Fetch(fetch_node) => {
                         let job = fetch_node.execute_for_root(execution_context);
-                        jobs.push(Box::pin(job.map(ParallelJob::Root)));
+                        let selection_set = &fetch_node.operation.document.operation.selection_set;
+                        jobs.push(Box::pin(
+                            job.map(|res| ParallelJob::Root(res, selection_set)),
+                        ));
                     }
                     PlanNode::Flatten(flatten_node) => {
                         let normalized_path: Vec<&str> =
@@ -507,9 +519,27 @@ impl ExecutablePlanNode for ParallelNode {
                             filtered_representations,
                             indexes,
                         );
-                        jobs.push(Box::pin(
-                            job.map(|r| ParallelJob::Flatten((r, normalized_path))),
-                        ));
+
+                        let operation_selection_set =
+                            &fetch_node.operation.document.operation.selection_set;
+                        let entities_selection = operation_selection_set.items.first();
+                        let selection_set =
+                            if let Some(SelectionItem::Field(field)) = entities_selection {
+                                if field.name == "_entities" {
+                                    &field.selections
+                                } else {
+                                    warn!(
+                                        "Expected _entities field in FlattenNode, found: {}",
+                                        field.name
+                                    );
+                                    return; // Skip if the first item is not _entities
+                                }
+                            } else {
+                                return; // No selection set to merge into
+                            };
+                        jobs.push(Box::pin(job.map(|r| {
+                            ParallelJob::Flatten((r, normalized_path, selection_set))
+                        })));
                     }
                     _ => {}
                 }
@@ -519,13 +549,13 @@ impl ExecutablePlanNode for ParallelNode {
             let now = std::time::Instant::now();
             while let Some(result) = jobs.next().await {
                 match result {
-                    ParallelJob::Root(fetch_result) => {
+                    ParallelJob::Root(fetch_result, selection_set) => {
                         // Process root FetchNode results
                         if let Some(new_data) = fetch_result.data {
                             if data.is_null() {
                                 *data = new_data; // Initialize with new_data
                             } else {
-                                deep_merge::deep_merge(data, new_data);
+                                deep_merge::deep_merge(data, new_data, selection_set);
                             }
                         }
                         // Process errors and extensions
@@ -536,7 +566,7 @@ impl ExecutablePlanNode for ParallelNode {
                             all_extensions.push(extensions);
                         }
                     }
-                    ParallelJob::Flatten((result, path)) => {
+                    ParallelJob::Flatten((result, path, selection_set)) => {
                         if let Some(mut entities) = result.entities {
                             let mut index_of_traverse = 0;
                             let mut index_of_entities = 0;
@@ -545,7 +575,7 @@ impl ExecutablePlanNode for ParallelNode {
                                     let entity =
                                         entities.get_mut(index_of_entities).unwrap().take();
                                     // Merge the entity into the target
-                                    deep_merge::deep_merge(target, entity);
+                                    deep_merge::deep_merge(target, entity, selection_set);
                                     index_of_entities += 1;
                                 }
                                 index_of_traverse += 1;
@@ -658,9 +688,24 @@ impl ExecutablePlanNode for FlattenNode {
             )
             .await;
         if let Some(entities) = result.entities {
+            let operation_selection_set = &fetch_node.operation.document.operation.selection_set;
+            let entities_selection = operation_selection_set.items.first();
+            let selection_set = if let Some(SelectionItem::Field(field)) = entities_selection {
+                if field.name == "_entities" {
+                    &field.selections
+                } else {
+                    warn!(
+                        "Expected _entities field in FlattenNode, found: {}",
+                        field.name
+                    );
+                    return; // Skip if the first item is not _entities
+                }
+            } else {
+                return; // No selection set to merge into
+            };
             for (entity, target) in entities.into_iter().zip(representations.iter_mut()) {
                 // Merge the entity into the representation
-                deep_merge::deep_merge(target, entity);
+                deep_merge::deep_merge(target, entity, selection_set);
             }
         }
 

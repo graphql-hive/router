@@ -321,11 +321,93 @@ fn deep_merge_with_complex(c: &mut Criterion) {
         data_2_users.as_array_mut().unwrap().push(user_2_clone);
     }
 
+    let review_selection_set = query_planner::ast::selection_set::SelectionSet {
+        items: vec![
+            SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                name: "id".to_string(),
+                selections: query_planner::ast::selection_set::SelectionSet { items: vec![] },
+                alias: None,
+                arguments: None,
+                include_if: None,
+                skip_if: None,
+            }),
+            SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                name: "content".to_string(),
+                selections: query_planner::ast::selection_set::SelectionSet { items: vec![] },
+                alias: None,
+                arguments: None,
+                include_if: None,
+                skip_if: None,
+            }),
+            SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                name: "product".to_string(),
+                selections: query_planner::ast::selection_set::SelectionSet {
+                    items: vec![
+                        SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                            name: "id".to_string(),
+                            selections: query_planner::ast::selection_set::SelectionSet {
+                                items: vec![],
+                            },
+                            alias: None,
+                            arguments: None,
+                            include_if: None,
+                            skip_if: None,
+                        }),
+                        SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                            name: "upc".to_string(),
+                            selections: query_planner::ast::selection_set::SelectionSet {
+                                items: vec![],
+                            },
+                            alias: None,
+                            arguments: None,
+                            include_if: None,
+                            skip_if: None,
+                        }),
+                    ],
+                },
+                alias: None,
+                arguments: None,
+                include_if: None,
+                skip_if: None,
+            }),
+        ],
+    };
+
+    let user_selection_set = query_planner::ast::selection_set::SelectionSet {
+        items: vec![
+            SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                name: "id".to_string(),
+                selections: query_planner::ast::selection_set::SelectionSet { items: vec![] },
+                alias: None,
+                arguments: None,
+                include_if: None,
+                skip_if: None,
+            }),
+            SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                name: "age".to_string(),
+                selections: query_planner::ast::selection_set::SelectionSet { items: vec![] },
+                alias: None,
+                arguments: None,
+                include_if: None,
+                skip_if: None,
+            }),
+            SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                name: "reviews".to_string(),
+                selections: review_selection_set,
+                alias: None,
+                arguments: None,
+                include_if: None,
+                skip_if: None,
+            }),
+        ],
+    };
+
     c.bench_function("deep_merge_with_complex", |b| {
         b.iter(|| {
             let mut target = black_box(data_1.clone());
             let source = black_box(data_2.clone());
-            query_plan_executor::deep_merge::deep_merge(&mut target, source);
+            let selection_set = black_box(&user_selection_set);
+            query_plan_executor::deep_merge::deep_merge(&mut target, source, selection_set);
         });
     });
 }
@@ -455,11 +537,33 @@ fn deep_merge_with_simple(c: &mut Criterion) {
         data_2_users.as_array_mut().unwrap().push(user_2_clone);
     }
 
+    let selection_set = query_planner::ast::selection_set::SelectionSet {
+        items: vec![
+            SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                name: "id".to_string(),
+                selections: query_planner::ast::selection_set::SelectionSet { items: vec![] },
+                alias: None,
+                arguments: None,
+                include_if: None,
+                skip_if: None,
+            }),
+            SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                name: "age".to_string(),
+                selections: query_planner::ast::selection_set::SelectionSet { items: vec![] },
+                alias: None,
+                arguments: None,
+                include_if: None,
+                skip_if: None,
+            }),
+        ],
+    };
+
     c.bench_function("deep_merge_with_simple", |b| {
         b.iter(|| {
             let mut target = black_box(data_1.clone());
             let source = black_box(data_2.clone());
-            query_plan_executor::deep_merge::deep_merge(&mut target, source);
+            let selection_set = black_box(&selection_set);
+            query_plan_executor::deep_merge::deep_merge(&mut target, source, selection_set);
         });
     });
 }
