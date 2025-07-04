@@ -63,7 +63,7 @@ impl FetchGraph {
 }
 
 fn is_mutation_fetch_step(
-    fetch_graph: &mut FetchGraph,
+    fetch_graph: &FetchGraph,
     fetch_step_index: NodeIndex,
 ) -> Result<bool, FetchGraphError> {
     for edge_ref in fetch_graph.children_of(fetch_step_index) {
