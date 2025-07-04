@@ -14,14 +14,23 @@ use axum::body::Body;
 use axum::response::IntoResponse;
 use axum::Json;
 use http::header::CONTENT_TYPE;
-use http::{Request, Response};
-use query_plan_executor::execute_query_plan;
-use serde_json::to_value;
+use http::{HeaderName, Request, Response};
+use query_plan_executor::{execute_query_plan, ExecutionResult};
+use serde_json::{json, to_value};
 use tower::Service;
 
 #[derive(Clone, Debug, Default)]
 pub struct ExecutionService {
     expose_query_plan: bool,
+}
+
+static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ExposeQueryPlanMode {
+    Yes,
+    No,
+    DryRun,
 }
 
 impl ExecutionService {
@@ -41,7 +50,22 @@ impl Service<Request<Body>> for ExecutionService {
 
     #[tracing::instrument(level = "trace", name = "ExecutionService", skip_all)]
     fn call(&mut self, req: Request<Body>) -> Self::Future {
-        let expose_query_plan = self.expose_query_plan;
+        let mut expose_query_plan: ExposeQueryPlanMode = match self.expose_query_plan {
+            true => ExposeQueryPlanMode::Yes,
+            false => ExposeQueryPlanMode::No,
+        };
+
+        if let Some(expose_qp_header) = req.headers().get(&EXPOSE_QUERY_PLAN_HEADER) {
+            let str_value = expose_qp_header.to_str().unwrap_or_default().trim();
+
+            match str_value {
+                "true" => expose_query_plan = ExposeQueryPlanMode::Yes,
+                "false" => expose_query_plan = ExposeQueryPlanMode::No,
+                "dry-run" => expose_query_plan = ExposeQueryPlanMode::DryRun,
+                _ => {}
+            }
+        }
+
         Box::pin(async move {
             let normalized_payload = req
                 .extensions()
@@ -66,17 +90,28 @@ impl Service<Request<Body>> for ExecutionService {
                 .get::<HttpRequestParams>()
                 .expect("HttpRequestParams missing");
 
-            let mut execution_result = execute_query_plan(
-                &query_plan_payload.query_plan,
-                &app_state.subgraph_executor_map,
-                &variable_payload.variables_map,
-                &app_state.schema_metadata,
-                &normalized_payload.normalized_document.operation,
-                normalized_payload.has_introspection,
-            )
-            .await;
+            let mut execution_result = match expose_query_plan {
+                ExposeQueryPlanMode::DryRun => ExecutionResult {
+                    data: Some(json!({})),
+                    errors: None,
+                    extensions: Some(HashMap::new()),
+                },
+                _ => {
+                    execute_query_plan(
+                        &query_plan_payload.query_plan,
+                        &app_state.subgraph_executor_map,
+                        &variable_payload.variables_map,
+                        &app_state.schema_metadata,
+                        &normalized_payload.normalized_document.operation,
+                        normalized_payload.has_introspection,
+                    )
+                    .await
+                }
+            };
 
-            if expose_query_plan {
+            if expose_query_plan == ExposeQueryPlanMode::Yes
+                || expose_query_plan == ExposeQueryPlanMode::DryRun
+            {
                 let plan_value = to_value(query_plan_payload.query_plan.as_ref()).unwrap();
 
                 execution_result
