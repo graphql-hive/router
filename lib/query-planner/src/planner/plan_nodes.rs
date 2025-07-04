@@ -1,4 +1,3 @@
-use super::fetch::fetch_graph::FetchStepData;
 use crate::{
     ast::{
         minification::minify_operation,
@@ -8,6 +7,7 @@ use crate::{
         type_aware_selection::TypeAwareSelection,
         value::Value,
     },
+    planner::fetch::fetch_step_data::FetchStepData,
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
