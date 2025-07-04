@@ -39,7 +39,7 @@ impl GatewayPipelineLayer for CoerceVariablesService {
     ) -> Result<(Request<Body>, GatewayPipelineStepDecision), PipelineError> {
         let normalized_operation = req
             .extensions()
-            .get::<GraphQLNormalizationPayload>()
+            .get::<Arc<GraphQLNormalizationPayload>>()
             .ok_or_else(|| {
                 PipelineErrorVariant::InternalServiceError("GraphQLNormalizationPayload is missing")
             })?;

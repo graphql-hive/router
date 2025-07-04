@@ -5,11 +5,12 @@ use graphql_tools::validation::{utils::ValidationError, validate::ValidationPlan
 use moka::future::Cache;
 use query_plan_executor::executors::map::SubgraphExecutorMap;
 use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
-use query_planner::ast::document::NormalizedDocument;
 use query_planner::{
     planner::{plan_nodes::QueryPlan, Planner},
     state::supergraph_state::SupergraphState,
 };
+
+use crate::pipeline::normalize_service::GraphQLNormalizationPayload;
 
 pub struct GatewaySharedState {
     pub schema_metadata: SchemaMetadata,
@@ -20,7 +21,7 @@ pub struct GatewaySharedState {
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub parse_cache: Cache<String, Arc<graphql_parser::query::Document<'static, String>>>,
-    pub normalize_cache: Cache<String, Arc<NormalizedDocument>>,
+    pub normalize_cache: Cache<String, Arc<GraphQLNormalizationPayload>>,
 }
 
 impl GatewaySharedState {
