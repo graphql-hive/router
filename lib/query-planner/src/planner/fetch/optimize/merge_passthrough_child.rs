@@ -33,7 +33,7 @@ impl FetchGraph {
             let mut merges_to_perform: Vec<(NodeIndex, NodeIndex)> = Vec::new();
             let parent_index = *node_indexes
                 .get(&parent_index)
-                .expect("Index mapping got lost");
+                .ok_or(FetchGraphError::IndexMappingLost)?;
 
             let children: Vec<_> = self
                 .graph
@@ -64,10 +64,10 @@ impl FetchGraph {
                 // Get the latest indexes for the nodes, accounting for previous merges.
                 let parent_index_latest = node_indexes
                     .get(&parent_index)
-                    .expect("Index mapping got lost");
+                    .ok_or(FetchGraphError::IndexMappingLost)?;
                 let child_index_latest = node_indexes
                     .get(&child_index)
-                    .expect("Index mapping got lost");
+                    .ok_or(FetchGraphError::IndexMappingLost)?;
 
                 perform_passthrough_child_merge(*parent_index_latest, *child_index_latest, self)?;
 
