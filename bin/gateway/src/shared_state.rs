@@ -5,6 +5,7 @@ use graphql_tools::validation::{utils::ValidationError, validate::ValidationPlan
 use moka::future::Cache;
 use query_plan_executor::executors::map::SubgraphExecutorMap;
 use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
+use query_planner::ast::document::NormalizedDocument;
 use query_planner::{
     planner::{plan_nodes::QueryPlan, Planner},
     state::supergraph_state::SupergraphState,
@@ -18,6 +19,8 @@ pub struct GatewaySharedState {
     pub subgraph_endpoint_map: HashMap<String, String>,
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
+    pub parse_cache: Cache<String, Arc<graphql_parser::query::Document<'static, String>>>,
+    pub normalize_cache: Cache<String, Arc<NormalizedDocument>>,
 }
 
 impl GatewaySharedState {
@@ -39,6 +42,8 @@ impl GatewaySharedState {
             subgraph_endpoint_map,
             plan_cache: moka::future::Cache::new(1000),
             validate_cache: moka::future::Cache::new(1000),
+            parse_cache: moka::future::Cache::new(1000),
+            normalize_cache: moka::future::Cache::new(1000),
         })
     }
 }
