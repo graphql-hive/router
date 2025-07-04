@@ -4,7 +4,8 @@ use petgraph::{graph::NodeIndex, Direction};
 use tracing::{instrument, trace};
 
 use crate::planner::fetch::{
-    error::FetchGraphError, fetch_graph::FetchGraph, optimize::utils::perform_fetch_step_merge,
+    error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
+    optimize::utils::perform_fetch_step_merge,
 };
 
 impl FetchGraph {
@@ -100,5 +101,33 @@ impl FetchGraph {
             }
         }
         Ok(())
+    }
+}
+
+impl FetchStepData {
+    pub(crate) fn can_merge_siblings(
+        &self,
+        self_index: NodeIndex,
+        other_index: NodeIndex,
+        other: &Self,
+        fetch_graph: &FetchGraph,
+    ) -> bool {
+        // First, check if the base conditions for merging are met.
+        let can_merge_base = self.can_merge(self_index, other_index, other, fetch_graph);
+
+        if let (Some(self_mut_idx), Some(other_mut_index)) =
+            (self.mutation_field_position, other.mutation_field_position)
+        {
+            // If indexes are equal or one happens to be after the other,
+            // and we already know they belong to the same service,
+            // we shouldn't prevent merging.
+            if self_mut_idx != other_mut_index
+                && (self_mut_idx as i64 - other_mut_index as i64).abs() != 1
+            {
+                return false;
+            }
+        }
+
+        can_merge_base
     }
 }

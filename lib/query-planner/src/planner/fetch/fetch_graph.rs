@@ -1,12 +1,11 @@
 use crate::ast::merge_path::{MergePath, Segment};
-use crate::ast::operation::VariableDefinition;
-use crate::ast::safe_merge::AliasesRecords;
 use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
-use crate::ast::type_aware_selection::{find_arguments_conflicts, TypeAwareSelection};
+use crate::ast::type_aware_selection::TypeAwareSelection;
 use crate::graph::edge::{Edge, FieldMove, InterfaceObjectTypeMove};
 use crate::graph::node::Node;
 use crate::graph::Graph;
+use crate::planner::fetch::fetch_step_data::{FetchStepData, FetchStepKind};
 use crate::planner::plan_nodes::{FetchRewrite, ValueSetter};
 use crate::planner::tree::query_tree::QueryTree;
 use crate::planner::tree::query_tree_node::{MutationFieldPosition, QueryTreeNode};
@@ -19,7 +18,7 @@ use petgraph::visit::EdgeRef;
 use petgraph::visit::{Bfs, IntoNodeReferences};
 use petgraph::Directed;
 use petgraph::Direction;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::VecDeque;
 use std::fmt::{Debug, Display};
 use tracing::{instrument, trace};
 
@@ -228,182 +227,6 @@ impl Display for FetchGraph {
         }
 
         Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum FetchStepKind {
-    Entity,
-    Root,
-}
-
-#[derive(Debug, Clone)]
-pub struct FetchStepData {
-    pub service_name: SubgraphName,
-    pub response_path: MergePath,
-    pub input: TypeAwareSelection,
-    pub output: TypeAwareSelection,
-    pub kind: FetchStepKind,
-    pub used_for_requires: bool,
-    pub variable_usages: Option<BTreeSet<String>>,
-    pub variable_definitions: Option<Vec<VariableDefinition>>,
-    pub mutation_field_position: MutationFieldPosition,
-    pub input_rewrites: Option<Vec<FetchRewrite>>,
-    pub internal_aliases_locations: AliasesRecords,
-}
-
-impl Display for FetchStepData {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}/{} {} → {} at $.{}",
-            self.input.type_name,
-            self.service_name,
-            self.input,
-            self.output,
-            self.response_path.join("."),
-        )?;
-
-        if self.used_for_requires {
-            write!(f, " [@requires]")?;
-        }
-
-        Ok(())
-    }
-}
-
-impl FetchStepData {
-    pub fn pretty_write(
-        &self,
-        writer: &mut std::fmt::Formatter<'_>,
-        index: NodeIndex,
-    ) -> Result<(), std::fmt::Error> {
-        write!(writer, "[{}] {}", index.index(), self)
-    }
-
-    pub fn is_entity_call(&self) -> bool {
-        self.input.type_name != "Query"
-            && self.input.type_name != "Mutation"
-            && self.input.type_name != "Subscription"
-    }
-
-    pub fn add_input_rewrite(&mut self, rewrite: FetchRewrite) {
-        let rewrites = self.input_rewrites.get_or_insert_default();
-
-        if !rewrites.contains(&rewrite) {
-            rewrites.push(rewrite);
-        }
-    }
-
-    /// see `perform_passthrough_child_merge`
-    pub fn can_merge_passthrough_child(
-        &self,
-        self_index: NodeIndex,
-        other_index: NodeIndex,
-        other: &Self,
-        fetch_graph: &FetchGraph,
-    ) -> bool {
-        if self_index == other_index {
-            return false;
-        }
-
-        // if the `other` FetchStep has a single parent and it's `this` FetchStep
-        if fetch_graph.parents_of(other_index).count() != 1 {
-            return false;
-        }
-
-        if fetch_graph.parents_of(other_index).next().unwrap().source() != self_index {
-            return false;
-        }
-
-        other.input.eq(&other.output)
-    }
-
-    pub fn can_merge_siblings(
-        &self,
-        self_index: NodeIndex,
-        other_index: NodeIndex,
-        other: &Self,
-        fetch_graph: &FetchGraph,
-    ) -> bool {
-        // First, check if the base conditions for merging are met.
-        let can_merge_base = self.can_merge(self_index, other_index, other, fetch_graph);
-
-        if let (Some(self_mut_idx), Some(other_mut_index)) =
-            (self.mutation_field_position, other.mutation_field_position)
-        {
-            // If indexes are equal or one happens to be after the other,
-            // and we already know they belong to the same service,
-            // we shouldn't prevent merging.
-            if self_mut_idx != other_mut_index
-                && (self_mut_idx as i64 - other_mut_index as i64).abs() != 1
-            {
-                return false;
-            }
-        }
-
-        can_merge_base
-    }
-
-    pub fn can_merge(
-        &self,
-        self_index: NodeIndex,
-        other_index: NodeIndex,
-        other: &Self,
-        fetch_graph: &FetchGraph,
-    ) -> bool {
-        if self_index == other_index {
-            return false;
-        }
-
-        if self.service_name != other.service_name {
-            return false;
-        }
-
-        // If both are entities, their response_paths should match,
-        // as we can't merge entity calls resolving different entities
-        if matches!(self.kind, FetchStepKind::Entity) && self.kind == other.kind {
-            if !self.response_path.eq(&other.response_path) {
-                return false;
-            }
-        } else {
-            // otherwise we can merge
-            if !other.response_path.starts_with(&self.response_path) {
-                return false;
-            }
-        }
-
-        let input_conflicts = find_arguments_conflicts(&self.input, &other.input);
-
-        if !input_conflicts.is_empty() {
-            trace!(
-                "preventing merge of [{}]+[{}] due to input conflicts",
-                self_index.index(),
-                other_index.index()
-            );
-
-            return false;
-        }
-
-        // if the `other` FetchStep has a single parent and it's `this` FetchStep
-        if fetch_graph.parents_of(other_index).count() == 1
-            && fetch_graph
-                .parents_of(other_index)
-                .all(|edge| edge.source() == self_index)
-        {
-            return true;
-        }
-
-        // if they do not share parents, they can't be merged
-        if !fetch_graph.parents_of(self_index).all(|self_edge| {
-            fetch_graph
-                .parents_of(other_index)
-                .any(|other_edge| other_edge.source() == self_edge.source())
-        }) {
-            return false;
-        }
-
-        true
     }
 }
 

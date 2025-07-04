@@ -7,7 +7,9 @@ use petgraph::{
 };
 use tracing::{instrument, trace};
 
-use crate::planner::fetch::{error::FetchGraphError, fetch_graph::FetchGraph};
+use crate::planner::fetch::{
+    error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
+};
 
 impl FetchGraph {
     /// When a child has the input identical as the output,
@@ -77,6 +79,31 @@ impl FetchGraph {
         }
 
         Ok(())
+    }
+}
+
+impl FetchStepData {
+    pub(crate) fn can_merge_passthrough_child(
+        &self,
+        self_index: NodeIndex,
+        other_index: NodeIndex,
+        other: &Self,
+        fetch_graph: &FetchGraph,
+    ) -> bool {
+        if self_index == other_index {
+            return false;
+        }
+
+        // if the `other` FetchStep has a single parent and it's `this` FetchStep
+        if fetch_graph.parents_of(other_index).count() != 1 {
+            return false;
+        }
+
+        if fetch_graph.parents_of(other_index).next().unwrap().source() != self_index {
+            return false;
+        }
+
+        other.input.eq(&other.output)
     }
 }
 
