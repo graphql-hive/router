@@ -49,37 +49,30 @@ impl GatewayPipelineLayer for GraphQLParserService {
                 PipelineErrorVariant::InternalServiceError("GatewaySharedState is missing")
             })?;
 
-        match app_state.parse_cache.get(&execution_params.query).await {
-            Some(parsed_operation) => {
+        let parsed_operation =
+            if let Some(cached) = app_state.parse_cache.get(&execution_params.query).await {
                 trace!("Found cached parsed operation for query");
-
-                req.extensions_mut()
-                    .insert(GraphQLParserPayload { parsed_operation });
-
-                return Ok((req, GatewayPipelineStepDecision::Continue));
-            }
-            None => match safe_parse_operation(&execution_params.query) {
-                Ok(parsed_operation) => {
-                    trace!("sucessfully parsed GraphQL operation");
-                    let parsed_operation = Arc::new(parsed_operation);
-                    app_state
-                        .parse_cache
-                        .insert(execution_params.query.to_string(), parsed_operation.clone())
-                        .await;
-                    req.extensions_mut()
-                        .insert(GraphQLParserPayload { parsed_operation });
-
-                    Ok((req, GatewayPipelineStepDecision::Continue))
-                }
-                Err(err) => {
+                cached
+            } else {
+                let parsed = safe_parse_operation(&execution_params.query).map_err(|err| {
                     error!("Failed to parse GraphQL operation: {}", err);
-
-                    Err(PipelineError::new_with_accept_header(
+                    PipelineError::new_with_accept_header(
                         PipelineErrorVariant::FailedToParseOperation(err),
                         http_params.accept_header.clone(),
-                    ))
-                }
-            },
-        }
+                    )
+                })?;
+                trace!("sucessfully parsed GraphQL operation");
+                let parsed_arc = Arc::new(parsed);
+                app_state
+                    .parse_cache
+                    .insert(execution_params.query.to_string(), parsed_arc.clone())
+                    .await;
+                parsed_arc
+            };
+
+        req.extensions_mut()
+            .insert(GraphQLParserPayload { parsed_operation });
+
+        Ok((req, GatewayPipelineStepDecision::Continue))
     }
 }
