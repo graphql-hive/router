@@ -4,14 +4,11 @@ use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
 use crate::pipeline::gateway_layer::{
     GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer,
 };
-use crate::pipeline::http_request_params::HttpRequestParams;
-use crate::pipeline::normalize_service::GraphQLNormalizationPayload;
 use crate::pipeline::parser_service::GraphQLParserPayload;
 use crate::shared_state::GatewaySharedState;
 use axum::body::Body;
 use graphql_tools::validation::validate::validate;
-use http::{Method, Request};
-use query_planner::state::supergraph_state::OperationKind;
+use http::Request;
 use tracing::{error, trace};
 
 #[derive(Clone, Debug, Default)]
@@ -30,17 +27,6 @@ impl GatewayPipelineLayer for GraphQLValidationService {
         &self,
         req: Request<Body>,
     ) -> Result<(Request<Body>, GatewayPipelineStepDecision), PipelineError> {
-        let normalized_operation = req
-            .extensions()
-            .get::<Arc<GraphQLNormalizationPayload>>()
-            .ok_or_else(|| {
-                PipelineErrorVariant::InternalServiceError("GraphQLNormalizationPayload is missing")
-            })?;
-
-        let http_params = req.extensions().get::<HttpRequestParams>().ok_or_else(|| {
-            PipelineErrorVariant::InternalServiceError("HttpRequestParams is missing")
-        })?;
-
         let parser_payload = req
             .extensions()
             .get::<GraphQLParserPayload>()
@@ -55,26 +41,17 @@ impl GatewayPipelineLayer for GraphQLValidationService {
                 PipelineErrorVariant::InternalServiceError("GatewaySharedState is missing")
             })?;
 
-        if http_params.http_method == Method::GET {
-            if let Some(OperationKind::Mutation) = normalized_operation
-                .normalized_document
-                .operation
-                .operation_kind
-            {
-                error!("Mutation is not allowed over GET, stopping");
-
-                return Err(PipelineErrorVariant::MutationNotAllowedOverHttpGet.into());
-            }
-        }
-
         let consumer_schema_ast = &app_state.planner.consumer_schema.document;
-        let validation_cache_key = normalized_operation.normalized_document.operation.hash();
 
-        let validation_result = match app_state.validate_cache.get(&validation_cache_key).await {
+        let validation_result = match app_state
+            .validate_cache
+            .get(&parser_payload.cache_key)
+            .await
+        {
             Some(cached_validation) => {
                 trace!(
                     "validation result of hash {} has been loaded from cache",
-                    validation_cache_key
+                    parser_payload.cache_key
                 );
 
                 cached_validation
@@ -82,7 +59,7 @@ impl GatewayPipelineLayer for GraphQLValidationService {
             None => {
                 trace!(
                     "validation result of hash {} does not exists in cache",
-                    validation_cache_key
+                    parser_payload.cache_key
                 );
 
                 let res = validate(
@@ -94,7 +71,7 @@ impl GatewayPipelineLayer for GraphQLValidationService {
 
                 app_state
                     .validate_cache
-                    .insert(validation_cache_key, arc_res.clone())
+                    .insert(parser_payload.cache_key, arc_res.clone())
                     .await;
                 arc_res
             }

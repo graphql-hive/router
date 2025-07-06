@@ -2,10 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::body::Body;
-use http::Request;
+use http::{Method, Request};
 use query_plan_executor::variables::collect_variables;
+use query_planner::state::supergraph_state::OperationKind;
 use serde_json::Value;
-use tracing::{trace, warn};
+use tracing::{error, trace, warn};
 
 use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
 use crate::pipeline::gateway_layer::{
@@ -58,6 +59,18 @@ impl GatewayPipelineLayer for CoerceVariablesService {
             .ok_or_else(|| {
                 PipelineErrorVariant::InternalServiceError("GatewaySharedState is missing")
             })?;
+
+        if http_payload.http_method == Method::GET {
+            if let Some(OperationKind::Mutation) = normalized_operation
+                .normalized_document
+                .operation
+                .operation_kind
+            {
+                error!("Mutation is not allowed over GET, stopping");
+
+                return Err(PipelineErrorVariant::MutationNotAllowedOverHttpGet.into());
+            }
+        }
 
         match collect_variables(
             &normalized_operation.operation_for_plan,

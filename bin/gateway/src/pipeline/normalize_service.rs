@@ -1,3 +1,4 @@
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -67,7 +68,17 @@ impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
                 PipelineErrorVariant::InternalServiceError("GatewaySharedState is missing")
             })?;
 
-        match app_state.normalize_cache.get(&execution_params.query).await {
+        let cache_key = match &execution_params.operation_name {
+            Some(operation_name) => {
+                let mut hasher = DefaultHasher::new();
+                execution_params.query.hash(&mut hasher);
+                operation_name.hash(&mut hasher);
+                hasher.finish()
+            }
+            None => parser_payload.cache_key,
+        };
+
+        match app_state.normalize_cache.get(&cache_key).await {
             Some(payload) => {
                 trace!(
                     "Found normalized GraphQL operation in cache (operation name={:?}): {}",
@@ -107,7 +118,7 @@ impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
                     let payload_arc = Arc::new(payload);
                     app_state
                         .normalize_cache
-                        .insert(execution_params.query.to_string(), payload_arc.clone())
+                        .insert(cache_key, payload_arc.clone())
                         .await;
                     req.extensions_mut().insert(payload_arc);
                     Ok((req, GatewayPipelineStepDecision::Continue))

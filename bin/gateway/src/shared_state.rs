@@ -20,8 +20,8 @@ pub struct GatewaySharedState {
     pub subgraph_endpoint_map: HashMap<String, String>,
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
-    pub parse_cache: Cache<String, Arc<graphql_parser::query::Document<'static, String>>>,
-    pub normalize_cache: Cache<String, Arc<GraphQLNormalizationPayload>>,
+    pub parse_cache: Cache<u64, Arc<graphql_parser::query::Document<'static, String>>>,
+    pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
 }
 
 impl GatewaySharedState {
