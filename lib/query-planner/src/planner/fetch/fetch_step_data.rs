@@ -29,6 +29,7 @@ pub struct FetchStepData {
     pub variable_definitions: Option<Vec<VariableDefinition>>,
     pub mutation_field_position: MutationFieldPosition,
     pub input_rewrites: Option<Vec<FetchRewrite>>,
+    pub output_rewrites: Option<Vec<FetchRewrite>>,
     pub internal_aliases_locations: AliasesRecords,
 }
 
@@ -75,6 +76,14 @@ impl FetchStepData {
 
     pub fn add_input_rewrite(&mut self, rewrite: FetchRewrite) {
         let rewrites = self.input_rewrites.get_or_insert_default();
+
+        if !rewrites.contains(&rewrite) {
+            rewrites.push(rewrite);
+        }
+    }
+
+    pub fn add_output_rewrite(&mut self, rewrite: FetchRewrite) {
+        let rewrites = self.output_rewrites.get_or_insert_default();
 
         if !rewrites.contains(&rewrite) {
             rewrites.push(rewrite);

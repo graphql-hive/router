@@ -49,8 +49,8 @@ pub struct SupergraphState {
     pub known_subgraphs: HashMap<String, String>,
     /// A set of all known scalars in this schema, including built-ins
     pub known_scalars: HashSet<String>,
-    /// A map from subgraph id to a subgraph state
-    pub subgraphs_state: HashMap<String, SubgraphState>,
+    /// A map from subgraph name to a subgraph state
+    pub subgraphs_state: HashMap<SubgraphName, SubgraphState>,
     /// A map of (subgraph_name, endpoint) to make it easy to resolve
     pub subgraph_endpoint_map: HashMap<String, String>,
     /// The root entrypoints
@@ -77,7 +77,8 @@ impl SupergraphState {
 
         for subgraph_id in instance.known_subgraphs.keys() {
             let state = SubgraphState::decompose_from_supergraph(subgraph_id, &instance);
-            instance.subgraphs_state.insert(subgraph_id.clone(), state);
+            let subgraph_name = instance.resolve_graph_id(subgraph_id).unwrap();
+            instance.subgraphs_state.insert(subgraph_name, state);
         }
 
         instance
@@ -92,11 +93,11 @@ impl SupergraphState {
 
     pub fn subgraph_state(
         &self,
-        subgraph_id: &str,
+        subgraph_name: &SubgraphName,
     ) -> Result<&SubgraphState, SupergraphStateError> {
         self.subgraphs_state
-            .get(subgraph_id)
-            .ok_or_else(|| SupergraphStateError::SubgraphNotFound(subgraph_id.to_string()))
+            .get(subgraph_name)
+            .ok_or_else(|| SupergraphStateError::SubgraphNotFound(subgraph_name.0.to_string()))
     }
 
     pub fn subgraph_exists_by_name(&self, name: &str) -> bool {
@@ -572,6 +573,15 @@ impl SupergraphDefinition {
         }
     }
 
+    pub fn is_composite_type(&self) -> bool {
+        matches!(
+            self,
+            SupergraphDefinition::Object(_)
+                | SupergraphDefinition::Interface(_)
+                | SupergraphDefinition::Union(_)
+        )
+    }
+
     pub fn extract_join_types_for(&self, graph_id: &str) -> Vec<JoinTypeDirective> {
         self.join_types()
             .iter()
@@ -660,7 +670,7 @@ pub struct SupergraphField {
     pub join_field: Vec<JoinFieldDirective>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum TypeNode {
     List(Box<TypeNode>),
     NonNull(Box<TypeNode>),
@@ -687,6 +697,16 @@ impl TypeNode {
             TypeNode::Named(name) => name,
         }
     }
+
+    /// Generally based on https://spec.graphql.org/draft/#SameResponseShape() algorithm
+    pub fn can_be_merged_with(&self, other: &TypeNode) -> bool {
+        match (self, other) {
+            (TypeNode::List(left), TypeNode::List(right)) => left.can_be_merged_with(right),
+            (TypeNode::NonNull(left), TypeNode::NonNull(right)) => left.can_be_merged_with(right),
+            (TypeNode::Named(left), TypeNode::Named(right)) => left == right,
+            _ => false,
+        }
+    }
 }
 
 impl Display for TypeNode {
@@ -705,6 +725,43 @@ impl<'a, T: input::Text<'a>> From<&input::Type<'a, T>> for TypeNode {
             input::Type::ListType(inner) => TypeNode::List(Box::new(inner.as_ref().into())),
             input::Type::NonNullType(inner) => TypeNode::NonNull(Box::new(inner.as_ref().into())),
             input::Type::NamedType(name) => TypeNode::Named(name.as_ref().to_string()),
+        }
+    }
+}
+
+impl TryFrom<&str> for TypeNode {
+    type Error = &'static str;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        // The implementation now assumes the string is pre-trimmed.
+        // We add a check for an empty string, which is invalid.
+        if s.is_empty() {
+            return Err("Input string for type parsing cannot be empty.");
+        }
+
+        // 1. Check for the NonNull operator `!` at the end.
+        if let Some(inner) = s.strip_suffix('!') {
+            // Recursively parse the inner type.
+            let inner_type = TypeNode::try_from(inner)?;
+            return Ok(TypeNode::NonNull(Box::new(inner_type)));
+        }
+
+        // 2. Check for the List operator `[]`.
+        if let Some(inner) = s.strip_prefix('[') {
+            if let Some(inner_content) = inner.strip_suffix(']') {
+                // Recursively parse the content inside the brackets.
+                let inner_type = TypeNode::try_from(inner_content)?;
+                return Ok(TypeNode::List(Box::new(inner_type)));
+            } else {
+                return Err("Mismatched brackets in list type");
+            }
+        }
+
+        // 3. Base Case: Handle the Named type.
+        if !s.contains(['[', ']', '!']) {
+            Ok(TypeNode::Named(s.to_string()))
+        } else {
+            Err("Invalid named type format")
         }
     }
 }

@@ -1,0 +1,117 @@
+schema
+  @link(url: "https://specs.apollo.dev/link/v1.0")
+  @link(url: "https://specs.apollo.dev/join/v0.5", for: EXECUTION) {
+  query: Query
+}
+
+directive @link(
+  url: String
+  as: String
+  for: link__Purpose
+  import: [link__Import]
+) repeatable on SCHEMA
+
+directive @join__graph(name: String!, url: String!) on ENUM_VALUE
+
+directive @join__type(
+  graph: join__Graph!
+  key: join__FieldSet
+  extension: Boolean! = false
+  resolvable: Boolean! = true
+  isInterfaceObject: Boolean! = false
+) repeatable on ENUM | INPUT_OBJECT | INTERFACE | OBJECT | SCALAR | UNION
+
+directive @join__field(
+  graph: join__Graph
+  requires: join__FieldSet
+  provides: join__FieldSet
+  type: String
+  external: Boolean
+  override: String
+  overrideLabel: String
+  usedOverridden: Boolean
+  contextArguments: [join__ContextArgument!]
+) repeatable on FIELD_DEFINITION | INPUT_FIELD_DEFINITION
+
+directive @join__implements(
+  graph: join__Graph!
+  interface: String!
+) repeatable on INTERFACE | OBJECT
+
+directive @join__unionMember(
+  graph: join__Graph!
+  member: String!
+) repeatable on UNION
+
+directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @join__directive(
+  graphs: [join__Graph!]
+  name: String!
+  args: join__DirectiveArguments!
+) repeatable on SCHEMA | OBJECT | INTERFACE | FIELD_DEFINITION
+
+enum link__Purpose {
+  """
+  SECURITY features provide metadata necessary to securely resolve fields.
+  """
+  SECURITY
+  """
+  EXECUTION features provide metadata necessary for operation execution.
+  """
+  EXECUTION
+}
+
+scalar link__Import
+
+scalar join__FieldSet
+
+scalar join__FieldValue
+
+input join__ContextArgument {
+  name: String!
+  type: String!
+  context: String!
+  selection: join__FieldValue!
+}
+
+scalar join__DirectiveArguments
+
+enum join__Graph {
+  A @join__graph(name: "a", url: "file://a.graphql")
+  B @join__graph(name: "b", url: "file://b.graphql")
+}
+
+type TypeA implements Interface
+  @join__type(graph: A)
+  @join__implements(graph: A, interface: "Interface") {
+  id: ID! @join__field(graph: A, type: "ID!")
+  strField: [String] @join__field(graph: A, type: "[String]")
+  strField2: [String] @join__field(graph: A, type: "[String]")
+}
+
+type TypeB implements Interface
+  @join__type(graph: A)
+  @join__implements(graph: A, interface: "Interface")
+  @join__type(graph: B)
+  @join__implements(graph: B, interface: "Interface") {
+  id: ID! @join__field(graph: A, type: "ID!") @join__field(graph: B, type: "ID")
+  strField: String
+    @join__field(graph: A, type: "String")
+    @join__field(graph: B, type: "String")
+  strField2: String
+    @join__field(graph: A, type: "String")
+    @join__field(graph: B, type: "String")
+}
+
+interface Interface @join__type(graph: A) @join__type(graph: B) {
+  id: ID @join__field(graph: A, type: "ID") @join__field(graph: B, type: "ID")
+}
+
+type Query @join__type(graph: A) @join__type(graph: B) {
+  i: Interface
+    @join__field(graph: A, type: "Interface")
+    @join__field(graph: B, type: "Interface")
+}
+
+scalar Import @join__type(graph: A) @join__type(graph: B)

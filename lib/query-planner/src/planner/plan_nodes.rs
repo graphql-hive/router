@@ -1,5 +1,6 @@
 use crate::{
     ast::{
+        merge_path::{MergePath, Segment},
         minification::minify_operation,
         operation::{OperationDefinition, SubgraphFetchOperation, VariableDefinition},
         selection_item::SelectionItem,
@@ -85,8 +86,14 @@ pub struct ConditionNode {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyRenamer {
-    pub path: Vec<String>,
+    pub path: Vec<FetchNodePathSegment>,
     pub rename_key_to: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum FetchNodePathSegment {
+    Key(String),
+    TypenameEquals(String),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -95,10 +102,28 @@ pub enum FetchRewrite {
     KeyRenamer(KeyRenamer),
 }
 
+impl From<&MergePath> for Vec<FetchNodePathSegment> {
+    fn from(value: &MergePath) -> Self {
+        value
+            .inner
+            .iter()
+            .filter_map(|path_segment| match path_segment {
+                Segment::Cast(type_name) => {
+                    Some(FetchNodePathSegment::TypenameEquals(type_name.clone()))
+                }
+                Segment::Field(field_name, _args_hash) => {
+                    Some(FetchNodePathSegment::Key(field_name.clone()))
+                }
+                Segment::List => None,
+            })
+            .collect()
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ValueSetter {
-    pub path: Vec<String>,
+    pub path: Vec<FetchNodePathSegment>,
     // Use serde_json::Value for the 'any' type
     pub set_value_to: serde_json::Value,
 }
@@ -256,7 +281,7 @@ impl FetchNode {
                     },
                     requires: None,
                     input_rewrites: step.input_rewrites.clone(),
-                    output_rewrites: None,
+                    output_rewrites: step.output_rewrites.clone(),
                 }
             }
             false => FetchNode {
@@ -267,7 +292,7 @@ impl FetchNode {
                 operation: create_output_operation(step, supergraph),
                 requires: Some(create_input_selection_set(&step.input)),
                 input_rewrites: step.input_rewrites.clone(),
-                output_rewrites: None,
+                output_rewrites: step.output_rewrites.clone(),
             },
         }
     }

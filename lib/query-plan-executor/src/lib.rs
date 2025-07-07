@@ -4,8 +4,8 @@ use query_planner::{
         operation::OperationDefinition, selection_item::SelectionItem, selection_set::SelectionSet,
     },
     planner::plan_nodes::{
-        ConditionNode, FetchNode, FetchRewrite, FlattenNode, KeyRenamer, ParallelNode, PlanNode,
-        QueryPlan, SequenceNode, ValueSetter,
+        ConditionNode, FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode, KeyRenamer,
+        ParallelNode, PlanNode, QueryPlan, SequenceNode, ValueSetter,
     },
     state::supergraph_state::OperationKind,
 };
@@ -364,7 +364,7 @@ trait ApplyFetchRewrite {
         &self,
         possible_types: &HashMap<String, Vec<String>>,
         value: &mut Value,
-        path: &[String],
+        path: &[FetchNodePathSegment],
     );
 }
 
@@ -379,7 +379,7 @@ impl ApplyFetchRewrite for FetchRewrite {
         &self,
         possible_types: &HashMap<String, Vec<String>>,
         value: &mut Value,
-        path: &[String],
+        path: &[FetchNodePathSegment],
     ) {
         match self {
             FetchRewrite::KeyRenamer(renamer) => renamer.apply_path(possible_types, value, path),
@@ -397,7 +397,7 @@ impl ApplyFetchRewrite for KeyRenamer {
         &self,
         possible_types: &HashMap<String, Vec<String>>,
         value: &mut Value,
-        path: &[String],
+        path: &[FetchNodePathSegment],
     ) {
         let current_segment = &path[0];
         let remaining_path = &path[1..];
@@ -409,9 +409,8 @@ impl ApplyFetchRewrite for KeyRenamer {
                 }
             }
             Value::Object(obj) => {
-                let type_condition = current_segment.strip_prefix("... on ");
-                match type_condition {
-                    Some(type_condition) => {
+                match current_segment {
+                    FetchNodePathSegment::TypenameEquals(type_condition) => {
                         let type_name = match obj.get(TYPENAME_FIELD) {
                             Some(Value::String(type_name)) => type_name,
                             _ => type_condition, // Default to type_condition if not found
@@ -424,14 +423,14 @@ impl ApplyFetchRewrite for KeyRenamer {
                             self.apply_path(possible_types, value, remaining_path)
                         }
                     }
-                    _ => {
+                    FetchNodePathSegment::Key(field_name) => {
                         if remaining_path.is_empty() {
-                            if *current_segment != self.rename_key_to {
-                                if let Some(val) = obj.remove(current_segment) {
+                            if *field_name != self.rename_key_to {
+                                if let Some(val) = obj.remove(field_name) {
                                     obj.insert(self.rename_key_to.to_string(), val);
                                 }
                             }
-                        } else if let Some(next_value) = obj.get_mut(current_segment) {
+                        } else if let Some(next_value) = obj.get_mut(field_name) {
                             self.apply_path(possible_types, next_value, remaining_path)
                         }
                     }
@@ -452,7 +451,7 @@ impl ApplyFetchRewrite for ValueSetter {
         &self,
         possible_types: &HashMap<String, Vec<String>>,
         data: &mut Value,
-        path: &[String],
+        path: &[FetchNodePathSegment],
     ) {
         if path.is_empty() {
             *data = self.set_value_to.to_owned();
@@ -467,20 +466,29 @@ impl ApplyFetchRewrite for ValueSetter {
                 }
             }
             Value::Object(map) => {
-                let current_key = &path[0];
+                let current_segment = &path[0];
                 let remaining_path = &path[1..];
 
-                if let Some(type_condition) = current_key.strip_prefix("... on ") {
-                    let type_name = match map.get(TYPENAME_FIELD) {
-                        Some(Value::String(type_name)) => type_name,
-                        _ => type_condition, // Default to type_condition if not found
-                    };
-                    if entity_satisfies_type_condition(possible_types, type_name, type_condition) {
-                        self.apply_path(possible_types, data, remaining_path)
+                match current_segment {
+                    FetchNodePathSegment::TypenameEquals(type_condition) => {
+                        let type_name = match map.get(TYPENAME_FIELD) {
+                            Some(Value::String(type_name)) => type_name,
+                            _ => type_condition, // Default to type_condition if not found
+                        };
+                        if entity_satisfies_type_condition(
+                            possible_types,
+                            type_name,
+                            type_condition,
+                        ) {
+                            self.apply_path(possible_types, data, remaining_path)
+                        }
                     }
-                } else if let Some(data) = map.get_mut(current_key) {
-                    // If the key exists, apply the remaining path to its value
-                    self.apply_path(possible_types, data, remaining_path)
+                    FetchNodePathSegment::Key(field_name) => {
+                        if let Some(data) = map.get_mut(field_name) {
+                            // If the key exists, apply the remaining path to its value
+                            self.apply_path(possible_types, data, remaining_path)
+                        }
+                    }
                 }
             }
             _ => {

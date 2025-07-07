@@ -517,7 +517,7 @@ fn filter_introspection_selections(
         .filter_map(|item| {
             match item {
                 SelectionItem::Field(field) => {
-                    if field.name.starts_with("__") {
+                    if field.is_introspection_field() {
                         has_introspection = true;
                         None // Skip introspection fields except __typename
                     } else {

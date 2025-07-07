@@ -196,6 +196,10 @@ impl FieldSelection {
             None => None,
         }
     }
+
+    pub fn is_introspection_field(&self) -> bool {
+        self.name.starts_with("__")
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
