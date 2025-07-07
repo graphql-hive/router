@@ -4,6 +4,7 @@ use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
 use crate::pipeline::gateway_layer::{
     GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer,
 };
+use crate::pipeline::http_request_params::HttpRequestParams;
 use crate::pipeline::parser_service::GraphQLParserPayload;
 use crate::shared_state::GatewaySharedState;
 use axum::body::Body;
@@ -84,7 +85,14 @@ impl GatewayPipelineLayer for GraphQLValidationService {
             );
             trace!("Validation errors: {:?}", validation_result);
 
-            return Err(PipelineErrorVariant::ValidationErrors(validation_result).into());
+            let http_payload = req.extensions().get::<HttpRequestParams>().ok_or_else(|| {
+                PipelineErrorVariant::InternalServiceError("HttpRequestParams is missing")
+            })?;
+
+            return Err(PipelineError::new_with_accept_header(
+                PipelineErrorVariant::ValidationErrors(validation_result),
+                http_payload.accept_header.clone(),
+            ));
         }
 
         Ok((req, GatewayPipelineStepDecision::Continue))

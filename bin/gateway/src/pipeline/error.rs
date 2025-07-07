@@ -123,7 +123,8 @@ impl PipelineErrorVariant {
             (Self::VariablesCoercionError(_), false) => StatusCode::BAD_REQUEST,
             (Self::VariablesCoercionError(_), true) => StatusCode::OK,
             (Self::MutationNotAllowedOverHttpGet, _) => StatusCode::METHOD_NOT_ALLOWED,
-            (Self::ValidationErrors(_), _) => StatusCode::BAD_REQUEST,
+            (Self::ValidationErrors(_), true) => StatusCode::OK,
+            (Self::ValidationErrors(_), false) => StatusCode::BAD_REQUEST,
             (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
         }
@@ -147,10 +148,10 @@ impl From<PipelineErrorVariant> for PipelineError {
 
 impl IntoResponse for PipelineError {
     fn into_response(self) -> Response<Body> {
-        let accept_ok = self
+        let accept_ok = &self
             .accept_header
             .is_some_and(|v| v.contains(APPLICATION_JSON.to_str().unwrap()));
-        let status = self.error.default_status_code(accept_ok);
+        let status = self.error.default_status_code(*accept_ok);
 
         if let PipelineErrorVariant::ValidationErrors(validation_errors) = self.error {
             let validation_error_result = ExecutionResult {
@@ -160,7 +161,7 @@ impl IntoResponse for PipelineError {
             };
 
             return (
-                StatusCode::OK,
+                status,
                 serde_json::to_string(&validation_error_result).unwrap(),
             )
                 .into_response();
