@@ -56,7 +56,8 @@ impl FetchGraph {
             for mismatch_path in mismatches_paths {
                 let mut merger = SafeSelectionSetMerger::default();
 
-                if let Some(Segment::Field(field_lookup, args_hash_lookup, condition)) =
+                // TODO: cover condition
+                if let Some(Segment::Field(field_lookup, args_hash_lookup, _condition)) =
                     mismatch_path.last()
                 {
                     // TODO: We can avoid this cut and slice thing, if we return "SelectionItem" instead of "SelectionSet" inside "find_selection_set_by_path_mut".
