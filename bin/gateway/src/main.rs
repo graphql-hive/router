@@ -98,9 +98,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(GraphiQLResponderService::new_layer())
         .layer(GraphQLRequestParamsExtractor::new_layer())
         .layer(GraphQLParserService::new_layer())
+        .layer(GraphQLValidationService::new_layer())
         .layer(GraphQLOperationNormalizationService::new_layer())
         .layer(CoerceVariablesService::new_layer())
-        .layer(GraphQLValidationService::new_layer())
         .layer(QueryPlanService::new_layer())
         .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER_NAME.clone()))
         .service(ExecutionService::new(expose_query_plan));
