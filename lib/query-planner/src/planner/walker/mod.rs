@@ -18,6 +18,7 @@ use crate::{
     state::supergraph_state::OperationKind,
 };
 use best_path::{find_best_paths, BestPathTracker};
+use bumpalo::{collections::Vec as BumpVec, Bump};
 use error::WalkOperationError;
 use excluded::ExcludedFromLookup;
 use path::OperationPath;
@@ -25,24 +26,37 @@ use pathfinder::{find_direct_paths, find_indirect_paths};
 use tracing::{instrument, span, trace, Level};
 use utils::get_entrypoints;
 
-pub struct ResolvedOperation {
+/// The context for a single walk operation, holding the arena allocator.
+pub struct WalkContext<'bump> {
+    pub arena: &'bump Bump,
+    pub graph: &'bump Graph,
+}
+
+impl<'bump> WalkContext<'bump> {
+    pub fn new(graph: &'bump Graph, arena: &'bump Bump) -> Self {
+        Self { arena, graph }
+    }
+}
+
+/// The result of a successful walk, containing the operation kind and the groups of paths for each root field.
+pub struct ResolvedOperation<'a> {
     pub operation_kind: OperationKind,
-    pub root_field_groups: Vec<BestPathsPerLeaf>,
+    pub root_field_groups: BumpVec<'a, BestPathsPerLeaf<'a>>,
 }
 
 // TODO: Make a better struct
-pub type BestPathsPerLeaf = Vec<Vec<OperationPath>>;
+pub type BestPathsPerLeaf<'a> = BumpVec<'a, BumpVec<'a, OperationPath<'a>>>;
 
 // TODO: Consider to use VecDeque(fixed_size) if we can predict it?
 // TODO: Consider to drop this IR layer and just go with QTP directly.
-type WorkItem<'a> = (&'a SelectionItem, Vec<OperationPath>);
-type ResolutionStack<'a> = Vec<WorkItem<'a>>;
+type WorkItem<'a> = (&'a SelectionItem, BumpVec<'a, OperationPath<'a>>);
+type ResolutionStack<'a> = BumpVec<'a, WorkItem<'a>>;
 
-#[instrument(level = "trace", skip(graph, operation))]
-pub fn walk_operation(
-    graph: &Graph,
-    operation: &OperationDefinition,
-) -> Result<ResolvedOperation, WalkOperationError> {
+#[instrument(level = "trace", skip(ctx, operation))]
+pub fn walk_operation<'a>(
+    ctx: &'a WalkContext<'a>,
+    operation: &'a OperationDefinition,
+) -> Result<ResolvedOperation<'a>, WalkOperationError> {
     let operation_kind = operation
         .operation_kind
         .clone()
@@ -50,26 +64,28 @@ pub fn walk_operation(
     let (op_type, selection_set) = operation.parts();
     trace!("operation is of type {:?}", op_type);
 
-    let root_entrypoints = get_entrypoints(graph, op_type)?;
-    let initial_paths: Vec<OperationPath> = root_entrypoints
-        .iter()
-        .map(|edge| OperationPath::new_entrypoint(edge))
-        .collect();
+    let root_entrypoints = get_entrypoints(ctx.graph, op_type)?;
+    let mut initial_paths = BumpVec::new_in(ctx.arena);
+    initial_paths.extend(
+        root_entrypoints
+            .iter()
+            .map(|edge| OperationPath::new_entrypoint(ctx, edge)),
+    );
 
-    let mut paths_grouped_by_root_field: Vec<BestPathsPerLeaf> =
-        Vec::with_capacity(operation.selection_set.items.len());
+    let mut paths_grouped_by_root_field =
+        BumpVec::with_capacity_in(operation.selection_set.items.len(), ctx.arena);
 
     // It's critical to iterate over root fiels and preserve their original order
     for selection_item in selection_set.items.iter() {
-        let mut stack_to_resolve: VecDeque<WorkItem> = VecDeque::new();
+        let mut stack_to_resolve: VecDeque<WorkItem<'a>> = VecDeque::new();
 
-        stack_to_resolve.push_back((selection_item, initial_paths.to_vec()));
+        stack_to_resolve.push_back((selection_item, initial_paths.clone()));
 
-        let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
+        let mut paths_per_leaf = BumpVec::new_in(ctx.arena);
 
         while let Some((selection_item, paths)) = stack_to_resolve.pop_front() {
             let (next_stack_to_resolve, new_paths_per_leaf) =
-                process_selection(graph, selection_item, &paths)?;
+                process_selection(ctx, selection_item, &paths)?;
 
             paths_per_leaf.extend(new_paths_per_leaf);
             for item in next_stack_to_resolve.into_iter().rev() {
@@ -87,22 +103,22 @@ pub fn walk_operation(
 }
 
 fn process_selection<'a>(
-    graph: &'a Graph,
+    ctx: &'a WalkContext<'a>,
     selection_item: &'a SelectionItem,
-    paths: &Vec<OperationPath>,
-) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
-    let mut stack_to_resolve: ResolutionStack = vec![];
-    let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
+    paths: &BumpVec<'a, OperationPath<'a>>,
+) -> Result<(ResolutionStack<'a>, BestPathsPerLeaf<'a>), WalkOperationError> {
+    let mut stack_to_resolve = BumpVec::new_in(ctx.arena);
+    let mut paths_per_leaf = BumpVec::new_in(ctx.arena);
 
     match selection_item {
         SelectionItem::InlineFragment(fragment) => {
             let (next_selection_items, new_paths_per_leaf) =
-                process_inline_fragment(graph, fragment, paths)?;
+                process_inline_fragment(ctx, fragment, paths)?;
             paths_per_leaf.extend(new_paths_per_leaf);
             stack_to_resolve.extend(next_selection_items);
         }
         SelectionItem::Field(field) => {
-            let (next_selection_items, new_paths_per_leaf) = process_field(graph, field, paths)?;
+            let (next_selection_items, new_paths_per_leaf) = process_field(ctx, field, paths)?;
             paths_per_leaf.extend(new_paths_per_leaf);
             stack_to_resolve.extend(next_selection_items);
         }
@@ -114,17 +130,17 @@ fn process_selection<'a>(
     Ok((stack_to_resolve, paths_per_leaf))
 }
 
-#[instrument(level = "trace", skip(graph, selection_set, paths))]
+#[instrument(level = "trace", skip(ctx, selection_set, paths))]
 fn process_selection_set<'a>(
-    graph: &'a Graph,
+    ctx: &'a WalkContext<'a>,
     selection_set: &'a SelectionSet,
-    paths: &Vec<OperationPath>,
-) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
-    let mut stack_to_resolve: ResolutionStack = vec![];
-    let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
+    paths: &BumpVec<'a, OperationPath<'a>>,
+) -> Result<(ResolutionStack<'a>, BestPathsPerLeaf<'a>), WalkOperationError> {
+    let mut stack_to_resolve = BumpVec::new_in(ctx.arena);
+    let mut paths_per_leaf = BumpVec::new_in(ctx.arena);
 
     for item in selection_set.items.iter() {
-        let (next_stack_to_resolve, new_paths_per_leaf) = process_selection(graph, item, paths)?;
+        let (next_stack_to_resolve, new_paths_per_leaf) = process_selection(ctx, item, paths)?;
         paths_per_leaf.extend(new_paths_per_leaf);
         stack_to_resolve.extend(next_stack_to_resolve);
     }
@@ -132,14 +148,14 @@ fn process_selection_set<'a>(
     Ok((stack_to_resolve, paths_per_leaf))
 }
 
-#[instrument(level = "trace",skip(graph, fragment, paths), fields(
+#[instrument(level = "trace",skip(ctx, fragment, paths), fields(
   type_condition = fragment.type_condition,
 ))]
 fn process_inline_fragment<'a>(
-    graph: &'a Graph,
+    ctx: &'a WalkContext<'a>,
     fragment: &'a InlineFragmentSelection,
-    paths: &Vec<OperationPath>,
-) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
+    paths: &BumpVec<'a, OperationPath<'a>>,
+) -> Result<(ResolutionStack<'a>, BestPathsPerLeaf<'a>), WalkOperationError> {
     trace!(
         "Processing inline fragment '{}' on type '{}' through {} possible paths",
         fragment.selections,
@@ -149,7 +165,7 @@ fn process_inline_fragment<'a>(
 
     // if the current type is an object type we ignore an abstract move
     // but if it's a union, we need to find an abstract move to the target type
-    let tail_index = graph.get_edge_tail(
+    let tail_index = ctx.graph.get_edge_tail(
         &paths
             .first()
             .unwrap()
@@ -166,14 +182,14 @@ fn process_inline_fragment<'a>(
     //  - object types - `... on Object`-  we look for object's fields.
     //  - union types - `... on Union` will cause a graphql validation error.
     // We don't need to worry about correctness here as it's handled by graphql validations.
-    let tail = graph.node(tail_index)?;
+    let tail = ctx.graph.node(tail_index)?;
     let tail_type_name = match tail {
         Node::SubgraphType(t) => &t.name,
         _ => panic!("Expected a subgraph type when resolving fragments"),
     };
 
     if tail_type_name == &fragment.type_condition {
-        return process_selection_set(graph, &fragment.selections, paths);
+        return process_selection_set(ctx, &fragment.selections, paths);
     }
 
     trace!(
@@ -182,36 +198,36 @@ fn process_inline_fragment<'a>(
         paths.len()
     );
 
-    let mut next_paths: Vec<OperationPath> = Vec::with_capacity(paths.len());
+    let mut next_paths = BumpVec::with_capacity_in(paths.len(), ctx.arena);
     for path in paths {
         let path_span = span!(
             Level::TRACE,
             "explore_path",
-            path = path.pretty_print(graph)
+            path = path.pretty_print(ctx.graph)
         );
         let _enter = path_span.enter();
 
         let mut direct_paths = find_direct_paths(
-            graph,
+            ctx,
             path,
             &NavigationTarget::ConcreteType(&fragment.type_condition),
         )?;
 
         trace!("Direct paths found: {}", direct_paths.len());
         if !direct_paths.is_empty() {
-            trace!("advanced: {}", path.pretty_print(graph));
+            trace!("advanced: {}", path.pretty_print(ctx.graph));
             next_paths.push(direct_paths.remove(0));
         }
 
         let mut indirect_paths = find_indirect_paths(
-            graph,
+            ctx,
             path,
             &NavigationTarget::ConcreteType(&fragment.type_condition),
             &ExcludedFromLookup::new(),
         )?;
 
         if !indirect_paths.is_empty() {
-            trace!("advanced: {}", path.pretty_print(graph));
+            trace!("advanced: {}", path.pretty_print(ctx.graph));
             next_paths.push(indirect_paths.remove(0));
         }
 
@@ -229,17 +245,17 @@ fn process_inline_fragment<'a>(
     }
 
     if next_paths.is_empty() {
-        let mut tracker = BestPathTracker::new(graph);
+        let mut tracker = BestPathTracker::new(ctx);
 
         for path in paths {
             let path_span = span!(
                 Level::TRACE,
                 "explore_path",
-                path = path.pretty_print(graph)
+                path = path.pretty_print(ctx.graph)
             );
             let _enter = path_span.enter();
             let direct_paths = find_direct_paths(
-                graph,
+                ctx,
                 path,
                 &NavigationTarget::Field(&FieldSelection::new_typename()),
             )?;
@@ -255,30 +271,33 @@ fn process_inline_fragment<'a>(
             }
         }
 
-        let next_paths = tracker.get_best_paths();
+        let next_paths_from_tracker = tracker.get_best_paths();
 
-        if next_paths.is_empty() {
+        if next_paths_from_tracker.is_empty() {
             return Err(WalkOperationError::NoPathsFound("__typename".to_string()));
         }
 
-        return Ok((vec![], vec![find_best_paths(next_paths)]));
+        let best = find_best_paths(ctx.arena, next_paths_from_tracker);
+        let mut result = BumpVec::new_in(ctx.arena);
+        result.push(best);
+        return Ok((ResolutionStack::new_in(ctx.arena), result));
     }
 
-    process_selection_set(graph, &fragment.selections, &next_paths)
+    process_selection_set(ctx, &fragment.selections, &next_paths)
 }
 
-#[instrument(level = "trace", skip(graph, field, paths), fields(
+#[instrument(level = "trace", skip(ctx, field, paths), fields(
   field_name = &field.name,
   leaf = field.is_leaf()
 ))]
 fn process_field<'a>(
-    graph: &'a Graph,
+    ctx: &'a WalkContext<'a>,
     field: &'a FieldSelection,
-    paths: &[OperationPath],
-) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
-    let mut next_stack_to_resolve: ResolutionStack = vec![];
-    let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
-    let mut tracker = BestPathTracker::new(graph);
+    paths: &BumpVec<'a, OperationPath<'a>>,
+) -> Result<(ResolutionStack<'a>, BestPathsPerLeaf<'a>), WalkOperationError> {
+    let mut next_stack_to_resolve = BumpVec::new_in(ctx.arena);
+    let mut paths_per_leaf = BumpVec::new_in(ctx.arena);
+    let mut tracker = BestPathTracker::new(ctx);
 
     trace!(
         "Trying to advance to: {} through {} possible paths",
@@ -290,14 +309,14 @@ fn process_field<'a>(
         let path_span = span!(
             Level::TRACE,
             "explore_path",
-            path = path.pretty_print(graph)
+            path = path.pretty_print(ctx.graph)
         );
         let _enter = path_span.enter();
 
         let mut advanced = false;
 
         let excluded = ExcludedFromLookup::new();
-        let direct_paths = find_direct_paths(graph, path, &NavigationTarget::Field(field))?;
+        let direct_paths = find_direct_paths(ctx, path, &NavigationTarget::Field(field))?;
         trace!("Direct paths found: {}", direct_paths.len());
 
         if !direct_paths.is_empty() {
@@ -308,7 +327,7 @@ fn process_field<'a>(
         }
 
         let indirect_paths =
-            find_indirect_paths(graph, path, &NavigationTarget::Field(field), &excluded)?;
+            find_indirect_paths(ctx, path, &NavigationTarget::Field(field), &excluded)?;
         trace!("Indirect paths found: {}", indirect_paths.len());
 
         if !indirect_paths.is_empty() {
@@ -325,7 +344,7 @@ fn process_field<'a>(
             } else {
                 "failed to advance"
             },
-            path.pretty_print(graph)
+            path.pretty_print(ctx.graph)
         );
     }
 
@@ -335,7 +354,7 @@ fn process_field<'a>(
     }
 
     if field.is_leaf() {
-        paths_per_leaf.push(find_best_paths(next_paths));
+        paths_per_leaf.push(find_best_paths(ctx.arena, next_paths));
     } else {
         trace!("Found {} paths", next_paths.len());
         for next_selection_items in &field.selections.items {

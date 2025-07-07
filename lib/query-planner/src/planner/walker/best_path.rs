@@ -1,80 +1,97 @@
-use std::collections::{btree_map::Entry, BTreeMap};
+use bumpalo::{collections::Vec as BumpVec, Bump};
 
-use crate::graph::Graph;
+use super::{error::WalkOperationError, path::OperationPath, WalkContext};
 
-use super::{error::WalkOperationError, path::OperationPath};
+// A tuple representing the best paths for a specific subgraph.
+// (subgraph_id, paths, cost)
+type SubgraphBestPaths<'bump> = (&'bump str, BumpVec<'bump, OperationPath<'bump>>, u64);
 
-pub struct BestPathTracker<'graph> {
-    graph: &'graph Graph,
-    /// A map from subgraph name to the best path and its cost.
-    /// BTreeMap instead of HashMap to keep the order of inserted keys deterministic.
-    subgraph_to_best_paths: BTreeMap<String, (Vec<OperationPath>, u64)>,
+pub struct BestPathTracker<'bump, 'a> {
+    ctx: &'a WalkContext<'bump>,
+    /// A vector of best paths per subgraph. We use a Vec instead of a map
+    /// for better performance with the bump allocator.
+    subgraph_to_best_paths: BumpVec<'bump, SubgraphBestPaths<'bump>>,
 }
 
-pub fn find_best_paths(paths: Vec<OperationPath>) -> Vec<OperationPath> {
-    let mut best_paths = Vec::new();
-    let mut best_cost = 0;
+pub fn find_best_paths<'bump>(
+    arena: &'bump Bump,
+    paths: BumpVec<'bump, OperationPath<'bump>>,
+) -> BumpVec<'bump, OperationPath<'bump>> {
+    let mut best_paths = BumpVec::new_in(arena);
+    let mut best_cost = u64::MAX;
 
     for path in paths {
-        if best_cost == 0 {
+        if best_cost == u64::MAX || path.cost < best_cost {
             best_cost = path.cost;
-            best_paths = vec![path];
-        } else if best_cost == path.cost {
+            // The old `best_paths` are now suboptimal, clear and start a new list.
+            if !best_paths.is_empty() {
+                best_paths.clear();
+            }
             best_paths.push(path);
-        } else if best_cost > path.cost {
-            best_cost = path.cost;
-            best_paths = vec![path];
+        } else if path.cost == best_cost {
+            best_paths.push(path);
         }
     }
 
     best_paths
 }
 
-impl<'graph> BestPathTracker<'graph> {
-    pub fn new(graph: &'graph Graph) -> Self {
+impl<'bump, 'a> BestPathTracker<'bump, 'a> {
+    pub fn new(ctx: &'a WalkContext<'bump>) -> Self {
         Self {
-            graph,
-            subgraph_to_best_paths: BTreeMap::new(),
+            ctx,
+            subgraph_to_best_paths: BumpVec::new_in(ctx.arena),
         }
     }
 
-    pub fn add(&mut self, path: &OperationPath) -> Result<(), WalkOperationError> {
+    pub fn add(&mut self, path: &OperationPath<'bump>) -> Result<(), WalkOperationError> {
         let tail_graph_id = self
+            .ctx
             .graph
             .node(path.tail())?
             .graph_id()
             .expect("Graph ID not found in node");
 
-        match self.subgraph_to_best_paths.entry(tail_graph_id.to_string()) {
-            Entry::Occupied(mut entry) => {
-                let (existing_paths, existing_cost) = entry.get_mut();
-
-                match path.cost.cmp(existing_cost) {
-                    std::cmp::Ordering::Less => {
-                        *existing_cost = path.cost;
-                        existing_paths.clear();
-                        existing_paths.push(path.clone());
-                    }
-                    std::cmp::Ordering::Equal => {
-                        existing_paths.push(path.clone());
-                    }
-                    std::cmp::Ordering::Greater => {
-                        // ignore this path
-                    }
+        if let Some((_, existing_paths, existing_cost)) = self
+            .subgraph_to_best_paths
+            .iter_mut()
+            .find(|(id, _, _)| *id == tail_graph_id)
+        {
+            // Found existing entry for this subgraph
+            match path.cost.cmp(existing_cost) {
+                std::cmp::Ordering::Less => {
+                    *existing_cost = path.cost;
+                    existing_paths.clear();
+                    existing_paths.push(path.clone());
+                }
+                std::cmp::Ordering::Equal => {
+                    existing_paths.push(path.clone());
+                }
+                std::cmp::Ordering::Greater => {
+                    // ignore this path, it's worse
                 }
             }
-            Entry::Vacant(entry) => {
-                entry.insert((vec![path.clone()], path.cost));
-            }
+        } else {
+            // No entry for this subgraph yet, create a new one.
+            let mut new_paths = BumpVec::new_in(self.ctx.arena);
+            new_paths.push(path.clone());
+            // Allocate the graph_id string in the arena
+            let graph_id_in_arena = self.ctx.arena.alloc_str(tail_graph_id);
+            self.subgraph_to_best_paths
+                .push((graph_id_in_arena, new_paths, path.cost));
         }
 
         Ok(())
     }
 
-    pub fn get_best_paths(self) -> Vec<OperationPath> {
-        self.subgraph_to_best_paths
-            .into_values()
-            .flat_map(|(paths, _)| paths)
-            .collect::<Vec<OperationPath>>()
+    pub fn get_best_paths(mut self) -> BumpVec<'bump, OperationPath<'bump>> {
+        // Sorting here to maintain the deterministic behavior of the old BTreeMap.
+        self.subgraph_to_best_paths.sort_by_key(|(id, _, _)| *id);
+
+        let mut result = BumpVec::new_in(self.ctx.arena);
+        for (_, paths, _) in self.subgraph_to_best_paths {
+            result.extend(paths);
+        }
+        result
     }
 }

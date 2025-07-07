@@ -9,9 +9,12 @@ use crate::planner::fetch::fetch_step_data::{FetchStepData, FetchStepKind};
 use crate::planner::plan_nodes::{FetchRewrite, ValueSetter};
 use crate::planner::tree::query_tree::QueryTree;
 use crate::planner::tree::query_tree_node::{MutationFieldPosition, QueryTreeNode};
+
 use crate::planner::walker::path::OperationPath;
 use crate::planner::walker::pathfinder::can_satisfy_edge;
+use crate::planner::walker::WalkContext;
 use crate::state::supergraph_state::SubgraphName;
+use bumpalo::{collections::Vec as BumpVec, Bump};
 use petgraph::graph::EdgeReference;
 use petgraph::stable_graph::{EdgeIndex, NodeIndex, NodeIndices, NodeReferences, StableDiGraph};
 use petgraph::visit::EdgeRef;
@@ -482,10 +485,10 @@ fn ensure_fetch_step_for_requirement(
   parent_fetch_step_index = parent_fetch_step_index.index(),
   requiring_fetch_step_index = requiring_fetch_step_index.map(|s| s.index())
 ))]
-fn process_children_for_fetch_steps(
-    graph: &Graph,
+fn process_children_for_fetch_steps<'bump, 'a: 'bump>(
+    ctx: &'a WalkContext<'bump>,
     fetch_graph: &mut FetchGraph,
-    query_node: &QueryTreeNode,
+    query_node: &QueryTreeNode<'bump>,
     parent_fetch_step_index: NodeIndex,
     response_path: &MergePath,
     fetch_path: &MergePath,
@@ -499,7 +502,7 @@ fn process_children_for_fetch_steps(
     let mut leaf_fetch_step_indexes: Vec<NodeIndex> = vec![];
     for sub_step in query_node.children.iter() {
         leaf_fetch_step_indexes.extend(process_query_node(
-            graph,
+            ctx,
             fetch_graph,
             sub_step,
             Some(parent_fetch_step_index),
@@ -516,10 +519,10 @@ fn process_children_for_fetch_steps(
 #[instrument(level = "trace",skip_all, fields(
   count = query_node.requirements.len()
 ))]
-fn process_requirements_for_fetch_steps(
-    graph: &Graph,
+fn process_requirements_for_fetch_steps<'bump, 'a: 'bump>(
+    ctx: &'a WalkContext<'bump>,
     fetch_graph: &mut FetchGraph,
-    query_node: &QueryTreeNode,
+    query_node: &QueryTreeNode<'bump>,
     parent_fetch_step_index: NodeIndex,
     requiring_fetch_step_index: Option<NodeIndex>,
     response_path: &MergePath,
@@ -531,7 +534,7 @@ fn process_requirements_for_fetch_steps(
 
     for req_query_node in query_node.requirements.iter() {
         process_query_node(
-            graph,
+            ctx,
             fetch_graph,
             req_query_node,
             Some(parent_fetch_step_index),
@@ -548,10 +551,10 @@ fn process_requirements_for_fetch_steps(
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 #[instrument(level = "trace", skip_all)]
-fn process_noop_edge(
-    graph: &Graph,
+fn process_noop_edge<'bump, 'a: 'bump>(
+    ctx: &'a WalkContext<'bump>,
     fetch_graph: &mut FetchGraph,
-    query_node: &QueryTreeNode,
+    query_node: &QueryTreeNode<'bump>,
     parent_fetch_step_index: Option<NodeIndex>,
     response_path: &MergePath,
     fetch_path: &MergePath,
@@ -563,7 +566,7 @@ fn process_noop_edge(
         .unwrap_or_else(|| create_noop_fetch_step(fetch_graph, created_from_requires));
 
     process_children_for_fetch_steps(
-        graph,
+        ctx,
         fetch_graph,
         query_node,
         fetch_step_index,
@@ -596,14 +599,14 @@ fn add_typename_field_to_output(
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 #[instrument(level = "trace",skip_all, fields(
-  edge = graph.pretty_print_edge(edge_index, false),
+  edge = ctx.graph.pretty_print_edge(edge_index, false),
   parent_fetch_step_index = parent_fetch_step_index.index(),
   requiring_fetch_step_index = requiring_fetch_step_index.map(|f| f.index()),
 ))]
-fn process_entity_move_edge(
-    graph: &Graph,
+fn process_entity_move_edge<'bump, 'a: 'bump>(
+    ctx: &'a WalkContext<'bump>,
     fetch_graph: &mut FetchGraph,
-    query_node: &QueryTreeNode,
+    query_node: &QueryTreeNode<'bump>,
     parent_fetch_step_index: NodeIndex,
     response_path: &MergePath,
     fetch_path: &MergePath,
@@ -611,7 +614,7 @@ fn process_entity_move_edge(
     edge_index: EdgeIndex,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
-    let edge = graph.edge(edge_index)?;
+    let edge = ctx.graph.edge(edge_index)?;
     let (requirement, is_interface) = match edge {
         Edge::EntityMove(em) => (
             TypeAwareSelection {
@@ -627,15 +630,15 @@ fn process_entity_move_edge(
         }
     };
 
-    let head_node_index = graph.get_edge_head(&edge_index)?;
-    let head_node = graph.node(head_node_index)?;
+    let head_node_index = ctx.graph.get_edge_head(&edge_index)?;
+    let head_node = ctx.graph.node(head_node_index)?;
     let input_type_name = match head_node {
         Node::SubgraphType(t) => &t.name,
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
-    let tail_node_index = graph.get_edge_tail(&edge_index)?;
-    let tail_node = graph.node(tail_node_index)?;
+    let tail_node_index = ctx.graph.get_edge_tail(&edge_index)?;
+    let tail_node = ctx.graph.node(tail_node_index)?;
     let (output_type_name, subgraph_name) = match tail_node {
         Node::SubgraphType(t) => (&t.name, &t.subgraph),
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
@@ -690,7 +693,7 @@ fn process_entity_move_edge(
     fetch_graph.connect(parent_fetch_step_index, fetch_step_index);
 
     process_requirements_for_fetch_steps(
-        graph,
+        ctx,
         fetch_graph,
         query_node,
         parent_fetch_step_index,
@@ -700,7 +703,7 @@ fn process_entity_move_edge(
     )?;
 
     process_children_for_fetch_steps(
-        graph,
+        ctx,
         fetch_graph,
         query_node,
         fetch_step_index,
@@ -714,14 +717,14 @@ fn process_entity_move_edge(
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 #[instrument(level = "trace",skip_all, fields(
-  edge = graph.pretty_print_edge(edge_index, false),
+  edge = ctx.graph.pretty_print_edge(edge_index, false),
   parent_fetch_step_index = parent_fetch_step_index.index(),
   requiring_fetch_step_index = requiring_fetch_step_index.map(|f| f.index()),
 ))]
-fn process_interface_object_type_move_edge(
-    graph: &Graph,
+fn process_interface_object_type_move_edge<'bump, 'a: 'bump>(
+    ctx: &'a WalkContext<'bump>,
     fetch_graph: &mut FetchGraph,
-    query_node: &QueryTreeNode,
+    query_node: &QueryTreeNode<'bump>,
     parent_fetch_step_index: NodeIndex,
     response_path: &MergePath,
     fetch_path: &MergePath,
@@ -735,7 +738,7 @@ fn process_interface_object_type_move_edge(
             parent_fetch_step_index.index(),
         ));
     }
-    let edge = graph.edge(edge_index)?;
+    let edge = ctx.graph.edge(edge_index)?;
     let requirement = match edge {
         Edge::InterfaceObjectTypeMove(m) => TypeAwareSelection {
             selection_set: m.requirements.selection_set.clone(),
@@ -748,15 +751,15 @@ fn process_interface_object_type_move_edge(
         }
     };
 
-    let head_node_index = graph.get_edge_head(&edge_index)?;
-    let head_node = graph.node(head_node_index)?;
+    let head_node_index = ctx.graph.get_edge_head(&edge_index)?;
+    let head_node = ctx.graph.node(head_node_index)?;
     let head_subgraph_name = match head_node {
         Node::SubgraphType(t) => &t.subgraph,
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
-    let tail_node_index = graph.get_edge_tail(&edge_index)?;
-    let tail_node = graph.node(tail_node_index)?;
+    let tail_node_index = ctx.graph.get_edge_tail(&edge_index)?;
+    let tail_node = ctx.graph.node(tail_node_index)?;
     let (interface_type_name, subgraph_name) = match tail_node {
         Node::SubgraphType(t) => (&t.name, &t.subgraph),
         // todo: FetchGraphError::MissingSubgraphName(tail_node.clone())
@@ -783,7 +786,7 @@ fn process_interface_object_type_move_edge(
     );
     step_for_children.input.add(&requirement);
     let key_to_reenter_subgraph =
-        find_satisfiable_key(graph, query_node.requirements.first().unwrap())?;
+        find_satisfiable_key(ctx, query_node.requirements.first().unwrap())?;
     step_for_children.input.add(&requirement);
     trace!(
         "adding key '{}' to fetch step [{}]",
@@ -842,7 +845,7 @@ fn process_interface_object_type_move_edge(
 
     trace!("Processing requirements");
     let leaf_fetch_step_indexes = process_query_node(
-        graph,
+        ctx,
         fetch_graph,
         query_node.requirements.first().unwrap(),
         Some(step_for_requirements_index),
@@ -862,7 +865,7 @@ fn process_interface_object_type_move_edge(
 
     trace!("Processing children");
     process_children_for_fetch_steps(
-        graph,
+        ctx,
         fetch_graph,
         query_node,
         step_for_children_index,
@@ -878,10 +881,10 @@ fn process_interface_object_type_move_edge(
   type_name = type_name,
   parent_fetch_step_index = parent_fetch_step_index.index(),
 ))]
-fn process_subgraph_entrypoint_edge(
-    graph: &Graph,
+fn process_subgraph_entrypoint_edge<'bump, 'a: 'bump>(
+    ctx: &'a WalkContext<'bump>,
     fetch_graph: &mut FetchGraph,
-    query_node: &QueryTreeNode,
+    query_node: &QueryTreeNode<'bump>,
     parent_fetch_step_index: NodeIndex,
     subgraph_name: &SubgraphName,
     type_name: &str,
@@ -898,7 +901,7 @@ fn process_subgraph_entrypoint_edge(
     fetch_graph.connect(parent_fetch_step_index, fetch_step_index);
 
     process_children_for_fetch_steps(
-        graph,
+        ctx,
         fetch_graph,
         query_node,
         fetch_step_index,
@@ -918,10 +921,10 @@ fn process_subgraph_entrypoint_edge(
   response_path = response_path.to_string(),
   fetch_path = fetch_path.to_string()
 ))]
-fn process_abstract_edge(
-    graph: &Graph,
+fn process_abstract_edge<'bump, 'a: 'bump>(
+    ctx: &'a WalkContext<'bump>,
     fetch_graph: &mut FetchGraph,
-    query_node: &QueryTreeNode,
+    query_node: &QueryTreeNode<'bump>,
     parent_fetch_step_index: NodeIndex,
     requiring_fetch_step_index: Option<NodeIndex>,
     response_path: &MergePath,
@@ -929,8 +932,8 @@ fn process_abstract_edge(
     target_type_name: &String,
     edge_index: &EdgeIndex,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
-    let head_index = graph.get_edge_head(edge_index)?;
-    let head = graph.node(head_index)?;
+    let head_index = ctx.graph.get_edge_head(edge_index)?;
+    let head = ctx.graph.node(head_index)?;
     let head_type_name = match head {
         Node::SubgraphType(t) => &t.name,
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
@@ -963,7 +966,7 @@ fn process_abstract_edge(
     let child_fetch_path = fetch_path.push(Segment::Cast(target_type_name.clone()));
 
     process_children_for_fetch_steps(
-        graph,
+        ctx,
         fetch_graph,
         query_node,
         parent_fetch_step_index,
@@ -988,10 +991,10 @@ fn process_abstract_edge(
   response_path = response_path.to_string(),
   fetch_path = fetch_path.to_string()
 ))]
-fn process_plain_field_edge(
-    graph: &Graph,
+fn process_plain_field_edge<'bump, 'a: 'bump>(
+    ctx: &'a WalkContext<'bump>,
     fetch_graph: &mut FetchGraph,
-    query_node: &QueryTreeNode,
+    query_node: &QueryTreeNode<'bump>,
     parent_fetch_step_index: NodeIndex,
     requiring_fetch_step_index: Option<NodeIndex>,
     response_path: &MergePath,
@@ -1049,7 +1052,7 @@ fn process_plain_field_edge(
     }
 
     process_children_for_fetch_steps(
-        graph,
+        ctx,
         fetch_graph,
         query_node,
         parent_fetch_step_index,
@@ -1066,10 +1069,10 @@ fn process_plain_field_edge(
   parent_fetch_step_index = parent_fetch_step_index.index(),
   requiring_fetch_step_index = requiring_fetch_step_index.map(|s| s.index()),
 ))]
-fn process_requires_field_edge(
-    graph: &Graph,
+fn process_requires_field_edge<'bump, 'a: 'bump>(
+    ctx: &'a WalkContext<'bump>,
     fetch_graph: &mut FetchGraph,
-    query_node: &QueryTreeNode,
+    query_node: &QueryTreeNode<'bump>,
     parent_fetch_step_index: NodeIndex,
     response_path: &MergePath,
     requiring_fetch_step_index: Option<NodeIndex>,
@@ -1094,21 +1097,21 @@ fn process_requires_field_edge(
         .as_ref()
         .ok_or(FetchGraphError::MissingRequires)?;
 
-    let tail_node_index = graph.get_edge_tail(&edge_index)?;
-    let tail_node = graph.node(tail_node_index)?;
+    let tail_node_index = ctx.graph.get_edge_tail(&edge_index)?;
+    let tail_node = ctx.graph.node(tail_node_index)?;
     let tail_type_name = match tail_node {
         Node::SubgraphType(t) => &t.name,
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
-    let head_node_index = graph.get_edge_head(&edge_index)?;
-    let head_node = graph.node(head_node_index)?;
+    let head_node_index = ctx.graph.get_edge_head(&edge_index)?;
+    let head_node = ctx.graph.node(head_node_index)?;
     let (head_type_name, head_subgraph_name) = match head_node {
         Node::SubgraphType(t) => (&t.name, &t.subgraph),
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
     let key_to_reenter_subgraph =
-        find_satisfiable_key(graph, query_node.requirements.first().unwrap())?;
+        find_satisfiable_key(ctx, query_node.requirements.first().unwrap())?;
     trace!("Key to re-enter: {}", key_to_reenter_subgraph);
 
     let parent_fetch_step = fetch_graph.get_step_data(parent_fetch_step_index)?;
@@ -1217,7 +1220,7 @@ fn process_requires_field_edge(
 
     trace!("Processing requirements");
     let leaf_fetch_step_indexes = process_query_node(
-        graph,
+        ctx,
         fetch_graph,
         query_node.requirements.first().unwrap(),
         Some(step_for_requirements_index),
@@ -1257,7 +1260,7 @@ fn process_requires_field_edge(
 
     trace!("Processing children");
     process_children_for_fetch_steps(
-        graph,
+        ctx,
         fetch_graph,
         query_node,
         step_for_children_index,
@@ -1293,39 +1296,35 @@ fn process_requires_field_edge(
 /// The key fields need to be added to the output of the parent,
 /// and input of the entity move.
 #[instrument(level = "trace",skip_all, fields(
-  node = graph.node(query_node.node_index).unwrap().to_string()
+  node = ctx.graph.node(query_node.node_index).unwrap().to_string()
 ))]
-fn find_satisfiable_key<'a>(
-    graph: &'a Graph,
-    query_node: &QueryTreeNode,
+fn find_satisfiable_key<'a, 'bump: 'a>(
+    ctx: &'a WalkContext<'bump>,
+    query_node: &QueryTreeNode<'bump>,
 ) -> Result<&'a TypeAwareSelection, FetchGraphError> {
     // This could be improved...
     // We added a flag to `can_satisfy_edge` and increased the complexity.
 
-    let mut entity_moves_edges_to_self: Vec<EdgeReference<crate::graph::edge::Edge>> = graph
+    let mut entity_moves_edges_to_self: Vec<EdgeReference<crate::graph::edge::Edge>> = ctx
+        .graph
         .edges_from(query_node.node_index)
         .filter(|edge_reference| {
-            let edge = graph.edge(edge_reference.id()).unwrap();
+            let edge = ctx.graph.edge(edge_reference.id()).unwrap();
             matches!(edge, Edge::EntityMove(_))
         })
         .collect();
     entity_moves_edges_to_self.sort_by_key(|edge| std::cmp::Reverse(edge.weight().cost()));
 
     for edge_ref in entity_moves_edges_to_self {
-        if can_satisfy_edge(
-            graph,
-            &edge_ref,
-            &OperationPath {
-                root_node: query_node.node_index,
-                last_segment: None,
-                visited_edge_indices: Default::default(),
-                cost: 0,
-            },
-            &Default::default(),
-            true,
-        )
-        .map_err(|err| FetchGraphError::SatisfiableKeyFailure(Box::new(err)))?
-        .is_some()
+        let op_path = OperationPath::new(
+            ctx.arena,
+            query_node.node_index,
+            None,
+            BumpVec::new_in(ctx.arena),
+        );
+        if can_satisfy_edge(ctx, edge_ref, &op_path, &Default::default(), true)
+            .map_err(|err| FetchGraphError::SatisfiableKeyFailure(Box::new(err)))?
+            .is_some()
         {
             return edge_ref
                 .weight()
@@ -1343,10 +1342,10 @@ fn find_satisfiable_key<'a>(
 
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
-fn process_query_node(
-    graph: &Graph,
+fn process_query_node<'bump, 'a: 'bump>(
+    ctx: &'a WalkContext<'bump>,
     fetch_graph: &mut FetchGraph,
-    query_node: &QueryTreeNode,
+    query_node: &QueryTreeNode<'bump>,
     parent_fetch_step_index: Option<NodeIndex>,
     response_path: &MergePath,
     fetch_path: &MergePath,
@@ -1355,12 +1354,12 @@ fn process_query_node(
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
     if let Some(edge_index) = query_node.edge_from_parent {
         let parent_fetch_step_index = parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?;
-        let edge = graph.edge(edge_index)?;
+        let edge = ctx.graph.edge(edge_index)?;
 
         match edge {
             Edge::SubgraphEntrypoint { name, .. } => {
-                let tail_node_index = graph.get_edge_tail(&edge_index)?;
-                let tail_node = graph.node(tail_node_index)?;
+                let tail_node_index = ctx.graph.get_edge_tail(&edge_index)?;
+                let tail_node = ctx.graph.node(tail_node_index)?;
                 let type_name = match tail_node {
                     Node::QueryRoot(t) => t,
                     Node::MutationRoot(t) => t,
@@ -1369,7 +1368,7 @@ fn process_query_node(
                 };
 
                 process_subgraph_entrypoint_edge(
-                    graph,
+                    ctx,
                     fetch_graph,
                     query_node,
                     parent_fetch_step_index,
@@ -1379,7 +1378,7 @@ fn process_query_node(
                 )
             }
             Edge::EntityMove(_) => process_entity_move_edge(
-                graph,
+                ctx,
                 fetch_graph,
                 query_node,
                 parent_fetch_step_index,
@@ -1391,7 +1390,7 @@ fn process_query_node(
             ),
             Edge::FieldMove(field) => match field.requirements.is_some() {
                 true => process_requires_field_edge(
-                    graph,
+                    ctx,
                     fetch_graph,
                     query_node,
                     parent_fetch_step_index,
@@ -1402,7 +1401,7 @@ fn process_query_node(
                     created_from_requires,
                 ),
                 false => process_plain_field_edge(
-                    graph,
+                    ctx,
                     fetch_graph,
                     query_node,
                     parent_fetch_step_index,
@@ -1414,7 +1413,7 @@ fn process_query_node(
                 ),
             },
             Edge::AbstractMove(type_name) => process_abstract_edge(
-                graph,
+                ctx,
                 fetch_graph,
                 query_node,
                 parent_fetch_step_index,
@@ -1427,7 +1426,7 @@ fn process_query_node(
             Edge::InterfaceObjectTypeMove(InterfaceObjectTypeMove {
                 object_type_name, ..
             }) => process_interface_object_type_move_edge(
-                graph,
+                ctx,
                 fetch_graph,
                 query_node,
                 parent_fetch_step_index,
@@ -1441,7 +1440,7 @@ fn process_query_node(
         }
     } else {
         process_noop_edge(
-            graph,
+            ctx,
             fetch_graph,
             query_node,
             parent_fetch_step_index,
@@ -1472,14 +1471,20 @@ pub fn find_graph_roots(graph: &FetchGraph) -> Vec<NodeIndex> {
     requirements_count = query_tree.root.requirements.len(),
     children_count = query_tree.root.children.len(),
 ))]
-pub fn build_fetch_graph_from_query_tree(
-    graph: &Graph,
-    query_tree: QueryTree,
+pub fn build_fetch_graph_from_query_tree<'b>(
+    graph: &'b Graph,
+    query_tree: QueryTree<'b>,
 ) -> Result<FetchGraph, FetchGraphError> {
     let mut fetch_graph = FetchGraph::new();
 
-    process_query_node(
+    let arena = Bump::new();
+    let ctx = WalkContext {
+        arena: &arena,
         graph,
+    };
+
+    process_query_node(
+        &ctx,
         &mut fetch_graph,
         &query_tree.root,
         None,

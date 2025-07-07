@@ -1923,6 +1923,7 @@ dependencies = [
 name = "query-planner"
 version = "0.0.1"
 dependencies = [
+ "bumpalo",
  "criterion",
  "graphql-parser",
  "graphql-tools",

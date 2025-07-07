@@ -1,58 +1,69 @@
 use std::collections::{HashSet, VecDeque};
-use std::rc::Rc;
 
+use bumpalo::collections::Vec as BumpVec;
 use petgraph::visit::{EdgeRef, NodeRef};
 use tracing::{instrument, trace};
 
 use crate::ast::selection_set::InlineFragmentSelection;
+use crate::planner::tree::query_tree_node::QueryTreeNode;
 use crate::{
     ast::{
         selection_item::SelectionItem, selection_set::FieldSelection,
         type_aware_selection::TypeAwareSelection,
     },
-    graph::{
-        edge::{Edge, EdgeReference},
-        Graph,
-    },
-    planner::{
-        tree::query_tree_node::QueryTreeNode,
-        walker::best_path::{find_best_paths, BestPathTracker},
-    },
+    graph::edge::{Edge, EdgeReference},
+    planner::walker::best_path::{find_best_paths, BestPathTracker},
 };
 
-use super::{error::WalkOperationError, excluded::ExcludedFromLookup, path::OperationPath};
+use super::{
+    error::WalkOperationError, excluded::ExcludedFromLookup, path::OperationPath, WalkContext,
+};
 
 pub type VisitedGraphs = HashSet<String>;
 
-struct IndirectPathsLookupQueue {
-    queue: Vec<(VisitedGraphs, HashSet<TypeAwareSelection>, OperationPath)>,
+struct IndirectPathsLookupQueue<'bump, 'a> {
+    queue: BumpVec<
+        'bump,
+        (
+            VisitedGraphs,
+            HashSet<TypeAwareSelection>,
+            OperationPath<'bump>,
+        ),
+    >,
+    ctx: &'a WalkContext<'bump>,
 }
 
-impl IndirectPathsLookupQueue {
-    pub fn new_from_excluded(excluded: &ExcludedFromLookup, path: &OperationPath) -> Self {
-        IndirectPathsLookupQueue {
-            queue: vec![(
-                excluded.graph_ids.clone(),
-                excluded
-                    .requirement
-                    .clone()
-                    .into_iter()
-                    .collect::<HashSet<_>>(),
-                path.clone(),
-            )],
-        }
+impl<'bump, 'a> IndirectPathsLookupQueue<'bump, 'a> {
+    pub fn new_from_excluded(
+        ctx: &'a WalkContext<'bump>,
+        excluded: &ExcludedFromLookup,
+        path: &OperationPath<'bump>,
+    ) -> Self {
+        let mut queue = BumpVec::new_in(ctx.arena);
+        queue.push((
+            excluded.graph_ids.clone(),
+            excluded.requirement.clone(),
+            path.clone(),
+        ));
+        IndirectPathsLookupQueue { queue, ctx }
     }
 
     pub fn add(
         &mut self,
         visited_graphs: VisitedGraphs,
         selections: HashSet<TypeAwareSelection>,
-        path: OperationPath,
+        path: OperationPath<'bump>,
     ) {
         self.queue.push((visited_graphs, selections, path));
     }
 
-    pub fn pop(&mut self) -> Option<(VisitedGraphs, HashSet<TypeAwareSelection>, OperationPath)> {
+    pub fn pop(
+        &mut self,
+    ) -> Option<(
+        VisitedGraphs,
+        HashSet<TypeAwareSelection>,
+        OperationPath<'bump>,
+    )> {
         self.queue.pop()
     }
 }
@@ -63,29 +74,29 @@ pub enum NavigationTarget<'a> {
     ConcreteType(&'a str),
 }
 
-#[instrument(level = "trace",skip(graph, excluded, target), fields(
-  path = path.pretty_print(graph),
+#[instrument(level = "trace",skip(ctx, path, excluded, target), fields(
+  path = path.pretty_print(ctx.graph),
   current_cost = path.cost
 ))]
-pub fn find_indirect_paths(
-    graph: &Graph,
-    path: &OperationPath,
+pub fn find_indirect_paths<'bump, 'a: 'bump>(
+    ctx: &'a WalkContext<'bump>,
+    path: &OperationPath<'bump>,
     target: &NavigationTarget,
     excluded: &ExcludedFromLookup,
-) -> Result<Vec<OperationPath>, WalkOperationError> {
-    let mut tracker = BestPathTracker::new(graph);
+) -> Result<BumpVec<'bump, OperationPath<'bump>>, WalkOperationError> {
+    let mut tracker = BestPathTracker::new(ctx);
     let tail_node_index = path.tail();
-    let tail_node = graph.node(tail_node_index)?;
+    let tail_node = ctx.graph.node(tail_node_index)?;
     let source_graph_id = tail_node
         .graph_id()
         .ok_or(WalkOperationError::TailMissingInfo(tail_node_index))?;
 
-    let mut queue = IndirectPathsLookupQueue::new_from_excluded(excluded, path);
+    let mut queue = IndirectPathsLookupQueue::new_from_excluded(ctx, excluded, path);
 
     while let Some(item) = queue.pop() {
-        let (visited_graphs, visited_key_fields, path) = item;
+        let (visited_graphs, visited_key_fields, current_path) = item;
 
-        let relevant_edges = graph.edges_from(path.tail()).filter(|e| {
+        let relevant_edges = ctx.graph.edges_from(current_path.tail()).filter(|e| {
             matches!(
                 e.weight(),
                 Edge::EntityMove { .. } | Edge::InterfaceObjectTypeMove { .. }
@@ -95,10 +106,10 @@ pub fn find_indirect_paths(
         for edge_ref in relevant_edges {
             trace!(
                 "Exploring edge {}",
-                graph.pretty_print_edge(edge_ref.id(), false)
+                ctx.graph.pretty_print_edge(edge_ref.id(), false)
             );
 
-            let edge_tail_graph_id = graph.node(edge_ref.target().id())?.graph_id().unwrap();
+            let edge_tail_graph_id = ctx.graph.node(edge_ref.target().id())?.graph_id().unwrap();
 
             if visited_graphs.contains(edge_tail_graph_id) {
                 trace!(
@@ -109,29 +120,15 @@ pub fn find_indirect_paths(
                 continue;
             }
 
-            let edge_tail_graph_id = graph.node(edge_ref.target().id())?.graph_id().unwrap();
             let edge = edge_ref.weight();
 
             if edge_tail_graph_id == source_graph_id
                 && !matches!(edge, Edge::InterfaceObjectTypeMove(..))
             {
-                // Prevent a situation where we are going back to the same graph
-                // The only exception is when we are moving to an abstract type
                 trace!("Ignoring. We would go back to the same graph");
                 continue;
             }
 
-            // A huge win for performance, is when you do less work :D
-            // We can ignore an edge that has already been visited with the same key fields / requirements.
-            // The way entity-move edges are created, where every graph points to every other graph:
-            //  Graph A: User @key(id) @key(name)
-            //  Graph B: User @key(id)
-            //  Edges in a merged graph:
-            //    - User/A @key(id) -> User/B
-            //    - User/B @key(id) -> User/A
-            //    - User/B @key(name) -> User/A
-            // Allows us to ignore an edge with the same key fields.
-            // That's because in some other path, we will or already have checked the other edge.
             let requirements_already_checked = match edge.requirements() {
                 Some(selection_requirements) => visited_key_fields.contains(selection_requirements),
                 None => false,
@@ -144,61 +141,55 @@ pub fn find_indirect_paths(
 
             let new_excluded = excluded.next(edge_tail_graph_id, &visited_key_fields);
 
-            let can_be_satisfied = can_satisfy_edge(graph, &edge_ref, &path, &new_excluded, false)?;
+            let can_be_satisfied =
+                can_satisfy_edge(ctx, edge_ref, &current_path, &new_excluded, false)?;
 
-            match can_be_satisfied {
-                None => {
-                    trace!("Requirements not satisfied, continue look up...");
-                    continue;
-                }
-                Some(paths) => {
+            if let Some(paths) = can_be_satisfied {
+                trace!(
+                    "Advancing path to {}",
+                    ctx.graph.pretty_print_edge(edge_ref.id(), false)
+                );
+
+                let requirement_tree = QueryTreeNode::from_paths(ctx, &paths, None)?;
+
+                let next_resolution_path = current_path.advance(
+                    ctx,
+                    &edge_ref,
+                    requirement_tree,
+                    match target {
+                        NavigationTarget::Field(field) => Some(field),
+                        NavigationTarget::ConcreteType(_) => None,
+                    },
+                );
+
+                let direct_paths = find_direct_paths(ctx, &next_resolution_path, target)?;
+
+                if !direct_paths.is_empty() {
                     trace!(
-                        "Advancing path to {}",
-                        graph.pretty_print_edge(edge_ref.id(), false)
+                        "Found {} direct paths to {}",
+                        direct_paths.len(),
+                        ctx.graph.pretty_print_edge(edge_ref.id(), false)
                     );
 
-                    let next_resolution_path = path.advance(
-                        &edge_ref,
-                        QueryTreeNode::from_paths(graph, &paths, None)?,
-                        match target {
-                            NavigationTarget::Field(field) => Some(field),
-                            NavigationTarget::ConcreteType(_) => None,
-                        },
-                    );
-
-                    let direct_paths = find_direct_paths(graph, &next_resolution_path, target)?;
-
-                    if !direct_paths.is_empty() {
-                        trace!(
-                            "Found {} direct paths to {}",
-                            direct_paths.len(),
-                            graph.pretty_print_edge(edge_ref.id(), false)
-                        );
-
-                        for direct_path in direct_paths {
-                            tracker.add(&direct_path)?;
-                        }
-
-                        continue;
-                    } else {
-                        trace!("No direct paths found");
-
-                        let mut new_visited_graphs = visited_graphs.clone();
-                        new_visited_graphs.insert(edge_tail_graph_id.to_string());
-
-                        let next_requirements = match edge.requirements() {
-                            Some(requirements) => {
-                                let mut new_visited_key_fields = visited_key_fields.clone();
-                                new_visited_key_fields.insert(requirements.clone());
-                                new_visited_key_fields
-                            }
-                            None => visited_key_fields.clone(),
-                        };
-
-                        queue.add(new_visited_graphs, next_requirements, next_resolution_path);
-
-                        trace!("going deeper");
+                    for direct_path in direct_paths {
+                        tracker.add(&direct_path)?;
                     }
+                } else {
+                    trace!("No direct paths found, going deeper");
+
+                    let mut new_visited_graphs = visited_graphs.clone();
+                    new_visited_graphs.insert(edge_tail_graph_id.to_string());
+
+                    let next_requirements = match edge.requirements() {
+                        Some(requirements) => {
+                            let mut new_visited_key_fields = visited_key_fields.clone();
+                            new_visited_key_fields.insert(requirements.clone());
+                            new_visited_key_fields
+                        }
+                        None => visited_key_fields.clone(),
+                    };
+
+                    queue.add(new_visited_graphs, next_requirements, next_resolution_path);
                 }
             }
         }
@@ -211,62 +202,55 @@ pub fn find_indirect_paths(
         best_paths.len()
     );
 
-    // TODO: this should be done in a more efficient way, like I do in the satisfiability checker
-    // I set shortest path right after each path is generated
-
     Ok(best_paths)
 }
 
-#[instrument(level = "trace",skip(graph, target), fields(
-    path = path.pretty_print(graph),
+#[instrument(level = "trace",skip(ctx, path, target), fields(
+    path = path.pretty_print(ctx.graph),
     current_cost = path.cost,
 ))]
-pub fn find_direct_paths(
-    graph: &Graph,
-    path: &OperationPath,
+pub fn find_direct_paths<'bump, 'a: 'bump>(
+    ctx: &'a WalkContext<'bump>,
+    path: &OperationPath<'bump>,
     target: &NavigationTarget,
-) -> Result<Vec<OperationPath>, WalkOperationError> {
-    let mut result: Vec<OperationPath> = vec![];
+) -> Result<BumpVec<'bump, OperationPath<'bump>>, WalkOperationError> {
+    let mut result = BumpVec::new_in(ctx.arena);
     let path_tail_index = path.tail();
 
     match *target {
         NavigationTarget::Field(field) => {
-            let edges_iter = graph
+            let edges_iter = ctx
+                .graph
                 .edges_from(path_tail_index)
                 .filter(|e| matches!(e.weight(), Edge::FieldMove(f) if f.name == field.name));
             for edge_ref in edges_iter {
                 trace!(
                     "checking edge {}",
-                    graph.pretty_print_edge(edge_ref.id(), false)
+                    ctx.graph.pretty_print_edge(edge_ref.id(), false)
                 );
 
                 let can_be_satisfied =
-                    can_satisfy_edge(graph, &edge_ref, path, &ExcludedFromLookup::new(), false)?;
+                    can_satisfy_edge(ctx, edge_ref, path, &ExcludedFromLookup::new(), false)?;
 
-                match can_be_satisfied {
-                    Some(paths) => {
-                        trace!(
-                            "Advancing path {} with edge {}",
-                            path.pretty_print(graph),
-                            graph.pretty_print_edge(edge_ref.id(), false)
-                        );
+                if let Some(paths) = can_be_satisfied {
+                    trace!(
+                        "Advancing path {} with edge {}",
+                        path.pretty_print(ctx.graph),
+                        ctx.graph.pretty_print_edge(edge_ref.id(), false)
+                    );
 
-                        let next_resolution_path = path.advance(
-                            &edge_ref,
-                            QueryTreeNode::from_paths(graph, &paths, None)?,
-                            Some(field),
-                        );
+                    let requirement_tree = QueryTreeNode::from_paths(ctx, &paths, None)?;
 
-                        result.push(next_resolution_path);
-                    }
-                    None => {
-                        trace!("Edge not satisfied, continue look up...");
-                    }
+                    let next_resolution_path =
+                        path.advance(ctx, &edge_ref, requirement_tree, Some(field));
+
+                    result.push(next_resolution_path);
                 }
             }
         }
         NavigationTarget::ConcreteType(type_name) => {
-            let edges_iter = graph
+            let edges_iter = ctx
+                .graph
                 .edges_from(path_tail_index)
                 .filter(|e| match e.weight() {
                     Edge::AbstractMove(t) => t == type_name,
@@ -277,31 +261,24 @@ pub fn find_direct_paths(
             for edge_ref in edges_iter {
                 trace!(
                     "Checking edge {}",
-                    graph.pretty_print_edge(edge_ref.id(), false)
+                    ctx.graph.pretty_print_edge(edge_ref.id(), false)
                 );
 
                 let can_be_satisfied =
-                    can_satisfy_edge(graph, &edge_ref, path, &ExcludedFromLookup::new(), false)?;
+                    can_satisfy_edge(ctx, edge_ref, path, &ExcludedFromLookup::new(), false)?;
 
-                match can_be_satisfied {
-                    Some(paths) => {
-                        trace!(
-                            "Advancing path {} with edge {}",
-                            path.pretty_print(graph),
-                            graph.pretty_print_edge(edge_ref.id(), false)
-                        );
+                if let Some(paths) = can_be_satisfied {
+                    trace!(
+                        "Advancing path {} with edge {}",
+                        path.pretty_print(ctx.graph),
+                        ctx.graph.pretty_print_edge(edge_ref.id(), false)
+                    );
 
-                        let next_resolution_path = path.advance(
-                            &edge_ref,
-                            QueryTreeNode::from_paths(graph, &paths, None)?,
-                            None,
-                        );
+                    let requirement_tree = QueryTreeNode::from_paths(ctx, &paths, None)?;
 
-                        result.push(next_resolution_path);
-                    }
-                    None => {
-                        trace!("Edge not satisfied, continue look up...");
-                    }
+                    let next_resolution_path = path.advance(ctx, &edge_ref, requirement_tree, None);
+
+                    result.push(next_resolution_path);
                 }
             }
         }
@@ -316,113 +293,80 @@ pub fn find_direct_paths(
 }
 
 #[instrument(level = "trace",skip_all, fields(
-  path = path.pretty_print(graph),
+  path = path.pretty_print(ctx.graph),
   edge = edge_ref.weight().display_name(),
 ))]
-pub fn can_satisfy_edge(
-    graph: &Graph,
-    edge_ref: &EdgeReference,
-    path: &OperationPath,
+pub fn can_satisfy_edge<'bump, 'a: 'bump>(
+    ctx: &'a WalkContext<'bump>,
+    edge_ref: EdgeReference<'a>,
+    path: &OperationPath<'bump>,
     excluded: &ExcludedFromLookup,
     use_only_direct_edges: bool,
-) -> Result<Option<Vec<OperationPath>>, WalkOperationError> {
+) -> Result<Option<BumpVec<'bump, OperationPath<'bump>>>, WalkOperationError> {
     let edge = edge_ref.weight();
 
     match edge.requirements() {
-        None => Ok(Some(vec![])),
+        None => Ok(Some(BumpVec::new_in(ctx.arena))),
         Some(selections) => {
             trace!(
                 "checking requirements {} for edge '{}'",
                 selections,
-                graph.pretty_print_edge(edge_ref.id(), false)
+                ctx.graph.pretty_print_edge(edge_ref.id(), false)
             );
 
             let mut requirements: VecDeque<MoveRequirement> = VecDeque::new();
-            let mut paths_to_requirements: Vec<OperationPath> = vec![];
+            let mut paths_to_requirements = BumpVec::new_in(ctx.arena);
+
+            let initial_path_slice = ctx.arena.alloc_slice_clone(&[path.clone()]);
 
             for selection in selections.selection_set.items.iter() {
                 requirements.push_front(MoveRequirement {
-                    paths: Rc::new(vec![path.clone()]),
-                    selection: selection.clone(),
+                    paths: initial_path_slice,
+                    selection,
                 });
             }
 
-            // it's important to pop from the end as we want to process the last added requirement first
             while let Some(requirement) = requirements.pop_back() {
                 match &requirement.selection {
                     SelectionItem::Field(selection_field_requirement) => {
                         let result = validate_field_requirement(
-                            graph,
+                            ctx,
                             &requirement,
                             selection_field_requirement,
                             excluded,
                             use_only_direct_edges,
                         )?;
 
-                        match result {
-                            Some((next_paths, next_requirements)) => {
-                                trace!("Paths for {}", selection_field_requirement);
-
-                                for next_path in next_paths.iter() {
-                                    trace!("  Path {} is valid", next_path.pretty_print(graph));
-                                }
-
-                                if selection_field_requirement.is_leaf() {
-                                    let best_paths = find_best_paths(next_paths);
-                                    trace!(
-                                        "Found {} best paths for this leaf requirement",
-                                        best_paths.len()
+                        if let Some((next_paths, next_requirements)) = result {
+                            if selection_field_requirement.is_leaf() {
+                                let best_paths = find_best_paths(ctx.arena, next_paths);
+                                for best_path in best_paths {
+                                    paths_to_requirements.push(
+                                        path.build_requirement_continuation_path(ctx, &best_path),
                                     );
-
-                                    for best_path in best_paths {
-                                        paths_to_requirements.push(
-                                            path.build_requirement_continuation_path(&best_path),
-                                        );
-                                    }
-                                }
-
-                                for req in next_requirements.into_iter().rev() {
-                                    requirements.push_front(req);
                                 }
                             }
-                            None => {
-                                return Ok(None);
-                            }
-                        };
+                            requirements.extend(next_requirements);
+                        } else {
+                            return Ok(None);
+                        }
                     }
                     SelectionItem::InlineFragment(fragment_selection) => {
-                        let fragment_requirements = validate_fragment_requirement(
-                            graph,
+                        let result = validate_fragment_requirement(
+                            ctx,
                             &requirement,
                             fragment_selection,
                             excluded,
                         )?;
 
-                        match fragment_requirements {
-                            Some((next_paths, next_requirements)) => {
-                                trace!("Paths for {}", fragment_selection);
-
-                                for next_path in next_paths.iter() {
-                                    trace!("  Path {} is valid", next_path.pretty_print(graph));
-                                }
-
-                                for req in next_requirements.into_iter().rev() {
-                                    requirements.push_front(req);
-                                }
-                            }
-                            None => {
-                                return Ok(None);
-                            }
-                        };
+                        if let Some((_next_paths, next_requirements)) = result {
+                            requirements.extend(next_requirements);
+                        } else {
+                            return Ok(None);
+                        }
                     }
-                    SelectionItem::FragmentSpread(_) => {
-                        // No processing needed for FragmentSpread
-                    }
+                    SelectionItem::FragmentSpread(_) => {}
                 }
-            }
-
-            for path in paths_to_requirements.iter() {
-                trace!("path {} is valid", path.pretty_print(graph));
             }
 
             Ok(Some(paths_to_requirements))
@@ -431,163 +375,100 @@ pub fn can_satisfy_edge(
 }
 
 #[derive(Debug)]
-pub struct MoveRequirement {
-    pub paths: Rc<Vec<OperationPath>>,
-    pub selection: SelectionItem,
+pub struct MoveRequirement<'bump, 'a> {
+    pub paths: &'bump [OperationPath<'bump>],
+    pub selection: &'a SelectionItem,
 }
 
-type FieldRequirementsResult = Option<(Vec<OperationPath>, Vec<MoveRequirement>)>;
-type FragmentRequirementsResult = Option<(Vec<OperationPath>, Vec<MoveRequirement>)>;
+type RequirementsResult<'bump, 'a> = Option<(
+    BumpVec<'bump, OperationPath<'bump>>,
+    BumpVec<'bump, MoveRequirement<'bump, 'a>>,
+)>;
 
 #[instrument(level = "trace", skip_all, fields(field = field.name))]
-fn validate_field_requirement(
-    graph: &Graph,
-    move_requirement: &MoveRequirement, // Contains Rc<Vec<OperationPath>>
-    field: &FieldSelection,
+fn validate_field_requirement<'bump, 'a: 'bump>(
+    ctx: &'a WalkContext<'bump>,
+    move_requirement: &MoveRequirement<'bump, 'a>,
+    field: &'a FieldSelection,
     excluded: &ExcludedFromLookup,
     use_only_direct_edges: bool,
-) -> Result<FieldRequirementsResult, WalkOperationError> {
-    // Collect all Vec<OperationPath> results from find_direct_paths
-    let mut direct_path_results: Vec<Vec<OperationPath>> =
-        Vec::with_capacity(move_requirement.paths.len());
+) -> Result<RequirementsResult<'bump, 'a>, WalkOperationError> {
+    let mut next_paths = BumpVec::new_in(ctx.arena);
+
     for path in move_requirement.paths.iter() {
-        direct_path_results.push(find_direct_paths(
-            graph,
-            path,
-            &NavigationTarget::Field(field),
-        )?);
-    }
+        let direct_paths = find_direct_paths(ctx, path, &NavigationTarget::Field(field))?;
+        next_paths.extend(direct_paths);
 
-    // Collect all Vec<OperationPath> results from find_indirect_paths, if needed
-    let indirect_path_results: Vec<Vec<OperationPath>> = if !use_only_direct_edges {
-        let mut temp_indirect_results = Vec::with_capacity(move_requirement.paths.len());
-        for path_from_rc in move_requirement.paths.iter() {
-            temp_indirect_results.push(find_indirect_paths(
-                graph,
-                path_from_rc,
-                &NavigationTarget::Field(field),
-                excluded,
-            )?);
+        if !use_only_direct_edges {
+            let indirect_paths =
+                find_indirect_paths(ctx, path, &NavigationTarget::Field(field), excluded)?;
+            next_paths.extend(indirect_paths);
         }
-        temp_indirect_results
-    } else {
-        Vec::new()
-    };
-
-    // sum of direct and indirect
-    let total_capacity: usize = direct_path_results.iter().map(|v| v.len()).sum::<usize>()
-        + indirect_path_results.iter().map(|v| v.len()).sum::<usize>();
-
-    let mut next_paths: Vec<OperationPath> = Vec::with_capacity(total_capacity);
-
-    // These extend calls should not reallocate `next_paths`.
-    for paths_vec in direct_path_results {
-        next_paths.extend(paths_vec);
-    }
-    // No need to check use_only_direct_edges again, indirect_path_results_vecs will be empty if not used.
-    for paths_vec in indirect_path_results {
-        next_paths.extend(paths_vec);
     }
 
     if next_paths.is_empty() {
         return Ok(None);
     }
 
-    if move_requirement.selection.selections().is_none()
-        || move_requirement
-            .selection
-            .selections()
-            .is_some_and(|s| s.is_empty())
-    {
-        // No sub-selections, next_paths is returned directly.
-        return Ok(Some((next_paths, vec![])));
+    let selections = &field.selections.items;
+    if selections.is_empty() {
+        return Ok(Some((next_paths, BumpVec::new_in(ctx.arena))));
     }
 
-    let shared_next_paths_for_subs = Rc::new(next_paths.clone());
-    let next_requirements: Vec<MoveRequirement> = move_requirement
-        .selection
-        .selections()
-        .unwrap() // Safe due to the check above
-        .iter()
-        .map(|selection_item| MoveRequirement {
-            selection: selection_item.clone(),
-            paths: Rc::clone(&shared_next_paths_for_subs),
-        })
-        .collect();
+    let shared_next_paths_for_subs = next_paths.into_bump_slice();
+    let mut next_requirements = BumpVec::new_in(ctx.arena);
+    next_requirements.extend(selections.iter().map(|selection_item| MoveRequirement {
+        selection: selection_item,
+        paths: shared_next_paths_for_subs,
+    }));
 
-    Ok(Some((next_paths, next_requirements)))
+    Ok(Some((
+        BumpVec::from_iter_in(shared_next_paths_for_subs.iter().cloned(), ctx.arena),
+        next_requirements,
+    )))
 }
 
 #[instrument(level = "trace", skip_all, fields(type_condition = fragment_selection.type_condition))]
-fn validate_fragment_requirement(
-    graph: &Graph,
-    requirement: &MoveRequirement,
-    fragment_selection: &InlineFragmentSelection,
+fn validate_fragment_requirement<'bump, 'a: 'bump>(
+    ctx: &'a WalkContext<'bump>,
+    requirement: &MoveRequirement<'bump, 'a>,
+    fragment_selection: &'a InlineFragmentSelection,
     excluded: &ExcludedFromLookup,
-) -> Result<FragmentRequirementsResult, WalkOperationError> {
+) -> Result<RequirementsResult<'bump, 'a>, WalkOperationError> {
     let type_name = &fragment_selection.type_condition;
-    // Collect all Vec<OperationPath> results from find_direct_paths
-    let mut direct_path_results: Vec<Vec<OperationPath>> =
-        Vec::with_capacity(requirement.paths.len());
+    let mut next_paths = BumpVec::new_in(ctx.arena);
+
     for path in requirement.paths.iter() {
-        direct_path_results.push(find_direct_paths(
-            graph,
+        let direct_paths =
+            find_direct_paths(ctx, path, &NavigationTarget::ConcreteType(type_name))?;
+        next_paths.extend(direct_paths);
+        let indirect_paths = find_indirect_paths(
+            ctx,
             path,
             &NavigationTarget::ConcreteType(type_name),
-        )?);
-    }
-
-    // Collect all Vec<OperationPath> results from find_indirect_paths
-    let mut indirect_path_results: Vec<Vec<OperationPath>> =
-        Vec::with_capacity(requirement.paths.len());
-    for path_from_rc in requirement.paths.iter() {
-        indirect_path_results.push(find_indirect_paths(
-            graph,
-            path_from_rc,
-            &NavigationTarget::ConcreteType(type_name),
             excluded,
-        )?);
-    }
-
-    // sum of direct and indirect
-    let total_capacity: usize = direct_path_results.iter().map(|v| v.len()).sum::<usize>()
-        + indirect_path_results.iter().map(|v| v.len()).sum::<usize>();
-
-    let mut next_paths: Vec<OperationPath> = Vec::with_capacity(total_capacity);
-
-    // These extend calls should not reallocate `next_paths`.
-    for paths_vec in direct_path_results {
-        next_paths.extend(paths_vec);
-    }
-    for paths_vec in indirect_path_results {
-        next_paths.extend(paths_vec);
+        )?;
+        next_paths.extend(indirect_paths);
     }
 
     if next_paths.is_empty() {
         return Ok(None);
     }
 
-    if requirement.selection.selections().is_none()
-        || requirement
-            .selection
-            .selections()
-            .is_some_and(|s| s.is_empty())
-    {
-        // No sub-selections, next_paths is returned directly.
-        return Ok(Some((next_paths, vec![])));
+    let selections = &fragment_selection.selections.items;
+    if selections.is_empty() {
+        return Ok(Some((next_paths, BumpVec::new_in(ctx.arena))));
     }
 
-    let shared_next_paths_for_subs = Rc::new(next_paths.clone());
-    let next_requirements: Vec<MoveRequirement> = requirement
-        .selection
-        .selections()
-        .unwrap() // Safe due to the check above
-        .iter()
-        .map(|selection_item| MoveRequirement {
-            selection: selection_item.clone(),
-            paths: Rc::clone(&shared_next_paths_for_subs),
-        })
-        .collect();
+    let shared_next_paths_for_subs = next_paths.into_bump_slice();
+    let mut next_requirements = BumpVec::new_in(ctx.arena);
+    next_requirements.extend(selections.iter().map(|selection_item| MoveRequirement {
+        selection: selection_item,
+        paths: shared_next_paths_for_subs,
+    }));
 
-    Ok(Some((next_paths, next_requirements)))
+    Ok(Some((
+        BumpVec::from_iter_in(shared_next_paths_for_subs.iter().cloned(), ctx.arena),
+        next_requirements,
+    )))
 }

@@ -3,6 +3,7 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Once;
 
+use bumpalo::Bump;
 use lazy_static::lazy_static;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -14,7 +15,7 @@ use crate::planner::best::find_best_combination;
 use crate::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
 use crate::planner::plan_nodes::QueryPlan;
 use crate::planner::query_plan::build_query_plan_from_fetch_graph;
-use crate::planner::walker::walk_operation;
+use crate::planner::walker::{walk_operation, WalkContext};
 use crate::state::supergraph_state::SupergraphState;
 use crate::utils::parsing::parse_schema;
 
@@ -57,12 +58,14 @@ pub fn build_query_plan(
 ) -> Result<QueryPlan, Box<dyn Error>> {
     let schema = parse_schema(&read_supergraph(fixture_path));
     let supergraph_state = SupergraphState::new(&schema);
+    let arena = Bump::new();
     let graph =
         Graph::graph_from_supergraph_state(&supergraph_state).expect("failed to create graph");
+    let walk_context = WalkContext::new(&graph, &arena);
     let document = normalize_operation(&supergraph_state, &query, None).unwrap();
     let operation = document.executable_operation();
-    let best_paths_per_leaf = walk_operation(&graph, operation)?;
-    let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
+    let best_paths_per_leaf = walk_operation(&walk_context, operation)?;
+    let query_tree = find_best_combination(&walk_context, best_paths_per_leaf).unwrap();
     let fetch_graph = build_fetch_graph_from_query_tree(&graph, query_tree)?;
 
     Ok(build_query_plan_from_fetch_graph(

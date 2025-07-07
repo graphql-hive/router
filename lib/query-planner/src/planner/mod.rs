@@ -1,10 +1,11 @@
+use bumpalo::Bump;
 use error::QueryPlanError;
 use fetch::{error::FetchGraphError, fetch_graph::build_fetch_graph_from_query_tree};
 use graphql_parser::schema;
 use petgraph::graph::NodeIndex;
 use plan_nodes::QueryPlan;
 use query_plan::build_query_plan_from_fetch_graph;
-use walker::{error::WalkOperationError, walk_operation};
+use walker::{error::WalkOperationError, walk_operation, WalkContext};
 
 use crate::{
     ast::operation::{OperationDefinition, VariableDefinition},
@@ -92,9 +93,15 @@ impl Planner {
         &self,
         normalized_operation: &OperationDefinition,
     ) -> Result<QueryPlan, PlannerError> {
-        let best_paths_per_leaf = walk_operation(&self.graph, normalized_operation)?;
-        let query_tree = find_best_combination(&self.graph, best_paths_per_leaf).unwrap();
-        let mut fetch_graph = build_fetch_graph_from_query_tree(&self.graph, query_tree)?;
+        let arena = Bump::new();
+        let ctx = WalkContext {
+            arena: &arena,
+            graph: &self.graph,
+        };
+
+        let best_paths_per_leaf = walk_operation(&ctx, normalized_operation)?;
+        let query_tree = find_best_combination(&ctx, best_paths_per_leaf).unwrap();
+        let mut fetch_graph = build_fetch_graph_from_query_tree(&ctx.graph, query_tree)?;
         add_variables_to_fetch_steps(&mut fetch_graph, &normalized_operation.variable_definitions)?;
         let query_plan = build_query_plan_from_fetch_graph(fetch_graph, &self.supergraph)?;
 

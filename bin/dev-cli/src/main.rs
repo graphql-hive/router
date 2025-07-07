@@ -13,6 +13,7 @@ use query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
 use query_planner::planner::tree::query_tree::QueryTree;
 use query_planner::planner::walker::walk_operation;
 use query_planner::planner::walker::ResolvedOperation;
+use query_planner::planner::walker::WalkContext;
 use query_planner::state::supergraph_state::SupergraphState;
 use query_planner::utils::parsing::parse_operation;
 use query_planner::utils::parsing::parse_schema;
@@ -134,9 +135,11 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
     let parsed_schema = parse_schema(&supergraph_sdl);
     let supergraph = SupergraphState::new(&parsed_schema);
     let graph = Graph::graph_from_supergraph_state(&supergraph).expect("failed to create graph");
+    let arena = Bump::new();
+    let context = WalkContext::new(&graph, &arena);
     let operation = get_operation(operation_path, &supergraph);
-    let best_paths_per_leaf = walk_operation(&graph, &operation).unwrap();
-    let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
+    let best_paths_per_leaf = walk_operation(&context, &operation).unwrap();
+    let query_tree = find_best_combination(&context, best_paths_per_leaf).unwrap();
     let fetch_graph =
         build_fetch_graph_from_query_tree(&graph, query_tree).expect("failed to build fetch graph");
 
