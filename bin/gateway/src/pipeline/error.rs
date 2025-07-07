@@ -78,6 +78,18 @@ impl PipelineErrorVariant {
             Self::UnsupportedHttpMethod(_) => "METHOD_NOT_ALLOWED",
             Self::PlannerError(_) => "QUERY_PLAN_BUILD_FAILED",
             Self::InternalServiceError(_) => "INTERNAL_SERVER_ERROR",
+            Self::FailedToParseOperation(_) => "GRAPHQL_PARSE_FAILED",
+            Self::ValidationErrors(_) => "GRAPHQL_VALIDATION_FAILED",
+            Self::VariablesCoercionError(_) => "BAD_USER_INPUT",
+            Self::NormalizationError(NormalizationError::OperationNotFound) => {
+                "OPERATION_RESOLUTION_FAILURE"
+            }
+            Self::NormalizationError(NormalizationError::SpecifiedOperationNotFound {
+                operation_name: _,
+            }) => "OPERATION_RESOLUTION_FAILURE",
+            Self::NormalizationError(NormalizationError::MultipleMatchingOperationsFound) => {
+                "OPERATION_RESOLUTION_FAILURE"
+            }
             _ => "BAD_REQUEST",
         }
     }
