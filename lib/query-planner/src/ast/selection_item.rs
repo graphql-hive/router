@@ -248,11 +248,8 @@ impl<'a, T: query_ast::Text<'a>> From<&Vec<query_ast::Directive<'a, T>>> for Con
                             false => None,
                         }
                     });
-                    match if_arg {
-                        Some(query_ast::Value::Variable(var_name)) => {
-                            skip_if = Some(var_name.as_ref().to_string());
-                        }
-                        _ => {}
+                    if let Some(query_ast::Value::Variable(var_name)) = if_arg {
+                        skip_if = Some(var_name.as_ref().to_string());
                     }
                 }
                 "include" => {
@@ -262,11 +259,8 @@ impl<'a, T: query_ast::Text<'a>> From<&Vec<query_ast::Directive<'a, T>>> for Con
                             false => None,
                         }
                     });
-                    match if_arg {
-                        Some(query_ast::Value::Variable(var_name)) => {
-                            include_if = Some(var_name.as_ref().to_string());
-                        }
-                        _ => {}
+                    if let Some(query_ast::Value::Variable(var_name)) = if_arg {
+                        include_if = Some(var_name.as_ref().to_string());
                     }
                 }
                 _ => {}
