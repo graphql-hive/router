@@ -140,10 +140,12 @@ impl Display for OperationDefinition {
         if let Some(variable_definitions) = &self.variable_definitions {
             if !variable_definitions.is_empty() {
                 write!(f, "(")?;
+                let len = variable_definitions.len();
                 for (i, variable_definition) in variable_definitions.iter().enumerate() {
+                    let is_last = i == len - 1;
                     write!(f, "{}", variable_definition)?;
 
-                    if i > 0 {
+                    if !is_last {
                         write!(f, ", ")?;
                     }
                 }

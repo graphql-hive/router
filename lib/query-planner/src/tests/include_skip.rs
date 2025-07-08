@@ -23,60 +23,60 @@ fn include_basic_test() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-      QueryPlan {
-        Sequence {
-          Fetch(service: "a") {
-            query ($bool: Boolean) {
-              product {
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          query ($bool:Boolean) {
+            product {
+              __typename
+              id
+              price
+              ... on Product @include(if: $bool) {
                 __typename
                 id
                 price
-                ... on Product @include(if: $bool) {
-                  __typename
-                  id
-                  price
-                }
               }
             }
-          },
-          Include(if: $bool) {
-            Sequence {
-              Flatten(path: "product") {
-                Fetch(service: "b") {
-                  {
-                    ... on Product {
-                      __typename
-                      price
-                      id
-                    }
-                  } =>
-                  {
-                    ... on Product {
-                      isExpensive
-                    }
+          }
+        },
+        Include(if: $bool) {
+          Sequence {
+            Flatten(path: "product") {
+              Fetch(service: "b") {
+                {
+                  ... on Product {
+                    __typename
+                    price
+                    id
                   }
-                },
+                } =>
+                {
+                  ... on Product {
+                    isExpensive
+                  }
+                }
               },
-              Flatten(path: "product") {
-                Fetch(service: "c") {
-                  {
-                    ... on Product {
-                      __typename
-                      isExpensive
-                      id
-                    }
-                  } =>
-                  {
-                    ... on Product {
-                      neverCalledInclude
-                    }
+            },
+            Flatten(path: "product") {
+              Fetch(service: "c") {
+                {
+                  ... on Product {
+                    __typename
+                    isExpensive
+                    id
                   }
-                },
+                } =>
+                {
+                  ... on Product {
+                    neverCalledInclude
+                  }
+                }
               },
             },
           },
         },
       },
+    },
     "#);
 
     Ok(())
