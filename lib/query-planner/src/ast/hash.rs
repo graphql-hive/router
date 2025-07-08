@@ -77,6 +77,7 @@ impl ASTHash for SelectionItem {
 impl ASTHash for &FieldSelection {
     fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
         self.name.hash(hasher);
+        self.alias.hash(hasher);
         self.selections.ast_hash(hasher);
         if let Some(args) = &self.arguments {
             args.ast_hash(hasher);
