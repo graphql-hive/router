@@ -601,12 +601,14 @@ fn poop<'a>(
                 })
                 .unwrap_or(false);
 
-            if condition_value {
-                if let Some(if_clause) = &node.if_clause.as_deref() {
-                    return poop(if_clause, execution_context, data);
-                }
-            } else if let Some(else_clause) = &node.else_clause.as_deref() {
-                return poop(else_clause, execution_context, data);
+            let clause = if condition_value {
+                node.if_clause.as_deref()
+            } else {
+                node.else_clause.as_deref()
+            };
+
+            if let Some(clause) = clause {
+                return poop(clause, execution_context, data);
             }
 
             return PoopResult {
