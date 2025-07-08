@@ -597,7 +597,7 @@ fn create_execution_step<'a>(
                 .and_then(|vars| vars.get(&node.condition))
                 .is_some_and(|val| match val {
                     Value::Bool(b) => *b,
-                    _ => true,
+                    _ => false,
                 });
 
             let clause = if condition_value {
@@ -799,28 +799,14 @@ impl ExecutablePlanNode for ConditionNode {
         execution_context: &mut QueryPlanExecutionContext<'_>,
         data: &mut Value,
     ) {
-        // Get the condition variable from the context
-        let condition_value: bool = match execution_context.variable_values {
-            Some(ref variable_values) => {
-                match variable_values.get(&self.condition) {
-                    Some(value) => {
-                        // Check if the value is a boolean
-                        match value {
-                            Value::Bool(b) => *b,
-                            _ => true, // Default to true if not a boolean
-                        }
-                    }
-                    None => {
-                        // If the variable is not found, default to false
-                        false
-                    }
-                }
-            }
-            None => {
-                // No variable values provided, default to false
-                false
-            }
-        };
+        let condition_value = execution_context
+            .variable_values
+            .as_ref()
+            .and_then(|vars| vars.get(&self.condition))
+            .is_some_and(|val| match val {
+                Value::Bool(b) => *b,
+                _ => false,
+            });
         if condition_value {
             if let Some(if_clause) = &self.if_clause {
                 return if_clause.execute(execution_context, data).await;

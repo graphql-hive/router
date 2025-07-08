@@ -228,11 +228,18 @@ impl<'a, T: query_ast::Text<'a>> From<query_ast::Selection<'a, T>> for Selection
     }
 }
 
-impl<'a, T: query_ast::Text<'a>> From<query_ast::Field<'a, T>> for FieldSelection {
-    fn from(field: query_ast::Field<'a, T>) -> Self {
+#[derive(Default)]
+struct ConditionsPair {
+    skip_if: Option<String>,
+    include_if: Option<String>,
+}
+
+impl<'a, T: query_ast::Text<'a>> From<&Vec<query_ast::Directive<'a, T>>> for ConditionsPair {
+    fn from(directives: &Vec<query_ast::Directive<'a, T>>) -> Self {
         let mut skip_if: Option<String> = None;
         let mut include_if: Option<String> = None;
-        for directive in &field.directives {
+
+        for directive in directives {
             match directive.name.as_ref() {
                 "skip" => {
                     let if_arg = directive.arguments.iter().find_map(|(name, value)| {
@@ -242,9 +249,6 @@ impl<'a, T: query_ast::Text<'a>> From<query_ast::Field<'a, T>> for FieldSelectio
                         }
                     });
                     match if_arg {
-                        Some(query_ast::Value::Boolean(true)) => {
-                            continue;
-                        }
                         Some(query_ast::Value::Variable(var_name)) => {
                             skip_if = Some(var_name.as_ref().to_string());
                         }
@@ -259,9 +263,6 @@ impl<'a, T: query_ast::Text<'a>> From<query_ast::Field<'a, T>> for FieldSelectio
                         }
                     });
                     match if_arg {
-                        Some(query_ast::Value::Boolean(false)) => {
-                            continue;
-                        }
                         Some(query_ast::Value::Variable(var_name)) => {
                             include_if = Some(var_name.as_ref().to_string());
                         }
@@ -271,6 +272,17 @@ impl<'a, T: query_ast::Text<'a>> From<query_ast::Field<'a, T>> for FieldSelectio
                 _ => {}
             }
         }
+
+        Self {
+            skip_if,
+            include_if,
+        }
+    }
+}
+
+impl<'a, T: query_ast::Text<'a>> From<query_ast::Field<'a, T>> for FieldSelection {
+    fn from(field: query_ast::Field<'a, T>) -> Self {
+        let conditions: ConditionsPair = (&field.directives).into();
 
         Self {
             name: field.name.as_ref().to_string(),
@@ -280,8 +292,8 @@ impl<'a, T: query_ast::Text<'a>> From<query_ast::Field<'a, T>> for FieldSelectio
                 _ => Some(field.arguments.into()),
             },
             selections: field.selection_set.into(),
-            skip_if,
-            include_if,
+            skip_if: conditions.skip_if,
+            include_if: conditions.include_if,
         }
     }
 }
@@ -290,47 +302,8 @@ impl<'a, T: query_ast::Text<'a>> From<query_ast::InlineFragment<'a, T>>
     for InlineFragmentSelection
 {
     fn from(value: query_ast::InlineFragment<'a, T>) -> Self {
-        let mut skip_if: Option<String> = None;
-        let mut include_if: Option<String> = None;
-        for directive in &value.directives {
-            match directive.name.as_ref() {
-                "skip" => {
-                    let if_arg = directive.arguments.iter().find_map(|(name, value)| {
-                        match name.as_ref() == "if" {
-                            true => Some(value),
-                            false => None,
-                        }
-                    });
-                    match if_arg {
-                        Some(query_ast::Value::Boolean(true)) => {
-                            continue;
-                        }
-                        Some(query_ast::Value::Variable(var_name)) => {
-                            skip_if = Some(var_name.as_ref().to_string());
-                        }
-                        _ => {}
-                    }
-                }
-                "include" => {
-                    let if_arg = directive.arguments.iter().find_map(|(name, value)| {
-                        match name.as_ref() == "if" {
-                            true => Some(value),
-                            false => None,
-                        }
-                    });
-                    match if_arg {
-                        Some(query_ast::Value::Boolean(false)) => {
-                            continue;
-                        }
-                        Some(query_ast::Value::Variable(var_name)) => {
-                            include_if = Some(var_name.as_ref().to_string());
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {}
-            }
-        }
+        let conditions: ConditionsPair = (&value.directives).into();
+
         Self {
             type_condition: extract_type_condition(
                 &value
@@ -339,8 +312,8 @@ impl<'a, T: query_ast::Text<'a>> From<query_ast::InlineFragment<'a, T>>
             )
             .to_string(),
             selections: value.selection_set.into(),
-            skip_if,
-            include_if,
+            skip_if: conditions.skip_if,
+            include_if: conditions.include_if,
         }
     }
 }

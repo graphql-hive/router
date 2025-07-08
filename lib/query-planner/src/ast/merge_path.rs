@@ -25,40 +25,36 @@ impl Display for Condition {
 
 impl From<&FieldSelection> for Option<Condition> {
     fn from(field: &FieldSelection) -> Self {
-        if field.skip_if.is_some() {
-            return Some(Condition::Skip(field.skip_if.clone().unwrap()));
+        if let Some(variable) = &field.skip_if {
+            return Some(Condition::Skip(variable.clone()));
         }
-
-        if field.include_if.is_some() {
-            return Some(Condition::Include(field.include_if.clone().unwrap()));
+        if let Some(variable) = &field.include_if {
+            return Some(Condition::Include(variable.clone()));
         }
-
         None
     }
 }
 
 impl From<&mut FieldSelection> for Option<Condition> {
     fn from(field: &mut FieldSelection) -> Self {
-        if field.skip_if.is_some() {
-            return Some(Condition::Skip(field.skip_if.clone().unwrap()));
+        if let Some(variable) = &field.skip_if {
+            return Some(Condition::Skip(variable.clone()));
         }
-
-        if field.include_if.is_some() {
-            return Some(Condition::Include(field.include_if.clone().unwrap()));
+        if let Some(variable) = &field.include_if {
+            return Some(Condition::Include(variable.clone()));
         }
-
         None
     }
 }
 
 impl From<&InlineFragmentSelection> for Option<Condition> {
     fn from(fragment: &InlineFragmentSelection) -> Self {
-        if fragment.skip_if.is_some() {
-            return Some(Condition::Skip(fragment.skip_if.clone().unwrap()));
+        if let Some(variable) = &fragment.skip_if {
+            return Some(Condition::Skip(variable.clone()));
         }
 
-        if fragment.include_if.is_some() {
-            return Some(Condition::Include(fragment.include_if.clone().unwrap()));
+        if let Some(variable) = &fragment.include_if {
+            return Some(Condition::Include(variable.clone()));
         }
 
         None
