@@ -9,10 +9,27 @@ use serde_json::{json, Value};
 
 #[derive(Debug)]
 pub struct SchemaMetadata {
-    pub possible_types: HashMap<String, HashSet<String>>,
+    pub possible_types: PossibleTypes,
     pub enum_values: HashMap<String, Vec<String>>,
     pub type_fields: HashMap<String, HashMap<String, String>>,
     pub introspection_schema_root_json: Value,
+}
+
+#[derive(Debug)]
+pub struct PossibleTypes {
+    map: HashMap<String, HashSet<String>>,
+}
+
+impl PossibleTypes {
+    pub fn entity_satisfies_type_condition(&self, type_name: &str, type_condition: &str) -> bool {
+        if type_name == type_condition {
+            true
+        } else if let Some(possible_types_of_type) = self.map.get(type_condition) {
+            possible_types_of_type.contains(type_name)
+        } else {
+            false
+        }
+    }
 }
 
 pub trait SchemaWithMetadata {
@@ -98,7 +115,9 @@ impl SchemaWithMetadata for ConsumerSchema {
         let introspection_schema_root_json = json!(introspection_query.__schema);
 
         SchemaMetadata {
-            possible_types: final_possible_types,
+            possible_types: PossibleTypes {
+                map: final_possible_types,
+            },
             enum_values,
             type_fields,
             introspection_schema_root_json,

@@ -1,9 +1,9 @@
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use axum::body::Body;
 use http::Request;
 use query_plan_executor::introspection::filter_introspection_fields_in_operation;
-use query_plan_executor::ExecutionRequest;
 use query_planner::ast::document::NormalizedDocument;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
@@ -12,6 +12,7 @@ use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
 use crate::pipeline::gateway_layer::{
     GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer,
 };
+use crate::pipeline::graphql_request_params::ExecutionRequest;
 use crate::pipeline::http_request_params::HttpRequestParams;
 use crate::pipeline::parser_service::GraphQLParserPayload;
 use crate::shared_state::GatewaySharedState;
@@ -67,45 +68,71 @@ impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
                 PipelineErrorVariant::InternalServiceError("GatewaySharedState is missing")
             })?;
 
-        match normalize_operation(
-            &app_state.planner.supergraph,
-            &parser_payload.parsed_operation,
-            execution_params.operation_name.as_deref(),
-        ) {
-            Ok(doc) => {
+        let cache_key = match &execution_params.operation_name {
+            Some(operation_name) => {
+                let mut hasher = DefaultHasher::new();
+                execution_params.query.hash(&mut hasher);
+                operation_name.hash(&mut hasher);
+                hasher.finish()
+            }
+            None => parser_payload.cache_key,
+        };
+
+        match app_state.normalize_cache.get(&cache_key).await {
+            Some(payload) => {
                 trace!(
-                    "Successfully normalized GraphQL operation (operation name={:?}): {}",
-                    doc.operation_name,
-                    doc.operation
+                    "Found normalized GraphQL operation in cache (operation name={:?}): {}",
+                    payload.normalized_document.operation_name,
+                    payload.normalized_document.operation
                 );
-
-                let operation = &doc.operation;
-                let (has_introspection, filtered_operation_for_plan) =
-                    filter_introspection_fields_in_operation(operation);
-
-                trace!(
-                    "Operation after removing introspection fields (introspection found={}): {}",
-                    has_introspection,
-                    filtered_operation_for_plan
-                );
-
-                req.extensions_mut().insert(GraphQLNormalizationPayload {
-                    normalized_document: doc,
-                    operation_for_plan: filtered_operation_for_plan,
-                    has_introspection,
-                });
-
+                req.extensions_mut().insert(payload);
                 Ok((req, GatewayPipelineStepDecision::Continue))
             }
-            Err(err) => {
-                error!("Failed to normalize GraphQL operation: {}", err);
-                trace!("{:?}", err);
+            None => match normalize_operation(
+                &app_state.planner.supergraph,
+                &parser_payload.parsed_operation,
+                execution_params.operation_name.as_deref(),
+            ) {
+                Ok(doc) => {
+                    trace!(
+                        "Successfully normalized GraphQL operation (operation name={:?}): {}",
+                        doc.operation_name,
+                        doc.operation
+                    );
 
-                return Err(PipelineError::new_with_accept_header(
-                    PipelineErrorVariant::NormalizationError(err),
-                    http_payload.accept_header.clone(),
-                ));
-            }
+                    let operation = &doc.operation;
+                    let (has_introspection, filtered_operation_for_plan) =
+                        filter_introspection_fields_in_operation(operation);
+
+                    trace!(
+                        "Operation after removing introspection fields (introspection found={}): {}",
+                        has_introspection,
+                        filtered_operation_for_plan
+                    );
+
+                    let payload = GraphQLNormalizationPayload {
+                        normalized_document: doc,
+                        operation_for_plan: filtered_operation_for_plan,
+                        has_introspection,
+                    };
+                    let payload_arc = Arc::new(payload);
+                    app_state
+                        .normalize_cache
+                        .insert(cache_key, payload_arc.clone())
+                        .await;
+                    req.extensions_mut().insert(payload_arc);
+                    Ok((req, GatewayPipelineStepDecision::Continue))
+                }
+                Err(err) => {
+                    error!("Failed to normalize GraphQL operation: {}", err);
+                    trace!("{:?}", err);
+
+                    Err(PipelineError::new_with_accept_header(
+                        PipelineErrorVariant::NormalizationError(err),
+                        http_payload.accept_header.clone(),
+                    ))
+                }
+            },
         }
     }
 }
