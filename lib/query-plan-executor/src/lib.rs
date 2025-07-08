@@ -594,7 +594,7 @@ fn create_execution_step<'a>(
                 .variable_values
                 .as_ref()
                 .and_then(|vars| vars.get(&node.condition))
-                .map_or(false, |val| match val {
+                .is_some_and(|val| match val {
                     Value::Bool(b) => *b,
                     _ => true,
                 });
