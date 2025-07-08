@@ -46,7 +46,7 @@ fn query_executor_pipeline_locally() {
             &schema_metadata,
             normalized_operation,
             false,
-            false,
+            crate::ExposeQueryPlanMode::No,
         )
         .await;
         insta::assert_snapshot!(result);
