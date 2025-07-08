@@ -270,7 +270,12 @@ impl ExecutableFetchNode for FetchNode {
 
 trait ApplyFetchRewrite {
     fn apply(&self, possible_types: &PossibleTypes, value: &mut Value);
-    fn apply_path(&self, possible_types: &PossibleTypes, value: &mut Value, path: &[FetchNodePathSegment]);
+    fn apply_path(
+        &self,
+        possible_types: &PossibleTypes,
+        value: &mut Value,
+        path: &[FetchNodePathSegment],
+    );
 }
 
 impl ApplyFetchRewrite for FetchRewrite {
@@ -280,7 +285,12 @@ impl ApplyFetchRewrite for FetchRewrite {
             FetchRewrite::ValueSetter(setter) => setter.apply(possible_types, value),
         }
     }
-    fn apply_path(&self, possible_types: &PossibleTypes, value: &mut Value, path: &[FetchNodePathSegment]) {
+    fn apply_path(
+        &self,
+        possible_types: &PossibleTypes,
+        value: &mut Value,
+        path: &[FetchNodePathSegment],
+    ) {
         match self {
             FetchRewrite::KeyRenamer(renamer) => renamer.apply_path(possible_types, value, path),
             FetchRewrite::ValueSetter(setter) => setter.apply_path(possible_types, value, path),
@@ -293,7 +303,12 @@ impl ApplyFetchRewrite for KeyRenamer {
         self.apply_path(possible_types, value, &self.path)
     }
     // Applies key rename operation on a Value (mutably)
-    fn apply_path(&self, possible_types: &PossibleTypes, value: &mut Value, path: &[FetchNodePathSegment]) {
+    fn apply_path(
+        &self,
+        possible_types: &PossibleTypes,
+        value: &mut Value,
+        path: &[FetchNodePathSegment],
+    ) {
         let current_segment = &path[0];
         let remaining_path = &path[1..];
 
@@ -339,7 +354,12 @@ impl ApplyFetchRewrite for ValueSetter {
     }
 
     // Applies value setting on a Value (returns a new Value)
-    fn apply_path(&self, possible_types: &PossibleTypes, data: &mut Value, path: &[FetchNodePathSegment]) {
+    fn apply_path(
+        &self,
+        possible_types: &PossibleTypes,
+        data: &mut Value,
+        path: &[FetchNodePathSegment],
+    ) {
         if path.is_empty() {
             *data = self.set_value_to.to_owned();
             return;
@@ -362,7 +382,8 @@ impl ApplyFetchRewrite for ValueSetter {
                             Some(Value::String(type_name)) => type_name,
                             _ => type_condition, // Default to type_condition if not found
                         };
-                        if possible_types.entity_satisfies_type_condition(type_name, type_condition) {
+                        if possible_types.entity_satisfies_type_condition(type_name, type_condition)
+                        {
                             self.apply_path(possible_types, data, remaining_path)
                         }
                     }
@@ -1025,6 +1046,13 @@ pub fn traverse_and_callback<'a, Callback>(
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExposeQueryPlanMode {
+    Yes,
+    No,
+    DryRun,
+}
+
 #[instrument(
     level = "trace",
     skip_all,
@@ -1041,7 +1069,7 @@ pub async fn execute_query_plan(
     schema_metadata: &SchemaMetadata,
     operation: &OperationDefinition,
     has_introspection: bool,
-    expose_query_plan: bool,
+    expose_query_plan: ExposeQueryPlanMode,
 ) -> String {
     let mut result_data = Value::Null; // Initialize data as Null
     let mut result_errors = vec![]; // Initial errors are empty
@@ -1054,15 +1082,19 @@ pub async fn execute_query_plan(
         errors: result_errors,
         extensions: result_extensions,
     };
-    query_plan
-        .execute(&mut execution_context, &mut result_data)
-        .await;
+    if expose_query_plan != ExposeQueryPlanMode::DryRun {
+        query_plan
+            .execute(&mut execution_context, &mut result_data)
+            .await;
+    }
     result_errors = execution_context.errors; // Get the final errors from the execution context
     result_extensions = execution_context.extensions; // Get the final extensions from the execution context
     if result_data.is_null() && has_introspection {
         result_data = Value::Object(Map::new()); // Ensure data is an empty object if it was null
     }
-    if expose_query_plan {
+    if expose_query_plan == ExposeQueryPlanMode::Yes
+        || expose_query_plan == ExposeQueryPlanMode::DryRun
+    {
         result_extensions.insert(
             "queryPlan".to_string(),
             serde_json::to_value(query_plan).unwrap(),
