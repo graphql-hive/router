@@ -743,6 +743,10 @@ impl ExecutablePlanNode for FlattenNode {
             representations.len(),
             now.elapsed()
         );
+        if first {
+            // No representations collected, so we skip the fetch execution
+            return;
+        }
         let result = fetch_node
             .execute_for_projected_representations(
                 execution_context,
@@ -756,6 +760,8 @@ impl ExecutablePlanNode for FlattenNode {
                 deep_merge::deep_merge(target, entity);
             }
         }
+
+        process_errors_and_extensions(execution_context, result.errors, result.extensions);
     }
 }
 
