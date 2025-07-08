@@ -26,7 +26,7 @@ fn include_basic_test() -> Result<(), Box<dyn Error>> {
       QueryPlan {
         Sequence {
           Fetch(service: "a") {
-            {
+            query ($bool: Boolean) {
               product {
                 __typename
                 id
@@ -104,7 +104,7 @@ fn skip_basic_test() -> Result<(), Box<dyn Error>> {
       QueryPlan {
         Sequence {
           Fetch(service: "a") {
-            {
+            query ($bool:Boolean=false) {
               product {
                 __typename
                 id

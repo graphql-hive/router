@@ -84,6 +84,13 @@ impl ASTHash for &FieldSelection {
         if let Some(args) = &self.arguments {
             args.ast_hash(hasher);
         }
+
+        if let Some(var_name) = self.include_if.as_ref() {
+            var_name.hash(hasher);
+        }
+        if let Some(var_name) = self.skip_if.as_ref() {
+            var_name.hash(hasher);
+        }
     }
 }
 
@@ -91,6 +98,12 @@ impl ASTHash for &InlineFragmentSelection {
     fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
         self.type_condition.hash(hasher);
         self.selections.ast_hash(hasher);
+        if let Some(var_name) = self.include_if.as_ref() {
+            var_name.hash(hasher);
+        }
+        if let Some(var_name) = self.skip_if.as_ref() {
+            var_name.hash(hasher);
+        }
     }
 }
 

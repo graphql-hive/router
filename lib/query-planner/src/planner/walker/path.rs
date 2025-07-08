@@ -7,9 +7,9 @@ use petgraph::{
 };
 
 use crate::ast::merge_path::Condition;
+use crate::planner::walker::pathfinder::NavigationTarget;
 use crate::{
     ast::arguments::ArgumentsMap,
-    ast::selection_set::FieldSelection,
     graph::{edge::EdgeReference, Graph},
     planner::tree::query_tree_node::QueryTreeNode,
 };
@@ -113,7 +113,7 @@ impl OperationPath {
         &self,
         edge_ref: &EdgeReference<'_>,
         requirement: Option<Arc<QueryTreeNode>>,
-        field: Option<&FieldSelection>,
+        target: &NavigationTarget,
     ) -> OperationPath {
         let prev_cost = self.cost;
         let edge_cost = edge_ref.weight().cost();
@@ -127,11 +127,19 @@ impl OperationPath {
             edge_index: edge_ref.id(),
             cumulative_cost: new_cost,
             requirement_tree: requirement,
-            selection_attributes: field.map(|f| SelectionAttributes {
-                alias: f.alias.clone(),
-                arguments: f.arguments.clone(),
-            }),
-            condition: field.and_then(|f| f.into()),
+            selection_attributes: match target {
+                NavigationTarget::Field(f) => Some(SelectionAttributes {
+                    alias: f.alias.clone(),
+                    arguments: f.arguments.clone(),
+                }),
+                NavigationTarget::ConcreteType(_, _) => None,
+            },
+            condition: match target {
+                NavigationTarget::Field(f) => (*f).into(),
+                NavigationTarget::ConcreteType(_, condition) => {
+                    condition.as_ref().map(|c| c.clone())
+                }
+            },
         };
         let new_segment = Arc::new(new_segment_data);
 

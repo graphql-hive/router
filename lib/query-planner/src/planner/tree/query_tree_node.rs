@@ -267,6 +267,9 @@ impl QueryTreeNode {
             Edge::SubgraphEntrypoint { .. } => {
                 write!(result, "\n{}🚪 ({})", indent, tail_str)
             }
+            Edge::AbstractMove(t) => {
+                write!(result, "\n{}... on {}{}", indent, t, condition_str)
+            }
             _ => {
                 let args_str = self
                     .selection_arguments()

@@ -262,8 +262,18 @@ impl From<&FetchStepData> for OperationKind {
 
 impl FetchNode {
     pub fn from_fetch_step(step: &FetchStepData, supergraph: &SupergraphState) -> Self {
-        match !step.is_entity_call() {
-            true => {
+        match step.is_entity_call() {
+            true => FetchNode {
+                service_name: step.service_name.0.clone(),
+                variable_usages: step.variable_usages.clone(),
+                operation_kind: Some(OperationKind::Query),
+                operation_name: None,
+                operation: create_output_operation(step, supergraph),
+                requires: Some(create_input_selection_set(&step.input)),
+                input_rewrites: step.input_rewrites.clone(),
+                output_rewrites: step.output_rewrites.clone(),
+            },
+            false => {
                 let operation_def = OperationDefinition {
                     name: None,
                     operation_kind: Some(step.into()),
@@ -288,16 +298,6 @@ impl FetchNode {
                     output_rewrites: step.output_rewrites.clone(),
                 }
             }
-            false => FetchNode {
-                service_name: step.service_name.0.clone(),
-                variable_usages: step.variable_usages.clone(),
-                operation_kind: Some(OperationKind::Query),
-                operation_name: None,
-                operation: create_output_operation(step, supergraph),
-                requires: Some(create_input_selection_set(&step.input)),
-                input_rewrites: step.input_rewrites.clone(),
-                output_rewrites: step.output_rewrites.clone(),
-            },
         }
     }
 }

@@ -196,7 +196,7 @@ fn process_inline_fragment<'a>(
         let mut direct_paths = find_direct_paths(
             graph,
             path,
-            &NavigationTarget::ConcreteType(&fragment.type_condition),
+            &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
         )?;
 
         trace!("Direct paths found: {}", direct_paths.len());
@@ -208,7 +208,7 @@ fn process_inline_fragment<'a>(
         let mut indirect_paths = find_indirect_paths(
             graph,
             path,
-            &NavigationTarget::ConcreteType(&fragment.type_condition),
+            &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
             &ExcludedFromLookup::new(),
         )?;
 

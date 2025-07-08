@@ -1144,9 +1144,6 @@ fn process_requires_field_edge(
         .as_ref()
         .ok_or(FetchGraphError::MissingRequires)?;
 
-    let condition = query_node.condition.as_ref().or(condition);
-    trace!("Condition: {:?}", condition);
-
     let tail_node_index = graph.get_edge_tail(&edge_index)?;
     let tail_node = graph.node(tail_node_index)?;
     let tail_type_name = match tail_node {
@@ -1412,6 +1409,7 @@ fn process_query_node(
     condition: Option<&Condition>,
     created_from_requires: bool,
 ) -> Result<Vec<NodeIndex>, FetchGraphError> {
+    let condition = query_node.condition.as_ref().or(condition);
     if let Some(edge_index) = query_node.edge_from_parent {
         let parent_fetch_step_index = parent_fetch_step_index.ok_or(FetchGraphError::IndexNone)?;
         let edge = graph.edge(edge_index)?;

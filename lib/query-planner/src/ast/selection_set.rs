@@ -180,6 +180,14 @@ impl FieldSelection {
             }
         }
 
+        if let Some(include_if) = &self.include_if {
+            usages.insert(include_if.clone());
+        }
+
+        if let Some(skip_if) = &self.skip_if {
+            usages.insert(skip_if.clone());
+        }
+
         usages.extend(self.selections.variable_usages());
         usages
     }
@@ -211,6 +219,23 @@ pub struct InlineFragmentSelection {
     pub skip_if: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_if: Option<String>,
+}
+
+impl InlineFragmentSelection {
+    pub fn variable_usages(&self) -> BTreeSet<String> {
+        let mut usages = BTreeSet::new();
+
+        if let Some(include_if) = &self.include_if {
+            usages.insert(include_if.clone());
+        }
+
+        if let Some(skip_if) = &self.skip_if {
+            usages.insert(skip_if.clone());
+        }
+
+        usages.extend(self.selections.variable_usages());
+        usages
+    }
 }
 
 impl Hash for InlineFragmentSelection {

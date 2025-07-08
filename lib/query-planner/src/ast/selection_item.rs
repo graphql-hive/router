@@ -96,7 +96,9 @@ impl SelectionItem {
     pub fn variable_usages(&self) -> BTreeSet<String> {
         match self {
             SelectionItem::Field(field_selection) => field_selection.variable_usages(),
-            SelectionItem::InlineFragment(_fragment_selection) => BTreeSet::new(),
+            SelectionItem::InlineFragment(fragment_selection) => {
+                fragment_selection.variable_usages()
+            }
             SelectionItem::FragmentSpread(_fragment_spread) => BTreeSet::new(),
         }
     }

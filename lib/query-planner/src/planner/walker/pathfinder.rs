@@ -4,6 +4,7 @@ use std::rc::Rc;
 use petgraph::visit::{EdgeRef, NodeRef};
 use tracing::{instrument, trace};
 
+use crate::ast::merge_path::Condition;
 use crate::ast::selection_set::InlineFragmentSelection;
 use crate::{
     ast::{
@@ -60,7 +61,7 @@ impl IndirectPathsLookupQueue {
 #[derive(Debug)]
 pub enum NavigationTarget<'a> {
     Field(&'a FieldSelection),
-    ConcreteType(&'a str),
+    ConcreteType(&'a str, Option<Condition>),
 }
 
 #[instrument(level = "trace",skip(graph, excluded, target), fields(
@@ -160,10 +161,7 @@ pub fn find_indirect_paths(
                     let next_resolution_path = path.advance(
                         &edge_ref,
                         QueryTreeNode::from_paths(graph, &paths, None)?,
-                        match target {
-                            NavigationTarget::Field(field) => Some(field),
-                            NavigationTarget::ConcreteType(_) => None,
-                        },
+                        target,
                     );
 
                     let direct_paths = find_direct_paths(graph, &next_resolution_path, target)?;
@@ -229,7 +227,7 @@ pub fn find_direct_paths(
     let mut result: Vec<OperationPath> = vec![];
     let path_tail_index = path.tail();
 
-    match *target {
+    match target {
         NavigationTarget::Field(field) => {
             let edges_iter = graph
                 .edges_from(path_tail_index)
@@ -254,7 +252,7 @@ pub fn find_direct_paths(
                         let next_resolution_path = path.advance(
                             &edge_ref,
                             QueryTreeNode::from_paths(graph, &paths, None)?,
-                            Some(field),
+                            target,
                         );
 
                         result.push(next_resolution_path);
@@ -265,12 +263,12 @@ pub fn find_direct_paths(
                 }
             }
         }
-        NavigationTarget::ConcreteType(type_name) => {
+        NavigationTarget::ConcreteType(type_name, _condition) => {
             let edges_iter = graph
                 .edges_from(path_tail_index)
                 .filter(|e| match e.weight() {
                     Edge::AbstractMove(t) => t == type_name,
-                    Edge::InterfaceObjectTypeMove(t) => t.object_type_name == type_name,
+                    Edge::InterfaceObjectTypeMove(t) => &t.object_type_name == type_name,
                     _ => false,
                 });
 
@@ -294,7 +292,7 @@ pub fn find_direct_paths(
                         let next_resolution_path = path.advance(
                             &edge_ref,
                             QueryTreeNode::from_paths(graph, &paths, None)?,
-                            None,
+                            target,
                         );
 
                         result.push(next_resolution_path);
@@ -533,7 +531,9 @@ fn validate_fragment_requirement(
         direct_path_results.push(find_direct_paths(
             graph,
             path,
-            &NavigationTarget::ConcreteType(type_name),
+            // @skip/@include can't be used in @requires and @provides,
+            // that's why we pass no condition
+            &NavigationTarget::ConcreteType(type_name, None),
         )?);
     }
 
@@ -544,7 +544,9 @@ fn validate_fragment_requirement(
         indirect_path_results.push(find_indirect_paths(
             graph,
             path_from_rc,
-            &NavigationTarget::ConcreteType(type_name),
+            // @skip/@include can't be used in @requires and @provides,
+            // that's why we pass no condition
+            &NavigationTarget::ConcreteType(type_name, None),
             excluded,
         )?);
     }

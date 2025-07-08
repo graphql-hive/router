@@ -650,3 +650,394 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[test]
+fn poop1() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($title: Boolean = true) {
+          products {
+            id
+            reviews {
+              product {
+                id
+                ... on Book @include(if: $title) {
+                  title
+                }
+                ... on Magazine {
+                  sku
+                }
+              }
+            }
+          }
+        }
+      ,
+      "#,
+    );
+    let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
+
+    // TODO: this should be batched (turned into a sequence of two fetch steps)
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            products {
+              __typename
+              id
+              ... on Book {
+                __typename
+                id
+              }
+              ... on Magazine {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Parallel {
+          Flatten(path: "products.@") {
+            Fetch(service: "reviews") {
+              {
+                ... on Magazine {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Magazine {
+                  reviews {
+                    product {
+                      __typename
+                      id
+                      ... on Book {
+                        __typename
+                        id
+                      }
+                      ... on Magazine {
+                        __typename
+                        id
+                      }
+                    }
+                  }
+                }
+              }
+            },
+          },
+          Flatten(path: "products.@") {
+            Fetch(service: "reviews") {
+              {
+                ... on Book {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Book {
+                  reviews {
+                    product {
+                      __typename
+                      id
+                      ... on Book {
+                        __typename
+                        id
+                      }
+                      ... on Magazine {
+                        __typename
+                        id
+                      }
+                    }
+                  }
+                }
+              }
+            },
+          },
+        },
+        Parallel {
+          Flatten(path: "products.@.reviews.@.product") {
+            Fetch(service: "products") {
+              {
+                ... on Magazine {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Magazine {
+                  sku
+                }
+              }
+            },
+          },
+          Include(if: $title) {
+            Flatten(path: "products.@.reviews.@.product") {
+              Fetch(service: "books") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    title
+                  }
+                }
+              },
+            },
+          },
+          Flatten(path: "products.@.reviews.@.product") {
+            Fetch(service: "products") {
+              {
+                ... on Magazine {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Magazine {
+                  sku
+                }
+              }
+            },
+          },
+          Include(if: $title) {
+            Flatten(path: "products.@.reviews.@.product") {
+              Fetch(service: "books") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    title
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn poop2() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($title: Boolean = true) {
+          products {
+            id
+            reviews {
+              product {
+                id
+                ... on Book @include(if: $title) {
+                  title
+                  ... on Book {
+                    sku
+                  }
+                }
+                ... on Magazine {
+                  sku
+                }
+              }
+            }
+          }
+        }
+      ,
+      "#,
+    );
+    let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
+
+    // TODO: this should be batched (turned into a sequence of two fetch steps)
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            products {
+              __typename
+              id
+              ... on Book {
+                __typename
+                id
+              }
+              ... on Magazine {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Parallel {
+          Flatten(path: "products.@") {
+            Fetch(service: "reviews") {
+              {
+                ... on Magazine {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Magazine {
+                  reviews {
+                    product {
+                      __typename
+                      id
+                      ... on Book {
+                        __typename
+                        id
+                      }
+                      ... on Magazine {
+                        __typename
+                        id
+                      }
+                    }
+                  }
+                }
+              }
+            },
+          },
+          Flatten(path: "products.@") {
+            Fetch(service: "reviews") {
+              {
+                ... on Book {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Book {
+                  reviews {
+                    product {
+                      __typename
+                      id
+                      ... on Book {
+                        __typename
+                        id
+                      }
+                      ... on Magazine {
+                        __typename
+                        id
+                      }
+                    }
+                  }
+                }
+              }
+            },
+          },
+        },
+        Parallel {
+          Flatten(path: "products.@.reviews.@.product") {
+            Fetch(service: "products") {
+              {
+                ... on Magazine {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Magazine {
+                  sku
+                }
+              }
+            },
+          },
+          Include(if: $title) {
+            Flatten(path: "products.@.reviews.@.product") {
+              Fetch(service: "products") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    sku
+                  }
+                }
+              },
+            },
+          },
+          Include(if: $title) {
+            Flatten(path: "products.@.reviews.@.product") {
+              Fetch(service: "books") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    title
+                  }
+                }
+              },
+            },
+          },
+          Flatten(path: "products.@.reviews.@.product") {
+            Fetch(service: "products") {
+              {
+                ... on Magazine {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Magazine {
+                  sku
+                }
+              }
+            },
+          },
+          Include(if: $title) {
+            Flatten(path: "products.@.reviews.@.product") {
+              Fetch(service: "products") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    sku
+                  }
+                }
+              },
+            },
+          },
+          Include(if: $title) {
+            Flatten(path: "products.@.reviews.@.product") {
+              Fetch(service: "books") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    title
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
