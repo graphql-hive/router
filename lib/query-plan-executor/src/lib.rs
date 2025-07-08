@@ -11,7 +11,7 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::{collections::HashMap, vec};
+use std::{collections::HashMap, future::Future, pin::Pin, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
 use crate::{
@@ -543,6 +543,88 @@ fn process_root_result(
     );
 }
 
+struct PoopResult<'a> {
+    fetch_job: Option<Pin<Box<dyn Future<Output = ExecutionResult> + Send + 'a>>>,
+    flatten_job: Option<Pin<Box<dyn Future<Output = ExecuteForRepresentationsResult> + Send + 'a>>>,
+    flatten_path: Option<Vec<&'a str>>,
+}
+
+fn poop<'a>(
+    node: &'a PlanNode,
+    execution_context: &'a QueryPlanExecutionContext<'a>,
+    data: &mut Value,
+) -> PoopResult<'a> {
+    return match node {
+        PlanNode::Fetch(fetch_node) => PoopResult {
+            fetch_job: Some(fetch_node.execute_for_root(execution_context)),
+            flatten_job: None,
+            flatten_path: None,
+        },
+        PlanNode::Flatten(flatten_node) => {
+            let normalized_path: Vec<&str> = flatten_node.path.iter().map(String::as_str).collect();
+            let collected_representations = traverse_and_collect(data, &normalized_path);
+            let fetch_node = match flatten_node.node.as_ref() {
+                PlanNode::Fetch(fetch_node) => fetch_node,
+                _ => {
+                    warn!(
+                        "FlattenNode can only execute FetchNode as child node, found: {:?}",
+                        flatten_node.node
+                    );
+                    return PoopResult {
+                        fetch_job: None,
+                        flatten_job: None,
+                        flatten_path: None,
+                    };
+                }
+            };
+            let project_result =
+                fetch_node.project_representations(execution_context, &collected_representations);
+            let job = fetch_node.execute_for_projected_representations(
+                execution_context,
+                project_result.representations,
+                project_result.indexes,
+            );
+            return PoopResult {
+                fetch_job: None,
+                flatten_job: Some(job),
+                flatten_path: Some(normalized_path),
+            };
+        }
+        PlanNode::Condition(node) => {
+            let condition_value: bool = execution_context
+                .variable_values
+                .as_ref()
+                .and_then(|ref variable_values| variable_values.get(&node.condition))
+                .map(|value| match value {
+                    Value::Bool(b) => b.clone(),
+                    _ => true, // Default to true if not a boolean
+                })
+                .unwrap_or(false);
+
+            if condition_value {
+                if let Some(if_clause) = &node.if_clause.as_deref() {
+                    return poop(if_clause, execution_context, data);
+                }
+            } else if let Some(else_clause) = &node.else_clause.as_deref() {
+                return poop(else_clause, execution_context, data);
+            }
+
+            return PoopResult {
+                fetch_job: None,
+                flatten_job: None,
+                flatten_path: None,
+            };
+        }
+        _ => {
+            return PoopResult {
+                fetch_job: None,
+                flatten_job: None,
+                flatten_path: None,
+            };
+        }
+    };
+}
+
 #[async_trait]
 impl ExecutablePlanNode for ParallelNode {
     #[instrument(level = "trace", skip_all, name = "ParallelNode::execute", fields(
@@ -561,124 +643,16 @@ impl ExecutablePlanNode for ParallelNode {
         // Collect Fetch node results and non-fetch nodes for sequential execution
         let now = std::time::Instant::now();
         for node in &self.nodes {
-            match node {
-                PlanNode::Fetch(fetch_node) => {
-                    // Execute FetchNode in parallel
-                    let job = fetch_node.execute_for_root(execution_context);
-                    fetch_jobs.push(job);
-                }
-                PlanNode::Flatten(flatten_node) => {
-                    let normalized_path: Vec<&str> =
-                        flatten_node.path.iter().map(String::as_str).collect();
-                    let collected_representations = traverse_and_collect(data, &normalized_path);
-                    let fetch_node = match flatten_node.node.as_ref() {
-                        PlanNode::Fetch(fetch_node) => fetch_node,
-                        _ => {
-                            warn!(
-                                "FlattenNode can only execute FetchNode as child node, found: {:?}",
-                                flatten_node.node
-                            );
-                            continue; // Skip if the child node is not a FetchNode
-                        }
-                    };
-                    let project_result = fetch_node
-                        .project_representations(execution_context, &collected_representations);
-                    let job = fetch_node.execute_for_projected_representations(
-                        execution_context,
-                        project_result.representations,
-                        project_result.indexes,
-                    );
-                    flatten_jobs.push(job);
-                    flatten_paths.push(normalized_path);
-                }
-                PlanNode::Condition(node) => {
-                    let condition_value: bool = execution_context
-                        .variable_values
-                        .as_ref()
-                        .and_then(|ref variable_values| variable_values.get(&node.condition))
-                        .map(|value| match value {
-                            Value::Bool(b) => b.clone(),
-                            _ => true, // Default to true if not a boolean
-                        })
-                        .unwrap_or(false);
+            let res = poop(node, execution_context, data);
 
-                    if condition_value {
-                        if let Some(if_clause) = &node.if_clause.as_deref() {
-                            match if_clause {
-                                PlanNode::Fetch(fetch_node) => {
-                                    // Execute FetchNode in parallel
-                                    let job = fetch_node.execute_for_root(execution_context);
-                                    fetch_jobs.push(job);
-                                }
-                                PlanNode::Flatten(flatten_node) => {
-                                    let normalized_path: Vec<&str> =
-                                        flatten_node.path.iter().map(String::as_str).collect();
-                                    let collected_representations =
-                                        traverse_and_collect(data, &normalized_path);
-                                    let fetch_node = match flatten_node.node.as_ref() {
-                                        PlanNode::Fetch(fetch_node) => fetch_node,
-                                        _ => {
-                                            warn!(
-                                              "FlattenNode can only execute FetchNode as child node, found: {:?}",
-                                              flatten_node.node
-                                          );
-                                            continue; // Skip if the child node is not a FetchNode
-                                        }
-                                    };
-                                    let project_result = fetch_node.project_representations(
-                                        execution_context,
-                                        &collected_representations,
-                                    );
-                                    let job = fetch_node.execute_for_projected_representations(
-                                        execution_context,
-                                        project_result.representations,
-                                        project_result.indexes,
-                                    );
-                                    flatten_jobs.push(job);
-                                    flatten_paths.push(normalized_path);
-                                }
-                                _ => {}
-                            }
-                        }
-                    } else if let Some(else_clause) = &node.else_clause.as_deref() {
-                        match else_clause {
-                            PlanNode::Fetch(fetch_node) => {
-                                // Execute FetchNode in parallel
-                                let job = fetch_node.execute_for_root(execution_context);
-                                fetch_jobs.push(job);
-                            }
-                            PlanNode::Flatten(flatten_node) => {
-                                let normalized_path: Vec<&str> =
-                                    flatten_node.path.iter().map(String::as_str).collect();
-                                let collected_representations =
-                                    traverse_and_collect(data, &normalized_path);
-                                let fetch_node = match flatten_node.node.as_ref() {
-                                    PlanNode::Fetch(fetch_node) => fetch_node,
-                                    _ => {
-                                        warn!(
-                                        "FlattenNode can only execute FetchNode as child node, found: {:?}",
-                                        flatten_node.node
-                                    );
-                                        continue; // Skip if the child node is not a FetchNode
-                                    }
-                                };
-                                let project_result = fetch_node.project_representations(
-                                    execution_context,
-                                    &collected_representations,
-                                );
-                                let job = fetch_node.execute_for_projected_representations(
-                                    execution_context,
-                                    project_result.representations,
-                                    project_result.indexes,
-                                );
-                                flatten_jobs.push(job);
-                                flatten_paths.push(normalized_path);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                _ => {}
+            if let Some(fetch_job) = res.fetch_job {
+                fetch_jobs.push(fetch_job);
+            }
+            if let Some(flatten_job) = res.flatten_job {
+                flatten_jobs.push(flatten_job);
+            }
+            if let Some(flatten_path) = res.flatten_path {
+                flatten_paths.push(flatten_path);
             }
         }
         trace!(
