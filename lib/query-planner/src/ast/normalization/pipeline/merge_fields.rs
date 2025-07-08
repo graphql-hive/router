@@ -56,7 +56,9 @@ fn handle_selection_set<'a>(
     selection_set: &mut SelectionSet<'a, String>,
 ) -> Result<(), NormalizationError> {
     let old_items = std::mem::take(&mut selection_set.items);
-    let mut new_items: Vec<Selection<'a, String>> = Vec::new();
+    let mut new_fields = Vec::new();
+    let mut old_inline_fragments = Vec::new();
+    let mut new_inline_fragments = Vec::new();
 
     for selection in old_items {
         match selection {
@@ -64,7 +66,7 @@ fn handle_selection_set<'a>(
                 handle_selection_set(&mut current_field.selection_set)?;
 
                 let mut merged_into_existing = false;
-                for new_item_selection in new_items.iter_mut() {
+                for new_item_selection in new_fields.iter_mut() {
                     if let Selection::Field(ref mut existing_field) = new_item_selection {
                         if fields_equal(&current_field, existing_field) {
                             existing_field
@@ -80,19 +82,36 @@ fn handle_selection_set<'a>(
                 }
 
                 if !merged_into_existing {
-                    new_items.push(Selection::Field(current_field));
+                    new_fields.push(Selection::Field(current_field));
                 }
             }
-            Selection::InlineFragment(mut inline_fragment) => {
-                handle_selection_set(&mut inline_fragment.selection_set)?;
-                new_items.push(Selection::InlineFragment(inline_fragment));
+            Selection::InlineFragment(_) => {
+                old_inline_fragments.push(selection);
             }
             Selection::FragmentSpread(_) => {
                 // should be resolved and inlined by that point
             }
         }
     }
-    selection_set.items = new_items;
+    for selection in old_inline_fragments {
+        match selection {
+            Selection::Field(_) => {
+                //Done already
+            }
+            Selection::InlineFragment(mut inline_fragment) => {
+                inline_fragment
+                    .selection_set
+                    .items
+                    .extend(new_fields.clone());
+                handle_selection_set(&mut inline_fragment.selection_set)?;
+                new_inline_fragments.push(Selection::InlineFragment(inline_fragment));
+            }
+            Selection::FragmentSpread(_) => {
+                // should be resolved and inlined by that point
+            }
+        }
+    }
+    selection_set.items = [new_fields, new_inline_fragments].concat();
 
     Ok(())
 }
