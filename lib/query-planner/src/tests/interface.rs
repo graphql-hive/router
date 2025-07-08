@@ -652,7 +652,7 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn poop1() -> Result<(), Box<dyn Error>> {
+fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> {
     init_logger();
     let document = parse_operation(
         r#"
@@ -829,7 +829,7 @@ fn poop1() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn poop2() -> Result<(), Box<dyn Error>> {
+fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dyn Error>> {
     init_logger();
     let document = parse_operation(
         r#"
