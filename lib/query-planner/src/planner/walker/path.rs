@@ -136,9 +136,7 @@ impl OperationPath {
             },
             condition: match target {
                 NavigationTarget::Field(f) => (*f).into(),
-                NavigationTarget::ConcreteType(_, condition) => {
-                    condition.as_ref().map(|c| c.clone())
-                }
+                NavigationTarget::ConcreteType(_, condition) => condition.clone(),
             },
         };
         let new_segment = Arc::new(new_segment_data);
