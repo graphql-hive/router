@@ -207,6 +207,10 @@ impl FieldSelection {
 pub struct InlineFragmentSelection {
     pub type_condition: String,
     pub selections: SelectionSet,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_if: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_if: Option<String>,
 }
 
 impl Hash for InlineFragmentSelection {

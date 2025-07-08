@@ -183,6 +183,8 @@ fn create_input_selection_set(input_selections: &TypeAwareSelection) -> Selectio
         items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
             selections: input_selections.selection_set.strip_for_plan_input(),
             type_condition: input_selections.type_name.clone(),
+            skip_if: None,
+            include_if: None,
         })],
     }
 }
@@ -215,6 +217,8 @@ fn create_output_operation(
                     items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
                         selections: type_aware_selection.selection_set.clone(),
                         type_condition: type_aware_selection.type_name.clone(),
+                        skip_if: None,
+                        include_if: None,
                     })],
                 },
                 alias: None,

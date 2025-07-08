@@ -403,6 +403,8 @@ fn project_requires(c: &mut Criterion) {
                     }),
                 ],
             },
+            include_if: None,
+            skip_if: None,
         })]
         .to_vec();
     c.bench_function("project_requires", |b| {

@@ -150,6 +150,8 @@ fn transform_inline_fragment(
     Ok(SelectionItem::InlineFragment(InlineFragmentSelection {
         type_condition: fragment.type_condition.clone(),
         selections: new_selections,
+        skip_if: fragment.skip_if.clone(),
+        include_if: fragment.include_if.clone(),
     }))
 }
 
@@ -199,6 +201,8 @@ fn transform_field(
                     new_entities.push(SelectionItem::InlineFragment(InlineFragmentSelection {
                         type_condition: fragment.type_condition.clone(),
                         selections: new_selections,
+                        skip_if: fragment.skip_if.clone(),
+                        include_if: fragment.include_if.clone(),
                     }));
                 }
                 SelectionItem::FragmentSpread(spread) => {

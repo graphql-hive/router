@@ -953,6 +953,8 @@ fn process_abstract_edge(
                     SelectionItem::InlineFragment(InlineFragmentSelection {
                         type_condition: target_type_name.clone(),
                         selections: SelectionSet::default(),
+                        skip_if: None,
+                        include_if: None,
                     }),
                 ],
             },

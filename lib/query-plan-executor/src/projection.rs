@@ -158,6 +158,54 @@ fn project_selection_set(
     }
 }
 
+trait IncludeOrSkipByVariable {
+    fn include_or_skip_by_variable(&self, variable_values: &Option<HashMap<String, Value>>)
+        -> bool;
+}
+
+impl IncludeOrSkipByVariable for SelectionItem {
+    fn include_or_skip_by_variable(
+        &self,
+        variable_values: &Option<HashMap<String, Value>>,
+    ) -> bool {
+        if let Some(skip_variable) = match self {
+            SelectionItem::Field(field) => field.skip_if.as_ref(),
+            SelectionItem::InlineFragment(inline_fragment) => inline_fragment.skip_if.as_ref(),
+            SelectionItem::FragmentSpread(_) => {
+                // Fragment spreads should not exist in the final response projection.
+                unreachable!("Fragment spreads should not exist in the final response projection.")
+            }
+        } {
+            if let Some(variable_value) = variable_values
+                .as_ref()
+                .and_then(|vars| vars.get(skip_variable))
+            {
+                if variable_value == &Value::Bool(true) {
+                    return false; // Skip this field if the variable is true
+                }
+            }
+        }
+        if let Some(include_variable) = match self {
+            SelectionItem::Field(field) => field.include_if.as_ref(),
+            SelectionItem::InlineFragment(inline_fragment) => inline_fragment.include_if.as_ref(),
+            SelectionItem::FragmentSpread(_) => {
+                // Fragment spreads should not exist in the final response projection.
+                unreachable!("Fragment spreads should not exist in the final response projection.")
+            }
+        } {
+            if let Some(variable_value) = variable_values
+                .as_ref()
+                .and_then(|vars| vars.get(include_variable))
+            {
+                if variable_value != &Value::Bool(true) {
+                    return false; // Skip this field if the variable is not true
+                }
+            }
+        }
+        true
+    }
+}
+
 #[instrument(
     level = "trace",
     skip_all,
@@ -196,25 +244,11 @@ fn project_selection_set_with_map(
     };
 
     for selection in &selection_set.items {
+        if !selection.include_or_skip_by_variable(variable_values) {
+            continue; // Skip this selection if it doesn't satisfy include_if or skip_if conditions
+        }
         match selection {
             SelectionItem::Field(field) => {
-                if let Some(ref skip_variable) = field.skip_if {
-                    let variable_value = variable_values
-                        .as_ref()
-                        .and_then(|vars| vars.get(skip_variable));
-                    if variable_value == Some(&Value::Bool(true)) {
-                        continue; // Skip this field if the variable is true
-                    }
-                }
-                if let Some(ref include_variable) = field.include_if {
-                    let variable_value = variable_values
-                        .as_ref()
-                        .and_then(|vars| vars.get(include_variable));
-                    if variable_value != Some(&Value::Bool(true)) {
-                        continue; // Skip this field if the variable is not true
-                    }
-                }
-
                 let response_key = field.alias.as_ref().unwrap_or(&field.name);
 
                 if *first {

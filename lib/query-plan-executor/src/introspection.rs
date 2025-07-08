@@ -532,6 +532,8 @@ fn filter_introspection_selections(
                         Some(SelectionItem::InlineFragment(InlineFragmentSelection {
                             type_condition: inline_fragment.type_condition.clone(),
                             selections: filtered_selection_set,
+                            skip_if: inline_fragment.skip_if.clone(),
+                            include_if: inline_fragment.include_if.clone(),
                         }))
                     } else {
                         Some(item.clone())
