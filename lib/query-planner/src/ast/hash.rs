@@ -124,9 +124,8 @@ impl ASTHash for Vec<VariableDefinition> {
     fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
         // Order does not matter for hashing
         // The order of variables does not matter.
-
-        // We should do a similar thing as for ArgumentsMap,
-        // but we need to sort the variables by their names.
+        // We do a similar thing as for ArgumentsMap,
+        // we sort the variables by their names.
         let mut variables: Vec<_> = self.iter().collect();
         variables.sort_by_key(|f| &f.name);
         for var in variables {
