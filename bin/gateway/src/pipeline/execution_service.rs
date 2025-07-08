@@ -11,8 +11,8 @@ use crate::pipeline::query_plan_service::QueryPlanPayload;
 use crate::shared_state::GatewaySharedState;
 use axum::body::Body;
 use http::header::CONTENT_TYPE;
-use http::{Request, Response};
-use query_plan_executor::execute_query_plan;
+use http::{HeaderName, Request, Response};
+use query_plan_executor::{execute_query_plan, ExposeQueryPlanMode};
 use tower::Service;
 
 #[derive(Clone, Debug, Default)]
@@ -21,13 +21,6 @@ pub struct ExecutionService {
 }
 
 static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ExposeQueryPlanMode {
-    Yes,
-    No,
-    DryRun,
-}
 
 impl ExecutionService {
     pub fn new(expose_query_plan: bool) -> Self {

@@ -11,9 +11,9 @@ use query_planner::graph::PlannerOverrideContext;
 use query_planner::planner::plan_nodes::FlattenNodePathSegment;
 use std::hint::black_box;
 
-use query_plan_executor::execute_query_plan;
 use query_plan_executor::schema_metadata::SchemaWithMetadata;
 use query_plan_executor::ExecutableQueryPlan;
+use query_plan_executor::{execute_query_plan, ExposeQueryPlanMode};
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::utils::parsing::parse_operation;
 use query_planner::utils::parsing::parse_schema;
@@ -57,7 +57,7 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
                 schema_metadata,
                 operation,
                 has_introspection,
-                false,
+                ExposeQueryPlanMode::No,
             )
             .await;
             black_box(result)
@@ -149,7 +149,7 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
                 schema_metadata,
                 operation,
                 has_introspection,
-                false,
+                ExposeQueryPlanMode::No,
             )
             .await;
             black_box(result)
