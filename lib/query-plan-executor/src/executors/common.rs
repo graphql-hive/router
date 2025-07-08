@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::{ExecutionRequest, ExecutionResult};
+use crate::{ExecutionResult, SubgraphExecutionRequest};
 
 #[async_trait]
 pub trait SubgraphExecutor {
-    async fn execute(&self, execution_request: ExecutionRequest) -> ExecutionResult;
+    async fn execute<'a>(&self, execution_request: SubgraphExecutionRequest<'a>)
+        -> ExecutionResult;
     fn to_boxed_arc<'a>(self) -> Arc<Box<dyn SubgraphExecutor + Send + Sync + 'a>>
     where
         Self: Sized + Send + Sync + 'a,
