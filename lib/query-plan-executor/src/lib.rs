@@ -543,63 +543,61 @@ fn process_root_result(
     );
 }
 
-struct PoopResult<'a> {
-    fetch_job: Option<Pin<Box<dyn Future<Output = ExecutionResult> + Send + 'a>>>,
-    flatten_job: Option<Pin<Box<dyn Future<Output = ExecuteForRepresentationsResult> + Send + 'a>>>,
+type ExecutionStepJob<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+#[derive(Default)]
+struct ExecutionStep<'a> {
+    fetch_job: Option<ExecutionStepJob<'a, ExecutionResult>>,
+    flatten_job: Option<ExecutionStepJob<'a, ExecuteForRepresentationsResult>>,
     flatten_path: Option<Vec<&'a str>>,
 }
 
-fn poop<'a>(
+fn create_execution_step<'a>(
     node: &'a PlanNode,
     execution_context: &'a QueryPlanExecutionContext<'a>,
     data: &mut Value,
-) -> PoopResult<'a> {
-    return match node {
-        PlanNode::Fetch(fetch_node) => PoopResult {
+) -> ExecutionStep<'a> {
+    match node {
+        PlanNode::Fetch(fetch_node) => ExecutionStep {
             fetch_job: Some(fetch_node.execute_for_root(execution_context)),
-            flatten_job: None,
-            flatten_path: None,
+            ..Default::default()
         },
         PlanNode::Flatten(flatten_node) => {
+            let PlanNode::Fetch(fetch_node) = flatten_node.node.as_ref() else {
+                warn!(
+                    "FlattenNode can only execute FetchNode as child node, found: {:?}",
+                    flatten_node.node
+                );
+                return ExecutionStep::default();
+            };
+
             let normalized_path: Vec<&str> = flatten_node.path.iter().map(String::as_str).collect();
             let collected_representations = traverse_and_collect(data, &normalized_path);
-            let fetch_node = match flatten_node.node.as_ref() {
-                PlanNode::Fetch(fetch_node) => fetch_node,
-                _ => {
-                    warn!(
-                        "FlattenNode can only execute FetchNode as child node, found: {:?}",
-                        flatten_node.node
-                    );
-                    return PoopResult {
-                        fetch_job: None,
-                        flatten_job: None,
-                        flatten_path: None,
-                    };
-                }
-            };
+
             let project_result =
                 fetch_node.project_representations(execution_context, &collected_representations);
+
             let job = fetch_node.execute_for_projected_representations(
                 execution_context,
                 project_result.representations,
                 project_result.indexes,
             );
-            return PoopResult {
-                fetch_job: None,
+
+            ExecutionStep {
                 flatten_job: Some(job),
                 flatten_path: Some(normalized_path),
-            };
+                ..Default::default()
+            }
         }
         PlanNode::Condition(node) => {
-            let condition_value: bool = execution_context
+            let condition_value = execution_context
                 .variable_values
                 .as_ref()
-                .and_then(|ref variable_values| variable_values.get(&node.condition))
-                .map(|value| match value {
-                    Value::Bool(b) => b.clone(),
-                    _ => true, // Default to true if not a boolean
-                })
-                .unwrap_or(false);
+                .and_then(|vars| vars.get(&node.condition))
+                .map_or(false, |val| match val {
+                    Value::Bool(b) => *b,
+                    _ => true,
+                });
 
             let clause = if condition_value {
                 node.if_clause.as_deref()
@@ -608,23 +606,13 @@ fn poop<'a>(
             };
 
             if let Some(clause) = clause {
-                return poop(clause, execution_context, data);
+                create_execution_step(clause, execution_context, data)
+            } else {
+                ExecutionStep::default()
             }
-
-            return PoopResult {
-                fetch_job: None,
-                flatten_job: None,
-                flatten_path: None,
-            };
         }
-        _ => {
-            return PoopResult {
-                fetch_job: None,
-                flatten_job: None,
-                flatten_path: None,
-            };
-        }
-    };
+        _ => ExecutionStep::default(),
+    }
 }
 
 #[async_trait]
@@ -645,7 +633,7 @@ impl ExecutablePlanNode for ParallelNode {
         // Collect Fetch node results and non-fetch nodes for sequential execution
         let now = std::time::Instant::now();
         for node in &self.nodes {
-            let res = poop(node, execution_context, data);
+            let res = create_execution_step(node, execution_context, data);
 
             if let Some(fetch_job) = res.fetch_job {
                 fetch_jobs.push(fetch_job);
