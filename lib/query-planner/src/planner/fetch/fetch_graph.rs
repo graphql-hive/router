@@ -1204,10 +1204,10 @@ fn process_requires_field_edge(
         &TypeAwareSelection {
             selection_set: SelectionSet {
                 items: vec![SelectionItem::Field(FieldSelection {
-                    name: field_move.name.clone(),
-                    alias: None,
-                    selections: SelectionSet { items: vec![] },
-                    arguments: Default::default(),
+                    name: field_move.name.to_string(),
+                    alias: query_node.selection_alias().map(|a| a.to_string()),
+                    selections: SelectionSet::default(),
+                    arguments: query_node.selection_arguments().cloned(),
                     skip_if: None,
                     include_if: None,
                 })],
@@ -1258,10 +1258,21 @@ fn process_requires_field_edge(
 
     fetch_graph.connect(real_parent_fetch_step_index, step_for_requirements_index);
 
-    let mut child_response_path =
-        response_path.push(Segment::Field(field_move.name.clone(), 0, None));
-    let mut child_fetch_path =
-        MergePath::default().push(Segment::Field(field_move.name.clone(), 0, None));
+    let child_segment = query_node.selection_alias().unwrap_or(&field_move.name);
+    let segment_args_hash = query_node
+        .selection_arguments()
+        .map(|a| a.hash_u64())
+        .unwrap_or(0);
+    let mut child_response_path = response_path.push(Segment::Field(
+        child_segment.to_string(),
+        segment_args_hash,
+        None,
+    ));
+    let mut child_fetch_path = MergePath::default().push(Segment::Field(
+        child_segment.to_string(),
+        segment_args_hash,
+        None,
+    ));
 
     if field_move.is_list {
         child_response_path = child_response_path.push(Segment::List);
