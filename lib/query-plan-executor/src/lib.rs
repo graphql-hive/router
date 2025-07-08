@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 use query_planner::{
     ast::{
         operation::OperationDefinition, selection_item::SelectionItem, selection_set::SelectionSet,
@@ -11,7 +12,7 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::{collections::HashMap, future::Future, pin::Pin, vec};
+use std::collections::HashMap;
 use tracing::{instrument, trace, warn}; // For reading file in main
 
 use crate::{
@@ -543,7 +544,7 @@ fn process_root_result(
     );
 }
 
-type ExecutionStepJob<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+type ExecutionStepJob<'a, T> = BoxFuture<'a, T>;
 
 #[derive(Default)]
 struct ExecutionStep<'a> {
