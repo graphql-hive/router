@@ -107,7 +107,8 @@ impl TypeAwareSelection {
     pub fn has_typename_at_path(&self, lookup_path: &MergePath) -> bool {
         find_selection_set_by_path(
             &self.selection_set,
-            // TODO: condition
+            // We pass None for the condition, because we are checking
+            // the presence of __typename at the given path, not type __typename with a condition.
             &lookup_path.push(Segment::Field("__typename".to_string(), 0, None)),
         )
         .is_some()
@@ -390,7 +391,7 @@ pub fn find_arguments_conflicts(
         .collect()
 }
 
-fn field_condition_equal(cond: &Option<Condition>, field: &FieldSelection) -> bool {
+pub fn field_condition_equal(cond: &Option<Condition>, field: &FieldSelection) -> bool {
     match cond {
         Some(cond) => match cond {
             Condition::Include(var_name) => {

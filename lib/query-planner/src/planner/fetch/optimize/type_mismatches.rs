@@ -7,7 +7,7 @@ use crate::{
         mismatch_finder::SelectionMismatchFinder,
         safe_merge::SafeSelectionSetMerger,
         selection_item::SelectionItem,
-        type_aware_selection::find_selection_set_by_path_mut,
+        type_aware_selection::{field_condition_equal, find_selection_set_by_path_mut},
     },
     planner::{
         fetch::{error::FetchGraphError, fetch_graph::FetchGraph},
@@ -57,7 +57,7 @@ impl FetchGraph {
                 let mut merger = SafeSelectionSetMerger::default();
 
                 // TODO: cover condition
-                if let Some(Segment::Field(field_lookup, args_hash_lookup, _condition)) =
+                if let Some(Segment::Field(field_lookup, args_hash_lookup, condition)) =
                     mismatch_path.last()
                 {
                     // TODO: We can avoid this cut and slice thing, if we return "SelectionItem" instead of "SelectionSet" inside "find_selection_set_by_path_mut".
@@ -70,7 +70,7 @@ impl FetchGraph {
                         let item = selection_set
                           .items
                           .iter_mut()
-                          .find(|v| matches!(v, SelectionItem::Field(field) if field.name == *field_lookup && field.arguments_hash() == *args_hash_lookup));
+                          .find(|v| matches!(v, SelectionItem::Field(field) if field.name == *field_lookup && field.arguments_hash() == *args_hash_lookup && field_condition_equal(condition, field)));
 
                         if let Some(SelectionItem::Field(field_to_alias)) = item {
                             trace!(

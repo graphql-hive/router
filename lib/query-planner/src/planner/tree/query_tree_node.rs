@@ -83,7 +83,6 @@ impl QueryTreeNode {
             children: Vec::new(),
             selection_attributes: selection_attributes.cloned(),
             mutation_field_position: None,
-            // TODO: improve it
             condition: condition.cloned(),
         }
     }
@@ -156,8 +155,6 @@ impl QueryTreeNode {
             "Processing edge: {}",
             graph.pretty_print_edge(*edge_at_index, false)
         );
-
-        trace!("Condition: {:?}", segment_at_index.condition);
 
         // Creates the QueryTreeNode representing the state after traversing this edge
         let tail_node_index = graph.get_edge_tail(edge_at_index)?;
