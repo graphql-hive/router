@@ -83,9 +83,11 @@ impl ASTHash for &FieldSelection {
         }
 
         if let Some(var_name) = self.include_if.as_ref() {
+            "@include".hash(hasher);
             var_name.hash(hasher);
         }
         if let Some(var_name) = self.skip_if.as_ref() {
+            "@skip".hash(hasher);
             var_name.hash(hasher);
         }
     }
@@ -96,9 +98,11 @@ impl ASTHash for &InlineFragmentSelection {
         self.type_condition.hash(hasher);
         self.selections.ast_hash(hasher);
         if let Some(var_name) = self.include_if.as_ref() {
+            "@include".hash(hasher);
             var_name.hash(hasher);
         }
         if let Some(var_name) = self.skip_if.as_ref() {
+            "@skip".hash(hasher);
             var_name.hash(hasher);
         }
     }
