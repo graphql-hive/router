@@ -591,6 +591,93 @@ impl ExecutablePlanNode for ParallelNode {
                     flatten_jobs.push(job);
                     flatten_paths.push(normalized_path);
                 }
+                PlanNode::Condition(node) => {
+                    let condition_value: bool = execution_context
+                        .variable_values
+                        .as_ref()
+                        .and_then(|ref variable_values| variable_values.get(&node.condition))
+                        .map(|value| match value {
+                            Value::Bool(b) => b.clone(),
+                            _ => true, // Default to true if not a boolean
+                        })
+                        .unwrap_or(false);
+
+                    if condition_value {
+                        if let Some(if_clause) = &node.if_clause.as_deref() {
+                            match if_clause {
+                                PlanNode::Fetch(fetch_node) => {
+                                    // Execute FetchNode in parallel
+                                    let job = fetch_node.execute_for_root(execution_context);
+                                    fetch_jobs.push(job);
+                                }
+                                PlanNode::Flatten(flatten_node) => {
+                                    let normalized_path: Vec<&str> =
+                                        flatten_node.path.iter().map(String::as_str).collect();
+                                    let collected_representations =
+                                        traverse_and_collect(data, &normalized_path);
+                                    let fetch_node = match flatten_node.node.as_ref() {
+                                        PlanNode::Fetch(fetch_node) => fetch_node,
+                                        _ => {
+                                            warn!(
+                                              "FlattenNode can only execute FetchNode as child node, found: {:?}",
+                                              flatten_node.node
+                                          );
+                                            continue; // Skip if the child node is not a FetchNode
+                                        }
+                                    };
+                                    let project_result = fetch_node.project_representations(
+                                        execution_context,
+                                        &collected_representations,
+                                    );
+                                    let job = fetch_node.execute_for_projected_representations(
+                                        execution_context,
+                                        project_result.representations,
+                                        project_result.indexes,
+                                    );
+                                    flatten_jobs.push(job);
+                                    flatten_paths.push(normalized_path);
+                                }
+                                _ => {}
+                            }
+                        }
+                    } else if let Some(else_clause) = &node.else_clause.as_deref() {
+                        match else_clause {
+                            PlanNode::Fetch(fetch_node) => {
+                                // Execute FetchNode in parallel
+                                let job = fetch_node.execute_for_root(execution_context);
+                                fetch_jobs.push(job);
+                            }
+                            PlanNode::Flatten(flatten_node) => {
+                                let normalized_path: Vec<&str> =
+                                    flatten_node.path.iter().map(String::as_str).collect();
+                                let collected_representations =
+                                    traverse_and_collect(data, &normalized_path);
+                                let fetch_node = match flatten_node.node.as_ref() {
+                                    PlanNode::Fetch(fetch_node) => fetch_node,
+                                    _ => {
+                                        warn!(
+                                        "FlattenNode can only execute FetchNode as child node, found: {:?}",
+                                        flatten_node.node
+                                    );
+                                        continue; // Skip if the child node is not a FetchNode
+                                    }
+                                };
+                                let project_result = fetch_node.project_representations(
+                                    execution_context,
+                                    &collected_representations,
+                                );
+                                let job = fetch_node.execute_for_projected_representations(
+                                    execution_context,
+                                    project_result.representations,
+                                    project_result.indexes,
+                                );
+                                flatten_jobs.push(job);
+                                flatten_paths.push(normalized_path);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -1135,6 +1222,23 @@ fn project_selection_set_with_map(
                     &type_name,
                     &inline_fragment.type_condition,
                 ) {
+                    if let Some(ref skip_variable) = inline_fragment.skip_if {
+                        let variable_value = variable_values
+                            .as_ref()
+                            .and_then(|vars| vars.get(skip_variable));
+                        if variable_value == Some(&Value::Bool(true)) {
+                            continue; // Skip this selection set if the variable is not true
+                        }
+                    }
+                    if let Some(ref include_variable) = inline_fragment.include_if {
+                        let variable_value = variable_values
+                            .as_ref()
+                            .and_then(|vars| vars.get(include_variable));
+                        if variable_value != Some(&Value::Bool(true)) {
+                            continue; // Skip this selection set if the variable is not true
+                        }
+                    }
+
                     let sub_new_obj = project_selection_set_with_map(
                         obj,
                         errors,
