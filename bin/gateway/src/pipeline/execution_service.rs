@@ -65,7 +65,7 @@ impl Service<Request<Body>> for ExecutionService {
         Box::pin(async move {
             let normalized_payload = req
                 .extensions()
-                .get::<GraphQLNormalizationPayload>()
+                .get::<Arc<GraphQLNormalizationPayload>>()
                 .expect("GraphQLNormalizationPayload missing");
             let query_plan_payload = req
                 .extensions()

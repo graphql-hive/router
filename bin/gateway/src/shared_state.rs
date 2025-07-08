@@ -10,6 +10,8 @@ use query_planner::{
     state::supergraph_state::SupergraphState,
 };
 
+use crate::pipeline::normalize_service::GraphQLNormalizationPayload;
+
 pub struct GatewaySharedState {
     pub schema_metadata: SchemaMetadata,
     pub planner: Planner,
@@ -18,6 +20,8 @@ pub struct GatewaySharedState {
     pub subgraph_endpoint_map: HashMap<String, String>,
     pub plan_cache: Cache<u64, Arc<QueryPlan>>,
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
+    pub parse_cache: Cache<u64, Arc<graphql_parser::query::Document<'static, String>>>,
+    pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
 }
 
 impl GatewaySharedState {
@@ -39,6 +43,8 @@ impl GatewaySharedState {
             subgraph_endpoint_map,
             plan_cache: moka::future::Cache::new(1000),
             validate_cache: moka::future::Cache::new(1000),
+            parse_cache: moka::future::Cache::new(1000),
+            normalize_cache: moka::future::Cache::new(1000),
         })
     }
 }
