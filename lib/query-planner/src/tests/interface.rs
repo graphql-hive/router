@@ -677,7 +677,8 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
     );
     let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
 
-    // TODO: this should be batched (turned into a sequence of two fetch steps)
+    // TODO: there are duplicated calls in the plan,
+    //       but it's because of the #206
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
@@ -857,7 +858,8 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
     );
     let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
 
-    // TODO: this should be batched (turned into a sequence of two fetch steps)
+    // TODO: there are duplicated calls in the plan,
+    //       but it's because of the #206
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
