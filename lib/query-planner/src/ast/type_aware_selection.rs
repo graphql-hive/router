@@ -8,6 +8,12 @@ use crate::ast::{
 
 use super::{merge_path::MergePath, selection_item::SelectionItem, selection_set::SelectionSet};
 
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum TypeAwareSelectionError {
+    #[error("Failed to locate path '{0}' in selection set '{1}'")]
+    PathNotFound(String, String),
+}
+
 #[derive(Debug, Clone)]
 pub struct TypeAwareSelection {
     pub type_name: String,
@@ -70,11 +76,23 @@ impl TypeAwareSelection {
         merge_selection_set(&mut self.selection_set, &to_add.selection_set, false);
     }
 
-    pub fn add_at_path(&mut self, to_add: &Self, add_at_fetch_path: MergePath, as_first: bool) {
+    pub fn add_at_path(
+        &mut self,
+        to_add: &Self,
+        add_at_fetch_path: MergePath,
+        as_first: bool,
+    ) -> Result<(), TypeAwareSelectionError> {
         if let Some(source) =
             find_selection_set_by_path_mut(&mut self.selection_set, &add_at_fetch_path)
         {
             merge_selection_set(source, &to_add.selection_set, as_first);
+
+            Ok(())
+        } else {
+            Err(TypeAwareSelectionError::PathNotFound(
+                add_at_fetch_path.to_string(),
+                self.selection_set.to_string(),
+            ))
         }
     }
 
