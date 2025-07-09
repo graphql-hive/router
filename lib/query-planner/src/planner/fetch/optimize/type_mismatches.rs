@@ -56,7 +56,6 @@ impl FetchGraph {
             for mismatch_path in mismatches_paths {
                 let mut merger = SafeSelectionSetMerger::default();
 
-                // TODO: cover condition
                 if let Some(Segment::Field(field_lookup, args_hash_lookup, condition)) =
                     mismatch_path.last()
                 {
