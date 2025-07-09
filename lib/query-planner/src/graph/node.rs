@@ -31,6 +31,7 @@ pub enum SubgraphTypeSpecialization {
 pub struct SubgraphType {
     pub name: String,
     pub subgraph: SubgraphName,
+    pub is_interface_object: bool,
     specialization: Option<SubgraphTypeSpecialization>,
 }
 
@@ -80,10 +81,11 @@ impl Node {
         }
     }
 
-    pub fn new_node(name: &str, subgraph: SubgraphName) -> Node {
+    pub fn new_node(name: &str, subgraph: SubgraphName, is_interface_object: bool) -> Node {
         Node::SubgraphType(SubgraphType {
             name: name.to_string(),
             subgraph,
+            is_interface_object,
             specialization: None,
         })
     }
@@ -91,11 +93,13 @@ impl Node {
     pub fn new_specialized_node(
         name: &str,
         subgraph: SubgraphName,
+        is_interface_object: bool,
         specialization: SubgraphTypeSpecialization,
     ) -> Node {
         Node::SubgraphType(SubgraphType {
             name: name.to_string(),
             subgraph,
+            is_interface_object,
             specialization: Some(specialization),
         })
     }

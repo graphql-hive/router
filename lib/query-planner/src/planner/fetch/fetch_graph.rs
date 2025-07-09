@@ -694,9 +694,10 @@ fn process_entity_move_edge(
         // We use `output_type_name` as there's no connection from `Interface` to `Object`,
         // it's always Object -> Interface.
         trace!(
-            "adding input rewrite '... on {} {{ __typename }}' to '{}'",
+            "adding input rewrite '... on {} {{ __typename }}' to '{}' of [{}]",
             output_type_name,
-            output_type_name
+            output_type_name,
+            fetch_step_index.index()
         );
         fetch_step.add_input_rewrite(FetchRewrite::ValueSetter(ValueSetter {
             path: vec![
@@ -826,9 +827,10 @@ fn process_interface_object_type_move_edge(
     step_for_children.input.add(key_to_reenter_subgraph);
 
     trace!(
-        "adding input rewrite '... on {} {{ __typename }}' to '{}'",
+        "adding input rewrite '... on {} {{ __typename }}' to '{}' of [{}]",
         interface_type_name,
-        interface_type_name
+        interface_type_name,
+        step_for_children_index.index()
     );
     step_for_children.add_input_rewrite(FetchRewrite::ValueSetter(ValueSetter {
         path: vec![
@@ -1152,8 +1154,8 @@ fn process_requires_field_edge(
     };
     let head_node_index = graph.get_edge_head(&edge_index)?;
     let head_node = graph.node(head_node_index)?;
-    let (head_type_name, head_subgraph_name) = match head_node {
-        Node::SubgraphType(t) => (&t.name, &t.subgraph),
+    let (head_type_name, head_subgraph_name, is_interface_object) = match head_node {
+        Node::SubgraphType(t) => (&t.name, &t.subgraph, &t.is_interface_object),
         _ => return Err(FetchGraphError::ExpectedSubgraphType),
     };
 
@@ -1218,6 +1220,22 @@ fn process_requires_field_edge(
         false,
     );
 
+    if *is_interface_object {
+        trace!(
+            "adding input rewrite '... on {} {{ __typename }}' to '{}' of [{}]",
+            head_type_name,
+            head_type_name,
+            step_for_children_index.index(),
+        );
+        step_for_children.add_input_rewrite(FetchRewrite::ValueSetter(ValueSetter {
+            path: vec![
+                FetchNodePathSegment::TypenameEquals(head_type_name.to_string()),
+                FetchNodePathSegment::Key("__typename".to_string()),
+            ],
+            set_value_to: head_type_name.clone().into(),
+        }));
+    }
+
     trace!(
         "Adding {} to fetch([{}]).input (requires)",
         requires,
@@ -1250,9 +1268,25 @@ fn process_requires_field_edge(
     step_for_requirements.input.add(key_to_reenter_subgraph);
 
     let real_parent_fetch_step = fetch_graph.get_step_data_mut(real_parent_fetch_step_index)?;
+
+    let key_to_reenter_at = if real_parent_fetch_step.response_path.len() > response_path.len() {
+        return Err(FetchGraphError::Internal(
+            "Response path is longer than expected".to_string(),
+        ));
+    } else {
+        &response_path.slice_from(real_parent_fetch_step.response_path.len())
+    };
+
+    trace!(
+        "Adding {} to fetch([{}]).output at path {}",
+        key_to_reenter_subgraph,
+        real_parent_fetch_step_index.index(),
+        key_to_reenter_at
+    );
+
     real_parent_fetch_step.output.add_at_path(
         key_to_reenter_subgraph,
-        response_path.clone(),
+        key_to_reenter_at.clone(),
         false,
     );
 
