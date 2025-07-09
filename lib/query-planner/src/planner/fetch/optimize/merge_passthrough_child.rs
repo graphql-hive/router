@@ -125,7 +125,7 @@ fn perform_passthrough_child_merge(
         &other.output,
         other.response_path.slice_from(me.response_path.len()),
         false,
-    );
+    )?;
 
     let mut children_indexes: Vec<NodeIndex> = vec![];
     let mut parents_indexes: Vec<NodeIndex> = vec![];

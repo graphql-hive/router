@@ -605,7 +605,7 @@ fn add_typename_field_to_output(
     fetch_step: &mut FetchStepData,
     type_name: &str,
     add_at: &MergePath,
-) {
+) -> Result<(), FetchGraphError> {
     trace!("adding __typename field to output for type '{}'", type_name);
 
     fetch_step.output.add_at_path(
@@ -617,7 +617,9 @@ fn add_typename_field_to_output(
         },
         add_at.clone(),
         true,
-    );
+    )?;
+
+    Ok(())
 }
 
 // TODO: simplfy args
@@ -709,7 +711,7 @@ fn process_entity_move_edge(
     }
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
-    add_typename_field_to_output(parent_fetch_step, output_type_name, fetch_path);
+    add_typename_field_to_output(parent_fetch_step, output_type_name, fetch_path)?;
 
     // Make the fetch step a child of the parent fetch step
     trace!(
@@ -841,7 +843,7 @@ fn process_interface_object_type_move_edge(
     }));
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
-    add_typename_field_to_output(parent_fetch_step, interface_type_name, fetch_path);
+    add_typename_field_to_output(parent_fetch_step, interface_type_name, fetch_path)?;
 
     // In all cases it's `__typename` that needs to be resolved by another subgraph.
     trace!("Creating a fetch step for requirement of @interfaceObject");
@@ -999,7 +1001,7 @@ fn process_abstract_edge(
         },
         fetch_path.clone(),
         false,
-    );
+    )?;
 
     let child_response_path = response_path.push(Segment::Cast(target_type_name.clone(), None));
     let child_fetch_path = fetch_path.push(Segment::Cast(target_type_name.clone(), None));
@@ -1075,7 +1077,7 @@ fn process_plain_field_edge(
         },
         fetch_path.clone(),
         false,
-    );
+    )?;
 
     let child_segment = query_node.selection_alias().unwrap_or(&field_move.name);
     let segment_args_hash = query_node
@@ -1218,7 +1220,7 @@ fn process_requires_field_edge(
         },
         MergePath::default(),
         false,
-    );
+    )?;
 
     if *is_interface_object {
         trace!(
@@ -1288,7 +1290,7 @@ fn process_requires_field_edge(
         key_to_reenter_subgraph,
         key_to_reenter_at.clone(),
         false,
-    );
+    )?;
 
     fetch_graph.connect(real_parent_fetch_step_index, step_for_requirements_index);
 
