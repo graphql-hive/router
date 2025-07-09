@@ -51,11 +51,9 @@ impl SubgraphExecutorMap {
         let executor_map = subgraph_endpoint_map
             .into_iter()
             .map(|(subgraph_name, endpoint)| {
-                let executor = crate::executors::http::HTTPSubgraphExecutor::new(
-                    endpoint,
-                    http_client.clone(),
-                )
-                .to_boxed_arc();
+                let executor =
+                    crate::executors::http::HTTPSubgraphExecutor::new(&endpoint, &http_client)
+                        .to_boxed_arc();
                 (subgraph_name, executor)
             })
             .collect::<HashMap<_, _>>();

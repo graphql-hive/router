@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use reqwest::RequestBuilder;
 use tracing::{error, instrument, trace};
 
 use crate::{
@@ -8,17 +9,17 @@ use crate::{
 
 #[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
-    pub endpoint: String,
-    pub http_client: reqwest::Client,
+    pub request_builder: RequestBuilder,
 }
 
 const FIRST_VARIABLE_STR: &str = ",\"variables\":{";
 
 impl HTTPSubgraphExecutor {
-    pub fn new(endpoint: String, http_client: reqwest::Client) -> Self {
+    pub fn new(endpoint: &str, http_client: &reqwest::Client) -> Self {
         HTTPSubgraphExecutor {
-            endpoint,
-            http_client,
+            request_builder: http_client
+                .post(endpoint)
+                .header("Content-Type", "application/json; charset=utf-8"),
         }
     }
 
@@ -26,7 +27,7 @@ impl HTTPSubgraphExecutor {
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
     ) -> Result<ExecutionResult, String> {
-        trace!("Executing HTTP request to subgraph at {}", self.endpoint);
+        trace!("Executing HTTP request to subgraph");
 
         // We may want to remove it, but let's see.
         let mut body = String::with_capacity(4096);
@@ -66,32 +67,27 @@ impl HTTPSubgraphExecutor {
         }
         body.push('}');
 
-        self.http_client
-            .post(&self.endpoint)
+        let request_builder = match self.request_builder.try_clone() {
+            Some(request_builder) => request_builder,
+            None => {
+                return Err("Failed to initialize the HTTP Client".to_string());
+            }
+        };
+
+        request_builder
             .body(body)
-            .header("Content-Type", "application/json; charset=utf-8")
             .send()
             .await
-            .map_err(|e| {
-                format!(
-                    "Failed to send request to subgraph {}: {}",
-                    self.endpoint, e
-                )
-            })?
+            .map_err(|e| format!("Failed to send request to subgraph: {}", e))?
             .json::<ExecutionResult>()
             .await
-            .map_err(|e| {
-                format!(
-                    "Failed to parse response from subgraph {}: {}",
-                    self.endpoint, e
-                )
-            })
+            .map_err(|e| format!("Failed to parse response from subgraph {}", e))
     }
 }
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
-    #[instrument(level = "trace", skip(self), name = "http_subgraph_execute", fields(endpoint = %self.endpoint))]
+    #[instrument(level = "trace", skip(self), name = "http_subgraph_execute")]
     async fn execute<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
