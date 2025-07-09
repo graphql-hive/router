@@ -474,7 +474,7 @@ impl ExecutablePlanNode for ParallelNode {
                 let node = if let PlanNode::Condition(condition_node) = node {
                     // If the node is a ConditionNode, we need to check the condition
                     if let Some(inner_node) =
-                        condition_node.get_inner_node(execution_context.variable_values)
+                        condition_node.inner_node_by_variables(execution_context.variable_values)
                     {
                         inner_node
                     } else {
@@ -705,17 +705,19 @@ impl ExecutablePlanNode for FlattenNode {
     }
 }
 
-trait GetInnerNodeOfConditionNode {
-    fn get_inner_node(&self, variable_values: &Option<HashMap<String, Value>>)
-        -> Option<&PlanNode>;
+trait GetInnerNodeByVariables {
+    fn inner_node_by_variables(
+        &self,
+        variables: &Option<HashMap<String, Value>>,
+    ) -> Option<&PlanNode>;
 }
 
-impl GetInnerNodeOfConditionNode for ConditionNode {
-    fn get_inner_node(
+impl GetInnerNodeByVariables for ConditionNode {
+    fn inner_node_by_variables(
         &self,
-        variable_values: &Option<HashMap<String, Value>>,
+        variables: &Option<HashMap<String, Value>>,
     ) -> Option<&PlanNode> {
-        let condition_value = variable_values
+        let condition_value = variables
             .as_ref()
             .and_then(|vars| vars.get(&self.condition))
             .is_some_and(|val| match val {
@@ -724,12 +726,15 @@ impl GetInnerNodeOfConditionNode for ConditionNode {
             });
         if condition_value {
             if let Some(if_clause) = &self.if_clause {
-                return Some(if_clause);
+                Some(if_clause)
+            } else {
+                None
             }
         } else if let Some(else_clause) = &self.else_clause {
-            return Some(else_clause);
+            Some(else_clause)
+        } else {
+            None
         }
-        None
     }
 }
 
@@ -741,7 +746,7 @@ impl ExecutablePlanNode for ConditionNode {
         execution_context: &mut QueryPlanExecutionContext<'_>,
         data: &mut Value,
     ) {
-        let inner_node = self.get_inner_node(execution_context.variable_values);
+        let inner_node = self.inner_node_by_variables(execution_context.variable_values);
         if let Some(node) = inner_node {
             // Execute the inner node if it exists
             node.execute(execution_context, data).await;
