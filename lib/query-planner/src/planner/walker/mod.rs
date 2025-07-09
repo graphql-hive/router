@@ -141,9 +141,11 @@ fn process_inline_fragment<'a>(
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
     trace!(
-        "Processing inline fragment '{}' on type '{}' through {} possible paths",
+        "Processing inline fragment '{}' on type '{}' (skip: {:?}, include: {:?}) through {} possible paths",
         fragment.selections,
         fragment.type_condition,
+        fragment.include_if,
+        fragment.skip_if,
         paths.len()
     );
 
@@ -194,7 +196,7 @@ fn process_inline_fragment<'a>(
         let mut direct_paths = find_direct_paths(
             graph,
             path,
-            &NavigationTarget::ConcreteType(&fragment.type_condition),
+            &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
         )?;
 
         trace!("Direct paths found: {}", direct_paths.len());
@@ -206,7 +208,7 @@ fn process_inline_fragment<'a>(
         let mut indirect_paths = find_indirect_paths(
             graph,
             path,
-            &NavigationTarget::ConcreteType(&fragment.type_condition),
+            &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
             &ExcludedFromLookup::new(),
         )?;
 

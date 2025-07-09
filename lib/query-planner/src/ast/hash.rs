@@ -2,11 +2,11 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::ast::arguments::ArgumentsMap;
-use crate::ast::operation::OperationDefinition;
+use crate::ast::operation::{OperationDefinition, VariableDefinition};
 use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
 use crate::ast::value::Value;
-use crate::state::supergraph_state::{self, OperationKind};
+use crate::state::supergraph_state::{self, OperationKind, TypeNode};
 
 /// Order-dependent hashing
 pub trait ASTHash {
@@ -40,10 +40,7 @@ impl ASTHash for OperationDefinition {
             .ast_hash(hasher);
 
         self.selection_set.ast_hash(hasher);
-        // TODO:
-        // self.variable_definitions
-        //     .or(Default::default())
-        //     .shape_hash();
+        self.variable_definitions.ast_hash(hasher);
     }
 }
 
@@ -80,9 +77,20 @@ impl ASTHash for SelectionItem {
 impl ASTHash for &FieldSelection {
     fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
         self.name.hash(hasher);
+        self.alias.hash(hasher);
         self.selections.ast_hash(hasher);
+
         if let Some(args) = &self.arguments {
             args.ast_hash(hasher);
+        }
+
+        if let Some(var_name) = self.include_if.as_ref() {
+            "@include".hash(hasher);
+            var_name.hash(hasher);
+        }
+        if let Some(var_name) = self.skip_if.as_ref() {
+            "@skip".hash(hasher);
+            var_name.hash(hasher);
         }
     }
 }
@@ -91,6 +99,14 @@ impl ASTHash for &InlineFragmentSelection {
     fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
         self.type_condition.hash(hasher);
         self.selections.ast_hash(hasher);
+        if let Some(var_name) = self.include_if.as_ref() {
+            "@include".hash(hasher);
+            var_name.hash(hasher);
+        }
+        if let Some(var_name) = self.skip_if.as_ref() {
+            "@skip".hash(hasher);
+            var_name.hash(hasher);
+        }
     }
 }
 
@@ -106,6 +122,44 @@ impl ASTHash for ArgumentsMap {
             key.hash(hasher);
             // We can unwrap here because we are iterating over existing keys
             self.get_argument(key).unwrap().ast_hash(hasher);
+        }
+    }
+}
+
+impl ASTHash for Vec<VariableDefinition> {
+    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
+        // Order does not matter for hashing
+        // The order of variables does not matter.
+        // We do a similar thing as for ArgumentsMap,
+        // we sort the variables by their names.
+        let mut variables: Vec<_> = self.iter().collect();
+        variables.sort_by_key(|f| &f.name);
+        for var in variables {
+            var.ast_hash(hasher);
+        }
+    }
+}
+
+impl ASTHash for VariableDefinition {
+    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
+        self.name.hash(hasher);
+        self.variable_type.ast_hash(hasher);
+        self.default_value.ast_hash(hasher);
+    }
+}
+
+impl ASTHash for TypeNode {
+    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
+        match self {
+            TypeNode::Named(name) => name.hash(hasher),
+            TypeNode::List(inner) => {
+                "list".hash(hasher);
+                inner.ast_hash(hasher);
+            }
+            TypeNode::NonNull(inner) => {
+                "non_null".hash(hasher);
+                inner.ast_hash(hasher);
+            }
         }
     }
 }

@@ -6,7 +6,13 @@ use petgraph::{
 };
 use tracing::{instrument, trace};
 
-use crate::planner::fetch::{error::FetchGraphError, fetch_graph::FetchGraph};
+use crate::{
+    ast::{
+        merge_path::Condition, selection_item::SelectionItem,
+        selection_set::InlineFragmentSelection,
+    },
+    planner::fetch::{error::FetchGraphError, fetch_graph::FetchGraph},
+};
 
 // Return true in case an alias was applied during the merge process.
 #[instrument(level = "trace", skip_all)]
@@ -22,6 +28,49 @@ pub(crate) fn perform_fetch_step_merge(
         self_index.index(),
         other_index.index(),
     );
+
+    if let (true, Some(condition)) = (!me.is_entity_call(), other.condition.clone()) {
+        // The "other" fetch step is an entity call,
+        // that has both input and output, obviously.
+        // We can safely merge them into the output of the "me" fetch step,
+        // as it's a regular query (not an entity call).
+        //
+        // Input             -> Output
+        // { id __typename } -> { price }
+        //
+        // becomes
+        // { products { ... on Product @skip(if: $bool) { __typename id price } } }
+        //
+        // We can't do it when both are entity calls fetch steps.
+        other.output.add(&other.input);
+
+        let old_selection_set = other.output.selection_set.clone();
+        match condition {
+            Condition::Include(var_name) => {
+                other.output.selection_set.items =
+                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                        type_condition: other.output.type_name.clone(),
+                        selections: old_selection_set,
+                        skip_if: None,
+                        include_if: Some(var_name),
+                    })];
+            }
+            Condition::Skip(var_name) => {
+                other.output.selection_set.items =
+                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                        type_condition: other.output.type_name.clone(),
+                        selections: old_selection_set,
+                        skip_if: Some(var_name),
+                        include_if: None,
+                    })];
+            }
+        }
+    } else if me.is_entity_call() && other.condition.is_some() {
+        // We don't want to pass a condition
+        // to a regular (non-entity call) fetch step,
+        // because the condition is applied on an inline fragment.
+        me.condition = other.condition.take();
+    }
 
     let maybe_aliases = me.output.add_at_path_and_solve_conflicts(
         &other.output,
@@ -43,6 +92,9 @@ pub(crate) fn perform_fetch_step_merge(
         }
     }
 
+    // It's safe to not check if a condition was turned into an inline fragment,
+    // because if a condition is present and "me" is a non-entity fetch step,
+    // then the type_name values of the inputs are different.
     if me.input.type_name == other.input.type_name {
         if me.response_path != other.response_path {
             return Err(FetchGraphError::MismatchedResponsePath);

@@ -71,15 +71,49 @@ impl Serialize for SubgraphFetchOperation {
 impl PrettyDisplay for SubgraphFetchOperation {
     fn pretty_fmt(&self, f: &mut std::fmt::Formatter<'_>, depth: usize) -> std::fmt::Result {
         let indent = get_indent(depth);
+        // TODO: improve
+        let has_variables = self
+            .document
+            .operation
+            .variable_definitions
+            .as_ref()
+            .is_some_and(|defs| {
+                !defs.is_empty() && defs.iter().all(|v| v.variable_type.inner_type() != "_Any")
+            });
         let kind: &str = match &self.document.operation.operation_kind {
             Some(kind) => match kind {
-                OperationKind::Query => "",
+                OperationKind::Query => match has_variables {
+                    true => "query ",
+                    false => "",
+                },
                 OperationKind::Mutation => "mutation ",
                 OperationKind::Subscription => "subscription ",
             },
             None => "",
         };
-        writeln!(f, "{indent}  {kind}{{")?;
+        let variables =
+            if let Some(variables) = self.document.operation.variable_definitions.as_ref() {
+                let representationless = variables
+                    .iter()
+                    .filter(|v| v.variable_type.inner_type() != "_Any")
+                    .collect::<Vec<_>>();
+
+                if representationless.is_empty() {
+                    "".to_string()
+                } else {
+                    format!(
+                        "({}) ",
+                        representationless
+                            .iter()
+                            .map(|v| v.to_string())
+                            .collect::<Vec<String>>()
+                            .join(",")
+                    )
+                }
+            } else {
+                "".to_string()
+            };
+        writeln!(f, "{indent}  {kind}{variables}{{")?;
         self.get_inner_selection_set().pretty_fmt(f, depth + 2)?;
         writeln!(f, "{indent}  }}")?;
 
@@ -106,10 +140,12 @@ impl Display for OperationDefinition {
         if let Some(variable_definitions) = &self.variable_definitions {
             if !variable_definitions.is_empty() {
                 write!(f, "(")?;
+                let len = variable_definitions.len();
                 for (i, variable_definition) in variable_definitions.iter().enumerate() {
+                    let is_last = i == len - 1;
                     write!(f, "{}", variable_definition)?;
 
-                    if i > 0 {
+                    if !is_last {
                         write!(f, ", ")?;
                     }
                 }

@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        merge_path::{MergePath, Segment},
+        merge_path::{Condition, MergePath, Segment},
         minification::minify_operation,
         operation::{OperationDefinition, SubgraphFetchOperation, VariableDefinition},
         selection_item::SelectionItem,
@@ -108,10 +108,10 @@ impl From<&MergePath> for Vec<FetchNodePathSegment> {
             .inner
             .iter()
             .filter_map(|path_segment| match path_segment {
-                Segment::Cast(type_name) => {
+                Segment::Cast(type_name, _) => {
                     Some(FetchNodePathSegment::TypenameEquals(type_name.clone()))
                 }
-                Segment::Field(field_name, _args_hash) => {
+                Segment::Field(field_name, _args_hash, _) => {
                     Some(FetchNodePathSegment::Key(field_name.clone()))
                 }
                 Segment::List => None,
@@ -183,6 +183,8 @@ fn create_input_selection_set(input_selections: &TypeAwareSelection) -> Selectio
         items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
             selections: input_selections.selection_set.strip_for_plan_input(),
             type_condition: input_selections.type_name.clone(),
+            skip_if: None,
+            include_if: None,
         })],
     }
 }
@@ -215,6 +217,8 @@ fn create_output_operation(
                     items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
                         selections: type_aware_selection.selection_set.clone(),
                         type_condition: type_aware_selection.type_name.clone(),
+                        skip_if: None,
+                        include_if: None,
                     })],
                 },
                 alias: None,
@@ -258,8 +262,18 @@ impl From<&FetchStepData> for OperationKind {
 
 impl FetchNode {
     pub fn from_fetch_step(step: &FetchStepData, supergraph: &SupergraphState) -> Self {
-        match !step.is_entity_call() {
-            true => {
+        match step.is_entity_call() {
+            true => FetchNode {
+                service_name: step.service_name.0.clone(),
+                variable_usages: step.variable_usages.clone(),
+                operation_kind: Some(OperationKind::Query),
+                operation_name: None,
+                operation: create_output_operation(step, supergraph),
+                requires: Some(create_input_selection_set(&step.input)),
+                input_rewrites: step.input_rewrites.clone(),
+                output_rewrites: step.output_rewrites.clone(),
+            },
+            false => {
                 let operation_def = OperationDefinition {
                     name: None,
                     operation_kind: Some(step.into()),
@@ -284,23 +298,13 @@ impl FetchNode {
                     output_rewrites: step.output_rewrites.clone(),
                 }
             }
-            false => FetchNode {
-                service_name: step.service_name.0.clone(),
-                variable_usages: step.variable_usages.clone(),
-                operation_kind: Some(OperationKind::Query),
-                operation_name: None,
-                operation: create_output_operation(step, supergraph),
-                requires: Some(create_input_selection_set(&step.input)),
-                input_rewrites: step.input_rewrites.clone(),
-                output_rewrites: step.output_rewrites.clone(),
-            },
         }
     }
 }
 
 impl PlanNode {
     pub fn from_fetch_step(step: &FetchStepData, supergraph: &SupergraphState) -> Self {
-        if step.response_path.is_empty() {
+        let node = if step.response_path.is_empty() {
             PlanNode::Fetch(FetchNode::from_fetch_step(step, supergraph))
         } else {
             PlanNode::Flatten(FlattenNode {
@@ -310,6 +314,22 @@ impl PlanNode {
                     step, supergraph,
                 ))),
             })
+        };
+
+        match step.condition.as_ref() {
+            Some(condition) => match condition {
+                Condition::Include(var_name) => PlanNode::Condition(ConditionNode {
+                    condition: var_name.clone(),
+                    if_clause: Some(Box::new(node)),
+                    else_clause: None,
+                }),
+                Condition::Skip(var_name) => PlanNode::Condition(ConditionNode {
+                    condition: var_name.clone(),
+                    if_clause: None,
+                    else_clause: Some(Box::new(node)),
+                }),
+            },
+            None => node,
         }
     }
 }
@@ -403,6 +423,30 @@ impl PrettyDisplay for ParallelNode {
     }
 }
 
+impl PrettyDisplay for ConditionNode {
+    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+        let indent = get_indent(depth);
+
+        match (self.if_clause.as_ref(), self.else_clause.as_ref()) {
+            (Some(if_clause), None) => {
+                writeln!(f, "{indent}Include(if: ${}) {{", self.condition)?;
+                if_clause.pretty_fmt(f, depth + 1)?;
+                writeln!(f, "{indent}}},")?;
+            }
+            (None, Some(else_clause)) => {
+                writeln!(f, "{indent}Skip(if: ${}) {{", self.condition)?;
+                else_clause.pretty_fmt(f, depth + 1)?;
+                writeln!(f, "{indent}}},")?;
+            }
+            (Some(_if_clause), Some(_else_clause)) => {
+                todo!("Implement pretty_fmt for ConditionNode with both if and else clauses");
+            }
+            _ => panic!("Invalid condition node"),
+        }
+        Ok(())
+    }
+}
+
 impl PrettyDisplay for PlanNode {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         match self {
@@ -410,6 +454,7 @@ impl PrettyDisplay for PlanNode {
             PlanNode::Flatten(node) => node.pretty_fmt(f, depth),
             PlanNode::Sequence(node) => node.pretty_fmt(f, depth),
             PlanNode::Parallel(node) => node.pretty_fmt(f, depth),
+            PlanNode::Condition(node) => node.pretty_fmt(f, depth),
             _ => Ok(()),
         }
     }

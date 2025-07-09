@@ -98,8 +98,11 @@ fn handle_selection_set<'field, 'schema>(
                         continue;
                     }
 
-                    let next_path =
-                        path.push(Segment::Field(field.name.clone(), field.arguments_hash()));
+                    let next_path = path.push(Segment::Field(
+                        field.name.clone(),
+                        field.arguments_hash(),
+                        field.into(),
+                    ));
 
                     let next_parent_type_name = handle_field(
                         supergraph_state,
@@ -131,8 +134,10 @@ fn handle_selection_set<'field, 'schema>(
                         .definitions
                         .get(&fragment.type_condition)
                         .unwrap();
-                    let fragment_enter_path =
-                        path.push(Segment::Cast(fragment.type_condition.clone()));
+                    let fragment_enter_path = path.push(Segment::Cast(
+                        fragment.type_condition.clone(),
+                        fragment.into(),
+                    ));
 
                     traversal_queue.push_back((
                         fragment_type,

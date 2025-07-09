@@ -399,7 +399,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
                 id
               }
             } =>
-            {
+            ($limit:Int=1) {
               ... on Post {
                 _internal_qp_alias_0: comments(limit: 3) {
                   __typename
@@ -476,7 +476,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
                 "limit"
               ],
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){__typename id} comments(limit: $limit){id}}}}",
+              "operation": "query($representations:[_Any!]!, $limit:Int=1){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){__typename id} comments(limit: $limit){id}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -627,7 +627,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
                 id
               }
             } =>
-            {
+            ($limit:Int=1) {
               ... on Post {
                 _internal_qp_alias_0: comments(limit: 3) {
                   __typename
@@ -704,7 +704,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
                 "limit"
               ],
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){__typename id} comments(limit: $limit){id}}}}",
+              "operation": "query($representations:[_Any!]!, $limit:Int=1){_entities(representations: $representations){...on Post{_internal_qp_alias_0: comments(limit: 3){__typename id} comments(limit: $limit){id}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1680,7 +1680,7 @@ fn arguments_and_variables() -> Result<(), Box<dyn Error>> {
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Fetch(service: "spotify") {
-        {
+        query ($id:ID!,$limit:Int) {
           album(id: $id) {
             albumType
             genres
@@ -1708,7 +1708,7 @@ fn arguments_and_variables() -> Result<(), Box<dyn Error>> {
           "limit"
         ],
         "operationKind": "query",
-        "operation": "query{album(id: $id){albumType genres name tracks(limit: $limit, offset: 10){edges{node{name}}}}}"
+        "operation": "query($id:ID!, $limit:Int){album(id: $id){albumType genres name tracks(limit: $limit, offset: 10){edges{node{name}}}}}"
       }
     }
     "#);
@@ -1907,7 +1907,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
     QueryPlan {
       Sequence {
         Fetch(service: "d") {
-          {
+          query ($secondProductId:ID!) {
             firstProduct: productFromD(id: "1") {
     ...a        }
             secondProduct: productFromD(id: $secondProductId) {
@@ -2040,7 +2040,7 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               "secondProductId"
             ],
             "operationKind": "query",
-            "operation": "query{firstProduct: productFromD(id: \"1\"){...a} secondProduct: productFromD(id: $secondProductId){...a}}\n\nfragment a on Product {__typename id name}\n"
+            "operation": "query($secondProductId:ID!){firstProduct: productFromD(id: \"1\"){...a} secondProduct: productFromD(id: $secondProductId){...a}}\n\nfragment a on Product {__typename id name}\n"
           },
           {
             "kind": "Parallel",

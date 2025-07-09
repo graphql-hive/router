@@ -347,6 +347,8 @@ fn project_requires(c: &mut Criterion) {
     let requires_selections: Vec<SelectionItem> =
         [SelectionItem::InlineFragment(InlineFragmentSelection {
             type_condition: "Product".to_string(),
+            skip_if: None,
+            include_if: None,
             selections: query_planner::ast::selection_set::SelectionSet {
                 items: vec![
                     SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {

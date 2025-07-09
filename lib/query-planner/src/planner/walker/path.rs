@@ -6,9 +6,10 @@ use petgraph::{
     visit::EdgeRef,
 };
 
+use crate::ast::merge_path::Condition;
+use crate::planner::walker::pathfinder::NavigationTarget;
 use crate::{
     ast::arguments::ArgumentsMap,
-    ast::selection_set::FieldSelection,
     graph::{edge::EdgeReference, Graph},
     planner::tree::query_tree_node::QueryTreeNode,
 };
@@ -36,6 +37,7 @@ pub struct PathSegment {
     cumulative_cost: u64,
     pub requirement_tree: Option<Arc<QueryTreeNode>>,
     pub selection_attributes: Option<SelectionAttributes>,
+    pub condition: Option<Condition>,
 }
 
 impl PathSegment {
@@ -47,6 +49,7 @@ impl PathSegment {
             cumulative_cost: edge.weight().cost(),
             requirement_tree: None,
             selection_attributes: None,
+            condition: None,
         }
     }
 }
@@ -110,7 +113,7 @@ impl OperationPath {
         &self,
         edge_ref: &EdgeReference<'_>,
         requirement: Option<Arc<QueryTreeNode>>,
-        field: Option<&FieldSelection>,
+        target: &NavigationTarget,
     ) -> OperationPath {
         let prev_cost = self.cost;
         let edge_cost = edge_ref.weight().cost();
@@ -124,10 +127,17 @@ impl OperationPath {
             edge_index: edge_ref.id(),
             cumulative_cost: new_cost,
             requirement_tree: requirement,
-            selection_attributes: field.map(|f| SelectionAttributes {
-                alias: f.alias.clone(),
-                arguments: f.arguments.clone(),
-            }),
+            selection_attributes: match target {
+                NavigationTarget::Field(f) => Some(SelectionAttributes {
+                    alias: f.alias.clone(),
+                    arguments: f.arguments.clone(),
+                }),
+                NavigationTarget::ConcreteType(_, _) => None,
+            },
+            condition: match target {
+                NavigationTarget::Field(f) => (*f).into(),
+                NavigationTarget::ConcreteType(_, condition) => condition.clone(),
+            },
         };
         let new_segment = Arc::new(new_segment_data);
 
@@ -257,6 +267,7 @@ impl OperationPath {
                 requirement_tree: original_segment.requirement_tree.clone(),
                 tail_node: original_segment.tail_node,
                 selection_attributes: original_segment.selection_attributes.clone(),
+                condition: original_segment.condition.clone(),
             };
 
             previous_new_segment = Some(Arc::new(new_segment_data));

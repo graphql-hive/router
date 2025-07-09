@@ -62,7 +62,9 @@ impl FetchGraph {
                         // Build a path without the alias path, to make sure we don't patch the wrong field
                         let relative_path = decendent.response_path.slice_from(alias_path.len());
 
-                        if let Some(Segment::Field(field_name, args_hash)) = maybe_patched_field {
+                        if let Some(Segment::Field(field_name, args_hash, condition)) =
+                            maybe_patched_field
+                        {
                             trace!(
                               "field '{}' was aliased, relative selection path: '{}', checking if need to patch selection '{}'",
                               field_name,
@@ -103,7 +105,7 @@ impl FetchGraph {
                               .iter()
                               .enumerate()
                               .find_map(|(idx, part)| {
-                                  if matches!(part, Segment::Field(f, a) if f == field_name && a == args_hash) {
+                                  if matches!(part, Segment::Field(f, a, c) if f == field_name && a == args_hash && c == condition) {
                                       Some(idx)
                                   } else {
                                       None
@@ -121,7 +123,7 @@ impl FetchGraph {
 
                                 let mut new_path = (*decendent.response_path.inner).to_vec();
 
-                                if let Some(Segment::Field(name, _)) =
+                                if let Some(Segment::Field(name, _, _)) =
                                     new_path.get_mut(segment_idx_to_patch)
                                 {
                                     *name = new_name.clone();

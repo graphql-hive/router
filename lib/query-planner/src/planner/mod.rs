@@ -103,7 +103,7 @@ impl Planner {
     }
 }
 
-fn add_variables_to_fetch_steps(
+pub fn add_variables_to_fetch_steps(
     graph: &mut FetchGraph,
     variables: &Option<Vec<VariableDefinition>>,
 ) -> Result<(), PlannerError> {

@@ -1,5 +1,6 @@
 mod drop_duplicated_fields;
 mod drop_fragment_definitions;
+mod drop_skipped_fields;
 mod drop_unused_operations;
 mod flatten_fragments;
 mod inline_fragment_spreads;
@@ -10,6 +11,7 @@ mod type_expand;
 
 pub use self::drop_duplicated_fields::*;
 pub use self::drop_fragment_definitions::*;
+pub use self::drop_skipped_fields::*;
 pub use self::drop_unused_operations::*;
 pub use self::flatten_fragments::*;
 pub use self::inline_fragment_spreads::*;

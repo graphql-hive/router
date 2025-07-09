@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 use query_planner::{
     ast::{
         operation::OperationDefinition, selection_item::SelectionItem, selection_set::SelectionSet,
@@ -11,7 +12,7 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::{collections::HashMap, vec};
+use std::collections::HashMap;
 use tracing::{instrument, trace, warn}; // For reading file in main
 
 use crate::{
@@ -543,6 +544,78 @@ fn process_root_result(
     );
 }
 
+type ExecutionStepJob<'a, T> = BoxFuture<'a, T>;
+
+#[derive(Default)]
+struct ExecutionStep<'a> {
+    fetch_job: Option<ExecutionStepJob<'a, ExecutionResult>>,
+    flatten_job: Option<ExecutionStepJob<'a, ExecuteForRepresentationsResult>>,
+    flatten_path: Option<Vec<&'a str>>,
+}
+
+fn create_execution_step<'a>(
+    node: &'a PlanNode,
+    execution_context: &'a QueryPlanExecutionContext<'a>,
+    data: &mut Value,
+) -> ExecutionStep<'a> {
+    match node {
+        PlanNode::Fetch(fetch_node) => ExecutionStep {
+            fetch_job: Some(fetch_node.execute_for_root(execution_context)),
+            ..Default::default()
+        },
+        PlanNode::Flatten(flatten_node) => {
+            let PlanNode::Fetch(fetch_node) = flatten_node.node.as_ref() else {
+                warn!(
+                    "FlattenNode can only execute FetchNode as child node, found: {:?}",
+                    flatten_node.node
+                );
+                return ExecutionStep::default();
+            };
+
+            let normalized_path: Vec<&str> = flatten_node.path.iter().map(String::as_str).collect();
+            let collected_representations = traverse_and_collect(data, &normalized_path);
+
+            let project_result =
+                fetch_node.project_representations(execution_context, &collected_representations);
+
+            let job = fetch_node.execute_for_projected_representations(
+                execution_context,
+                project_result.representations,
+                project_result.indexes,
+            );
+
+            ExecutionStep {
+                flatten_job: Some(job),
+                flatten_path: Some(normalized_path),
+                ..Default::default()
+            }
+        }
+        PlanNode::Condition(node) => {
+            let condition_value = execution_context
+                .variable_values
+                .as_ref()
+                .and_then(|vars| vars.get(&node.condition))
+                .is_some_and(|val| match val {
+                    Value::Bool(b) => *b,
+                    _ => false,
+                });
+
+            let clause = if condition_value {
+                node.if_clause.as_deref()
+            } else {
+                node.else_clause.as_deref()
+            };
+
+            if let Some(clause) = clause {
+                create_execution_step(clause, execution_context, data)
+            } else {
+                ExecutionStep::default()
+            }
+        }
+        _ => ExecutionStep::default(),
+    }
+}
+
 #[async_trait]
 impl ExecutablePlanNode for ParallelNode {
     #[instrument(level = "trace", skip_all, name = "ParallelNode::execute", fields(
@@ -561,37 +634,16 @@ impl ExecutablePlanNode for ParallelNode {
         // Collect Fetch node results and non-fetch nodes for sequential execution
         let now = std::time::Instant::now();
         for node in &self.nodes {
-            match node {
-                PlanNode::Fetch(fetch_node) => {
-                    // Execute FetchNode in parallel
-                    let job = fetch_node.execute_for_root(execution_context);
-                    fetch_jobs.push(job);
-                }
-                PlanNode::Flatten(flatten_node) => {
-                    let normalized_path: Vec<&str> =
-                        flatten_node.path.iter().map(String::as_str).collect();
-                    let collected_representations = traverse_and_collect(data, &normalized_path);
-                    let fetch_node = match flatten_node.node.as_ref() {
-                        PlanNode::Fetch(fetch_node) => fetch_node,
-                        _ => {
-                            warn!(
-                                "FlattenNode can only execute FetchNode as child node, found: {:?}",
-                                flatten_node.node
-                            );
-                            continue; // Skip if the child node is not a FetchNode
-                        }
-                    };
-                    let project_result = fetch_node
-                        .project_representations(execution_context, &collected_representations);
-                    let job = fetch_node.execute_for_projected_representations(
-                        execution_context,
-                        project_result.representations,
-                        project_result.indexes,
-                    );
-                    flatten_jobs.push(job);
-                    flatten_paths.push(normalized_path);
-                }
-                _ => {}
+            let res = create_execution_step(node, execution_context, data);
+
+            if let Some(fetch_job) = res.fetch_job {
+                fetch_jobs.push(fetch_job);
+            }
+            if let Some(flatten_job) = res.flatten_job {
+                flatten_jobs.push(flatten_job);
+            }
+            if let Some(flatten_path) = res.flatten_path {
+                flatten_paths.push(flatten_path);
             }
         }
         trace!(
@@ -747,28 +799,14 @@ impl ExecutablePlanNode for ConditionNode {
         execution_context: &mut QueryPlanExecutionContext<'_>,
         data: &mut Value,
     ) {
-        // Get the condition variable from the context
-        let condition_value: bool = match execution_context.variable_values {
-            Some(ref variable_values) => {
-                match variable_values.get(&self.condition) {
-                    Some(value) => {
-                        // Check if the value is a boolean
-                        match value {
-                            Value::Bool(b) => *b,
-                            _ => true, // Default to true if not a boolean
-                        }
-                    }
-                    None => {
-                        // If the variable is not found, default to false
-                        false
-                    }
-                }
-            }
-            None => {
-                // No variable values provided, default to false
-                false
-            }
-        };
+        let condition_value = execution_context
+            .variable_values
+            .as_ref()
+            .and_then(|vars| vars.get(&self.condition))
+            .is_some_and(|val| match val {
+                Value::Bool(b) => *b,
+                _ => false,
+            });
         if condition_value {
             if let Some(if_clause) = &self.if_clause {
                 return if_clause.execute(execution_context, data).await;
@@ -1135,6 +1173,23 @@ fn project_selection_set_with_map(
                     &type_name,
                     &inline_fragment.type_condition,
                 ) {
+                    if let Some(ref skip_variable) = inline_fragment.skip_if {
+                        let variable_value = variable_values
+                            .as_ref()
+                            .and_then(|vars| vars.get(skip_variable));
+                        if variable_value == Some(&Value::Bool(true)) {
+                            continue; // Skip this selection set if the variable is not true
+                        }
+                    }
+                    if let Some(ref include_variable) = inline_fragment.include_if {
+                        let variable_value = variable_values
+                            .as_ref()
+                            .and_then(|vars| vars.get(include_variable));
+                        if variable_value != Some(&Value::Bool(true)) {
+                            continue; // Skip this selection set if the variable is not true
+                        }
+                    }
+
                     let sub_new_obj = project_selection_set_with_map(
                         obj,
                         errors,

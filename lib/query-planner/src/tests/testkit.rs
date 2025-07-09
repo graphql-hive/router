@@ -10,6 +10,7 @@ use graphql_parser::query as query_ast;
 
 use crate::ast::normalization::normalize_operation;
 use crate::graph::Graph;
+use crate::planner::add_variables_to_fetch_steps;
 use crate::planner::best::find_best_combination;
 use crate::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
 use crate::planner::plan_nodes::QueryPlan;
@@ -63,10 +64,10 @@ pub fn build_query_plan(
     let operation = document.executable_operation();
     let best_paths_per_leaf = walk_operation(&graph, operation)?;
     let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
-    let fetch_graph = build_fetch_graph_from_query_tree(&graph, &supergraph_state, query_tree)?;
+    let mut fetch_graph = build_fetch_graph_from_query_tree(&graph, &supergraph_state, query_tree)?;
+    add_variables_to_fetch_steps(&mut fetch_graph, &operation.variable_definitions)?;
 
-    Ok(build_query_plan_from_fetch_graph(
-        fetch_graph,
-        &supergraph_state,
-    )?)
+    let plan = build_query_plan_from_fetch_graph(fetch_graph, &supergraph_state)?;
+
+    Ok(plan)
 }

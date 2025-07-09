@@ -3,24 +3,91 @@ use std::{
     sync::Arc,
 };
 
+use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection};
+
 // Can be either the alias or the name of the field. This will be used to identify the field in the selection set.
 type SelectionIdentifier = String;
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Condition {
+    Skip(String),
+    Include(String),
+}
+
+impl Display for Condition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Skip(condition) => write!(f, "@skip(if: ${})", condition),
+            Self::Include(condition) => write!(f, "@include(if: ${})", condition),
+        }
+    }
+}
+
+impl From<&FieldSelection> for Option<Condition> {
+    fn from(field: &FieldSelection) -> Self {
+        if let Some(variable) = &field.skip_if {
+            return Some(Condition::Skip(variable.clone()));
+        }
+        if let Some(variable) = &field.include_if {
+            return Some(Condition::Include(variable.clone()));
+        }
+        None
+    }
+}
+
+impl From<&mut FieldSelection> for Option<Condition> {
+    fn from(field: &mut FieldSelection) -> Self {
+        if let Some(variable) = &field.skip_if {
+            return Some(Condition::Skip(variable.clone()));
+        }
+        if let Some(variable) = &field.include_if {
+            return Some(Condition::Include(variable.clone()));
+        }
+        None
+    }
+}
+
+impl From<&InlineFragmentSelection> for Option<Condition> {
+    fn from(fragment: &InlineFragmentSelection) -> Self {
+        if let Some(variable) = &fragment.skip_if {
+            return Some(Condition::Skip(variable.clone()));
+        }
+
+        if let Some(variable) = &fragment.include_if {
+            return Some(Condition::Include(variable.clone()));
+        }
+
+        None
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Segment {
     // A field with a unique identifier and the arguments hash
     // We used this to uniquely identify the field in the selection set.
-    Field(SelectionIdentifier, u64),
+    Field(SelectionIdentifier, u64, Option<Condition>),
     List,
-    Cast(String),
+    Cast(String, Option<Condition>),
 }
 
 impl Display for Segment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::List => write!(f, "@"),
-            Self::Cast(type_name) => write!(f, "... on {}", type_name),
-            Self::Field(field_name, _) => write!(f, "{}", field_name),
+            Self::Cast(type_name, condition) => {
+                if let Some(condition) = condition {
+                    write!(f, "... on {} {}", type_name, condition)
+                } else {
+                    write!(f, "... on {}", type_name)
+                }
+            }
+            Self::Field(field_name, _, condition) => {
+                if let Some(condition) = condition {
+                    write!(f, "{} {}", field_name, condition)
+                } else {
+                    write!(f, "{}", field_name)
+                }
+            }
         }
     }
 }
@@ -60,7 +127,7 @@ impl MergePath {
         let mut iter = self
             .inner
             .iter()
-            .filter(|segment| !matches!(segment, Segment::Cast(_)));
+            .filter(|segment| !matches!(segment, Segment::Cast(_, _)));
 
         // We take the first to avoid a leading separator
         if let Some(first_segment) = iter.next() {
@@ -120,7 +187,7 @@ impl Display for MergePath {
         let mut iter = self
             .inner
             .iter()
-            .filter(|segment| !matches!(segment, Segment::Cast(_)));
+            .filter(|segment| !matches!(segment, Segment::Cast(_, _)));
 
         // We take the first to avoid a leading separator
         if let Some(first_segment) = iter.next() {
@@ -145,7 +212,7 @@ impl From<&MergePath> for Vec<String> {
     fn from(path: &MergePath) -> Self {
         path.inner
             .iter()
-            .filter(|segment| !matches!(segment, Segment::Cast(_)))
+            .filter(|segment| !matches!(segment, Segment::Cast(_, _)))
             .cloned()
             .map(|segment| format!("{}", segment))
             .collect()

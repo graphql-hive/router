@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tracing::{instrument, trace};
 
 use crate::{
-    ast::arguments::ArgumentsMap,
+    ast::{arguments::ArgumentsMap, merge_path::Condition},
     graph::{edge::Edge, error::GraphError, Graph},
     planner::walker::path::{OperationPath, PathSegment, SelectionAttributes},
 };
@@ -25,6 +25,7 @@ pub struct QueryTreeNode {
     pub requirements: Vec<Arc<QueryTreeNode>>,
     pub children: Vec<Arc<QueryTreeNode>>,
     pub selection_attributes: Option<SelectionAttributes>,
+    pub condition: Option<Condition>,
     /// Distinguishes nodes originating from different top-level mutation fields.
     pub mutation_field_position: MutationFieldPosition,
 }
@@ -38,6 +39,7 @@ impl PartialEq for QueryTreeNode {
             && self.edge_from_parent == other.edge_from_parent
             && self.selection_attributes == other.selection_attributes
             && self.mutation_field_position == other.mutation_field_position
+            && self.condition == other.condition
     }
 }
 
@@ -72,6 +74,7 @@ impl QueryTreeNode {
         node_index: &NodeIndex,
         edge_from_parent: Option<&EdgeIndex>,
         selection_attributes: Option<&SelectionAttributes>,
+        condition: Option<&Condition>,
     ) -> Self {
         QueryTreeNode {
             node_index: *node_index,
@@ -80,6 +83,7 @@ impl QueryTreeNode {
             children: Vec::new(),
             selection_attributes: selection_attributes.cloned(),
             mutation_field_position: None,
+            condition: condition.cloned(),
         }
     }
 
@@ -96,7 +100,7 @@ impl QueryTreeNode {
     }
 
     pub fn new_root(node_index: &NodeIndex) -> Self {
-        QueryTreeNode::new(node_index, None, None)
+        QueryTreeNode::new(node_index, None, None, None)
     }
 
     pub fn merge_nodes(&mut self, other: &Self) {
@@ -158,6 +162,7 @@ impl QueryTreeNode {
             &tail_node_index,
             Some(edge_at_index),
             (*selection_attributes_at_index).as_ref(),
+            segment_at_index.condition.as_ref(),
         );
 
         // Only apply the position to the first node created from the segments
@@ -237,6 +242,11 @@ impl QueryTreeNode {
         let node = graph.node(self.node_index).unwrap();
         let tail_str = format!("{}", node);
 
+        let condition_str = match self.condition.as_ref() {
+            Some(condition) => format!(" {}", condition),
+            None => "".to_string(),
+        };
+
         if !self.requirements.is_empty() {
             write!(result, "\n{}🧩 [", indent)?;
 
@@ -254,6 +264,9 @@ impl QueryTreeNode {
             Edge::SubgraphEntrypoint { .. } => {
                 write!(result, "\n{}🚪 ({})", indent, tail_str)
             }
+            Edge::AbstractMove(t) => {
+                write!(result, "\n{}... on {}{}", indent, t, condition_str)
+            }
             _ => {
                 let args_str = self
                     .selection_arguments()
@@ -264,11 +277,12 @@ impl QueryTreeNode {
                     .unwrap_or("".to_string());
                 write!(
                     result,
-                    "\n{}{}{} of {}",
+                    "\n{}{}{} of {}{}",
                     indent,
                     edge.display_name(),
                     args_str,
-                    tail_str
+                    tail_str,
+                    condition_str
                 )
             }
         }?;

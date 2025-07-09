@@ -650,3 +650,556 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[test]
+fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          book: similar(id: "p1") {
+            id
+            sku
+            delivery(zip: "1234") {
+              fastestDelivery
+              estimatedDelivery
+            }
+          }
+          magazine: similar(id: "p2") {
+            id
+            sku
+            delivery(zip: "1234") {
+              fastestDelivery
+              estimatedDelivery
+            }
+          }
+        }
+      ,
+      "#,
+    );
+    let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
+
+    // TODO: there are duplicated calls in the plan,
+    //       but it's because of the #206
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            book: similar(id: "p1") {
+    ...a        }
+            magazine: similar(id: "p2") {
+    ...a        }
+          }
+          fragment a on Product {
+            __typename
+            id
+            ... on Book {
+              __typename
+              dimensions {
+    ...b          }
+              id
+              sku
+            }
+            ... on Magazine {
+              __typename
+              dimensions {
+    ...b          }
+              id
+              sku
+            }
+          }
+          fragment b on ProductDimension {
+            size
+            weight
+          }
+        },
+        Parallel {
+          Flatten(path: "magazine.@") {
+            Fetch(service: "inventory") {
+              {
+                ... on Magazine {
+                  __typename
+                  dimensions {
+                    size
+                    weight
+                  }
+                  id
+                }
+              } =>
+              {
+                ... on Magazine {
+                  delivery(zip: "1234") {
+                    estimatedDelivery
+                    fastestDelivery
+                  }
+                }
+              }
+            },
+          },
+          Flatten(path: "magazine.@") {
+            Fetch(service: "inventory") {
+              {
+                ... on Book {
+                  __typename
+                  dimensions {
+                    size
+                    weight
+                  }
+                  id
+                }
+              } =>
+              {
+                ... on Book {
+                  delivery(zip: "1234") {
+                    estimatedDelivery
+                    fastestDelivery
+                  }
+                }
+              }
+            },
+          },
+          Flatten(path: "book.@") {
+            Fetch(service: "inventory") {
+              {
+                ... on Magazine {
+                  __typename
+                  dimensions {
+                    size
+                    weight
+                  }
+                  id
+                }
+              } =>
+              {
+                ... on Magazine {
+                  delivery(zip: "1234") {
+                    estimatedDelivery
+                    fastestDelivery
+                  }
+                }
+              }
+            },
+          },
+          Flatten(path: "book.@") {
+            Fetch(service: "inventory") {
+              {
+                ... on Book {
+                  __typename
+                  dimensions {
+                    size
+                    weight
+                  }
+                  id
+                }
+              } =>
+              {
+                ... on Book {
+                  delivery(zip: "1234") {
+                    estimatedDelivery
+                    fastestDelivery
+                  }
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($title: Boolean = true) {
+          products {
+            id
+            reviews {
+              product {
+                id
+                ... on Book @include(if: $title) {
+                  title
+                }
+                ... on Magazine {
+                  sku
+                }
+              }
+            }
+          }
+        }
+      ,
+      "#,
+    );
+    let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
+
+    // TODO: there are duplicated calls in the plan,
+    //       but it's because of the #206
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            products {
+              __typename
+              id
+              ... on Book {
+                __typename
+                id
+              }
+              ... on Magazine {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Parallel {
+          Flatten(path: "products.@") {
+            Fetch(service: "reviews") {
+              {
+                ... on Magazine {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Magazine {
+                  reviews {
+                    product {
+                      __typename
+                      id
+                      ... on Book {
+                        __typename
+                        id
+                      }
+                      ... on Magazine {
+                        __typename
+                        id
+                      }
+                    }
+                  }
+                }
+              }
+            },
+          },
+          Flatten(path: "products.@") {
+            Fetch(service: "reviews") {
+              {
+                ... on Book {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Book {
+                  reviews {
+                    product {
+                      __typename
+                      id
+                      ... on Book {
+                        __typename
+                        id
+                      }
+                      ... on Magazine {
+                        __typename
+                        id
+                      }
+                    }
+                  }
+                }
+              }
+            },
+          },
+        },
+        Parallel {
+          Flatten(path: "products.@.reviews.@.product") {
+            Fetch(service: "products") {
+              {
+                ... on Magazine {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Magazine {
+                  sku
+                }
+              }
+            },
+          },
+          Include(if: $title) {
+            Flatten(path: "products.@.reviews.@.product") {
+              Fetch(service: "books") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    title
+                  }
+                }
+              },
+            },
+          },
+          Flatten(path: "products.@.reviews.@.product") {
+            Fetch(service: "products") {
+              {
+                ... on Magazine {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Magazine {
+                  sku
+                }
+              }
+            },
+          },
+          Include(if: $title) {
+            Flatten(path: "products.@.reviews.@.product") {
+              Fetch(service: "books") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    title
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($title: Boolean = true) {
+          products {
+            id
+            reviews {
+              product {
+                id
+                ... on Book @include(if: $title) {
+                  title
+                  ... on Book {
+                    sku
+                  }
+                }
+                ... on Magazine {
+                  sku
+                }
+              }
+            }
+          }
+        }
+      ,
+      "#,
+    );
+    let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
+
+    // TODO: there are duplicated calls in the plan,
+    //       but it's because of the #206
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            products {
+              __typename
+              id
+              ... on Book {
+                __typename
+                id
+              }
+              ... on Magazine {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Parallel {
+          Flatten(path: "products.@") {
+            Fetch(service: "reviews") {
+              {
+                ... on Magazine {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Magazine {
+                  reviews {
+                    product {
+                      __typename
+                      id
+                      ... on Book {
+                        __typename
+                        id
+                      }
+                      ... on Magazine {
+                        __typename
+                        id
+                      }
+                    }
+                  }
+                }
+              }
+            },
+          },
+          Flatten(path: "products.@") {
+            Fetch(service: "reviews") {
+              {
+                ... on Book {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Book {
+                  reviews {
+                    product {
+                      __typename
+                      id
+                      ... on Book {
+                        __typename
+                        id
+                      }
+                      ... on Magazine {
+                        __typename
+                        id
+                      }
+                    }
+                  }
+                }
+              }
+            },
+          },
+        },
+        Parallel {
+          Flatten(path: "products.@.reviews.@.product") {
+            Fetch(service: "products") {
+              {
+                ... on Magazine {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Magazine {
+                  sku
+                }
+              }
+            },
+          },
+          Include(if: $title) {
+            Flatten(path: "products.@.reviews.@.product") {
+              Fetch(service: "products") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    sku
+                  }
+                }
+              },
+            },
+          },
+          Include(if: $title) {
+            Flatten(path: "products.@.reviews.@.product") {
+              Fetch(service: "books") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    title
+                  }
+                }
+              },
+            },
+          },
+          Flatten(path: "products.@.reviews.@.product") {
+            Fetch(service: "products") {
+              {
+                ... on Magazine {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Magazine {
+                  sku
+                }
+              }
+            },
+          },
+          Include(if: $title) {
+            Flatten(path: "products.@.reviews.@.product") {
+              Fetch(service: "products") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    sku
+                  }
+                }
+              },
+            },
+          },
+          Include(if: $title) {
+            Flatten(path: "products.@.reviews.@.product") {
+              Fetch(service: "books") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    title
+                  }
+                }
+              },
+            },
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}

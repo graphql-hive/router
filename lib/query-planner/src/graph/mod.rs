@@ -955,20 +955,24 @@ impl Graph {
                         }),
                     );
                     let type_def_from_cond =
-                        state.definitions.get(&type_name_from_cond).ok_or_else(|| {
+                        state.definitions.get(type_name_from_cond).ok_or_else(|| {
                             GraphError::DefinitionNotFound(type_name_from_cond.to_string())
                         })?;
 
                     // head is either an interface or a union
                     // tail is a type from a type condition (it's an object type - after normalization)
                     let tail = self.upsert_node(Node::new_specialized_node(
-                        &type_name_from_cond,
+                        type_name_from_cond,
                         state.resolve_graph_id(graph_id)?,
                         SubgraphTypeSpecialization::Provides(view_id),
                     ));
 
                     // because it's abstract -> object move, add an abstract move edge
-                    self.upsert_edge(head, tail, Edge::AbstractMove(type_name_from_cond.clone()));
+                    self.upsert_edge(
+                        head,
+                        tail,
+                        Edge::AbstractMove(type_name_from_cond.to_string()),
+                    );
 
                     // use object type (tail) when handling selection sets
                     self.handle_viewed_selection_set(

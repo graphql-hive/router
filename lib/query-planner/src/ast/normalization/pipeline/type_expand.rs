@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, vec};
 
 use graphql_parser::query::{
     Definition, Field, InlineFragment, Mutation, OperationDefinition, Query, Selection,
@@ -8,7 +8,7 @@ use graphql_parser::query::{
 use crate::{
     ast::normalization::{
         context::NormalizationContext, error::NormalizationError,
-        pipeline::flatten_fragments::PossibleTypesMap, utils::vec_to_hashset,
+        pipeline::flatten_fragments::PossibleTypesMap,
     },
     state::supergraph_state::{SupergraphDefinition, SupergraphObjectType, SupergraphState},
 };
@@ -39,17 +39,15 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
             SupergraphDefinition::Union(union_type) => {
                 possible_types.insert(
                     type_name,
-                    vec_to_hashset(
-                        &union_type
-                            .union_members
-                            .iter()
-                            .map(|m| m.member.clone())
-                            .collect::<Vec<String>>(),
-                    ),
+                    union_type
+                        .union_members
+                        .iter()
+                        .map(|m| m.member.as_str())
+                        .collect(),
                 );
             }
             SupergraphDefinition::Interface(_) => {
-                let mut object_types: HashSet<String> = HashSet::new();
+                let mut object_types: HashSet<&str> = HashSet::new();
                 for (obj_type_name, obj_type_def) in ctx.supergraph.definitions.iter() {
                     if let SupergraphDefinition::Object(object_type) = obj_type_def {
                         if object_type
@@ -57,7 +55,7 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
                             .iter()
                             .any(|j| &j.interface == type_name)
                         {
-                            object_types.insert(obj_type_name.to_string());
+                            object_types.insert(obj_type_name.as_str());
                         }
                     }
                 }
@@ -141,11 +139,11 @@ fn handle_selection_set(
                 })?;
             let mut objects = Vec::with_capacity(object_names.len());
             for name in object_names {
-                if let Some(SupergraphDefinition::Object(obj)) = state.definitions.get(name) {
+                if let Some(SupergraphDefinition::Object(obj)) = state.definitions.get(*name) {
                     objects.push(obj);
                 } else {
                     return Err(NormalizationError::SchemaTypeNotFound {
-                        type_name: name.clone(),
+                        type_name: name.to_string(),
                     });
                 }
             }
@@ -177,7 +175,6 @@ fn handle_selection_set(
                     }
                 }
 
-                // Recurse into sub-selection sets
                 if !field.selection_set.items.is_empty() {
                     let inner_type_name = type_def
                         .fields()
@@ -204,8 +201,7 @@ fn handle_selection_set(
                 new_items.push(Selection::Field(field));
             }
             Selection::InlineFragment(mut frag) => {
-                // Recurse into nested fragments
-                if let Some(ref type_cond) = frag.type_condition {
+                if let Some(type_cond) = &frag.type_condition {
                     let TypeCondition::On(type_name) = type_cond;
                     if let Some(type_def) = state.definitions.get(type_name) {
                         handle_selection_set(
@@ -359,7 +355,7 @@ fn handle_type_expansion_candidate<'a>(
         }
         fragments.push(Selection::InlineFragment(InlineFragment {
             type_condition: Some(TypeCondition::On(obj.name.clone())),
-            directives: vec![],
+            directives: field.directives.clone(),
             selection_set: SelectionSet {
                 span: Default::default(),
                 items: vec![Selection::Field(new_field)],
