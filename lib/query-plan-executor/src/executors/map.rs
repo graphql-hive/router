@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use hyper_util::{
     client::legacy::Client,
@@ -57,7 +57,7 @@ impl SubgraphExecutorMap {
         let mut builder = Client::builder(TokioExecutor::new());
         let builder_mut = builder
             .pool_timer(TokioTimer::new())
-            .pool_idle_timeout(None)
+            .pool_idle_timeout(Duration::from_secs(60 * 60))
             .pool_max_idle_per_host(usize::MAX);
         let http_client = builder_mut.build_http();
         let http_client_arc = Arc::new(http_client);
