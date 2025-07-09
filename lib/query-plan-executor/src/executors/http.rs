@@ -1,4 +1,9 @@
 use async_trait::async_trait;
+use http_body_util::BodyExt;
+use http_body_util::Full;
+use hyper::body::Buf;
+use hyper::{body::Bytes, Version};
+use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tracing::{error, instrument, trace};
 
 use crate::{
@@ -9,15 +14,20 @@ use crate::{
 #[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
     pub endpoint: String,
-    pub http_client: reqwest::Client,
+    pub http_client: Client<HttpConnector, Full<Bytes>>,
+    pub uri: http::Uri,
 }
 
 const FIRST_VARIABLE_STR: &str = ",\"variables\":{";
 
 impl HTTPSubgraphExecutor {
-    pub fn new(endpoint: String, http_client: reqwest::Client) -> Self {
+    pub fn new(endpoint: String, http_client: Client<HttpConnector, Full<Bytes>>) -> Self {
+        let uri = endpoint
+            .parse::<http::Uri>()
+            .expect("Failed to parse endpoint as URI");
         HTTPSubgraphExecutor {
             endpoint,
+            uri,
             http_client,
         }
     }
@@ -66,26 +76,43 @@ impl HTTPSubgraphExecutor {
         }
         body.push('}');
 
-        self.http_client
-            .post(&self.endpoint)
-            .body(body)
+        let req = hyper::Request::builder()
+            .method(http::Method::POST)
+            .uri(&self.uri)
+            .version(Version::HTTP_11)
             .header("Content-Type", "application/json; charset=utf-8")
-            .send()
+            .body(body.into())
+            .map_err(|e| {
+                format!(
+                    "Failed to build request to subgraph {}: {}",
+                    self.endpoint, e
+                )
+            })?;
+
+        let res = self.http_client.request(req).await.map_err(|e| {
+            format!(
+                "Failed to send request to subgraph {}: {}",
+                self.endpoint, e
+            )
+        })?;
+
+        let body = res
+            .collect()
             .await
             .map_err(|e| {
                 format!(
-                    "Failed to send request to subgraph {}: {}",
+                    "Failed to read response body from subgraph {}: {}",
                     self.endpoint, e
                 )
             })?
-            .json::<ExecutionResult>()
-            .await
-            .map_err(|e| {
-                format!(
-                    "Failed to parse response from subgraph {}: {}",
-                    self.endpoint, e
-                )
-            })
+            .aggregate();
+
+        serde_json::from_reader(body.reader()).map_err(|e| {
+            format!(
+                "Failed to parse response from subgraph {}: {}",
+                self.endpoint, e
+            )
+        })
     }
 }
 
