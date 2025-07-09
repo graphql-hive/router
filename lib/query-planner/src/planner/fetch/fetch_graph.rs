@@ -1268,7 +1268,15 @@ fn process_requires_field_edge(
     step_for_requirements.input.add(key_to_reenter_subgraph);
 
     let real_parent_fetch_step = fetch_graph.get_step_data_mut(real_parent_fetch_step_index)?;
-    let key_to_reenter_at = &response_path.slice_from(real_parent_fetch_step.response_path.len());
+
+    let key_to_reenter_at = if real_parent_fetch_step.response_path.len() > response_path.len() {
+        return Err(FetchGraphError::Internal(
+            "Response path is longer than expected".to_string(),
+        ));
+    } else {
+        &response_path.slice_from(real_parent_fetch_step.response_path.len())
+    };
+
     trace!(
         "Adding {} to fetch([{}]).output at path {}",
         key_to_reenter_subgraph,
