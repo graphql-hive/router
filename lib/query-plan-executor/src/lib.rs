@@ -472,6 +472,18 @@ impl ExecutablePlanNode for ParallelNode {
             // Collect Fetch node results and flatten nodes for parallel execution
             let now = std::time::Instant::now();
             for node in &self.nodes {
+                let node = if let PlanNode::Condition(condition_node) = node {
+                    // If the node is a ConditionNode, we need to check the condition
+                    if let Some(inner_node) =
+                        condition_node.get_inner_node(execution_context.variable_values)
+                    {
+                        inner_node
+                    } else {
+                        continue; // Skip this node if the condition is not met
+                    }
+                } else {
+                    node
+                };
                 match node {
                     PlanNode::Fetch(fetch_node) => {
                         let job = fetch_node.execute_for_root(execution_context);
@@ -693,16 +705,17 @@ impl ExecutablePlanNode for FlattenNode {
     }
 }
 
-#[async_trait]
-impl ExecutablePlanNode for ConditionNode {
-    #[instrument(level = "trace", skip_all, name = "ConditionNode::execute")]
-    async fn execute(
+trait GetInnerNodeOfConditionNode {
+    fn get_inner_node(&self, variable_values: &Option<HashMap<String, Value>>)
+        -> Option<&PlanNode>;
+}
+
+impl GetInnerNodeOfConditionNode for ConditionNode {
+    fn get_inner_node(
         &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
-        data: &mut Value,
-    ) {
-        let condition_value = execution_context
-            .variable_values
+        variable_values: &Option<HashMap<String, Value>>,
+    ) -> Option<&PlanNode> {
+        let condition_value = variable_values
             .as_ref()
             .and_then(|vars| vars.get(&self.condition))
             .is_some_and(|val| match val {
@@ -711,10 +724,30 @@ impl ExecutablePlanNode for ConditionNode {
             });
         if condition_value {
             if let Some(if_clause) = &self.if_clause {
-                return if_clause.execute(execution_context, data).await;
+                return Some(if_clause);
             }
         } else if let Some(else_clause) = &self.else_clause {
-            return else_clause.execute(execution_context, data).await;
+            return Some(else_clause);
+        }
+        None
+    }
+}
+
+#[async_trait]
+impl ExecutablePlanNode for ConditionNode {
+    #[instrument(level = "trace", skip_all, name = "ConditionNode::execute")]
+    async fn execute(
+        &self,
+        execution_context: &mut QueryPlanExecutionContext<'_>,
+        data: &mut Value,
+    ) {
+        let inner_node = self.get_inner_node(execution_context.variable_values);
+        if let Some(node) = inner_node {
+            // Execute the inner node if it exists
+            node.execute(execution_context, data).await;
+        } else {
+            // If no inner node, we do nothing
+            trace!("ConditionNode condition not met, skipping execution.");
         }
     }
 }
