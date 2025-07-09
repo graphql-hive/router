@@ -69,7 +69,7 @@ fn interface_object_requiring_interface_fields() -> Result<(), Box<dyn Error>> {
     },
     "#);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -155,13 +155,28 @@ fn interface_object_requiring_interface_fields() -> Result<(), Box<dyn Error>> {
                     }
                   ]
                 }
+              ],
+              "inputRewrites": [
+                {
+                  "ValueSetter": {
+                    "path": [
+                      {
+                        "TypenameEquals": "NodeWithName"
+                      },
+                      {
+                        "Key": "__typename"
+                      }
+                    ],
+                    "setValueTo": "NodeWithName"
+                  }
+                }
               ]
             }
           }
         ]
       }
     }
-    "###);
+    "#);
 
     Ok(())
 }
@@ -511,7 +526,6 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
             {
               ... on NodeWithName {
                 __typename
-                id
                 name
                 ... on User {
                   age
@@ -532,7 +546,6 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
             } =>
             {
               ... on NodeWithName {
-                id
                 username
               }
             }
@@ -542,7 +555,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
     },
     "#);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -552,7 +565,22 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{anotherUsers{__typename id}}"
+            "operation": "query{anotherUsers{__typename id}}",
+            "inputRewrites": [
+              {
+                "ValueSetter": {
+                  "path": [
+                    {
+                      "TypenameEquals": "NodeWithName"
+                    },
+                    {
+                      "Key": "__typename"
+                    }
+                  ],
+                  "setValueTo": "NodeWithName"
+                }
+              }
+            ]
           },
           {
             "kind": "Flatten",
@@ -564,7 +592,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
               "kind": "Fetch",
               "serviceName": "a",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename id name ...on User{age name}}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename name ...on User{age name}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -608,7 +636,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{id username}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{username}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -649,7 +677,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
         ]
       }
     }
-    "###);
+    "#);
 
     Ok(())
 }

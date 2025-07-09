@@ -282,6 +282,7 @@ impl Graph {
                     let head = self.upsert_node(Node::new_node(
                         def_name,
                         state.resolve_graph_id(&join_type1.graph_id)?,
+                        join_type1.is_interface_object,
                     ));
 
                     if join_type1.graph_id != join_type2.graph_id {
@@ -289,6 +290,7 @@ impl Graph {
                             let tail = self.upsert_node(Node::new_node(
                                 def_name,
                                 state.resolve_graph_id(&join_type2.graph_id)?,
+                                join_type2.is_interface_object,
                             ));
                             let key_selection = FederationRules::parse_key(
                                 state,
@@ -350,6 +352,7 @@ impl Graph {
                 let tail = self.upsert_node(Node::new_node(
                     interface_object_name,
                     state.resolve_graph_id(&join_type1.graph_id)?,
+                    join_type1.is_interface_object,
                 ));
 
                 let typename_selection = FederationRules::parse_key(
@@ -428,6 +431,7 @@ impl Graph {
                         let head = self.upsert_node(Node::new_node(
                             object_type_name,
                             state.resolve_graph_id(&join_type2.graph_id)?,
+                            join_type2.is_interface_object,
                         ));
 
                         trace!(
@@ -466,10 +470,16 @@ impl Graph {
                 let tail = self.upsert_node(Node::new_node(
                     def_name,
                     state.resolve_graph_id(&join_implements.graph_id)?,
+                    // The definition are object types,
+                    // so it can't be @interfaceObject (it'd has be Interface).
+                    false,
                 ));
                 let head = self.upsert_node(Node::new_node(
                     &join_implements.interface,
                     state.resolve_graph_id(&join_implements.graph_id)?,
+                    // The definition are object types,
+                    // so it can't be @interfaceObject (it'd has be Interface).
+                    false,
                 ));
 
                 trace!(
@@ -554,6 +564,7 @@ impl Graph {
                         let tail = self.upsert_node(Node::new_node(
                             def_name,
                             state.resolve_graph_id(graph_id)?,
+                            state.is_interface_object_in_subgraph(def_name, graph_id),
                         ));
 
                         self.upsert_edge(
@@ -601,10 +612,18 @@ impl Graph {
                         def_name,
                         graph_id
                     );
-                    let head = self
-                        .upsert_node(Node::new_node(def_name, state.resolve_graph_id(graph_id)?));
-                    let tail = self
-                        .upsert_node(Node::new_node("String", state.resolve_graph_id(graph_id)?));
+                    let head = self.upsert_node(Node::new_node(
+                        def_name,
+                        state.resolve_graph_id(graph_id)?,
+                        // __typename is not resolable for @interfaceObject so it's not it
+                        false,
+                    ));
+                    let tail = self.upsert_node(Node::new_node(
+                        "String",
+                        state.resolve_graph_id(graph_id)?,
+                        // String is not an @interfaceObject
+                        false,
+                    ));
 
                     self.upsert_edge(
                         head,
@@ -737,6 +756,7 @@ impl Graph {
                         let head = self.upsert_node(Node::new_node(
                             def_name,
                             state.resolve_graph_id(graph_id)?,
+                            state.is_interface_object_in_subgraph(def_name, graph_id),
                         ));
 
                         let member_types =
@@ -754,6 +774,7 @@ impl Graph {
                             let tail = self.upsert_node(Node::new_specialized_node(
                                 target_type,
                                 state.resolve_graph_id(graph_id)?,
+                                state.is_interface_object_in_subgraph(target_type, graph_id),
                                 SubgraphTypeSpecialization::UnionSubset(UnionSubsetData {
                                     type_name: def_name.clone(),
                                     field_name: field_name.clone(),
@@ -764,11 +785,13 @@ impl Graph {
                             let abstract_tail = self.upsert_node(Node::new_node(
                                 &member,
                                 state.resolve_graph_id(graph_id)?,
+                                state.is_interface_object_in_subgraph(&member, graph_id),
                             ));
                             // because we duplicate tails, we need to add __typename to all of them
                             let typename_tail = self.upsert_node(Node::new_node(
                                 "String",
                                 state.resolve_graph_id(graph_id)?,
+                                false,
                             ));
 
                             trace!(
@@ -830,11 +853,15 @@ impl Graph {
                         target_type
                     );
 
-                    let head = self
-                        .upsert_node(Node::new_node(def_name, state.resolve_graph_id(graph_id)?));
+                    let head = self.upsert_node(Node::new_node(
+                        def_name,
+                        state.resolve_graph_id(graph_id)?,
+                        state.is_interface_object_in_subgraph(def_name, graph_id),
+                    ));
                     let tail = self.upsert_node(Node::new_node(
                         target_type,
                         state.resolve_graph_id(graph_id)?,
+                        state.is_interface_object_in_subgraph(target_type, graph_id),
                     ));
 
                     trace!(
@@ -907,6 +934,7 @@ impl Graph {
                     let tail = self.upsert_node(Node::new_specialized_node(
                         return_type_name,
                         state.resolve_graph_id(graph_id)?,
+                        state.is_interface_object_in_subgraph(return_type_name, graph_id),
                         SubgraphTypeSpecialization::Provides(view_id),
                     ));
 
@@ -964,6 +992,7 @@ impl Graph {
                     let tail = self.upsert_node(Node::new_specialized_node(
                         type_name_from_cond,
                         state.resolve_graph_id(graph_id)?,
+                        state.is_interface_object_in_subgraph(type_name_from_cond, graph_id),
                         SubgraphTypeSpecialization::Provides(view_id),
                     ));
 
@@ -1021,6 +1050,10 @@ impl Graph {
                                 let head = self.upsert_node(Node::new_node(
                                     definition.name(),
                                     state.resolve_graph_id(&join_type.graph_id)?,
+                                    state.is_interface_object_in_subgraph(
+                                        definition.name(),
+                                        &join_type.graph_id,
+                                    ),
                                 ));
 
                                 let return_type_name = field_definition.field_type.inner_type();
@@ -1028,6 +1061,10 @@ impl Graph {
                                 let tail = self.upsert_node(Node::new_specialized_node(
                                     return_type_name,
                                     state.resolve_graph_id(&join_type.graph_id)?,
+                                    state.is_interface_object_in_subgraph(
+                                        return_type_name,
+                                        &join_type.graph_id,
+                                    ),
                                     SubgraphTypeSpecialization::Provides(view_id),
                                 ));
 

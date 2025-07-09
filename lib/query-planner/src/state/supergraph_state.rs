@@ -41,6 +41,8 @@ impl SubgraphName {
     }
 }
 
+type InterfaceObjectToSubgraphsMap = HashMap<String, HashSet<String>>;
+
 #[derive(Debug)]
 pub struct SupergraphState {
     /// A map all of definitions (def_name, def) that exists in the schema.
@@ -57,6 +59,9 @@ pub struct SupergraphState {
     pub query_type: String,
     pub mutation_type: Option<String>,
     pub subscription_type: Option<String>,
+    // Holds a map of interface names to a set of subgraph ids
+    // that hold the @interfaceObject
+    pub interface_object_types_in_subgraphs: InterfaceObjectToSubgraphsMap,
 }
 
 impl SupergraphState {
@@ -64,8 +69,13 @@ impl SupergraphState {
     pub fn new(schema: &SchemaDocument) -> Self {
         let (known_subgraphs, subgraph_endpoint_map) =
             Self::extract_subgraph_names_and_endpoints(schema);
+        let definitions = Self::build_map(schema);
+        let interface_object_types_in_subgraphs =
+            Self::create_interface_object_in_subgraph(&definitions);
+
         let mut instance = Self {
-            definitions: Self::build_map(schema),
+            definitions,
+            interface_object_types_in_subgraphs,
             known_subgraphs,
             subgraph_endpoint_map,
             known_scalars: Self::extract_known_scalars(schema),
@@ -110,6 +120,38 @@ impl SupergraphState {
         }
 
         self.known_scalars.contains(type_name)
+    }
+
+    pub fn is_interface_object_in_subgraph(&self, type_name: &str, graph_id: &str) -> bool {
+        self.interface_object_types_in_subgraphs
+            .get(type_name)
+            .is_some_and(|subgraph_ids| subgraph_ids.contains(graph_id))
+    }
+
+    fn create_interface_object_in_subgraph(
+        definitions: &HashMap<String, SupergraphDefinition>,
+    ) -> InterfaceObjectToSubgraphsMap {
+        let mut interface_object_types_in_subgraphs = InterfaceObjectToSubgraphsMap::new();
+
+        for (name, definition) in definitions
+            .iter()
+            .filter(|(_, def)| matches!(def, SupergraphDefinition::Interface(_)))
+        {
+            for graph_id in definition.join_types().iter().filter_map(|t| {
+                if t.is_interface_object {
+                    Some(&t.graph_id)
+                } else {
+                    None
+                }
+            }) {
+                interface_object_types_in_subgraphs
+                    .entry(name.to_string())
+                    .or_default()
+                    .insert(graph_id.to_string());
+            }
+        }
+
+        interface_object_types_in_subgraphs
     }
 
     fn extract_known_scalars(schema: &SchemaDocument) -> HashSet<String> {
