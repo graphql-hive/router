@@ -1,8 +1,15 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
+use hyper_util::{
+    client::legacy::Client,
+    rt::{TokioExecutor, TokioTimer},
+};
 use tracing::{instrument, warn};
 
-use crate::executors::common::{SubgraphExecutor, SubgraphExecutorBoxedArc};
+use crate::executors::{
+    common::{SubgraphExecutor, SubgraphExecutorBoxedArc},
+    http::HTTPSubgraphExecutor,
+};
 
 pub struct SubgraphExecutorMap {
     inner: HashMap<String, SubgraphExecutorBoxedArc>,
@@ -47,11 +54,18 @@ impl SubgraphExecutorMap {
     }
 
     pub fn from_http_endpoint_map(subgraph_endpoint_map: HashMap<String, String>) -> Self {
+        let mut builder = Client::builder(TokioExecutor::new());
+        let builder_mut = builder
+            .pool_timer(TokioTimer::new())
+            .pool_idle_timeout(None)
+            .pool_max_idle_per_host(usize::MAX);
+        let http_client = builder_mut.build_http();
+        let http_client_arc = Arc::new(http_client);
         let executor_map = subgraph_endpoint_map
             .into_iter()
             .map(|(subgraph_name, endpoint)| {
                 let executor =
-                    crate::executors::http::HTTPSubgraphExecutor::new(endpoint).to_boxed_arc();
+                    HTTPSubgraphExecutor::new(endpoint, http_client_arc.clone()).to_boxed_arc();
                 (subgraph_name, executor)
             })
             .collect::<HashMap<_, _>>();

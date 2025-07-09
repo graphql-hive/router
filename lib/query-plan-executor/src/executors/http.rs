@@ -1,13 +1,13 @@
-use std::usize;
+use std::sync::Arc;
 
 use async_trait::async_trait;
+use http::HeaderMap;
+use http::HeaderValue;
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::body::Buf;
 use hyper::{body::Bytes, Version};
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
-use hyper_util::rt::TokioExecutor;
-use hyper_util::rt::TokioTimer;
 use tracing::{error, instrument, trace};
 
 use crate::{
@@ -18,25 +18,28 @@ use crate::{
 #[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
     pub endpoint: String,
-    pub http_client: Client<HttpConnector, Full<Bytes>>,
+    pub http_client: Arc<Client<HttpConnector, Full<Bytes>>>,
     pub uri: http::Uri,
+    pub header_map: HeaderMap,
 }
 
 const FIRST_VARIABLE_STR: &str = ",\"variables\":{";
 
 impl HTTPSubgraphExecutor {
-    pub fn new(endpoint: String) -> Self {
+    pub fn new(endpoint: String, http_client: Arc<Client<HttpConnector, Full<Bytes>>>) -> Self {
         let uri = endpoint
             .parse::<http::Uri>()
             .expect("Failed to parse endpoint as URI");
-        let http_client = Client::builder(TokioExecutor::new())
-            .pool_timer(TokioTimer::new())
-            .pool_max_idle_per_host(usize::MAX)
-            .build_http();
+        let mut header_map = HeaderMap::new();
+        header_map.insert(
+            "Content-Type",
+            HeaderValue::from_static("application/json; charset=utf-8"),
+        );
         HTTPSubgraphExecutor {
             endpoint,
             uri,
             http_client,
+            header_map,
         }
     }
 
@@ -84,11 +87,10 @@ impl HTTPSubgraphExecutor {
         }
         body.push('}');
 
-        let req = hyper::Request::builder()
+        let mut req = hyper::Request::builder()
             .method(http::Method::POST)
             .uri(&self.uri)
             .version(Version::HTTP_11)
-            .header("Content-Type", "application/json; charset=utf-8")
             .body(body.into())
             .map_err(|e| {
                 format!(
@@ -96,6 +98,8 @@ impl HTTPSubgraphExecutor {
                     self.endpoint, e
                 )
             })?;
+
+        *req.headers_mut() = self.header_map.clone();
 
         let res = self.http_client.request(req).await.map_err(|e| {
             format!(
