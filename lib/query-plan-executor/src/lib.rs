@@ -212,10 +212,13 @@ impl ExecutableFetchNode for FetchNode {
                 &mut data,
             );
             match data {
-                Value::Object(mut obj) => match obj.remove("_entities") {
-                    Some(Value::Array(arr)) => Some(arr),
-                    _ => None, // If _entities is not found or not an array
-                },
+                Value::Object(mut obj) => {
+                    let entities = obj.get_mut("_entities").map(|v| v.take());
+                    match entities {
+                        Some(Value::Array(arr)) => Some(arr),
+                        _ => None,
+                    }
+                }
                 _ => None, // If data is not an object
             }
         } else {
