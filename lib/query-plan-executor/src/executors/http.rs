@@ -1,9 +1,13 @@
+use std::usize;
+
 use async_trait::async_trait;
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::body::Buf;
 use hyper::{body::Bytes, Version};
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use hyper_util::rt::TokioExecutor;
+use hyper_util::rt::TokioTimer;
 use tracing::{error, instrument, trace};
 
 use crate::{
@@ -21,10 +25,14 @@ pub struct HTTPSubgraphExecutor {
 const FIRST_VARIABLE_STR: &str = ",\"variables\":{";
 
 impl HTTPSubgraphExecutor {
-    pub fn new(endpoint: String, http_client: Client<HttpConnector, Full<Bytes>>) -> Self {
+    pub fn new(endpoint: String) -> Self {
         let uri = endpoint
             .parse::<http::Uri>()
             .expect("Failed to parse endpoint as URI");
+        let http_client = Client::builder(TokioExecutor::new())
+            .pool_timer(TokioTimer::new())
+            .pool_max_idle_per_host(usize::MAX)
+            .build_http();
         HTTPSubgraphExecutor {
             endpoint,
             uri,
