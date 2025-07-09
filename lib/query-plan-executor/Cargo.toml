@@ -16,7 +16,7 @@ graphql-tools = "0.4.0"
 tracing = "0.1.41"
 # TODO: Move this to dev-dependencies but currently benchmarks need it
 async-graphql = { version = "7.0.17" }
-hyper = { version= "1.6.0" }
+hyper = { version= "1.6.0", features = ["client"] }
 hyper-util = { version= "0.1.15", features = ["client", "client-legacy", "http1", "http2", "tokio"] }
 http-body-util = "0.1.3"
 http = "1.3.1"

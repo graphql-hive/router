@@ -5,7 +5,6 @@ use http::HeaderMap;
 use http::HeaderValue;
 use http_body_util::BodyExt;
 use http_body_util::Full;
-use hyper::body::Buf;
 use hyper::{body::Bytes, Version};
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tracing::{error, instrument, trace};
@@ -108,18 +107,19 @@ impl HTTPSubgraphExecutor {
             )
         })?;
 
-        let body = res
+        let bytes = res
+            .into_body()
             .collect()
             .await
             .map_err(|e| {
                 format!(
-                    "Failed to read response body from subgraph {}: {}",
+                    "Failed to parse response from subgraph {}: {}",
                     self.endpoint, e
                 )
             })?
-            .aggregate();
+            .to_bytes();
 
-        serde_json::from_reader(body.reader()).map_err(|e| {
+        serde_json::from_slice(&bytes).map_err(|e| {
             format!(
                 "Failed to parse response from subgraph {}: {}",
                 self.endpoint, e
