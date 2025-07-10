@@ -43,7 +43,7 @@ impl GatewayPipelineLayer for ProgressiveOverrideExtractor {
         // 100_000_000_000 = 100%
         // 50_000_000_000 = 50%
         // 50_123_456_789 = 50.12345678%
-        let percentage_value: u64 = rand::rng().random_range(0..=PERCENTAGE_SCALE_FACTOR);
+        let percentage_value: u64 = rand::rng().random_range(0..=(100 * PERCENTAGE_SCALE_FACTOR));
 
         let override_context = RequestOverrideContext {
             active_flags,
