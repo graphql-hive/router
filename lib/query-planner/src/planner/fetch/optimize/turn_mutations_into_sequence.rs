@@ -69,7 +69,7 @@ fn is_mutation_fetch_step(
     for edge_ref in fetch_graph.children_of(fetch_step_index) {
         let child = fetch_graph.get_step_data(edge_ref.target().id())?;
 
-        if child.output.type_name.ne("Mutation") {
+        if !child.output_new.is_selecting_definition("Mutation") {
             return Ok(false);
         }
     }

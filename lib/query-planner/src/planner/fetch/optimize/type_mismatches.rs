@@ -22,7 +22,7 @@ impl FetchGraph {
         &mut self,
         supergraph: &SupergraphState,
     ) -> Result<(), FetchGraphError> {
-        let mut pending_patches = Vec::<(NodeIndex, Vec<MergePath>)>::new();
+        let mut pending_patches = Vec::<(NodeIndex, Vec<(String, MergePath)>)>::new();
 
         for (node_index, node) in self.all_nodes() {
             if self.root_index.is_some_and(|v| v == node_index) {
@@ -35,7 +35,8 @@ impl FetchGraph {
             );
 
             let finder = SelectionMismatchFinder::new(supergraph);
-            let mismatches_paths = finder.find_mismatches_in_node(&node.service_name, &node.output);
+            let mismatches_paths =
+                finder.find_mismatches_in_node(&node.service_name, &node.output_new);
 
             if !mismatches_paths.is_empty() {
                 pending_patches.push((node_index, mismatches_paths));
@@ -53,7 +54,7 @@ impl FetchGraph {
                 node_index.index()
             );
 
-            for mismatch_path in mismatches_paths {
+            for (root_def_name, mismatch_path) in mismatches_paths {
                 let mut merger = SafeSelectionSetMerger::default();
 
                 if let Some(Segment::Field(field_lookup, args_hash_lookup, condition)) =
@@ -61,9 +62,11 @@ impl FetchGraph {
                 {
                     // TODO: We can avoid this cut and slice thing, if we return "SelectionItem" instead of "SelectionSet" inside "find_selection_set_by_path_mut".
                     let lookup_path = &mismatch_path.without_last();
+                    let root_def_selections =
+                        node.output_new.selections_for_definition(&root_def_name);
 
                     if let Some(selection_set) =
-                        find_selection_set_by_path_mut(&mut node.output.selection_set, lookup_path)
+                        find_selection_set_by_path_mut(root_def_selections, lookup_path)
                     {
                         let next_alias = merger.safe_next_alias_name(&selection_set.items);
                         let item = selection_set

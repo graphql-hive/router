@@ -9,6 +9,7 @@ use tracing::{instrument, trace};
 
 use crate::planner::fetch::{
     error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
+    selections::FetchStepSelections,
 };
 
 impl FetchGraph {
@@ -103,7 +104,20 @@ impl FetchStepData {
             return false;
         }
 
-        other.input.eq(&other.output)
+        match &other.output_new {
+            FetchStepSelections::Root { selection_set, .. } => {
+                return &other.input.selection_set == selection_set;
+            }
+            FetchStepSelections::Entities { selections } => {
+                for selections in selections.values() {
+                    if selections == &other.input.selection_set {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 }
 
@@ -121,11 +135,10 @@ fn perform_passthrough_child_merge(
         other_index.index()
     );
 
-    me.output.add_at_path(
-        &other.output,
-        other.response_path.slice_from(me.response_path.len()),
-        false,
-    )?;
+    me.output_new.migrate_from_another(
+        &other.output_new,
+        &other.response_path.slice_from(me.response_path.len()),
+    );
 
     let mut children_indexes: Vec<NodeIndex> = vec![];
     let mut parents_indexes: Vec<NodeIndex> = vec![];

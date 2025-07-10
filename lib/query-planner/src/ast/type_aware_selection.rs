@@ -162,7 +162,7 @@ fn selection_items_are_subset_of(source: &[SelectionItem], target: &[SelectionIt
     })
 }
 
-fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_first: bool) {
+pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_first: bool) {
     if source.items.is_empty() {
         return;
     }
