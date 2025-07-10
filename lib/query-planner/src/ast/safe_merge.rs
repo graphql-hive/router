@@ -59,7 +59,7 @@ impl SafeSelectionSetMerger {
             source,
             (self_used_for_requires, other_used_for_requires),
             as_first,
-            MergePath::default(),
+            MergePath::empty(),
             &mut aliases_performed,
         );
 
@@ -409,7 +409,7 @@ mod tests {
         let mut merger = SafeSelectionSetMerger::default();
         let merge_locations = merger.merge_selection_set(&mut a, &b, (false, true), false);
         assert_eq!(merge_locations.len(), 1);
-        insta::assert_snapshot!(merge_locations[0].0, @"p.a");
+        insta::assert_snapshot!(merge_locations[0].0, @"''->p.a");
         insta::assert_snapshot!(merge_locations[0].1, @"_internal_qp_alias_0");
     }
 }

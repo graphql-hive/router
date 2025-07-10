@@ -9,6 +9,7 @@ use tracing::{instrument, trace};
 
 use crate::planner::fetch::{
     error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
+    selections::FetchStepSelections,
 };
 
 impl FetchGraph {
@@ -103,7 +104,20 @@ impl FetchStepData {
             return false;
         }
 
-        other.input.eq(&other.output)
+        match &other.output_new {
+            FetchStepSelections::Root { selection_set, .. } => {
+                return &other.input.selection_set == selection_set;
+            }
+            FetchStepSelections::Entities { selections } => {
+                for selections in selections.values() {
+                    if selections == &other.input.selection_set {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 }
 
@@ -115,17 +129,19 @@ fn perform_passthrough_child_merge(
 ) -> Result<(), FetchGraphError> {
     let (me, other) = fetch_graph.get_pair_of_steps_mut(self_index, other_index)?;
 
+    let path = other
+        .response_path
+        .slice_from(me.response_path.len())
+        .of_type(me.output_new.type_name());
+
     trace!(
-        "merging fetch steps [{}] + [{}]",
+        "merging fetch steps [{}] + [{}] at path {}",
         self_index.index(),
-        other_index.index()
+        other_index.index(),
+        path
     );
 
-    me.output.add_at_path(
-        &other.output,
-        other.response_path.slice_from(me.response_path.len()),
-        false,
-    )?;
+    me.output_new.migrate_from_another(&other.output_new, &path);
 
     let mut children_indexes: Vec<NodeIndex> = vec![];
     let mut parents_indexes: Vec<NodeIndex> = vec![];

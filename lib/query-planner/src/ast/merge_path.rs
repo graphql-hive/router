@@ -92,18 +92,44 @@ impl Display for Segment {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)] // Clone is cheap with Arc inside
+#[derive(Clone, Debug, PartialEq)] // Clone is cheap with Arc inside
 pub struct MergePath {
+    pub entrypoint_definition_name: Arc<String>,
     pub inner: Arc<[Segment]>,
 }
 
 impl MergePath {
-    pub fn new(path: Vec<Segment>) -> Self {
-        Self { inner: path.into() }
+    pub fn empty() -> Self {
+        Self {
+            entrypoint_definition_name: Arc::new("".to_string()),
+            inner: Arc::from(vec![]),
+        }
+    }
+
+    pub fn new_empty_root(entrypoint_definition_name: &str) -> Self {
+        Self {
+            entrypoint_definition_name: entrypoint_definition_name.to_string().into(),
+            inner: Arc::from(vec![]),
+        }
+    }
+
+    pub fn of_type(&self, type_name: &str) -> Self {
+        Self {
+            entrypoint_definition_name: Arc::new(type_name.to_string()),
+            inner: self.inner.clone(),
+        }
+    }
+
+    pub fn new(entrypoint_definition_name: Arc<String>, path: Vec<Segment>) -> Self {
+        Self {
+            inner: path.into(),
+            entrypoint_definition_name,
+        }
     }
 
     pub fn slice_from(&self, start: usize) -> Self {
         Self {
+            entrypoint_definition_name: self.entrypoint_definition_name.clone(),
             inner: Arc::from(&self.inner[start..]),
         }
     }
@@ -114,6 +140,7 @@ impl MergePath {
 
     pub fn without_last(&self) -> Self {
         Self {
+            entrypoint_definition_name: self.entrypoint_definition_name.clone(),
             inner: Arc::from(&self.inner[..self.inner.len() - 1]),
         }
     }
@@ -147,7 +174,7 @@ impl MergePath {
         let mut new_segments = Vec::with_capacity(self.inner.len() + 1);
         new_segments.push(segment.into());
         new_segments.extend_from_slice(&self.inner);
-        Self::new(new_segments)
+        Self::new(self.entrypoint_definition_name.clone(), new_segments)
     }
 
     /// Inserts a string at the end of the path
@@ -155,7 +182,7 @@ impl MergePath {
         let mut new_segments = Vec::with_capacity(self.inner.len() + 1);
         new_segments.extend_from_slice(&self.inner);
         new_segments.push(segment.into());
-        Self::new(new_segments)
+        Self::new(self.entrypoint_definition_name.clone(), new_segments)
     }
 
     pub fn len(&self) -> usize {
@@ -184,10 +211,18 @@ impl MergePath {
 
 impl Display for MergePath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "'{}'->", self.entrypoint_definition_name).unwrap();
+
         let mut iter = self
             .inner
             .iter()
             .filter(|segment| !matches!(segment, Segment::Cast(_, _)));
+
+        if iter.clone().peekable().peek().is_none() {
+            write!(f, "''").unwrap();
+
+            return Ok(());
+        }
 
         // We take the first to avoid a leading separator
         if let Some(first_segment) = iter.next() {

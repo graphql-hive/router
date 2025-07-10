@@ -29,9 +29,7 @@ impl FetchGraph {
                     Err(_) => return false,
                 };
 
-                if !step.output.selection_set.items.is_empty()
-                    && self.parents_of(step_index).next().is_some()
-                {
+                if !step.output_new.is_empty() && self.parents_of(step_index).next().is_some() {
                     return false;
                 }
 
