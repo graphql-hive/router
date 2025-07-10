@@ -44,14 +44,14 @@ impl JoinFieldDirective {
         {
             let is_precision_valid = match value_str.find('.') {
                 Some(dot_index) => {
-                    // The decimal part is not longer than 3 digits
-                    value_str.len() - dot_index - 1 <= 3
+                    // The decimal precision should not be longer than 8 digits
+                    value_str.len() - dot_index - 1 <= 8
                 }
                 None => true,
             };
 
             if !is_precision_valid {
-                panic!("Invalid precision for percentage override. Must be no more than 3 decimal places.");
+                panic!("Invalid precision for percentage override. Must be no more than 8 fraction digits.");
             }
 
             match value_str.parse::<f64>() {
@@ -60,16 +60,17 @@ impl JoinFieldDirective {
                         panic!("Invalid percentage value. Must be between 0 and 100.");
                     }
 
-                    // Multiply by 1000 to scale for integer storage
-                    // (11.12 becomes 11120.0)
-                    // Cast to u32 for storage
-                    // (11120.0 becomes 11120)
-                    return OverrideLabel::Percentage((value * 1000.0) as u32);
+                    // Multiply by 100,000,000 to scale for integer storage
+                    // and to preserve 8 fraction digits.
+                    // (11.12 becomes 1112000000.0)
+                    // Cast to u64 for storage
+                    // (11120.0 becomes 1112000000)
+                    return OverrideLabel::Percentage((value * 100_000_000.0) as u64);
                 }
-                Err(e) => {
+                Err(error) => {
                     panic!(
                         "Invalid percentage value. Must be between 0 and 100. {}",
-                        e.to_string()
+                        error
                     );
                 }
             }
