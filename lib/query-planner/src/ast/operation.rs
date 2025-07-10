@@ -139,21 +139,19 @@ impl Display for OperationDefinition {
 
         if let Some(variable_definitions) = &self.variable_definitions {
             if !variable_definitions.is_empty() {
-                write!(f, "(")?;
-                let len = variable_definitions.len();
-                for (i, variable_definition) in variable_definitions.iter().enumerate() {
-                    let is_last = i == len - 1;
-                    write!(f, "{}", variable_definition)?;
-
-                    if !is_last {
-                        write!(f, ", ")?;
+                f.write_str("(")?;
+                let mut iter = variable_definitions.iter().peekable();
+                while let Some(variable_definition) = iter.next() {
+                    variable_definition.fmt(f)?;
+                    if iter.peek().is_some() {
+                        f.write_str(", ")?;
                     }
                 }
-                write!(f, ")")?;
+                f.write_str(")")?;
             }
         }
 
-        write!(f, "{}", self.selection_set)
+        self.selection_set.fmt(f)
     }
 }
 
