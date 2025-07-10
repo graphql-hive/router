@@ -55,11 +55,11 @@ pub enum PipelineErrorVariant {
 
     // GraphQL-specific errors
     #[error("Failed to parse GraphQL request payload")]
-    FailedToParseBody(serde_json::Error),
+    FailedToParseBody(sonic_rs::Error),
     #[error("Failed to parse GraphQL variables JSON")]
-    FailedToParseVariables(serde_json::Error),
+    FailedToParseVariables(sonic_rs::Error),
     #[error("Failed to parse GraphQL extensions JSON")]
-    FailedToParseExtensions(serde_json::Error),
+    FailedToParseExtensions(sonic_rs::Error),
     #[error("Failed to parse GraphQL operation")]
     FailedToParseOperation(graphql_parser::query::ParseError),
     #[error("Failed to normalize GraphQL operation")]

@@ -882,6 +882,7 @@ dependencies = [
  "query-planner",
  "serde",
  "serde_json",
+ "sonic-rs",
  "thiserror 2.0.12",
  "tokio",
  "tower",
