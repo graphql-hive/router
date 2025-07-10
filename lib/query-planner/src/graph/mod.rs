@@ -2,6 +2,8 @@ pub(crate) mod edge;
 pub(crate) mod error;
 pub(crate) mod node;
 
+pub use self::edge::ProgressiveOverrideContext;
+
 mod tests;
 
 use std::{

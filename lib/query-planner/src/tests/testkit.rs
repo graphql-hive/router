@@ -9,6 +9,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 use graphql_parser::query as query_ast;
 
 use crate::ast::normalization::normalize_operation;
+use crate::graph::edge::ProgressiveOverrideContext;
 use crate::graph::Graph;
 use crate::planner::add_variables_to_fetch_steps;
 use crate::planner::best::find_best_combination;
@@ -62,9 +63,15 @@ pub fn build_query_plan(
         Graph::graph_from_supergraph_state(&supergraph_state).expect("failed to create graph");
     let document = normalize_operation(&supergraph_state, &query, None).unwrap();
     let operation = document.executable_operation();
-    let best_paths_per_leaf = walk_operation(&graph, operation)?;
+    let override_context = ProgressiveOverrideContext::default();
+    let best_paths_per_leaf = walk_operation(&graph, &override_context, operation)?;
     let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
-    let mut fetch_graph = build_fetch_graph_from_query_tree(&graph, &supergraph_state, query_tree)?;
+    let mut fetch_graph = build_fetch_graph_from_query_tree(
+        &graph,
+        &supergraph_state,
+        &override_context,
+        query_tree,
+    )?;
     add_variables_to_fetch_steps(&mut fetch_graph, &operation.variable_definitions)?;
 
     let plan = build_query_plan_from_fetch_graph(fetch_graph, &supergraph_state)?;
