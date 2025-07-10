@@ -9,7 +9,7 @@ use super::error::PipelineError;
 use super::gateway_layer::{GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer};
 
 /// Contains the request-specific context for progressive overrides.
-/// This will be stored in the request extensions.
+/// This is stored in the request extensions
 #[derive(Debug, Clone)]
 pub struct RequestOverrideContext {
     /// The set of override flags that are active for this request.
