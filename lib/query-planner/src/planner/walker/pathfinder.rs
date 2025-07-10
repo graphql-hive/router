@@ -327,6 +327,8 @@ pub fn can_satisfy_edge(
     let edge = edge_ref.weight();
 
     if let Edge::FieldMove(field_move) = edge {
+        // TODO: This should be passed from the executor,
+        //       I will work on it next.
         if !field_move.satisfies_override_rules(&Default::default()) {
             return Ok(None);
         }
