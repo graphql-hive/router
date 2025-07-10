@@ -18,6 +18,7 @@ use axum::{
     Router,
 };
 use http::Request;
+use mimalloc::MiMalloc;
 use tokio::signal;
 
 use axum::Extension;
@@ -41,6 +42,9 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing::info;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

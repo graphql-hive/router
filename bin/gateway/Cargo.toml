@@ -11,6 +11,8 @@ path = "src/main.rs"
 query-planner = { path = "../../lib/query-planner" }
 query-plan-executor = { path = "../../lib/query-plan-executor" }
 
+mimalloc = "0.1.47"
+
 # Tokio runtime
 tokio = { version = "1.38.0", features = ["full"] }
 
