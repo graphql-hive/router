@@ -36,6 +36,46 @@ impl Default for JoinFieldDirective {
 
 impl JoinFieldDirective {
     pub const NAME: &str = "join__field";
+
+    fn parse_override_label(label: &str) -> OverrideLabel {
+        if let Some(value_str) = label
+            .strip_prefix("percent(")
+            .and_then(|s| s.strip_suffix(')'))
+        {
+            let is_precision_valid = match value_str.find('.') {
+                Some(dot_index) => {
+                    // The decimal part is not longer than 3 digits
+                    value_str.len() - dot_index - 1 <= 3
+                }
+                None => true,
+            };
+
+            if !is_precision_valid {
+                panic!("Invalid precision for percentage override. Must be no more than 3 decimal places.");
+            }
+
+            match value_str.parse::<f64>() {
+                Ok(value) => {
+                    if !(0.0..=100.0).contains(&value) {
+                        panic!("Invalid percentage value. Must be between 0 and 100.");
+                    }
+
+                    // Multiply by 1000 to scale for integer storage
+                    // (11.12 becomes 11120.0)
+                    // Cast to u32 for storage
+                    // (11120.0 becomes 11120)
+                    return OverrideLabel::Percentage((value * 1000.0) as u32);
+                }
+                Err(e) => {
+                    panic!(
+                        "Invalid percentage value. Must be between 0 and 100. {}",
+                        e.to_string()
+                    );
+                }
+            }
+        }
+        OverrideLabel::Custom(label.to_string())
+    }
 }
 
 impl FederationDirective for JoinFieldDirective {
@@ -79,6 +119,10 @@ impl FederationDirective for JoinFieldDirective {
             } else if arg_name.eq("usedOverridden") {
                 if let Value::Boolean(value) = arg_value {
                     result.used_overridden = *value
+                }
+            } else if arg_name.eq("overrideLabel") {
+                if let Value::String(value) = arg_value {
+                    result.override_label = Some(Self::parse_override_label(value));
                 }
             }
         }

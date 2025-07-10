@@ -1,4 +1,6 @@
+use rand::Rng;
 use std::{
+    collections::HashSet,
     fmt::{Debug, Display},
     hash::Hash,
 };
@@ -39,10 +41,81 @@ pub struct FieldMove {
     pub requirements: Option<TypeAwareSelection>,
     pub override_from: Option<String>,
     pub override_label: Option<OverrideLabel>,
+    pub overridden_by: Option<(String, Option<OverrideLabel>)>,
+}
+
+impl FieldMove {
+    pub fn satisfies_override_rules(&self, ctx: &ProgressiveOverrideContext) -> bool {
+        // Field is being progressively overridden by another subgraph
+        if let Some((_, Some(label))) = &self.overridden_by {
+            return self.check_progressive_override(label, ctx, false);
+        }
+
+        // Field is being fully overridden, so it's not resolvable
+        if self.overridden_by.is_some() {
+            return false;
+        }
+
+        // Field is progressively overriding another subgraph
+        if let Some(label) = &self.override_label {
+            return self.check_progressive_override(label, ctx, true);
+        }
+
+        // The field is not involved in an override, so it's always resolvable.
+        true
+    }
+
+    fn check_progressive_override(
+        &self,
+        label: &OverrideLabel,
+        ctx: &ProgressiveOverrideContext,
+        is_overriding_field: bool,
+    ) -> bool {
+        match label {
+            OverrideLabel::Custom(flag_name) => {
+                is_overriding_field == ctx.is_flag_active(flag_name)
+            }
+            OverrideLabel::Percentage(percentage_in_label) => {
+                is_overriding_field == ctx.is_in_range(percentage_in_label)
+            }
+        }
+    }
+}
+
+type ActiveFlags = HashSet<String>;
+
+#[derive(Default)]
+pub struct ProgressiveOverrideContext {
+    active_flags: ActiveFlags,
+    request_percentage_value: Percentage,
+}
+
+impl ProgressiveOverrideContext {
+    pub fn new(active_flags: ActiveFlags) -> Self {
+        // Percentage is 0 - 100_000
+        // 0 = 0%
+        // 100_000 = 100%
+        // 50_000 = 50%
+        // 50_123 = 50.123%
+        let request_percentage_value: Percentage = rand::rng().random_range(0..=100_000);
+
+        Self {
+            active_flags,
+            request_percentage_value,
+        }
+    }
+
+    pub fn is_flag_active(&self, flag_name: &str) -> bool {
+        self.active_flags.contains(flag_name)
+    }
+
+    pub fn is_in_range(&self, percentage: &Percentage) -> bool {
+        &self.request_percentage_value < percentage
+    }
 }
 
 /// Represents a percentage value
-/// as XX.XXXX multiplied by 10000
+/// as XX.XXX multiplied by 1000
 /// Where XX is a number between 0 and 100
 type Percentage = u32;
 
@@ -117,6 +190,7 @@ impl Edge {
         is_list: bool,
         join_field: Option<JoinFieldDirective>,
         requirements: Option<TypeAwareSelection>,
+        overridden_by: Option<(String, Option<OverrideLabel>)>,
     ) -> Self {
         let override_from = join_field.as_ref().and_then(|jf| jf.override_value.clone());
         let override_label = join_field.as_ref().and_then(|jf| jf.override_label.clone());
@@ -130,6 +204,7 @@ impl Edge {
             requirements,
             override_from,
             override_label,
+            overridden_by,
         })
     }
 
@@ -214,8 +289,14 @@ impl Debug for Edge {
                     }
 
                     if let Some(override_from) = &jf.override_value {
-                        result =
-                            result.and_then(|_| write!(f, " @override(from: {})", override_from));
+                        let label = jf
+                            .override_label
+                            .as_ref()
+                            .map_or("".to_string(), |label| format!(", label: {}", label));
+
+                        result = result.and_then(|_| {
+                            write!(f, " @override(from: {}{})", override_from, label)
+                        });
                     }
                 }
 

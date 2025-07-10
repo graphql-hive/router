@@ -326,6 +326,12 @@ pub fn can_satisfy_edge(
 ) -> Result<Option<Vec<OperationPath>>, WalkOperationError> {
     let edge = edge_ref.weight();
 
+    if let Edge::FieldMove(field_move) = edge {
+        if !field_move.satisfies_override_rules(&Default::default()) {
+            return Ok(None);
+        }
+    }
+
     match edge.requirements() {
         None => Ok(Some(vec![])),
         Some(selections) => {
