@@ -1,4 +1,7 @@
-use std::fmt::{Debug, Display};
+use std::{
+    fmt::{Debug, Display},
+    hash::Hash,
+};
 
 use petgraph::graph::EdgeReference as GraphEdgeReference;
 
@@ -35,6 +38,27 @@ pub struct FieldMove {
     pub join_field: Option<JoinFieldDirective>,
     pub requirements: Option<TypeAwareSelection>,
     pub override_from: Option<String>,
+    pub override_label: Option<OverrideLabel>,
+}
+
+/// Represents a percentage value
+/// as XX.XXXX multiplied by 10000
+/// Where XX is a number between 0 and 100
+type Percentage = u32;
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub enum OverrideLabel {
+    Custom(String),
+    Percentage(Percentage),
+}
+
+impl Display for OverrideLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OverrideLabel::Custom(label) => write!(f, "{}", label),
+            OverrideLabel::Percentage(percentage) => write!(f, "{}%", percentage / 1000),
+        }
+    }
 }
 
 pub enum Edge {
@@ -95,6 +119,7 @@ impl Edge {
         requirements: Option<TypeAwareSelection>,
     ) -> Self {
         let override_from = join_field.as_ref().and_then(|jf| jf.override_value.clone());
+        let override_label = join_field.as_ref().and_then(|jf| jf.override_label.clone());
 
         Self::FieldMove(FieldMove {
             name: name.clone(),
@@ -104,6 +129,7 @@ impl Edge {
             join_field,
             requirements,
             override_from,
+            override_label,
         })
     }
 

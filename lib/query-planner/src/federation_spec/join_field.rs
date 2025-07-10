@@ -1,6 +1,6 @@
 use graphql_parser::schema::{Directive, Value};
 
-use crate::state::supergraph_state::TypeNode;
+use crate::{graph::edge::OverrideLabel, state::supergraph_state::TypeNode};
 
 use super::directives::FederationDirective;
 
@@ -12,6 +12,7 @@ pub struct JoinFieldDirective {
     pub type_in_graph: Option<TypeNode>,
     pub external: bool,
     pub override_value: Option<String>,
+    pub override_label: Option<OverrideLabel>,
     pub used_overridden: bool,
 }
 
@@ -27,6 +28,7 @@ impl Default for JoinFieldDirective {
             type_in_graph: None,
             external: false,
             override_value: None,
+            override_label: None,
             used_overridden: false,
         }
     }
