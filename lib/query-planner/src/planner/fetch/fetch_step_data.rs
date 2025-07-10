@@ -11,7 +11,8 @@ use crate::{
         type_aware_selection::{find_arguments_conflicts, TypeAwareSelection},
     },
     planner::{
-        fetch::fetch_graph::FetchGraph, plan_nodes::FetchRewrite,
+        fetch::{fetch_graph::FetchGraph, selections::FetchStepSelections},
+        plan_nodes::FetchRewrite,
         tree::query_tree_node::MutationFieldPosition,
     },
     state::supergraph_state::SubgraphName,
@@ -23,6 +24,7 @@ pub struct FetchStepData {
     pub response_path: MergePath,
     pub input: TypeAwareSelection,
     pub output: TypeAwareSelection,
+    pub output_new: FetchStepSelections,
     pub kind: FetchStepKind,
     pub used_for_requires: bool,
     pub condition: Option<Condition>,
@@ -48,7 +50,7 @@ impl Display for FetchStepData {
             self.input.type_name,
             self.service_name,
             self.input,
-            self.output,
+            self.output_new,
             self.response_path.join("."),
         )?;
 
