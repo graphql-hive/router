@@ -11,7 +11,8 @@ use crate::{
         type_aware_selection::{find_arguments_conflicts, TypeAwareSelection},
     },
     planner::{
-        fetch::fetch_graph::FetchGraph, plan_nodes::FetchRewrite,
+        fetch::{fetch_graph::FetchGraph, selections::FetchStepSelections},
+        plan_nodes::FetchRewrite,
         tree::query_tree_node::MutationFieldPosition,
     },
     state::supergraph_state::SubgraphName,
@@ -23,6 +24,7 @@ pub struct FetchStepData {
     pub response_path: MergePath,
     pub input: TypeAwareSelection,
     pub output: TypeAwareSelection,
+    pub output_new: FetchStepSelections,
     pub kind: FetchStepKind,
     pub used_for_requires: bool,
     pub condition: Option<Condition>,
@@ -42,13 +44,27 @@ pub enum FetchStepKind {
 
 impl Display for FetchStepData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let first_output = match &self.output_new {
+            FetchStepSelections::Root { type_name, .. } => type_name,
+            FetchStepSelections::Entities { selections } => selections.keys().next().unwrap(),
+        };
+
+        // TODO: Remove this when i'm done. It's a way to test that i'm building the exact same selection set.
+        if first_output != &self.output.type_name {
+            panic!(
+                "the new output type name is {} while previous is {}",
+                first_output, self.output.type_name
+            )
+        }
+
         write!(
             f,
-            "{}/{} {} → {} at $.{}",
+            "{}/{} {} → {}/{} at $.{}",
             self.input.type_name,
             self.service_name,
             self.input,
-            self.output,
+            first_output,
+            self.output_new,
             self.response_path.join("."),
         )?;
 
