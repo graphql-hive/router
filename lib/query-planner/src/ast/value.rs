@@ -170,6 +170,7 @@ impl Display for Value {
                 f.write_str("]")
             }
             Value::Object(o) => {
+                f.write_str("{")?;
                 let mut iter = o.iter().peekable();
                 while let Some((k, v)) = iter.next() {
                     write!(f, "{}: {}", k, v)?;
@@ -177,7 +178,7 @@ impl Display for Value {
                         write!(f, ", ")?;
                     }
                 }
-                Ok(())
+                f.write_str("}")
             }
         }
     }
