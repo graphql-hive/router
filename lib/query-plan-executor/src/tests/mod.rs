@@ -1,3 +1,4 @@
+use query_planner::graph::PlannerOverrideContext;
 use subgraphs::accounts;
 
 use crate::executors::{common::SubgraphExecutor, map::SubgraphExecutorMap};
@@ -21,8 +22,9 @@ fn query_executor_pipeline_locally() {
         )
         .expect("Failed to normalize operation");
         let normalized_operation = normalized_document.executable_operation();
+        let override_context = PlannerOverrideContext::default();
         let query_plan = planner
-            .plan_from_normalized_operation(normalized_operation)
+            .plan_from_normalized_operation(normalized_operation, override_context)
             .expect("Failed to create query plan");
         let schema_metadata =
             crate::schema_metadata::SchemaWithMetadata::schema_metadata(&planner.consumer_schema);

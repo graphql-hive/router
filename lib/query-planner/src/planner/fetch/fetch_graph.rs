@@ -2,7 +2,7 @@ use crate::ast::merge_path::{Condition, MergePath, Segment};
 use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
 use crate::ast::type_aware_selection::TypeAwareSelection;
-use crate::graph::edge::{Edge, FieldMove, InterfaceObjectTypeMove, ProgressiveOverrideContext};
+use crate::graph::edge::{Edge, FieldMove, InterfaceObjectTypeMove, PlannerOverrideContext};
 use crate::graph::node::Node;
 use crate::graph::Graph;
 use crate::planner::fetch::fetch_step_data::{FetchStepData, FetchStepKind};
@@ -504,7 +504,7 @@ fn ensure_fetch_step_for_requirement(
 fn process_children_for_fetch_steps(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
     response_path: &MergePath,
@@ -544,7 +544,7 @@ fn process_children_for_fetch_steps(
 fn process_requirements_for_fetch_steps(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
     requiring_fetch_step_index: Option<NodeIndex>,
@@ -580,7 +580,7 @@ fn process_requirements_for_fetch_steps(
 fn process_noop_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: Option<NodeIndex>,
     response_path: &MergePath,
@@ -638,7 +638,7 @@ fn add_typename_field_to_output(
 fn process_entity_move_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
     response_path: &MergePath,
@@ -764,7 +764,7 @@ fn process_entity_move_edge(
 fn process_interface_object_type_move_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
     response_path: &MergePath,
@@ -938,7 +938,7 @@ fn process_interface_object_type_move_edge(
 fn process_subgraph_entrypoint_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
     subgraph_name: &SubgraphName,
@@ -981,7 +981,7 @@ fn process_subgraph_entrypoint_edge(
 fn process_abstract_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
     requiring_fetch_step_index: Option<NodeIndex>,
@@ -1057,7 +1057,7 @@ fn process_abstract_edge(
 fn process_plain_field_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
     requiring_fetch_step_index: Option<NodeIndex>,
@@ -1145,7 +1145,7 @@ fn process_plain_field_edge(
 fn process_requires_field_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: NodeIndex,
     response_path: &MergePath,
@@ -1428,7 +1428,7 @@ fn process_requires_field_edge(
 ))]
 fn find_satisfiable_key<'a>(
     graph: &'a Graph,
-    override_context: &'a ProgressiveOverrideContext,
+    override_context: &'a PlannerOverrideContext,
     query_node: &QueryTreeNode,
 ) -> Result<&'a TypeAwareSelection, FetchGraphError> {
     // This could be improved...
@@ -1479,7 +1479,7 @@ fn find_satisfiable_key<'a>(
 fn process_query_node(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     query_node: &QueryTreeNode,
     parent_fetch_step_index: Option<NodeIndex>,
     response_path: &MergePath,
@@ -1624,7 +1624,7 @@ pub fn find_graph_roots(graph: &FetchGraph) -> Vec<NodeIndex> {
 pub fn build_fetch_graph_from_query_tree(
     graph: &Graph,
     supergraph: &SupergraphState,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     query_tree: QueryTree,
 ) -> Result<FetchGraph, FetchGraphError> {
     let mut fetch_graph = FetchGraph::new();

@@ -30,6 +30,7 @@ use crate::pipeline::{
     graphql_request_params::GraphQLRequestParamsExtractor,
     http_request_params::HttpRequestParamsExtractor,
     normalize_service::GraphQLOperationNormalizationService, parser_service::GraphQLParserService,
+    progressive_override_service::ProgressiveOverrideExtractor,
     query_plan_service::QueryPlanService, validation_service::GraphQLValidationService,
 };
 use query_planner::utils::parsing::parse_schema;
@@ -98,6 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(GraphiQLResponderService::new_layer())
         .layer(GraphQLRequestParamsExtractor::new_layer())
         .layer(GraphQLParserService::new_layer())
+        .layer(ProgressiveOverrideExtractor::new_layer())
         .layer(GraphQLOperationNormalizationService::new_layer())
         .layer(CoerceVariablesService::new_layer())
         .layer(GraphQLValidationService::new_layer())

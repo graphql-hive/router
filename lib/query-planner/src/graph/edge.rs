@@ -1,4 +1,3 @@
-use rand::Rng;
 use std::{
     collections::HashSet,
     fmt::{Debug, Display},
@@ -45,7 +44,7 @@ pub struct FieldMove {
 }
 
 impl FieldMove {
-    pub fn satisfies_override_rules(&self, ctx: &ProgressiveOverrideContext) -> bool {
+    pub fn satisfies_override_rules(&self, ctx: &PlannerOverrideContext) -> bool {
         // Field is being progressively overridden by another subgraph
         if let Some((_, Some(label))) = &self.overridden_by {
             return self.check_progressive_override(label, ctx, false);
@@ -68,7 +67,7 @@ impl FieldMove {
     fn check_progressive_override(
         &self,
         label: &OverrideLabel,
-        ctx: &ProgressiveOverrideContext,
+        ctx: &PlannerOverrideContext,
         is_overriding_field: bool,
     ) -> bool {
         match label {
@@ -85,20 +84,13 @@ impl FieldMove {
 type ActiveFlags = HashSet<String>;
 
 #[derive(Default)]
-pub struct ProgressiveOverrideContext {
+pub struct PlannerOverrideContext {
     active_flags: ActiveFlags,
     request_percentage_value: Percentage,
 }
 
-impl ProgressiveOverrideContext {
-    pub fn new(active_flags: ActiveFlags) -> Self {
-        // Percentage is 0 - 100_000_000_000
-        // 0 = 0%
-        // 100_000_000_000 = 100%
-        // 50_000_000_000 = 50%
-        // 50_123_456_789 = 50.12345678%
-        let request_percentage_value: Percentage = rand::rng().random_range(0..=100_000_000_000);
-
+impl PlannerOverrideContext {
+    pub fn new(active_flags: ActiveFlags, request_percentage_value: Percentage) -> Self {
         Self {
             active_flags,
             request_percentage_value,
@@ -123,6 +115,7 @@ impl ProgressiveOverrideContext {
 ///
 /// Why 8? That's the maximum precision composition allows.
 pub type Percentage = u64;
+pub const PERCENTAGE_SCALE_FACTOR: u64 = 100_000_000;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum OverrideLabel {
@@ -134,7 +127,9 @@ impl Display for OverrideLabel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             OverrideLabel::Custom(label) => write!(f, "{}", label),
-            OverrideLabel::Percentage(percentage) => write!(f, "{}%", percentage / 1000),
+            OverrideLabel::Percentage(percentage) => {
+                write!(f, "{}%", percentage / PERCENTAGE_SCALE_FACTOR)
+            }
         }
     }
 }

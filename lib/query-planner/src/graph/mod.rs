@@ -2,7 +2,8 @@ pub(crate) mod edge;
 pub(crate) mod error;
 pub(crate) mod node;
 
-pub use self::edge::ProgressiveOverrideContext;
+pub use self::edge::PlannerOverrideContext;
+pub use self::edge::PERCENTAGE_SCALE_FACTOR;
 
 mod tests;
 

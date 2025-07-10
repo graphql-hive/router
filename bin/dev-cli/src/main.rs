@@ -5,6 +5,7 @@ use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
 use query_planner::consumer_schema::ConsumerSchema;
 use query_planner::graph::Graph;
+use query_planner::graph::PlannerOverrideContext;
 use query_planner::planner::best::find_best_combination;
 use query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
 use query_planner::planner::fetch::fetch_graph::FetchGraph;
@@ -127,7 +128,8 @@ fn process_fetch_graph(supergraph_path: &str, operation_path: &str) -> FetchGrap
     let (graph, query_tree, supergraph_state) =
         process_merged_tree(supergraph_path, operation_path);
 
-    build_fetch_graph_from_query_tree(&graph, &supergraph_state, query_tree)
+    let override_context = PlannerOverrideContext::default();
+    build_fetch_graph_from_query_tree(&graph, &supergraph_state, &override_context, query_tree)
         .expect("failed to build fetch graph")
 }
 
@@ -138,10 +140,12 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
     let supergraph = SupergraphState::new(&parsed_schema);
     let graph = Graph::graph_from_supergraph_state(&supergraph).expect("failed to create graph");
     let operation = get_operation(operation_path, &supergraph);
-    let best_paths_per_leaf = walk_operation(&graph, &operation).unwrap();
+    let override_context = PlannerOverrideContext::default();
+    let best_paths_per_leaf = walk_operation(&graph, &override_context, &operation).unwrap();
     let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
-    let fetch_graph = build_fetch_graph_from_query_tree(&graph, &supergraph, query_tree)
-        .expect("failed to build fetch graph");
+    let fetch_graph =
+        build_fetch_graph_from_query_tree(&graph, &supergraph, &override_context, query_tree)
+            .expect("failed to build fetch graph");
 
     build_query_plan_from_fetch_graph(fetch_graph, &supergraph).expect("failed to build query plan")
 }
@@ -181,7 +185,8 @@ fn process_paths(
     let supergraph = SupergraphState::new(&parsed_schema);
     let graph = Graph::graph_from_supergraph_state(&supergraph).expect("failed to create graph");
     let operation = get_operation(operation_path, &supergraph);
-    let best_paths_per_leaf = walk_operation(&graph, &operation).unwrap();
+    let override_context = PlannerOverrideContext::default();
+    let best_paths_per_leaf = walk_operation(&graph, &override_context, &operation).unwrap();
 
     (graph, best_paths_per_leaf, operation, supergraph)
 }

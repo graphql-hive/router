@@ -9,7 +9,7 @@ use walker::{error::WalkOperationError, walk_operation};
 use crate::{
     ast::operation::{OperationDefinition, VariableDefinition},
     consumer_schema::ConsumerSchema,
-    graph::{edge::ProgressiveOverrideContext, error::GraphError, Graph},
+    graph::{edge::PlannerOverrideContext, error::GraphError, Graph},
     planner::{best::find_best_combination, fetch::fetch_graph::FetchGraph},
     state::supergraph_state::SupergraphState,
 };
@@ -91,8 +91,8 @@ impl Planner {
     pub fn plan_from_normalized_operation(
         &self,
         normalized_operation: &OperationDefinition,
+        override_context: PlannerOverrideContext,
     ) -> Result<QueryPlan, PlannerError> {
-        let override_context = ProgressiveOverrideContext::default();
         let best_paths_per_leaf =
             walk_operation(&self.graph, &override_context, normalized_operation)?;
         let query_tree = find_best_combination(&self.graph, best_paths_per_leaf).unwrap();

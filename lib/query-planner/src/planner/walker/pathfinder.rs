@@ -6,7 +6,7 @@ use tracing::{instrument, trace};
 
 use crate::ast::merge_path::Condition;
 use crate::ast::selection_set::InlineFragmentSelection;
-use crate::graph::edge::ProgressiveOverrideContext;
+use crate::graph::edge::PlannerOverrideContext;
 use crate::{
     ast::{
         selection_item::SelectionItem, selection_set::FieldSelection,
@@ -71,7 +71,7 @@ pub enum NavigationTarget<'a> {
 ))]
 pub fn find_indirect_paths(
     graph: &Graph,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     path: &OperationPath,
     target: &NavigationTarget,
     excluded: &ExcludedFromLookup,
@@ -231,7 +231,7 @@ pub fn find_indirect_paths(
 ))]
 pub fn find_direct_paths(
     graph: &Graph,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     path: &OperationPath,
     target: &NavigationTarget,
 ) -> Result<Vec<OperationPath>, WalkOperationError> {
@@ -342,7 +342,7 @@ pub fn find_direct_paths(
 ))]
 pub fn can_satisfy_edge(
     graph: &Graph,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     edge_ref: &EdgeReference,
     path: &OperationPath,
     excluded: &ExcludedFromLookup,
@@ -474,7 +474,7 @@ type FragmentRequirementsResult = Option<(Vec<OperationPath>, Vec<MoveRequiremen
 #[instrument(level = "trace", skip_all, fields(field = field.name))]
 fn validate_field_requirement(
     graph: &Graph,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     move_requirement: &MoveRequirement, // Contains Rc<Vec<OperationPath>>
     field: &FieldSelection,
     excluded: &ExcludedFromLookup,
@@ -556,7 +556,7 @@ fn validate_field_requirement(
 #[instrument(level = "trace", skip_all, fields(type_condition = fragment_selection.type_condition))]
 fn validate_fragment_requirement(
     graph: &Graph,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     requirement: &MoveRequirement,
     fragment_selection: &InlineFragmentSelection,
     excluded: &ExcludedFromLookup,

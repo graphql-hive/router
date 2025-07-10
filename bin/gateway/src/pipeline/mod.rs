@@ -7,5 +7,6 @@ pub mod graphql_request_params;
 pub mod http_request_params;
 pub mod normalize_service;
 pub mod parser_service;
+pub mod progressive_override_service;
 pub mod query_plan_service;
 pub mod validation_service;

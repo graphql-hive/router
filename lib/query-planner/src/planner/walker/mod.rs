@@ -13,7 +13,7 @@ use crate::{
         selection_item::SelectionItem,
         selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
     },
-    graph::{edge::ProgressiveOverrideContext, node::Node, Graph},
+    graph::{edge::PlannerOverrideContext, node::Node, Graph},
     planner::walker::pathfinder::NavigationTarget,
     state::supergraph_state::OperationKind,
 };
@@ -41,7 +41,7 @@ type ResolutionStack<'a> = Vec<WorkItem<'a>>;
 #[instrument(level = "trace", skip_all)]
 pub fn walk_operation(
     graph: &Graph,
-    override_context: &ProgressiveOverrideContext,
+    override_context: &PlannerOverrideContext,
     operation: &OperationDefinition,
 ) -> Result<ResolvedOperation, WalkOperationError> {
     let operation_kind = operation
@@ -89,7 +89,7 @@ pub fn walk_operation(
 
 fn process_selection<'a>(
     graph: &'a Graph,
-    override_context: &'a ProgressiveOverrideContext,
+    override_context: &'a PlannerOverrideContext,
     selection_item: &'a SelectionItem,
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
@@ -120,7 +120,7 @@ fn process_selection<'a>(
 #[instrument(level = "trace", skip_all)]
 fn process_selection_set<'a>(
     graph: &'a Graph,
-    override_context: &'a ProgressiveOverrideContext,
+    override_context: &'a PlannerOverrideContext,
     selection_set: &'a SelectionSet,
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
@@ -142,7 +142,7 @@ fn process_selection_set<'a>(
 ))]
 fn process_inline_fragment<'a>(
     graph: &'a Graph,
-    override_context: &'a ProgressiveOverrideContext,
+    override_context: &'a PlannerOverrideContext,
     fragment: &'a InlineFragmentSelection,
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
@@ -284,7 +284,7 @@ fn process_inline_fragment<'a>(
 ))]
 fn process_field<'a>(
     graph: &'a Graph,
-    override_context: &'a ProgressiveOverrideContext,
+    override_context: &'a PlannerOverrideContext,
     field: &'a FieldSelection,
     paths: &[OperationPath],
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
