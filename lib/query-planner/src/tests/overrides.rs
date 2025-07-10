@@ -1,5 +1,6 @@
 use crate::{
-    tests::testkit::{build_query_plan, init_logger},
+    graph::PlannerOverrideContext,
+    tests::testkit::{build_query_plan, build_query_plan_with_context, init_logger},
     utils::parsing::parse_operation,
 };
 use std::error::Error;
@@ -209,6 +210,167 @@ fn override_object_field_but_interface_is_requested() -> Result<(), Box<dyn Erro
             }
           },
         },
+      },
+    },
+    "#);
+    Ok(())
+}
+
+#[test]
+fn progressive_override_percentage_test() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          aFeed {
+            createdAt
+          }
+          bFeed {
+            createdAt
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_context(
+        "fixture/tests/simple-progressive-overrides.supergraph.graphql",
+        document.clone(),
+        // @override(label: "percentage(75)")
+        PlannerOverrideContext::from_percentage(50.0),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Parallel {
+          Fetch(service: "b") {
+            {
+              bFeed {
+                createdAt
+              }
+            }
+          },
+          Fetch(service: "a") {
+            {
+              aFeed {
+                __typename
+                id
+              }
+            }
+          },
+        },
+        Flatten(path: "aFeed.@") {
+          Fetch(service: "b") {
+            {
+              ... on Post {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Post {
+                createdAt
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+
+    let query_plan = build_query_plan_with_context(
+        "fixture/tests/simple-progressive-overrides.supergraph.graphql",
+        document,
+        // @override(label: "percentage(75)")
+        PlannerOverrideContext::from_percentage(90.0),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Parallel {
+          Fetch(service: "b") {
+            {
+              bFeed {
+                __typename
+                id
+              }
+            }
+          },
+          Fetch(service: "a") {
+            {
+              aFeed {
+                createdAt
+              }
+            }
+          },
+        },
+        Flatten(path: "bFeed.@") {
+          Fetch(service: "a") {
+            {
+              ... on Post {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Post {
+                createdAt
+              }
+            }
+          },
+        },
+      },
+    },
+    "#);
+    Ok(())
+}
+
+#[test]
+fn progressive_override_flag_test() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query {
+          feed {
+            id
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan_with_context(
+        "fixture/tests/simple-progressive-overrides.supergraph.graphql",
+        document.clone(),
+        // @override(label: "feed_in_b")
+        PlannerOverrideContext::from_flag("feed_in_b".into()),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "b") {
+        {
+          feed {
+            id
+          }
+        }
+      },
+    },
+    "#);
+
+    let query_plan = build_query_plan_with_context(
+        "fixture/tests/simple-progressive-overrides.supergraph.graphql",
+        document,
+        // @override(label: "feed_in_b")
+        PlannerOverrideContext::from_flag("different_flag".into()),
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        {
+          feed {
+            id
+          }
+        }
       },
     },
     "#);

@@ -97,6 +97,20 @@ impl PlannerOverrideContext {
         }
     }
 
+    pub fn from_percentage(value: f64) -> Self {
+        Self {
+            active_flags: Default::default(),
+            request_percentage_value: (value * (PERCENTAGE_SCALE_FACTOR as f64)) as u64,
+        }
+    }
+
+    pub fn from_flag(value: String) -> Self {
+        Self {
+            active_flags: HashSet::from([value]),
+            request_percentage_value: 0,
+        }
+    }
+
     pub fn is_flag_active(&self, flag_name: &str) -> bool {
         self.active_flags.contains(flag_name)
     }

@@ -53,9 +53,10 @@ pub fn read_supergraph(fixture_path: &str) -> String {
     std::fs::read_to_string(supergraph_path).expect("Unable to read input file")
 }
 
-pub fn build_query_plan(
+pub fn build_query_plan_with_context(
     fixture_path: &str,
     query: query_ast::Document<'static, String>,
+    override_context: PlannerOverrideContext,
 ) -> Result<QueryPlan, Box<dyn Error>> {
     let schema = parse_schema(&read_supergraph(fixture_path));
     let supergraph_state = SupergraphState::new(&schema);
@@ -63,7 +64,6 @@ pub fn build_query_plan(
         Graph::graph_from_supergraph_state(&supergraph_state).expect("failed to create graph");
     let document = normalize_operation(&supergraph_state, &query, None).unwrap();
     let operation = document.executable_operation();
-    let override_context = PlannerOverrideContext::default();
     let best_paths_per_leaf = walk_operation(&graph, &override_context, operation)?;
     let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
     let mut fetch_graph = build_fetch_graph_from_query_tree(
@@ -77,4 +77,11 @@ pub fn build_query_plan(
     let plan = build_query_plan_from_fetch_graph(fetch_graph, &supergraph_state)?;
 
     Ok(plan)
+}
+
+pub fn build_query_plan(
+    fixture_path: &str,
+    query: query_ast::Document<'static, String>,
+) -> Result<QueryPlan, Box<dyn Error>> {
+    build_query_plan_with_context(fixture_path, query, PlannerOverrideContext::default())
 }

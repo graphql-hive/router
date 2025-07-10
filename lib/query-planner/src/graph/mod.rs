@@ -656,7 +656,7 @@ impl Graph {
                     if !is_available {
                         // The field is not available in the current subgraph
                         trace!(
-                              "[ ] Field '{}.{}/{}' does is not available in the subgraph, skipping edge creation (type: {})",
+                              "[ ] Field '{}.{}/{}' is not available in the subgraph, skipping edge creation (type: {})",
                               def_name, field_name, graph_id, target_type
                           );
                         continue;

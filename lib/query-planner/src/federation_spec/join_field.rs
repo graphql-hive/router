@@ -1,6 +1,9 @@
 use graphql_parser::schema::{Directive, Value};
 
-use crate::{graph::edge::OverrideLabel, state::supergraph_state::TypeNode};
+use crate::{
+    graph::{edge::OverrideLabel, PERCENTAGE_SCALE_FACTOR},
+    state::supergraph_state::TypeNode,
+};
 
 use super::directives::FederationDirective;
 
@@ -66,7 +69,9 @@ impl JoinFieldDirective {
                     // (11.12 becomes 1112000000.0)
                     // Cast to u64 for storage
                     // (11120.0 becomes 1112000000)
-                    return OverrideLabel::Percentage((value * 100_000_000.0) as u64);
+                    return OverrideLabel::Percentage(
+                        (value * (PERCENTAGE_SCALE_FACTOR as f64)) as u64,
+                    );
                 }
                 Err(error) => {
                     panic!(
