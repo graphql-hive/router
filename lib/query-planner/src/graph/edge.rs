@@ -122,7 +122,7 @@ impl ProgressiveOverrideContext {
 /// Max 100.00000000
 ///
 /// Why 8? That's the maximum precision composition allows.
-type Percentage = u64;
+pub type Percentage = u64;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum OverrideLabel {

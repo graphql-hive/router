@@ -9,9 +9,12 @@ use graphql_tools::ast::SchemaDocumentExtension;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
-use crate::federation_spec::directives::{
-    FederationDirective, InaccessibleDirective, JoinEnumValueDirective, JoinFieldDirective,
-    JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective, JoinUnionMemberDirective,
+use crate::{
+    federation_spec::directives::{
+        FederationDirective, InaccessibleDirective, JoinEnumValueDirective, JoinFieldDirective,
+        JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective, JoinUnionMemberDirective,
+    },
+    graph::edge::{OverrideLabel, Percentage},
 };
 
 use super::subgraph_state::SubgraphState;
@@ -41,12 +44,21 @@ impl SubgraphName {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct ProgressiveOverrides {
+    /// A set of all custom string labels used in `@override(label:)`
+    pub flags: HashSet<String>,
+    /// A set of all percentage values used in `@override(label:)`
+    pub percentages: HashSet<Percentage>,
+}
+
 type InterfaceObjectToSubgraphsMap = HashMap<String, HashSet<String>>;
+type DefinitionMap = HashMap<String, SupergraphDefinition>;
 
 #[derive(Debug)]
 pub struct SupergraphState {
     /// A map all of definitions (def_name, def) that exists in the schema.
-    pub definitions: HashMap<String, SupergraphDefinition>,
+    pub definitions: DefinitionMap,
     /// A map of (SUBGRAPH_ID, subgraph_name) to make it easy to resolve
     pub known_subgraphs: HashMap<String, String>,
     /// A set of all known scalars in this schema, including built-ins
@@ -59,9 +71,11 @@ pub struct SupergraphState {
     pub query_type: String,
     pub mutation_type: Option<String>,
     pub subscription_type: Option<String>,
-    // Holds a map of interface names to a set of subgraph ids
-    // that hold the @interfaceObject
+    /// Holds a map of interface names to a set of subgraph ids
+    /// that hold the @interfaceObject
     pub interface_object_types_in_subgraphs: InterfaceObjectToSubgraphsMap,
+    /// A pre-computed set of all progressive override labels in the supergraph
+    pub progressive_overrides: ProgressiveOverrides,
 }
 
 impl SupergraphState {
@@ -72,10 +86,12 @@ impl SupergraphState {
         let definitions = Self::build_map(schema);
         let interface_object_types_in_subgraphs =
             Self::create_interface_object_in_subgraph(&definitions);
+        let progressive_overrides = Self::extract_progressive_overrides(&definitions);
 
         let mut instance = Self {
             definitions,
             interface_object_types_in_subgraphs,
+            progressive_overrides,
             known_subgraphs,
             subgraph_endpoint_map,
             known_scalars: Self::extract_known_scalars(schema),
@@ -129,7 +145,7 @@ impl SupergraphState {
     }
 
     fn create_interface_object_in_subgraph(
-        definitions: &HashMap<String, SupergraphDefinition>,
+        definitions: &DefinitionMap,
     ) -> InterfaceObjectToSubgraphsMap {
         let mut interface_object_types_in_subgraphs = InterfaceObjectToSubgraphsMap::new();
 
@@ -152,6 +168,28 @@ impl SupergraphState {
         }
 
         interface_object_types_in_subgraphs
+    }
+
+    fn extract_progressive_overrides(definitions: &DefinitionMap) -> ProgressiveOverrides {
+        let mut overrides = ProgressiveOverrides::default();
+
+        for definition in definitions.values() {
+            for field in definition.fields().values() {
+                for join_field in &field.join_field {
+                    if let Some(label) = &join_field.override_label {
+                        match label {
+                            OverrideLabel::Custom(flag) => {
+                                overrides.flags.insert(flag.clone());
+                            }
+                            OverrideLabel::Percentage(p) => {
+                                overrides.percentages.insert(*p);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        overrides
     }
 
     fn extract_known_scalars(schema: &SchemaDocument) -> HashSet<String> {
