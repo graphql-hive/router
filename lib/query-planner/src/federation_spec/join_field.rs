@@ -57,6 +57,7 @@ impl JoinFieldDirective {
             match value_str.parse::<f64>() {
                 Ok(value) => {
                     if !(0.0..=100.0).contains(&value) {
+                        // TODO: convert it into Err
                         panic!("Invalid percentage value. Must be between 0 and 100.");
                     }
 
