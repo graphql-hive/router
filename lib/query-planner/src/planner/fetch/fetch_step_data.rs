@@ -23,7 +23,6 @@ pub struct FetchStepData {
     pub service_name: SubgraphName,
     pub response_path: MergePath,
     pub input: TypeAwareSelection,
-    pub output: TypeAwareSelection,
     pub output_new: FetchStepSelections,
     pub kind: FetchStepKind,
     pub used_for_requires: bool,
@@ -33,7 +32,7 @@ pub struct FetchStepData {
     pub mutation_field_position: MutationFieldPosition,
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     pub output_rewrites: Option<Vec<FetchRewrite>>,
-    pub internal_aliases_locations: AliasesRecords,
+    pub internal_aliases_locations: Vec<(String, AliasesRecords)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,10 +45,11 @@ impl Display for FetchStepData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{}/{} {} → {} at $.{}",
+            "{}/{} {} → {:?}/{} at $.{}",
             self.input.type_name,
             self.service_name,
             self.input,
+            self.output_new.selection_definitions(),
             self.output_new,
             self.response_path.join("."),
         )?;

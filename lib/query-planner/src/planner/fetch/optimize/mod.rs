@@ -22,7 +22,7 @@ impl FetchGraph {
         self.merge_siblings()?;
         self.deduplicate_and_prune_fetch_steps()?;
         self.turn_mutations_into_sequence()?;
-        self.fix_conflicting_type_mismatches(supergraph_state)?;
+        // self.fix_conflicting_type_mismatches(supergraph_state)?;
 
         // We call this last, because it should be done after all other optimizations/merging are done
         self.apply_internal_aliases_patching()?;

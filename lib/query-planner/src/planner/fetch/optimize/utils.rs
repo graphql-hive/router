@@ -29,6 +29,9 @@ pub(crate) fn perform_fetch_step_merge(
         other_index.index(),
     );
 
+    trace!("self: {}", me);
+    trace!("other: {}", other);
+
     if let (true, Some(condition)) = (!me.is_entity_call(), other.condition.clone()) {
         // The "other" fetch step is an entity call,
         // that has both input and output, obviously.
@@ -42,29 +45,32 @@ pub(crate) fn perform_fetch_step_merge(
         // { products { ... on Product @skip(if: $bool) { __typename id price } } }
         //
         // We can't do it when both are entity calls fetch steps.
-        other.output.add(&other.input);
+        // TODO: Bring back
+        // other
+        //     .output_new
+        //     .add_at_root(&other.input.type_name, other.input.selection_set);
 
-        let old_selection_set = other.output.selection_set.clone();
-        match condition {
-            Condition::Include(var_name) => {
-                other.output.selection_set.items =
-                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: other.output.type_name.clone(),
-                        selections: old_selection_set,
-                        skip_if: None,
-                        include_if: Some(var_name),
-                    })];
-            }
-            Condition::Skip(var_name) => {
-                other.output.selection_set.items =
-                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: other.output.type_name.clone(),
-                        selections: old_selection_set,
-                        skip_if: Some(var_name),
-                        include_if: None,
-                    })];
-            }
-        }
+        // let old_selection_set = other.output.selection_set.clone();
+        // match condition {
+        //     Condition::Include(var_name) => {
+        //         other.output.selection_set.items =
+        //             vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+        //                 type_condition: other.output.type_name.clone(),
+        //                 selections: old_selection_set,
+        //                 skip_if: None,
+        //                 include_if: Some(var_name),
+        //             })];
+        //     }
+        //     Condition::Skip(var_name) => {
+        //         other.output.selection_set.items =
+        //             vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+        //                 type_condition: other.output.type_name.clone(),
+        //                 selections: old_selection_set,
+        //                 skip_if: Some(var_name),
+        //                 include_if: None,
+        //             })];
+        //     }
+        // }
     } else if me.is_entity_call() && other.condition.is_some() {
         // We don't want to pass a condition
         // to a regular (non-entity call) fetch step,
@@ -72,17 +78,14 @@ pub(crate) fn perform_fetch_step_merge(
         me.condition = other.condition.take();
     }
 
-    let maybe_aliases = me.output.add_at_path_and_solve_conflicts(
-        &other.output,
-        other.response_path.slice_from(me.response_path.len()),
+    let scoped_aliases = me.output_new.safe_add_from_another_at_path(
+        &other.output_new,
+        &other.response_path.slice_from(me.response_path.len()),
         (me.used_for_requires, other.used_for_requires),
-        false,
     );
 
     // In cases where merging a step resulted in internal aliasing, keep a record of the aliases.
-    if let Some(aliases) = maybe_aliases {
-        me.internal_aliases_locations.extend(aliases);
-    }
+    me.internal_aliases_locations.extend(scoped_aliases);
 
     if let Some(input_rewrites) = other.input_rewrites.take() {
         if !input_rewrites.is_empty() {

@@ -193,7 +193,7 @@ fn create_output_operation(
     step: &FetchStepData,
     supergraph: &SupergraphState,
 ) -> SubgraphFetchOperation {
-    let type_aware_selection = &step.output;
+    let selection_set: SelectionSet = (&step.output_new).into();
     let mut variables = vec![VariableDefinition {
         name: "representations".to_string(),
         variable_type: TypeNode::NonNull(Box::new(TypeNode::List(Box::new(TypeNode::NonNull(
@@ -213,14 +213,7 @@ fn create_output_operation(
         selection_set: SelectionSet {
             items: vec![SelectionItem::Field(FieldSelection {
                 name: "_entities".to_string(),
-                selections: SelectionSet {
-                    items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                        selections: type_aware_selection.selection_set.clone(),
-                        type_condition: type_aware_selection.type_name.clone(),
-                        skip_if: None,
-                        include_if: None,
-                    })],
-                },
+                selections: selection_set,
                 alias: None,
                 arguments: Some(
                     (
@@ -246,7 +239,11 @@ fn create_output_operation(
 
 impl From<&FetchStepData> for OperationKind {
     fn from(step: &FetchStepData) -> Self {
-        let type_name = step.output.type_name.as_str();
+        let type_name = step
+            .output_new
+            .as_root_selection()
+            .map(|(root_type_name, _s)| root_type_name.as_str())
+            .unwrap_or("Query");
 
         if type_name == "Query" {
             OperationKind::Query
@@ -277,7 +274,7 @@ impl FetchNode {
                 let operation_def = OperationDefinition {
                     name: None,
                     operation_kind: Some(step.into()),
-                    selection_set: step.output.selection_set.clone(),
+                    selection_set: (&step.output_new).into(),
                     variable_definitions: step.variable_definitions.clone(),
                 };
                 let document =

@@ -103,7 +103,7 @@ impl FetchStepData {
             return false;
         }
 
-        other.input.eq(&other.output)
+        other.output_new == other.input
     }
 }
 
@@ -121,11 +121,10 @@ fn perform_passthrough_child_merge(
         other_index.index()
     );
 
-    me.output.add_at_path(
-        &other.output,
-        other.response_path.slice_from(me.response_path.len()),
-        false,
-    )?;
+    me.output_new.migrate_from_another_at_path(
+        &other.output_new,
+        &other.response_path.slice_from(me.response_path.len()),
+    );
 
     let mut children_indexes: Vec<NodeIndex> = vec![];
     let mut parents_indexes: Vec<NodeIndex> = vec![];
