@@ -5,9 +5,10 @@ use tracing::{instrument, trace};
 
 use crate::planner::fetch::{
     error::FetchGraphError, fetch_graph::FetchGraph, optimize::utils::perform_fetch_step_merge,
+    state::MultiTypeFetchStep,
 };
 
-impl FetchGraph {
+impl FetchGraph<MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn merge_children_with_parents(&mut self) -> Result<(), FetchGraphError> {
         let root_index = self

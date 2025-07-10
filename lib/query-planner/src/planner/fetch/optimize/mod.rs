@@ -11,11 +11,11 @@ mod utils;
 use tracing::instrument;
 
 use crate::{
-    planner::fetch::{error::FetchGraphError, fetch_graph::FetchGraph},
+    planner::fetch::{error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep},
     state::supergraph_state::SupergraphState,
 };
 
-impl FetchGraph {
+impl FetchGraph<MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     pub fn optimize(&mut self, supergraph_state: &SupergraphState) -> Result<(), FetchGraphError> {
         // Run optimization passes repeatedly until the graph stabilizes, as one optimization can create

@@ -5,10 +5,10 @@ use tracing::{instrument, trace};
 
 use crate::planner::fetch::{
     error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
-    optimize::utils::perform_fetch_step_merge,
+    optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
 };
 
-impl FetchGraph {
+impl FetchGraph<MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     pub(crate) fn merge_siblings(&mut self) -> Result<(), FetchGraphError> {
         let root_index = self
@@ -104,13 +104,13 @@ impl FetchGraph {
     }
 }
 
-impl FetchStepData {
+impl FetchStepData<MultiTypeFetchStep> {
     pub(crate) fn can_merge_siblings(
         &self,
         self_index: NodeIndex,
         other_index: NodeIndex,
         other: &Self,
-        fetch_graph: &FetchGraph,
+        fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     ) -> bool {
         // First, check if the base conditions for merging are met.
         let can_merge_base = self.can_merge(self_index, other_index, other, fetch_graph);

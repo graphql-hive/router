@@ -6,14 +6,9 @@ use petgraph::{
 };
 use tracing::{instrument, trace};
 
-use crate::{
-    ast::{
-        merge_path::Condition, selection_item::SelectionItem,
-        selection_set::InlineFragmentSelection,
-    },
-    planner::fetch::{
-        error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepFlags,
-    },
+use crate::planner::fetch::{
+    error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepFlags,
+    state::MultiTypeFetchStep,
 };
 
 // Return true in case an alias was applied during the merge process.
@@ -21,7 +16,7 @@ use crate::{
 pub(crate) fn perform_fetch_step_merge(
     self_index: NodeIndex,
     other_index: NodeIndex,
-    fetch_graph: &mut FetchGraph,
+    fetch_graph: &mut FetchGraph<MultiTypeFetchStep>,
 ) -> Result<(), FetchGraphError> {
     let (me, other) = fetch_graph.get_pair_of_steps_mut(self_index, other_index)?;
 
@@ -44,29 +39,11 @@ pub(crate) fn perform_fetch_step_merge(
         // { products { ... on Product @skip(if: $bool) { __typename id price } } }
         //
         // We can't do it when both are entity calls fetch steps.
-        other.output.add(&other.input);
+        other
+            .output
+            .add(&other.input.type_name, &other.input.selection_set)?;
 
-        let old_selection_set = other.output.selection_set.clone();
-        match condition {
-            Condition::Include(var_name) => {
-                other.output.selection_set.items =
-                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: other.output.type_name.clone(),
-                        selections: old_selection_set,
-                        skip_if: None,
-                        include_if: Some(var_name),
-                    })];
-            }
-            Condition::Skip(var_name) => {
-                other.output.selection_set.items =
-                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: other.output.type_name.clone(),
-                        selections: old_selection_set,
-                        skip_if: Some(var_name),
-                        include_if: None,
-                    })];
-            }
-        }
+        other.output.wrap_with_condition(condition);
     } else if me.is_entity_call() && other.condition.is_some() {
         // We don't want to pass a condition
         // to a regular (non-entity call) fetch step,
@@ -74,19 +51,22 @@ pub(crate) fn perform_fetch_step_merge(
         me.condition = other.condition.take();
     }
 
-    let maybe_aliases = me.output.add_at_path_and_solve_conflicts(
+    let scoped_aliases = me.output.safe_migrate_from_another(
         &other.output,
-        other.response_path.slice_from(me.response_path.len()),
+        &other.response_path.slice_from(me.response_path.len()),
         (
             me.flags.contains(FetchStepFlags::USED_FOR_REQUIRES),
             other.flags.contains(FetchStepFlags::USED_FOR_REQUIRES),
         ),
-        false,
-    );
+    )?;
 
-    // In cases where merging a step resulted in internal aliasing, keep a record of the aliases.
-    if let Some(aliases) = maybe_aliases {
-        me.internal_aliases_locations.extend(aliases);
+    if !scoped_aliases.is_empty() {
+        trace!(
+            "Total of {} alises applied during safe merge of selections",
+            scoped_aliases.len()
+        );
+        // In cases where merging a step resulted in internal aliasing, keep a record of the aliases.
+        me.internal_aliases_locations.extend(scoped_aliases);
     }
 
     if let Some(input_rewrites) = other.input_rewrites.take() {
@@ -145,7 +125,7 @@ pub(crate) fn perform_fetch_step_merge(
 /// The search starts from all direct parents of `child_index` *except*
 /// `target_ancestor_index`, and follows incoming edges from there.
 pub fn is_reachable_via_alternative_upstream_path(
-    graph: &FetchGraph,
+    graph: &FetchGraph<MultiTypeFetchStep>,
     child_index: NodeIndex,
     target_ancestor_index: NodeIndex,
 ) -> Result<bool, FetchGraphError> {

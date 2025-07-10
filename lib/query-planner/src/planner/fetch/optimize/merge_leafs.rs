@@ -5,17 +5,17 @@ use crate::{
     ast::type_aware_selection::find_arguments_conflicts,
     planner::fetch::{
         error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
-        optimize::utils::perform_fetch_step_merge,
+        optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
     },
 };
 
-impl FetchStepData {
+impl FetchStepData<MultiTypeFetchStep> {
     pub fn can_merge_leafs(
         &self,
         self_index: NodeIndex,
         other_index: NodeIndex,
         other: &Self,
-        fetch_graph: &FetchGraph,
+        fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     ) -> bool {
         if self_index == other_index {
             return false;
@@ -66,7 +66,7 @@ impl FetchStepData {
     }
 }
 
-impl FetchGraph {
+impl FetchGraph<MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     /// This optimization is about merging leaf nodes in the fetch nodes with other nodes.
     /// It reduces the number of fetch steps, without degrading the query performance.

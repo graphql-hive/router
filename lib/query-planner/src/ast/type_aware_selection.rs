@@ -2,17 +2,10 @@ use std::{fmt::Display, hash::Hash};
 
 use crate::ast::{
     merge_path::{Condition, Segment},
-    safe_merge::{AliasesRecords, SafeSelectionSetMerger},
     selection_set::{FieldSelection, InlineFragmentSelection},
 };
 
 use super::{merge_path::MergePath, selection_item::SelectionItem, selection_set::SelectionSet};
-
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum TypeAwareSelectionError {
-    #[error("Failed to locate path '{0}' in selection set '{1}'")]
-    PathNotFound(String, String),
-}
 
 #[derive(Debug, Clone)]
 pub struct TypeAwareSelection {
@@ -75,62 +68,6 @@ impl TypeAwareSelection {
     pub fn add(&mut self, to_add: &Self) {
         merge_selection_set(&mut self.selection_set, &to_add.selection_set, false);
     }
-
-    pub fn add_at_path(
-        &mut self,
-        to_add: &Self,
-        add_at_fetch_path: MergePath,
-        as_first: bool,
-    ) -> Result<(), TypeAwareSelectionError> {
-        if let Some(source) =
-            find_selection_set_by_path_mut(&mut self.selection_set, &add_at_fetch_path)
-        {
-            merge_selection_set(source, &to_add.selection_set, as_first);
-
-            Ok(())
-        } else {
-            Err(TypeAwareSelectionError::PathNotFound(
-                add_at_fetch_path.to_string(),
-                self.selection_set.to_string(),
-            ))
-        }
-    }
-
-    pub fn add_at_path_and_solve_conflicts(
-        &mut self,
-        to_add: &Self,
-        add_at_fetch_path: MergePath,
-        (self_used_for_requires, other_used_for_requires): (bool, bool),
-        as_first: bool,
-    ) -> Option<AliasesRecords> {
-        if let Some(source) =
-            find_selection_set_by_path_mut(&mut self.selection_set, &add_at_fetch_path)
-        {
-            let mut merger = SafeSelectionSetMerger::default();
-            let aliases_made = merger.merge_selection_set(
-                source,
-                &to_add.selection_set,
-                (self_used_for_requires, other_used_for_requires),
-                as_first,
-            );
-
-            if !aliases_made.is_empty() {
-                return Some(aliases_made);
-            }
-        }
-
-        None
-    }
-
-    pub fn has_typename_at_path(&self, lookup_path: &MergePath) -> bool {
-        find_selection_set_by_path(
-            &self.selection_set,
-            // We pass None for the condition, because we are checking
-            // the presence of __typename at the given path, not type __typename with a condition.
-            &lookup_path.push(Segment::Field("__typename".to_string(), 0, None)),
-        )
-        .is_some()
-    }
 }
 
 fn selection_item_is_subset_of(source: &SelectionItem, target: &SelectionItem) -> bool {
@@ -154,7 +91,7 @@ fn selection_item_is_subset_of(source: &SelectionItem, target: &SelectionItem) -
     }
 }
 
-fn selection_items_are_subset_of(source: &[SelectionItem], target: &[SelectionItem]) -> bool {
+pub fn selection_items_are_subset_of(source: &[SelectionItem], target: &[SelectionItem]) -> bool {
     target.iter().all(|target_node| {
         source
             .iter()
@@ -162,7 +99,7 @@ fn selection_items_are_subset_of(source: &[SelectionItem], target: &[SelectionIt
     })
 }
 
-fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_first: bool) {
+pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_first: bool) {
     if source.items.is_empty() {
         return;
     }
@@ -215,80 +152,6 @@ fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_firs
             target.items.extend(pending_items);
         }
     }
-}
-
-pub fn find_selection_set_by_path<'a>(
-    root_selection_set: &'a SelectionSet,
-    path: &MergePath,
-) -> Option<&'a SelectionSet> {
-    let mut current_selection_set = root_selection_set;
-
-    for path_element in path.inner.iter() {
-        match path_element {
-            Segment::List => {
-                continue;
-            }
-            Segment::Cast(type_name, condition) => {
-                let next_selection_set_option =
-                    current_selection_set
-                        .items
-                        .iter()
-                        .find_map(|item| match item {
-                            SelectionItem::Field(_) => None,
-                            SelectionItem::InlineFragment(f) => {
-                                if f.type_condition.eq(type_name)
-                                    && fragment_condition_equal(condition, f)
-                                {
-                                    Some(&f.selections)
-                                } else {
-                                    None
-                                }
-                            }
-                            SelectionItem::FragmentSpread(_) => None,
-                        });
-
-                match next_selection_set_option {
-                    Some(next_set) => {
-                        current_selection_set = next_set;
-                    }
-                    None => {
-                        return None;
-                    }
-                }
-            }
-            Segment::Field(field_name, args_hash, condition) => {
-                let next_selection_set_option =
-                    current_selection_set
-                        .items
-                        .iter()
-                        .find_map(|item| match item {
-                            SelectionItem::Field(field) => {
-                                if &field.name == field_name
-                                    && field.arguments_hash() == *args_hash
-                                    && field_condition_equal(condition, field)
-                                {
-                                    Some(&field.selections)
-                                } else {
-                                    None
-                                }
-                            }
-                            SelectionItem::InlineFragment(..) => None,
-                            SelectionItem::FragmentSpread(_) => None,
-                        });
-
-                match next_selection_set_option {
-                    Some(next_set) => {
-                        current_selection_set = next_set;
-                    }
-                    None => {
-                        return None;
-                    }
-                }
-            }
-        }
-    }
-
-    Some(current_selection_set)
 }
 
 pub fn find_selection_set_by_path_mut<'a>(

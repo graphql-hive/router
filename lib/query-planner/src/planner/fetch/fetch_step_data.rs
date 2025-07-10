@@ -12,7 +12,12 @@ use crate::{
         type_aware_selection::{find_arguments_conflicts, TypeAwareSelection},
     },
     planner::{
-        fetch::fetch_graph::FetchGraph, plan_nodes::FetchRewrite,
+        fetch::{
+            fetch_graph::FetchGraph,
+            selections::FetchStepSelections,
+            state::{MultiTypeFetchStep, SingleTypeFetchStep},
+        },
+        plan_nodes::FetchRewrite,
         tree::query_tree_node::MutationFieldPosition,
     },
     state::supergraph_state::SubgraphName,
@@ -29,11 +34,11 @@ bitflags! {
 }
 
 #[derive(Debug, Clone)]
-pub struct FetchStepData {
+pub struct FetchStepData<State> {
     pub service_name: SubgraphName,
     pub response_path: MergePath,
     pub input: TypeAwareSelection,
-    pub output: TypeAwareSelection,
+    pub output: FetchStepSelections<State>,
     pub kind: FetchStepKind,
     pub flags: FetchStepFlags,
     pub condition: Option<Condition>,
@@ -42,7 +47,7 @@ pub struct FetchStepData {
     pub mutation_field_position: MutationFieldPosition,
     pub input_rewrites: Option<Vec<FetchRewrite>>,
     pub output_rewrites: Option<Vec<FetchRewrite>>,
-    pub internal_aliases_locations: AliasesRecords,
+    pub internal_aliases_locations: Vec<(String, AliasesRecords)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -51,17 +56,19 @@ pub enum FetchStepKind {
     Root,
 }
 
-impl Display for FetchStepData {
+impl<State> Display for FetchStepData<State> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{}/{} {} → {} at $.{}",
-            self.input.type_name,
-            self.service_name,
-            self.input,
-            self.output,
-            self.response_path.join("."),
+            "{}/{} {} → ",
+            self.input.type_name, self.service_name, self.input,
         )?;
+
+        for (def_name, selections) in self.output.iter() {
+            write!(f, "{}/{} ", def_name, selections)?;
+        }
+
+        write!(f, " at $.{}", self.response_path.join("."))?;
 
         if self.flags.contains(FetchStepFlags::USED_FOR_REQUIRES) {
             write!(f, " [@requires]")?;
@@ -82,7 +89,7 @@ impl Display for FetchStepData {
     }
 }
 
-impl FetchStepData {
+impl<State> FetchStepData<State> {
     pub fn pretty_write(
         &self,
         writer: &mut std::fmt::Formatter<'_>,
@@ -112,13 +119,15 @@ impl FetchStepData {
             rewrites.push(rewrite);
         }
     }
+}
 
+impl FetchStepData<MultiTypeFetchStep> {
     pub fn can_merge(
         &self,
         self_index: NodeIndex,
         other_index: NodeIndex,
         other: &Self,
-        fetch_graph: &FetchGraph,
+        fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     ) -> bool {
         if self_index == other_index {
             return false;
@@ -177,5 +186,25 @@ impl FetchStepData {
         }
 
         true
+    }
+}
+
+impl FetchStepData<SingleTypeFetchStep> {
+    pub fn into_multi_type(self) -> FetchStepData<MultiTypeFetchStep> {
+        FetchStepData::<MultiTypeFetchStep> {
+            service_name: self.service_name,
+            response_path: self.response_path,
+            input: self.input,
+            output: self.output.into_multi_type(),
+            kind: self.kind,
+            flags: self.flags,
+            condition: self.condition,
+            variable_usages: self.variable_usages,
+            variable_definitions: self.variable_definitions,
+            mutation_field_position: self.mutation_field_position,
+            input_rewrites: self.input_rewrites,
+            output_rewrites: self.output_rewrites,
+            internal_aliases_locations: self.internal_aliases_locations,
+        }
     }
 }
