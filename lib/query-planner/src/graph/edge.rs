@@ -1,4 +1,8 @@
-use std::fmt::{Debug, Display};
+use std::{
+    collections::HashSet,
+    fmt::{Debug, Display},
+    hash::Hash,
+};
 
 use petgraph::graph::EdgeReference as GraphEdgeReference;
 
@@ -26,7 +30,7 @@ pub struct InterfaceObjectTypeMove {
 }
 
 /// Represent a simple file move
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct FieldMove {
     pub name: String,
     pub type_name: String,
@@ -35,6 +39,113 @@ pub struct FieldMove {
     pub join_field: Option<JoinFieldDirective>,
     pub requirements: Option<TypeAwareSelection>,
     pub override_from: Option<String>,
+    pub override_label: Option<OverrideLabel>,
+    pub overridden_by: Option<(String, Option<OverrideLabel>)>,
+}
+
+impl FieldMove {
+    pub fn satisfies_override_rules(&self, ctx: &PlannerOverrideContext) -> bool {
+        // Field is being progressively overridden by another subgraph
+        if let Some((_, Some(label))) = &self.overridden_by {
+            return self.check_progressive_override(label, ctx, false);
+        }
+
+        // Field is being fully overridden, so it's not resolvable
+        if self.overridden_by.is_some() {
+            return false;
+        }
+
+        // Field is progressively overriding another subgraph
+        if let Some(label) = &self.override_label {
+            return self.check_progressive_override(label, ctx, true);
+        }
+
+        // The field is not involved in an override, so it's always resolvable.
+        true
+    }
+
+    fn check_progressive_override(
+        &self,
+        label: &OverrideLabel,
+        ctx: &PlannerOverrideContext,
+        is_overriding_field: bool,
+    ) -> bool {
+        match label {
+            OverrideLabel::Custom(flag_name) => {
+                is_overriding_field == ctx.is_flag_active(flag_name)
+            }
+            OverrideLabel::Percentage(percentage_in_label) => {
+                is_overriding_field == ctx.is_in_range(percentage_in_label)
+            }
+        }
+    }
+}
+
+type ActiveFlags = HashSet<String>;
+
+#[derive(Default)]
+pub struct PlannerOverrideContext {
+    active_flags: ActiveFlags,
+    request_percentage_value: Percentage,
+}
+
+impl PlannerOverrideContext {
+    pub fn new(active_flags: ActiveFlags, request_percentage_value: Percentage) -> Self {
+        Self {
+            active_flags,
+            request_percentage_value,
+        }
+    }
+
+    pub fn from_percentage(value: f64) -> Self {
+        Self {
+            active_flags: Default::default(),
+            request_percentage_value: (value * (PERCENTAGE_SCALE_FACTOR as f64)) as u64,
+        }
+    }
+
+    pub fn from_flag(value: String) -> Self {
+        Self {
+            active_flags: HashSet::from([value]),
+            request_percentage_value: 0,
+        }
+    }
+
+    pub fn is_flag_active(&self, flag_name: &str) -> bool {
+        self.active_flags.contains(flag_name)
+    }
+
+    pub fn is_in_range(&self, percentage: &Percentage) -> bool {
+        &self.request_percentage_value < percentage
+    }
+}
+
+/// Represents a percentage value
+/// as I.F multiplied by 100_000_000
+/// Where I is a number between 0 and 100
+/// and F represents 8 fraction digits.
+/// Min 000.00000000
+/// Max 100.00000000
+///
+/// Why 8? That's the maximum precision composition allows.
+pub type Percentage = u64;
+pub const PERCENTAGE_SCALE_FACTOR: u64 = 100_000_000;
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub enum OverrideLabel {
+    Custom(String),
+    Percentage(Percentage),
+}
+
+impl Display for OverrideLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OverrideLabel::Custom(label) => write!(f, "{}", label),
+            OverrideLabel::Percentage(percentage) => {
+                write!(f, "{}%", percentage / PERCENTAGE_SCALE_FACTOR)
+            }
+        }
+    }
 }
 
 pub enum Edge {
@@ -44,7 +155,7 @@ pub enum Edge {
         field_names: Vec<String>,
         name: SubgraphName,
     },
-    FieldMove(FieldMove),
+    FieldMove(Box<FieldMove>),
     EntityMove(EntityMove),
     /// join__implements
     AbstractMove(String),
@@ -93,10 +204,12 @@ impl Edge {
         is_list: bool,
         join_field: Option<JoinFieldDirective>,
         requirements: Option<TypeAwareSelection>,
+        overridden_by: Option<(String, Option<OverrideLabel>)>,
     ) -> Self {
         let override_from = join_field.as_ref().and_then(|jf| jf.override_value.clone());
+        let override_label = join_field.as_ref().and_then(|jf| jf.override_label.clone());
 
-        Self::FieldMove(FieldMove {
+        Self::FieldMove(Box::new(FieldMove {
             name: name.clone(),
             type_name: type_name.clone(),
             is_leaf,
@@ -104,12 +217,14 @@ impl Edge {
             join_field,
             requirements,
             override_from,
-        })
+            override_label,
+            overridden_by,
+        }))
     }
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::FieldMove(FieldMove { name, .. }) => name,
+            Self::FieldMove(fm) => &fm.name,
             Self::EntityMove(EntityMove { key, .. }) => key,
             Self::AbstractMove(id) => id,
             Self::SubgraphEntrypoint { name, .. } => &name.0,
@@ -130,7 +245,7 @@ impl Edge {
 
     pub fn cost(&self) -> u64 {
         let move_cost = match self {
-            Self::FieldMove(FieldMove { .. }) => 1,
+            Self::FieldMove(_) => 1,
             _ => 1000,
         };
 
@@ -165,14 +280,12 @@ impl Debug for Edge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Edge::SubgraphEntrypoint { name, .. } => write!(f, "subgraph({})", name.0),
-            Edge::FieldMove(FieldMove {
-                name, join_field, ..
-            }) => {
+            Edge::FieldMove(fm) => {
                 // Start with the field name
-                let mut result = write!(f, "{}", name);
+                let mut result = write!(f, "{}", &fm.name);
 
                 // Add requires directive if present
-                if let Some(jf) = join_field {
+                if let Some(jf) = &fm.join_field {
                     if let Some(req) = &jf.requires {
                         result = result.and_then(|_| write!(f, " @requires({})", req));
                     }
@@ -188,8 +301,14 @@ impl Debug for Edge {
                     }
 
                     if let Some(override_from) = &jf.override_value {
-                        result =
-                            result.and_then(|_| write!(f, " @override(from: {})", override_from));
+                        let label = jf
+                            .override_label
+                            .as_ref()
+                            .map_or("".to_string(), |label| format!(", label: {}", label));
+
+                        result = result.and_then(|_| {
+                            write!(f, " @override(from: {}{})", override_from, label)
+                        });
                     }
                 }
 
@@ -214,39 +333,7 @@ impl PartialEq for Edge {
                     ..
                 },
             ) => graph_id == other_graph_id,
-            (
-                Edge::FieldMove(FieldMove {
-                    name,
-                    join_field: Some(jf1),
-                    ..
-                }),
-                Edge::FieldMove(FieldMove {
-                    name: other_name,
-                    join_field: Some(jf2),
-                    ..
-                }),
-            ) => {
-                // Compare names and directive fields that affect planning
-                name == other_name
-                    && jf1.requires == jf2.requires
-                    && jf1.provides == jf2.provides
-                    && jf1.external == jf2.external
-                    && jf1.override_value == jf2.override_value
-            }
-
-            (
-                Edge::FieldMove(FieldMove {
-                    name,
-                    join_field: None,
-                    ..
-                }),
-                Edge::FieldMove(FieldMove {
-                    name: other_name,
-                    join_field: None,
-                    ..
-                }),
-            ) => name == other_name,
-
+            (Edge::FieldMove(fm1), Edge::FieldMove(fm2)) => fm1 == fm2,
             (
                 Edge::EntityMove(EntityMove { key, .. }),
                 Edge::EntityMove(EntityMove { key: other_key, .. }),

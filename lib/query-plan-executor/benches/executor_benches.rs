@@ -7,6 +7,7 @@ use query_plan_executor::executors::common::SubgraphExecutor;
 use query_plan_executor::executors::map::SubgraphExecutorMap;
 use query_planner::ast::selection_item::SelectionItem;
 use query_planner::ast::selection_set::InlineFragmentSelection;
+use query_planner::graph::PlannerOverrideContext;
 use std::hint::black_box;
 
 use query_plan_executor::execute_query_plan;
@@ -34,8 +35,9 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
     let normalized_document = normalize_operation(&planner.supergraph, &parsed_document, None)
         .expect("Failed to normalize operation");
     let normalized_operation = normalized_document.executable_operation();
+    let override_context = PlannerOverrideContext::default();
     let query_plan = planner
-        .plan_from_normalized_operation(normalized_operation)
+        .plan_from_normalized_operation(normalized_operation, override_context)
         .expect("Failed to create query plan");
     let subgraph_endpoint_map = planner.supergraph.subgraph_endpoint_map;
     let schema_metadata = planner.consumer_schema.schema_metadata();
@@ -75,8 +77,9 @@ fn query_plan_execution_without_projection_via_http(c: &mut Criterion) {
     let normalized_document = normalize_operation(&planner.supergraph, &parsed_document, None)
         .expect("Failed to normalize operation");
     let normalized_operation = normalized_document.executable_operation();
+    let override_context = PlannerOverrideContext::default();
     let query_plan = planner
-        .plan_from_normalized_operation(normalized_operation)
+        .plan_from_normalized_operation(normalized_operation, override_context)
         .expect("Failed to create query plan");
     let subgraph_endpoint_map = planner.supergraph.subgraph_endpoint_map;
     let schema_metadata = planner.consumer_schema.schema_metadata();
@@ -115,8 +118,9 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
     let normalized_document = normalize_operation(&planner.supergraph, &parsed_document, None)
         .expect("Failed to normalize operation");
     let normalized_operation = normalized_document.executable_operation();
+    let override_context = PlannerOverrideContext::default();
     let query_plan = planner
-        .plan_from_normalized_operation(normalized_operation)
+        .plan_from_normalized_operation(normalized_operation, override_context)
         .expect("Failed to create query plan");
     let schema_metadata = planner.consumer_schema.schema_metadata();
     let mut subgraph_executor_map = SubgraphExecutorMap::new(); // No subgraphs in this testlet mut subgraph_executor_map = SubgraphExecutorMap::new(); // No subgraphs in this test
@@ -164,8 +168,9 @@ fn query_plan_executor_without_projection_locally(c: &mut Criterion) {
     let normalized_document = normalize_operation(&planner.supergraph, &parsed_document, None)
         .expect("Failed to normalize operation");
     let normalized_operation = normalized_document.executable_operation();
+    let override_context = PlannerOverrideContext::default();
     let query_plan = planner
-        .plan_from_normalized_operation(normalized_operation)
+        .plan_from_normalized_operation(normalized_operation, override_context)
         .expect("Failed to create query plan");
     let schema_metadata = planner.consumer_schema.schema_metadata();
     let mut subgraph_executor_map = SubgraphExecutorMap::new(); // No subgraphs in this testlet mut subgraph_executor_map = SubgraphExecutorMap::new(); // No subgraphs in this test

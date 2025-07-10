@@ -9,7 +9,7 @@ use walker::{error::WalkOperationError, walk_operation};
 use crate::{
     ast::operation::{OperationDefinition, VariableDefinition},
     consumer_schema::ConsumerSchema,
-    graph::{error::GraphError, Graph},
+    graph::{edge::PlannerOverrideContext, error::GraphError, Graph},
     planner::{best::find_best_combination, fetch::fetch_graph::FetchGraph},
     state::supergraph_state::SupergraphState,
 };
@@ -91,11 +91,17 @@ impl Planner {
     pub fn plan_from_normalized_operation(
         &self,
         normalized_operation: &OperationDefinition,
+        override_context: PlannerOverrideContext,
     ) -> Result<QueryPlan, PlannerError> {
-        let best_paths_per_leaf = walk_operation(&self.graph, normalized_operation)?;
+        let best_paths_per_leaf =
+            walk_operation(&self.graph, &override_context, normalized_operation)?;
         let query_tree = find_best_combination(&self.graph, best_paths_per_leaf).unwrap();
-        let mut fetch_graph =
-            build_fetch_graph_from_query_tree(&self.graph, &self.supergraph, query_tree)?;
+        let mut fetch_graph = build_fetch_graph_from_query_tree(
+            &self.graph,
+            &self.supergraph,
+            &override_context,
+            query_tree,
+        )?;
         add_variables_to_fetch_steps(&mut fetch_graph, &normalized_operation.variable_definitions)?;
         let query_plan = build_query_plan_from_fetch_graph(fetch_graph, &self.supergraph)?;
 

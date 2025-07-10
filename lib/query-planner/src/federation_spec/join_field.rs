@@ -1,6 +1,9 @@
 use graphql_parser::schema::{Directive, Value};
 
-use crate::state::supergraph_state::TypeNode;
+use crate::{
+    graph::{edge::OverrideLabel, PERCENTAGE_SCALE_FACTOR},
+    state::supergraph_state::TypeNode,
+};
 
 use super::directives::FederationDirective;
 
@@ -12,6 +15,7 @@ pub struct JoinFieldDirective {
     pub type_in_graph: Option<TypeNode>,
     pub external: bool,
     pub override_value: Option<String>,
+    pub override_label: Option<OverrideLabel>,
     pub used_overridden: bool,
 }
 
@@ -27,6 +31,7 @@ impl Default for JoinFieldDirective {
             type_in_graph: None,
             external: false,
             override_value: None,
+            override_label: None,
             used_overridden: false,
         }
     }
@@ -34,6 +39,50 @@ impl Default for JoinFieldDirective {
 
 impl JoinFieldDirective {
     pub const NAME: &str = "join__field";
+
+    fn parse_override_label(label: &str) -> OverrideLabel {
+        if let Some(value_str) = label
+            .strip_prefix("percent(")
+            .and_then(|s| s.strip_suffix(')'))
+        {
+            let is_precision_valid = match value_str.find('.') {
+                Some(dot_index) => {
+                    // The decimal precision should not be longer than 8 digits
+                    value_str.len() - dot_index - 1 <= 8
+                }
+                None => true,
+            };
+
+            if !is_precision_valid {
+                panic!("Invalid precision for percentage override. Must be no more than 8 fraction digits.");
+            }
+
+            match value_str.parse::<f64>() {
+                Ok(value) => {
+                    if !(0.0..=100.0).contains(&value) {
+                        // TODO: convert it into Err
+                        panic!("Invalid percentage value. Must be between 0 and 100.");
+                    }
+
+                    // Multiply by 100,000,000 to scale for integer storage
+                    // and to preserve 8 fraction digits.
+                    // (11.12 becomes 1112000000.0)
+                    // Cast to u64 for storage
+                    // (11120.0 becomes 1112000000)
+                    return OverrideLabel::Percentage(
+                        (value * (PERCENTAGE_SCALE_FACTOR as f64)) as u64,
+                    );
+                }
+                Err(error) => {
+                    panic!(
+                        "Invalid percentage value. Must be between 0 and 100. {}",
+                        error
+                    );
+                }
+            }
+        }
+        OverrideLabel::Custom(label.to_string())
+    }
 }
 
 impl FederationDirective for JoinFieldDirective {
@@ -77,6 +126,10 @@ impl FederationDirective for JoinFieldDirective {
             } else if arg_name.eq("usedOverridden") {
                 if let Value::Boolean(value) = arg_value {
                     result.used_overridden = *value
+                }
+            } else if arg_name.eq("overrideLabel") {
+                if let Value::String(value) = arg_value {
+                    result.override_label = Some(Self::parse_override_label(value));
                 }
             }
         }

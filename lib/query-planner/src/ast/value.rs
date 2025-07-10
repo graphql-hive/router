@@ -159,12 +159,26 @@ impl Display for Value {
             Value::Null => write!(f, "null"),
             Value::Enum(e) => write!(f, "{}", e),
             Value::List(l) => {
-                let values: Vec<String> = l.iter().map(|v| v.to_string()).collect();
-                write!(f, "[{}]", values.join(", "))
+                f.write_str("[")?;
+                let mut iter = l.iter().peekable();
+                while let Some(v) = iter.next() {
+                    write!(f, "{}", v)?;
+                    if iter.peek().is_some() {
+                        f.write_str(", ")?;
+                    }
+                }
+                f.write_str("]")
             }
             Value::Object(o) => {
-                let entries: Vec<String> = o.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
-                write!(f, "{{{}}}", entries.join(", "))
+                f.write_str("{")?;
+                let mut iter = o.iter().peekable();
+                while let Some((k, v)) = iter.next() {
+                    write!(f, "{}: {}", k, v)?;
+                    if iter.peek().is_some() {
+                        write!(f, ", ")?;
+                    }
+                }
+                f.write_str("}")
             }
         }
     }

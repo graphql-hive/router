@@ -2,6 +2,9 @@ pub(crate) mod edge;
 pub(crate) mod error;
 pub(crate) mod node;
 
+pub use self::edge::PlannerOverrideContext;
+pub use self::edge::PERCENTAGE_SCALE_FACTOR;
+
 mod tests;
 
 use std::{
@@ -635,6 +638,7 @@ impl Graph {
                             false,
                             None,
                             None,
+                            None,
                         ),
                     );
                 }
@@ -652,7 +656,7 @@ impl Graph {
                     if !is_available {
                         // The field is not available in the current subgraph
                         trace!(
-                              "[ ] Field '{}.{}/{}' does is not available in the subgraph, skipping edge creation (type: {})",
+                              "[ ] Field '{}.{}/{}' is not available in the subgraph, skipping edge creation (type: {})",
                               def_name, field_name, graph_id, target_type
                           );
                         continue;
@@ -660,31 +664,22 @@ impl Graph {
 
                     // A field is considered "overridden" if its resolution is handled by a different subgraph.
                     // This prevents the current subgraph from creating a resolvable edge for a field it no longer owns.
-                    let is_overridden = maybe_join_field
-                        // If another subgraph provides the implementation for a field from an interface
-                        // that this type implements, the `used_overridden` flag is set to true.
-                          .is_some_and(|join_field| join_field.used_overridden)
-                        ||
-                        // The field is marked with `@override(from: "...")`. If the `from` argument
-                        // matches the current subgraph's name, it tells us that another subgraph
-                        // has taken over the resolution of this field.
-                            field_definition.join_field.iter().any(|join_field| {
-                            join_field
-                                .override_value
-                                .as_ref()
-                                .is_some_and(|name| name == &graph_name.0)
-                        });
-
-                    if is_overridden {
-                        trace!(
-                            "[ ] Field '{}.{}/{}' is overriden by some other subgraph, skipping edge creation",
-                            def_name,
-                            field_name,
-                            graph_id
-                        );
-
-                        continue;
-                    }
+                    let overridden_by = field_definition.join_field.iter().find_map(|jf| {
+                        if let Some(override_from) = &jf.override_value {
+                            if override_from == &graph_name.0 {
+                                let overriding_subgraph_name = state
+                                    .resolve_graph_id(jf.graph_id.as_ref().expect(
+                                        "@override must be on a @join__field with a graph argument",
+                                    ))
+                                    .unwrap();
+                                return Some((
+                                    overriding_subgraph_name.0,
+                                    jf.override_label.clone(),
+                                ));
+                            }
+                        }
+                        None
+                    });
 
                     let is_external = maybe_join_field.is_some_and(|join_field| {
                         join_field.external && join_field.requires.is_none()
@@ -809,6 +804,7 @@ impl Graph {
                                     false,
                                     None,
                                     None,
+                                    None,
                                 ),
                             );
 
@@ -828,6 +824,7 @@ impl Graph {
                                     false,
                                     None,
                                     requirements.clone(),
+                                    overridden_by.clone(),
                                 ),
                             );
 
@@ -893,6 +890,7 @@ impl Graph {
                                 None => join_field.clone(),
                             }),
                             requirements,
+                            overridden_by.clone(),
                         ),
                     );
                 }
@@ -954,6 +952,7 @@ impl Graph {
                             parent_type_def.name().to_string(),
                             state.is_scalar_type(parent_type_def.name()),
                             field_in_parent.field_type.is_list(),
+                            None,
                             None,
                             None,
                         ),
@@ -1099,6 +1098,7 @@ impl Graph {
                                         field_definition.field_type.is_list(),
                                         Some(join_field.clone()),
                                         requirements,
+                                        None,
                                     ),
                                 );
 

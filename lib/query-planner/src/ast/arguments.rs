@@ -103,16 +103,13 @@ impl ArgumentsMap {
 
 impl Display for ArgumentsMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.arguments_map.is_empty() {
-            return Ok(());
+        let mut iter = self.arguments_map.iter().peekable();
+        while let Some((k, v)) = iter.next() {
+            write!(f, "{}: {}", k, v)?;
+            if iter.peek().is_some() {
+                write!(f, ", ")?;
+            }
         }
-
-        let args: Vec<String> = self
-            .arguments_map
-            .iter()
-            .map(|(k, v)| format!("{}: {}", k, v))
-            .collect();
-
-        write!(f, "{}", args.join(", "))
+        Ok(())
     }
 }

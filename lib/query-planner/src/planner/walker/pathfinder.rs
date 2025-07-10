@@ -6,6 +6,7 @@ use tracing::{instrument, trace};
 
 use crate::ast::merge_path::Condition;
 use crate::ast::selection_set::InlineFragmentSelection;
+use crate::graph::edge::PlannerOverrideContext;
 use crate::{
     ast::{
         selection_item::SelectionItem, selection_set::FieldSelection,
@@ -64,12 +65,13 @@ pub enum NavigationTarget<'a> {
     ConcreteType(&'a str, Option<Condition>),
 }
 
-#[instrument(level = "trace",skip(graph, excluded, target), fields(
+#[instrument(level = "trace",skip(graph, override_context, excluded, target), fields(
   path = path.pretty_print(graph),
   current_cost = path.cost
 ))]
 pub fn find_indirect_paths(
     graph: &Graph,
+    override_context: &PlannerOverrideContext,
     path: &OperationPath,
     target: &NavigationTarget,
     excluded: &ExcludedFromLookup,
@@ -145,7 +147,14 @@ pub fn find_indirect_paths(
 
             let new_excluded = excluded.next(edge_tail_graph_id, &visited_key_fields);
 
-            let can_be_satisfied = can_satisfy_edge(graph, &edge_ref, &path, &new_excluded, false)?;
+            let can_be_satisfied = can_satisfy_edge(
+                graph,
+                override_context,
+                &edge_ref,
+                &path,
+                &new_excluded,
+                false,
+            )?;
 
             match can_be_satisfied {
                 None => {
@@ -164,7 +173,8 @@ pub fn find_indirect_paths(
                         target,
                     );
 
-                    let direct_paths = find_direct_paths(graph, &next_resolution_path, target)?;
+                    let direct_paths =
+                        find_direct_paths(graph, override_context, &next_resolution_path, target)?;
 
                     if !direct_paths.is_empty() {
                         trace!(
@@ -215,12 +225,13 @@ pub fn find_indirect_paths(
     Ok(best_paths)
 }
 
-#[instrument(level = "trace",skip(graph, target), fields(
+#[instrument(level = "trace",skip(graph, target, override_context), fields(
     path = path.pretty_print(graph),
     current_cost = path.cost,
 ))]
 pub fn find_direct_paths(
     graph: &Graph,
+    override_context: &PlannerOverrideContext,
     path: &OperationPath,
     target: &NavigationTarget,
 ) -> Result<Vec<OperationPath>, WalkOperationError> {
@@ -238,8 +249,14 @@ pub fn find_direct_paths(
                     graph.pretty_print_edge(edge_ref.id(), false)
                 );
 
-                let can_be_satisfied =
-                    can_satisfy_edge(graph, &edge_ref, path, &ExcludedFromLookup::new(), false)?;
+                let can_be_satisfied = can_satisfy_edge(
+                    graph,
+                    override_context,
+                    &edge_ref,
+                    path,
+                    &ExcludedFromLookup::new(),
+                    false,
+                )?;
 
                 match can_be_satisfied {
                     Some(paths) => {
@@ -278,8 +295,14 @@ pub fn find_direct_paths(
                     graph.pretty_print_edge(edge_ref.id(), false)
                 );
 
-                let can_be_satisfied =
-                    can_satisfy_edge(graph, &edge_ref, path, &ExcludedFromLookup::new(), false)?;
+                let can_be_satisfied = can_satisfy_edge(
+                    graph,
+                    override_context,
+                    &edge_ref,
+                    path,
+                    &ExcludedFromLookup::new(),
+                    false,
+                )?;
 
                 match can_be_satisfied {
                     Some(paths) => {
@@ -319,12 +342,21 @@ pub fn find_direct_paths(
 ))]
 pub fn can_satisfy_edge(
     graph: &Graph,
+    override_context: &PlannerOverrideContext,
     edge_ref: &EdgeReference,
     path: &OperationPath,
     excluded: &ExcludedFromLookup,
     use_only_direct_edges: bool,
 ) -> Result<Option<Vec<OperationPath>>, WalkOperationError> {
     let edge = edge_ref.weight();
+
+    if let Edge::FieldMove(field_move) = edge {
+        // TODO: This should be passed from the executor,
+        //       I will work on it next.
+        if !field_move.satisfies_override_rules(override_context) {
+            return Ok(None);
+        }
+    }
 
     match edge.requirements() {
         None => Ok(Some(vec![])),
@@ -351,6 +383,7 @@ pub fn can_satisfy_edge(
                     SelectionItem::Field(selection_field_requirement) => {
                         let result = validate_field_requirement(
                             graph,
+                            override_context,
                             &requirement,
                             selection_field_requirement,
                             excluded,
@@ -391,6 +424,7 @@ pub fn can_satisfy_edge(
                     SelectionItem::InlineFragment(fragment_selection) => {
                         let fragment_requirements = validate_fragment_requirement(
                             graph,
+                            override_context,
                             &requirement,
                             fragment_selection,
                             excluded,
@@ -440,6 +474,7 @@ type FragmentRequirementsResult = Option<(Vec<OperationPath>, Vec<MoveRequiremen
 #[instrument(level = "trace", skip_all, fields(field = field.name))]
 fn validate_field_requirement(
     graph: &Graph,
+    override_context: &PlannerOverrideContext,
     move_requirement: &MoveRequirement, // Contains Rc<Vec<OperationPath>>
     field: &FieldSelection,
     excluded: &ExcludedFromLookup,
@@ -451,6 +486,7 @@ fn validate_field_requirement(
     for path in move_requirement.paths.iter() {
         direct_path_results.push(find_direct_paths(
             graph,
+            override_context,
             path,
             &NavigationTarget::Field(field),
         )?);
@@ -462,6 +498,7 @@ fn validate_field_requirement(
         for path_from_rc in move_requirement.paths.iter() {
             temp_indirect_results.push(find_indirect_paths(
                 graph,
+                override_context,
                 path_from_rc,
                 &NavigationTarget::Field(field),
                 excluded,
@@ -519,6 +556,7 @@ fn validate_field_requirement(
 #[instrument(level = "trace", skip_all, fields(type_condition = fragment_selection.type_condition))]
 fn validate_fragment_requirement(
     graph: &Graph,
+    override_context: &PlannerOverrideContext,
     requirement: &MoveRequirement,
     fragment_selection: &InlineFragmentSelection,
     excluded: &ExcludedFromLookup,
@@ -530,6 +568,7 @@ fn validate_fragment_requirement(
     for path in requirement.paths.iter() {
         direct_path_results.push(find_direct_paths(
             graph,
+            override_context,
             path,
             // @skip/@include can't be used in @requires and @provides,
             // that's why we pass no condition
@@ -543,6 +582,7 @@ fn validate_fragment_requirement(
     for path_from_rc in requirement.paths.iter() {
         indirect_path_results.push(find_indirect_paths(
             graph,
+            override_context,
             path_from_rc,
             // @skip/@include can't be used in @requires and @provides,
             // that's why we pass no condition

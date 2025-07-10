@@ -109,7 +109,7 @@ impl FederationRules {
 
     pub fn check_field_subgraph_availability<'a>(
         field: &'a SupergraphField,
-        current_subgraph: &str,
+        current_subgraph_id: &str,
         parent_definition: &SupergraphDefinition,
     ) -> (bool, Option<&'a JoinFieldDirective>) {
         let involved_subgraphs = parent_definition.subgraphs();
@@ -117,7 +117,7 @@ impl FederationRules {
         // A field i available if: it has no @join__field directives at all
         if field.join_field.is_empty() {
             // AND its parent type is available in the subgraph
-            if involved_subgraphs.contains(&current_subgraph) {
+            if involved_subgraphs.contains(&current_subgraph_id) {
                 return (true, None);
             }
 
@@ -130,7 +130,7 @@ impl FederationRules {
             join_field
                 .graph_id
                 .as_ref()
-                .is_some_and(|g| g == current_subgraph)
+                .is_some_and(|g| g == current_subgraph_id)
         });
 
         if let Some(join_field) = join_field {

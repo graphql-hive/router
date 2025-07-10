@@ -4,6 +4,7 @@ use query_planner::ast::minification::minify_operation;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
 use query_planner::graph::Graph;
+use query_planner::graph::PlannerOverrideContext;
 use query_planner::planner::best::find_best_combination;
 use query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
 use query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
@@ -38,19 +39,25 @@ fn query_plan_pipeline(c: &mut Criterion) {
     let parsed_document = get_operation("../../bench/operation.graphql");
     let operation =
         get_executable_operation(&parsed_document, &supergraph_state, Some("TestQuery"));
+    let override_context = PlannerOverrideContext::default();
 
     c.bench_function("query_plan", |b| {
         b.iter(|| {
             let bb_graph = black_box(&graph);
             let bb_operation = black_box(&operation);
             let bb_supergraph_state = black_box(&supergraph_state);
+            let bb_override_context = black_box(&override_context);
 
-            let best_paths_per_leaf = walk_operation(bb_graph, bb_operation)
+            let best_paths_per_leaf = walk_operation(bb_graph, bb_override_context, bb_operation)
                 .expect("walk_operation failed during benchmark");
             let query_tree = find_best_combination(bb_graph, best_paths_per_leaf).unwrap();
-            let fetch_graph =
-                build_fetch_graph_from_query_tree(bb_graph, bb_supergraph_state, query_tree)
-                    .unwrap();
+            let fetch_graph = build_fetch_graph_from_query_tree(
+                bb_graph,
+                bb_supergraph_state,
+                bb_override_context,
+                query_tree,
+            )
+            .unwrap();
             let query_plan =
                 build_query_plan_from_fetch_graph(fetch_graph, bb_supergraph_state).unwrap();
             black_box(query_plan);

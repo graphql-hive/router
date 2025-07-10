@@ -13,7 +13,7 @@ use crate::{
         selection_item::SelectionItem,
         selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
     },
-    graph::{node::Node, Graph},
+    graph::{edge::PlannerOverrideContext, node::Node, Graph},
     planner::walker::pathfinder::NavigationTarget,
     state::supergraph_state::OperationKind,
 };
@@ -38,9 +38,10 @@ pub type BestPathsPerLeaf = Vec<Vec<OperationPath>>;
 type WorkItem<'a> = (&'a SelectionItem, Vec<OperationPath>);
 type ResolutionStack<'a> = Vec<WorkItem<'a>>;
 
-#[instrument(level = "trace", skip(graph, operation))]
+#[instrument(level = "trace", skip_all)]
 pub fn walk_operation(
     graph: &Graph,
+    override_context: &PlannerOverrideContext,
     operation: &OperationDefinition,
 ) -> Result<ResolvedOperation, WalkOperationError> {
     let operation_kind = operation
@@ -69,7 +70,7 @@ pub fn walk_operation(
 
         while let Some((selection_item, paths)) = stack_to_resolve.pop_front() {
             let (next_stack_to_resolve, new_paths_per_leaf) =
-                process_selection(graph, selection_item, &paths)?;
+                process_selection(graph, override_context, selection_item, &paths)?;
 
             paths_per_leaf.extend(new_paths_per_leaf);
             for item in next_stack_to_resolve.into_iter().rev() {
@@ -88,6 +89,7 @@ pub fn walk_operation(
 
 fn process_selection<'a>(
     graph: &'a Graph,
+    override_context: &'a PlannerOverrideContext,
     selection_item: &'a SelectionItem,
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
@@ -97,12 +99,13 @@ fn process_selection<'a>(
     match selection_item {
         SelectionItem::InlineFragment(fragment) => {
             let (next_selection_items, new_paths_per_leaf) =
-                process_inline_fragment(graph, fragment, paths)?;
+                process_inline_fragment(graph, override_context, fragment, paths)?;
             paths_per_leaf.extend(new_paths_per_leaf);
             stack_to_resolve.extend(next_selection_items);
         }
         SelectionItem::Field(field) => {
-            let (next_selection_items, new_paths_per_leaf) = process_field(graph, field, paths)?;
+            let (next_selection_items, new_paths_per_leaf) =
+                process_field(graph, override_context, field, paths)?;
             paths_per_leaf.extend(new_paths_per_leaf);
             stack_to_resolve.extend(next_selection_items);
         }
@@ -114,9 +117,10 @@ fn process_selection<'a>(
     Ok((stack_to_resolve, paths_per_leaf))
 }
 
-#[instrument(level = "trace", skip(graph, selection_set, paths))]
+#[instrument(level = "trace", skip_all)]
 fn process_selection_set<'a>(
     graph: &'a Graph,
+    override_context: &'a PlannerOverrideContext,
     selection_set: &'a SelectionSet,
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
@@ -124,7 +128,8 @@ fn process_selection_set<'a>(
     let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
 
     for item in selection_set.items.iter() {
-        let (next_stack_to_resolve, new_paths_per_leaf) = process_selection(graph, item, paths)?;
+        let (next_stack_to_resolve, new_paths_per_leaf) =
+            process_selection(graph, override_context, item, paths)?;
         paths_per_leaf.extend(new_paths_per_leaf);
         stack_to_resolve.extend(next_stack_to_resolve);
     }
@@ -132,11 +137,12 @@ fn process_selection_set<'a>(
     Ok((stack_to_resolve, paths_per_leaf))
 }
 
-#[instrument(level = "trace",skip(graph, fragment, paths), fields(
+#[instrument(level = "trace", skip_all, fields(
   type_condition = fragment.type_condition,
 ))]
 fn process_inline_fragment<'a>(
     graph: &'a Graph,
+    override_context: &'a PlannerOverrideContext,
     fragment: &'a InlineFragmentSelection,
     paths: &Vec<OperationPath>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
@@ -175,7 +181,7 @@ fn process_inline_fragment<'a>(
     };
 
     if tail_type_name == &fragment.type_condition {
-        return process_selection_set(graph, &fragment.selections, paths);
+        return process_selection_set(graph, override_context, &fragment.selections, paths);
     }
 
     trace!(
@@ -195,6 +201,7 @@ fn process_inline_fragment<'a>(
 
         let mut direct_paths = find_direct_paths(
             graph,
+            override_context,
             path,
             &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
         )?;
@@ -207,6 +214,7 @@ fn process_inline_fragment<'a>(
 
         let mut indirect_paths = find_indirect_paths(
             graph,
+            override_context,
             path,
             &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
             &ExcludedFromLookup::new(),
@@ -242,6 +250,7 @@ fn process_inline_fragment<'a>(
             let _enter = path_span.enter();
             let direct_paths = find_direct_paths(
                 graph,
+                override_context,
                 path,
                 &NavigationTarget::Field(&FieldSelection::new_typename()),
             )?;
@@ -266,15 +275,16 @@ fn process_inline_fragment<'a>(
         return Ok((vec![], vec![find_best_paths(next_paths)]));
     }
 
-    process_selection_set(graph, &fragment.selections, &next_paths)
+    process_selection_set(graph, override_context, &fragment.selections, &next_paths)
 }
 
-#[instrument(level = "trace", skip(graph, field, paths), fields(
+#[instrument(level = "trace", skip(graph, override_context, field, paths), fields(
   field_name = &field.name,
   leaf = field.is_leaf()
 ))]
 fn process_field<'a>(
     graph: &'a Graph,
+    override_context: &'a PlannerOverrideContext,
     field: &'a FieldSelection,
     paths: &[OperationPath],
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
@@ -299,7 +309,12 @@ fn process_field<'a>(
         let mut advanced = false;
 
         let excluded = ExcludedFromLookup::new();
-        let direct_paths = find_direct_paths(graph, path, &NavigationTarget::Field(field))?;
+        let direct_paths = find_direct_paths(
+            graph,
+            override_context,
+            path,
+            &NavigationTarget::Field(field),
+        )?;
         trace!("Direct paths found: {}", direct_paths.len());
 
         if !direct_paths.is_empty() {
@@ -309,8 +324,13 @@ fn process_field<'a>(
             }
         }
 
-        let indirect_paths =
-            find_indirect_paths(graph, path, &NavigationTarget::Field(field), &excluded)?;
+        let indirect_paths = find_indirect_paths(
+            graph,
+            override_context,
+            path,
+            &NavigationTarget::Field(field),
+            &excluded,
+        )?;
         trace!("Indirect paths found: {}", indirect_paths.len());
 
         if !indirect_paths.is_empty() {
