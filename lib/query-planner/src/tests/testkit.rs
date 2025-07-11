@@ -63,7 +63,8 @@ pub fn build_query_plan_with_context(
     let graph = Graph::graph_from_supergraph_state(&supergraph_state)?;
     let document = normalize_operation(&supergraph_state, &query, None)?;
     let operation = document.executable_operation();
-    let best_paths_per_leaf = walk_operation(&graph, &override_context, operation)?;
+    let best_paths_per_leaf =
+        walk_operation(&graph, &supergraph_state, &override_context, operation)?;
     let query_tree = find_best_combination(&graph, best_paths_per_leaf)?;
     let mut fetch_graph = build_fetch_graph_from_query_tree(
         &graph,

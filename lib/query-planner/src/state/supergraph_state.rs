@@ -662,6 +662,10 @@ impl SupergraphDefinition {
         )
     }
 
+    pub fn is_interface_type(&self) -> bool {
+        matches!(self, SupergraphDefinition::Interface(_))
+    }
+
     pub fn extract_join_types_for(&self, graph_id: &str) -> Vec<JoinTypeDirective> {
         self.join_types()
             .iter()

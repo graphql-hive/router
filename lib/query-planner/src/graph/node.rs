@@ -69,6 +69,15 @@ impl Node {
         }
     }
 
+    pub fn name_str(&self) -> &str {
+        match self {
+            Node::QueryRoot(name) => name,
+            Node::MutationRoot(name) => name,
+            Node::SubscriptionRoot(name) => name,
+            Node::SubgraphType(st) => &st.name,
+        }
+    }
+
     pub fn is_using_provides(&self) -> bool {
         match self {
             Node::QueryRoot(_) => false,

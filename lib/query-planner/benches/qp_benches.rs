@@ -48,8 +48,13 @@ fn query_plan_pipeline(c: &mut Criterion) {
             let bb_supergraph_state = black_box(&supergraph_state);
             let bb_override_context = black_box(&override_context);
 
-            let best_paths_per_leaf = walk_operation(bb_graph, bb_override_context, bb_operation)
-                .expect("walk_operation failed during benchmark");
+            let best_paths_per_leaf = walk_operation(
+                bb_graph,
+                bb_supergraph_state,
+                bb_override_context,
+                bb_operation,
+            )
+            .expect("walk_operation failed during benchmark");
             let query_tree = find_best_combination(bb_graph, best_paths_per_leaf).unwrap();
             let fetch_graph = build_fetch_graph_from_query_tree(
                 bb_graph,
