@@ -40,8 +40,7 @@ pub type BestPathsPerLeaf = Vec<Vec<OperationPath>>;
 // TODO: Consider to use VecDeque(fixed_size) if we can predict it?
 // TODO: Consider to drop this IR layer and just go with QTP directly.
 
-type ResolveLocally = bool;
-type WorkItem<'a> = (&'a SelectionItem, Vec<OperationPath>, ResolveLocally);
+type WorkItem<'a> = (&'a SelectionItem, Vec<OperationPath>);
 type ResolutionStack<'a> = Vec<WorkItem<'a>>;
 
 #[instrument(level = "trace", skip_all)]
@@ -71,18 +70,18 @@ pub fn walk_operation(
     for selection_item in selection_set.items.iter() {
         let mut stack_to_resolve: VecDeque<WorkItem> = VecDeque::new();
 
-        stack_to_resolve.push_back((selection_item, initial_paths.to_vec(), false));
+        stack_to_resolve.push_back((selection_item, initial_paths.to_vec()));
 
         let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
 
-        while let Some((selection_item, paths, resolve_locally)) = stack_to_resolve.pop_front() {
+        while let Some((selection_item, paths)) = stack_to_resolve.pop_front() {
             let (next_stack_to_resolve, new_paths_per_leaf) = process_selection(
                 graph,
                 supergraph,
                 override_context,
                 selection_item,
                 &paths,
-                resolve_locally,
+                &vec![],
             )?;
 
             paths_per_leaf.extend(new_paths_per_leaf);
@@ -106,7 +105,7 @@ fn process_selection<'a>(
     override_context: &'a PlannerOverrideContext,
     selection_item: &'a SelectionItem,
     paths: &Vec<OperationPath>,
-    resolve_locally: bool,
+    fields_to_resolve_locally: &Vec<String>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
     let mut stack_to_resolve: ResolutionStack = vec![];
     let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
@@ -119,7 +118,7 @@ fn process_selection<'a>(
                 override_context,
                 fragment,
                 paths,
-                resolve_locally,
+                fields_to_resolve_locally,
             )?;
             paths_per_leaf.extend(new_paths_per_leaf);
             stack_to_resolve.extend(next_selection_items);
@@ -131,7 +130,7 @@ fn process_selection<'a>(
                 override_context,
                 field,
                 paths,
-                resolve_locally,
+                fields_to_resolve_locally,
             )?;
             paths_per_leaf.extend(new_paths_per_leaf);
             stack_to_resolve.extend(next_selection_items);
@@ -151,7 +150,7 @@ fn process_selection_set<'a>(
     override_context: &'a PlannerOverrideContext,
     selection_set: &'a SelectionSet,
     paths: &Vec<OperationPath>,
-    resolve_locally: bool,
+    fields_to_resolve_locally: &Vec<String>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
     let mut stack_to_resolve: ResolutionStack = vec![];
     let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
@@ -163,7 +162,7 @@ fn process_selection_set<'a>(
             override_context,
             item,
             paths,
-            resolve_locally,
+            fields_to_resolve_locally,
         )?;
         paths_per_leaf.extend(new_paths_per_leaf);
         stack_to_resolve.extend(next_stack_to_resolve);
@@ -181,7 +180,7 @@ fn process_inline_fragment<'a>(
     override_context: &'a PlannerOverrideContext,
     fragment: &'a InlineFragmentSelection,
     paths: &Vec<OperationPath>,
-    resolve_locally: bool,
+    fields_to_resolve_locally: &Vec<String>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
     trace!(
         "Processing inline fragment '{}' on type '{}' (skip: {:?}, include: {:?}) through {} possible paths",
@@ -224,7 +223,7 @@ fn process_inline_fragment<'a>(
             override_context,
             &fragment.selections,
             paths,
-            resolve_locally,
+            fields_to_resolve_locally,
         );
     }
 
@@ -256,7 +255,7 @@ fn process_inline_fragment<'a>(
             next_paths.push(direct_paths.remove(0));
         }
 
-        if !resolve_locally {
+        if fields_to_resolve_locally.is_empty() {
             let mut indirect_paths = find_indirect_paths(
                 graph,
                 override_context,
@@ -327,7 +326,7 @@ fn process_inline_fragment<'a>(
         override_context,
         &fragment.selections,
         &next_paths,
-        resolve_locally,
+        fields_to_resolve_locally,
     )
 }
 
@@ -341,7 +340,7 @@ fn process_field<'a>(
     override_context: &'a PlannerOverrideContext,
     field: &'a FieldSelection,
     paths: &[OperationPath],
-    resolve_locally: bool,
+    fields_to_resolve_locally: &Vec<String>,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
     let mut next_stack_to_resolve: ResolutionStack = vec![];
     let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
@@ -379,7 +378,7 @@ fn process_field<'a>(
             }
         }
 
-        if !resolve_locally {
+        if !fields_to_resolve_locally.contains(&field.name) {
             let indirect_paths = find_indirect_paths(
                 graph,
                 override_context,
@@ -413,7 +412,7 @@ fn process_field<'a>(
         return Err(WalkOperationError::NoPathsFound(field.name.to_string()));
     }
 
-    let mut resolve_children_locally_only = false;
+    let mut fields_to_resolve_locally: Vec<String> = Vec::new();
     if !field.is_leaf() {
         for path in &next_paths {
             trace!("- {}", path.pretty_print(graph));
@@ -471,7 +470,11 @@ fn process_field<'a>(
                     > 1
             {
                 trace!("Resolve children locally");
-                resolve_children_locally_only = true
+                fields_to_resolve_locally = output_type
+                    .fields()
+                    .iter()
+                    .map(|(name, _)| name.to_string())
+                    .collect();
             }
 
             // TODO: if a path is ending at an interface
@@ -479,7 +482,7 @@ fn process_field<'a>(
         }
     }
 
-    if resolve_children_locally_only {
+    if !fields_to_resolve_locally.is_empty() {
         trace!("Shareable interface detected. Validating that sub-selections can be resolved from a single path.");
         let path_span = span!(
             Level::TRACE,
@@ -497,7 +500,7 @@ fn process_field<'a>(
                     override_context,
                     child_selection,
                     &vec![candidate_path.clone()],
-                    true, // Force local resolution for this check
+                    &fields_to_resolve_locally,
                 );
 
                 match finding {
@@ -539,7 +542,7 @@ fn process_field<'a>(
     } else {
         trace!("Found {} paths", next_paths.len());
         for next_selection_items in &field.selections.items {
-            next_stack_to_resolve.push((next_selection_items, next_paths.clone(), false));
+            next_stack_to_resolve.push((next_selection_items, next_paths.clone()));
         }
     }
 
