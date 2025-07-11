@@ -80,7 +80,13 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
                             .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                                 type_name: "Query".to_string(),
                             })?;
-                    handle_selection_set(ctx.supergraph, &possible_types, root, selection_set)?;
+                    handle_selection_set(
+                        ctx.supergraph,
+                        &possible_types,
+                        root,
+                        &Default::default(),
+                        selection_set,
+                    )?;
                 }
                 OperationDefinition::Query(Query { selection_set, .. }) => {
                     let root =
@@ -90,7 +96,13 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
                             .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                                 type_name: "Query".to_string(),
                             })?;
-                    handle_selection_set(ctx.supergraph, &possible_types, root, selection_set)?;
+                    handle_selection_set(
+                        ctx.supergraph,
+                        &possible_types,
+                        root,
+                        &Default::default(),
+                        selection_set,
+                    )?;
                 }
                 OperationDefinition::Mutation(Mutation { selection_set, .. }) => {
                     let root = ctx
@@ -100,7 +112,13 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
                         .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                             type_name: "Mutation".to_string(),
                         })?;
-                    handle_selection_set(ctx.supergraph, &possible_types, root, selection_set)?;
+                    handle_selection_set(
+                        ctx.supergraph,
+                        &possible_types,
+                        root,
+                        &Default::default(),
+                        selection_set,
+                    )?;
                 }
                 OperationDefinition::Subscription(Subscription { selection_set, .. }) => {
                     let root = ctx
@@ -110,7 +128,13 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
                         .ok_or_else(|| NormalizationError::SchemaTypeNotFound {
                             type_name: "Subscription".to_string(),
                         })?;
-                    handle_selection_set(ctx.supergraph, &possible_types, root, selection_set)?;
+                    handle_selection_set(
+                        ctx.supergraph,
+                        &possible_types,
+                        root,
+                        &Default::default(),
+                        selection_set,
+                    )?;
                 }
             },
             Definition::Fragment(_) => {}
@@ -124,6 +148,7 @@ fn handle_selection_set(
     state: &SupergraphState,
     possible_types: &PossibleTypesMap,
     type_def: &SupergraphDefinition,
+    parent_field_in_graphs: &HashSet<String>,
     selection_set: &mut SelectionSet<String>,
 ) -> Result<(), NormalizationError> {
     let old_items = std::mem::take(&mut selection_set.items);
@@ -162,6 +187,15 @@ fn handle_selection_set(
                     continue;
                 }
 
+                let field_def = type_def.fields().get(&field.name).ok_or_else(|| {
+                    NormalizationError::FieldNotFoundInType {
+                        field_name: field.name.clone(),
+                        type_name: type_def.name().to_string(),
+                    }
+                })?;
+
+                let field_resolvable_in_graphs = field_def.resolvable_in_graphs(type_def);
+
                 if let Some(possible_object_types) = &possible_object_types {
                     if handle_type_expansion_candidate(
                         state,
@@ -169,6 +203,7 @@ fn handle_selection_set(
                         possible_object_types,
                         type_def,
                         &field,
+                        &parent_field_in_graphs,
                         &mut new_items,
                     )? {
                         continue;
@@ -176,15 +211,7 @@ fn handle_selection_set(
                 }
 
                 if !field.selection_set.items.is_empty() {
-                    let inner_type_name = type_def
-                        .fields()
-                        .get(&field.name)
-                        .ok_or_else(|| NormalizationError::FieldNotFoundInType {
-                            field_name: field.name.clone(),
-                            type_name: type_def.name().to_string(),
-                        })?
-                        .field_type
-                        .inner_type();
+                    let inner_type_name = field_def.field_type.inner_type();
                     let inner_type_def =
                         state.definitions.get(inner_type_name).ok_or_else(|| {
                             NormalizationError::SchemaTypeNotFound {
@@ -195,6 +222,7 @@ fn handle_selection_set(
                         state,
                         possible_types,
                         inner_type_def,
+                        &field_resolvable_in_graphs,
                         &mut field.selection_set,
                     )?;
                 }
@@ -208,11 +236,18 @@ fn handle_selection_set(
                             state,
                             possible_types,
                             type_def,
+                            parent_field_in_graphs,
                             &mut frag.selection_set,
                         )?;
                     }
                 } else {
-                    handle_selection_set(state, possible_types, type_def, &mut frag.selection_set)?;
+                    handle_selection_set(
+                        state,
+                        possible_types,
+                        type_def,
+                        parent_field_in_graphs,
+                        &mut frag.selection_set,
+                    )?;
                 }
                 new_items.push(Selection::InlineFragment(frag));
             }
@@ -233,6 +268,7 @@ fn handle_type_expansion_candidate<'a>(
     possible_object_types: &Vec<&SupergraphObjectType>,
     type_def: &SupergraphDefinition,
     field: &Field<'a, String>,
+    parent_field_in_graphs: &HashSet<String>,
     new_items: &mut Vec<Selection<'a, String>>,
 ) -> Result<ShouldContinue, NormalizationError> {
     let interface_type = match type_def {
@@ -334,8 +370,40 @@ fn handle_type_expansion_candidate<'a>(
     let mut sorted_object_types: Vec<_> = possible_object_types.iter().collect();
     sorted_object_types.sort_by(|a, b| a.name.cmp(&b.name));
 
+    let field_def = type_def.fields().get(&field.name).ok_or_else(|| {
+        NormalizationError::FieldNotFoundInType {
+            field_name: field.name.clone(),
+            type_name: type_def.name().to_string(),
+        }
+    })?;
+    let field_in_graphs = field_def.resolvable_in_graphs(type_def);
+
     let mut fragments = Vec::with_capacity(sorted_object_types.len());
     for obj in sorted_object_types {
+        if parent_field_in_graphs.len() > 1 {
+            let obj_field_def = obj.fields.get(&field.name).ok_or_else(|| {
+                NormalizationError::FieldNotFoundInType {
+                    field_name: field.name.clone(),
+                    type_name: obj.name.clone(),
+                }
+            })?;
+            let obj_type_def = state.definitions.get(&obj.name).ok_or_else(|| {
+                NormalizationError::SchemaTypeNotFound {
+                    type_name: obj.name.clone(),
+                }
+            })?;
+
+            if !obj_field_def
+                .resolvable_in_graphs(obj_type_def)
+                .is_superset(parent_field_in_graphs)
+            {
+                return Err(NormalizationError::InconsistentShareableField {
+                    field_name: field.name.clone(),
+                    type_name: obj.name.clone(),
+                });
+            }
+        }
+
         let mut new_field = field.clone();
         if !new_field.selection_set.items.is_empty() {
             if let Some(obj_field) = obj.fields.get(&new_field.name) {
@@ -349,6 +417,7 @@ fn handle_type_expansion_candidate<'a>(
                     state,
                     possible_types,
                     inner_type_def,
+                    &field_in_graphs,
                     &mut new_field.selection_set,
                 )?;
             }
