@@ -393,48 +393,93 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
     // Maybe instead of passing a boolean, it should be a list of fields that belong ot the interface?
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-      QueryPlan {
-        Sequence {
-          Fetch(service: "b") {
-            {
-              media {
-                __typename
-                id
+    QueryPlan {
+      Sequence {
+        Fetch(service: "b") {
+          {
+            media {
+              __typename
+              id
+              ... on Book {
                 animals {
                   __typename
-                  id
-                  name
-                }
-                ... on Book {
-                  __typename
-                  id
-                }
-              }
-            }
-          },
-          Flatten(path: "media") {
-            Fetch(service: "c") {
-              {
-                ... on Book {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Book {
-                  animals {
+                  ... on Cat {
                     __typename
-                    ... on Cat {
-                      age
-                    }
+                    id
+                    name
+                  }
+                  ... on Dog {
+                    id
+                    name
                   }
                 }
               }
-            },
+            }
+          }
+        },
+        Flatten(path: "media.animals.@") {
+          Fetch(service: "c") {
+            {
+              ... on Cat {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Cat {
+                age
+              }
+            }
           },
         },
       },
+    },
     "#);
+
+    // before
+    // insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    //   QueryPlan {
+    //     Sequence {
+    //       Fetch(service: "b") {
+    //         {
+    //           media {
+    //             __typename
+    //             id
+    //             animals {
+    //               __typename
+    //               id
+    //               name
+    //             }
+    //             ... on Book {
+    //               __typename
+    //               id
+    //             }
+    //           }
+    //         }
+    //       },
+    //       Flatten(path: "media") {
+    //         Fetch(service: "c") {
+    //           {
+    //             ... on Book {
+    //               __typename
+    //               id
+    //             }
+    //           } =>
+    //           {
+    //             ... on Book {
+    //               animals {
+    //                 __typename
+    //                 ... on Cat {
+    //                   age
+    //                 }
+    //               }
+    //             }
+    //           }
+    //         },
+    //       },
+    //     },
+    //   },
+    // "#);
 
     Ok(())
 }

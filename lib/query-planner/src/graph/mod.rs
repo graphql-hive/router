@@ -278,7 +278,7 @@ impl Graph {
     #[instrument(level = "trace", skip(self, state))]
     fn build_entity_reference_edges(&mut self, state: &SupergraphState) -> Result<(), GraphError> {
         for (def_name, definition) in state.definitions.iter() {
-            let is_interface = matches!(definition, SupergraphDefinition::Interface(_));
+            let is_interface = definition.is_interface_type();
             for join_type1 in definition.join_types() {
                 // Connects object and interface entities of the same name by @key
                 for join_type2 in definition.join_types() {
@@ -910,6 +910,41 @@ impl Graph {
         head: NodeIndex,
         view_id: u64,
     ) -> Result<(), GraphError> {
+        for jt in parent_type_def
+            .join_types()
+            .iter()
+            .filter(|jt| jt.resolvable && jt.key.is_some() && jt.graph_id != graph_id)
+        {
+            let tail = self.upsert_node(Node::new_node(
+                parent_type_def.name(),
+                state.resolve_graph_id(&jt.graph_id)?,
+                jt.is_interface_object,
+            ));
+            let key_selection = FederationRules::parse_key(
+                state,
+                &jt.graph_id,
+                parent_type_def.name(),
+                jt.key.as_ref().unwrap(),
+            );
+            println!(
+                "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
+                parent_type_def.name(),
+                graph_id,
+                parent_type_def.name(),
+                jt.graph_id,
+                jt.key.as_ref().unwrap()
+            );
+            self.upsert_edge(
+                head,
+                tail,
+                Edge::create_entity_move(
+                    jt.key.as_ref().unwrap(),
+                    key_selection,
+                    parent_type_def.is_interface_type(),
+                ),
+            );
+        }
+
         for selection in selection_set.items.iter() {
             match selection {
                 Selection::Field(field) => {
@@ -1030,6 +1065,10 @@ impl Graph {
             for join_type in definition.join_types().iter() {
                 let mut view_id = 0;
 
+                // A map of provided types to graph ids that
+                // we need to create edges to their matching entity types.
+                let mut connection_to_build: HashMap<NodeIndex, String> = HashMap::new();
+
                 for (field_name, field_definition) in definition.fields().iter() {
                     for join_field in field_definition.join_field.iter() {
                         if join_field
@@ -1054,6 +1093,8 @@ impl Graph {
                                         &join_type.graph_id,
                                     ),
                                 ));
+
+                                connection_to_build.insert(head, join_type.graph_id.clone());
 
                                 let return_type_name = field_definition.field_type.inner_type();
 
@@ -1117,6 +1158,41 @@ impl Graph {
                                 )?;
                             }
                         }
+                    }
+                }
+
+                for (head, from_graph_id) in connection_to_build {
+                    for jt in definition.join_types().iter().filter(|jt| {
+                        jt.resolvable && jt.key.is_some() && jt.graph_id != from_graph_id
+                    }) {
+                        let tail = self.upsert_node(Node::new_node(
+                            def_name,
+                            state.resolve_graph_id(&jt.graph_id)?,
+                            jt.is_interface_object,
+                        ));
+                        let key_selection = FederationRules::parse_key(
+                            state,
+                            &jt.graph_id,
+                            def_name,
+                            jt.key.as_ref().unwrap(),
+                        );
+                        println!(
+                            "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
+                            def_name,
+                            from_graph_id,
+                            def_name,
+                            jt.graph_id,
+                            jt.key.as_ref().unwrap()
+                        );
+                        self.upsert_edge(
+                            head,
+                            tail,
+                            Edge::create_entity_move(
+                                jt.key.as_ref().unwrap(),
+                                key_selection,
+                                definition.is_interface_type(),
+                            ),
+                        );
                     }
                 }
             }
