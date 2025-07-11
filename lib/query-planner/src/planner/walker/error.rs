@@ -12,6 +12,8 @@ pub enum WalkOperationError {
     TailMissingInfo(NodeIndex),
     #[error("Type Definition of '{0}' not found in Supergraph")]
     TypeNotFound(String),
+    #[error("Field '{0}' not found in type '{1}'")]
+    FieldNotFound(String, String),
     #[error("No paths found for selection item: {0}")]
     NoPathsFound(String),
     /// In case of a shareable field resolving an interface, all object types implementing the interface

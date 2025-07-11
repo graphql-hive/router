@@ -13,7 +13,11 @@ use crate::{
         selection_item::SelectionItem,
         selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
     },
-    graph::{edge::PlannerOverrideContext, node::Node, Graph},
+    graph::{
+        edge::{Edge, PlannerOverrideContext},
+        node::Node,
+        Graph,
+    },
     planner::walker::pathfinder::NavigationTarget,
     state::supergraph_state::{OperationKind, SupergraphDefinition, SupergraphState},
 };
@@ -35,7 +39,9 @@ pub type BestPathsPerLeaf = Vec<Vec<OperationPath>>;
 
 // TODO: Consider to use VecDeque(fixed_size) if we can predict it?
 // TODO: Consider to drop this IR layer and just go with QTP directly.
-type WorkItem<'a> = (&'a SelectionItem, Vec<OperationPath>);
+
+type ResolveLocally = bool;
+type WorkItem<'a> = (&'a SelectionItem, Vec<OperationPath>, ResolveLocally);
 type ResolutionStack<'a> = Vec<WorkItem<'a>>;
 
 #[instrument(level = "trace", skip_all)]
@@ -65,13 +71,19 @@ pub fn walk_operation(
     for selection_item in selection_set.items.iter() {
         let mut stack_to_resolve: VecDeque<WorkItem> = VecDeque::new();
 
-        stack_to_resolve.push_back((selection_item, initial_paths.to_vec()));
+        stack_to_resolve.push_back((selection_item, initial_paths.to_vec(), false));
 
         let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
 
-        while let Some((selection_item, paths)) = stack_to_resolve.pop_front() {
-            let (next_stack_to_resolve, new_paths_per_leaf) =
-                process_selection(graph, supergraph, override_context, selection_item, &paths)?;
+        while let Some((selection_item, paths, resolve_locally)) = stack_to_resolve.pop_front() {
+            let (next_stack_to_resolve, new_paths_per_leaf) = process_selection(
+                graph,
+                supergraph,
+                override_context,
+                selection_item,
+                &paths,
+                resolve_locally,
+            )?;
 
             paths_per_leaf.extend(new_paths_per_leaf);
             for item in next_stack_to_resolve.into_iter().rev() {
@@ -94,20 +106,33 @@ fn process_selection<'a>(
     override_context: &'a PlannerOverrideContext,
     selection_item: &'a SelectionItem,
     paths: &Vec<OperationPath>,
+    resolve_locally: bool,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
     let mut stack_to_resolve: ResolutionStack = vec![];
     let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
 
     match selection_item {
         SelectionItem::InlineFragment(fragment) => {
-            let (next_selection_items, new_paths_per_leaf) =
-                process_inline_fragment(graph, supergraph, override_context, fragment, paths)?;
+            let (next_selection_items, new_paths_per_leaf) = process_inline_fragment(
+                graph,
+                supergraph,
+                override_context,
+                fragment,
+                paths,
+                resolve_locally,
+            )?;
             paths_per_leaf.extend(new_paths_per_leaf);
             stack_to_resolve.extend(next_selection_items);
         }
         SelectionItem::Field(field) => {
-            let (next_selection_items, new_paths_per_leaf) =
-                process_field(graph, supergraph, override_context, field, paths)?;
+            let (next_selection_items, new_paths_per_leaf) = process_field(
+                graph,
+                supergraph,
+                override_context,
+                field,
+                paths,
+                resolve_locally,
+            )?;
             paths_per_leaf.extend(new_paths_per_leaf);
             stack_to_resolve.extend(next_selection_items);
         }
@@ -126,13 +151,20 @@ fn process_selection_set<'a>(
     override_context: &'a PlannerOverrideContext,
     selection_set: &'a SelectionSet,
     paths: &Vec<OperationPath>,
+    resolve_locally: bool,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
     let mut stack_to_resolve: ResolutionStack = vec![];
     let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
 
     for item in selection_set.items.iter() {
-        let (next_stack_to_resolve, new_paths_per_leaf) =
-            process_selection(graph, supergraph, override_context, item, paths)?;
+        let (next_stack_to_resolve, new_paths_per_leaf) = process_selection(
+            graph,
+            supergraph,
+            override_context,
+            item,
+            paths,
+            resolve_locally,
+        )?;
         paths_per_leaf.extend(new_paths_per_leaf);
         stack_to_resolve.extend(next_stack_to_resolve);
     }
@@ -149,6 +181,7 @@ fn process_inline_fragment<'a>(
     override_context: &'a PlannerOverrideContext,
     fragment: &'a InlineFragmentSelection,
     paths: &Vec<OperationPath>,
+    resolve_locally: bool,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
     trace!(
         "Processing inline fragment '{}' on type '{}' (skip: {:?}, include: {:?}) through {} possible paths",
@@ -191,6 +224,7 @@ fn process_inline_fragment<'a>(
             override_context,
             &fragment.selections,
             paths,
+            resolve_locally,
         );
     }
 
@@ -222,29 +256,31 @@ fn process_inline_fragment<'a>(
             next_paths.push(direct_paths.remove(0));
         }
 
-        let mut indirect_paths = find_indirect_paths(
-            graph,
-            override_context,
-            path,
-            &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
-            &ExcludedFromLookup::new(),
-        )?;
+        if !resolve_locally {
+            let mut indirect_paths = find_indirect_paths(
+                graph,
+                override_context,
+                path,
+                &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
+                &ExcludedFromLookup::new(),
+            )?;
 
-        if !indirect_paths.is_empty() {
-            trace!("advanced: {}", path.pretty_print(graph));
-            next_paths.push(indirect_paths.remove(0));
-        }
+            if !indirect_paths.is_empty() {
+                trace!("advanced: {}", path.pretty_print(graph));
+                next_paths.push(indirect_paths.remove(0));
+            }
 
-        if indirect_paths.is_empty() && direct_paths.is_empty() {
-            // Looks like a union member or an interface implementation is not resolvable.
-            // The fact the fragment for that object type passed GraphQL validations,
-            // means that it's a child of the abstract type,
-            // and it was probably eliminated from the Graph because of intersection.
-            trace!(
-                "Object type '{}' is not resolvable by '{}', resolve only the __typename",
-                fragment.type_condition,
-                tail_type_name
-            );
+            if indirect_paths.is_empty() && direct_paths.is_empty() {
+                // Looks like a union member or an interface implementation is not resolvable.
+                // The fact the fragment for that object type passed GraphQL validations,
+                // means that it's a child of the abstract type,
+                // and it was probably eliminated from the Graph because of intersection.
+                trace!(
+                    "Object type '{}' is not resolvable by '{}', resolve only the __typename",
+                    fragment.type_condition,
+                    tail_type_name
+                );
+            }
         }
     }
 
@@ -291,10 +327,11 @@ fn process_inline_fragment<'a>(
         override_context,
         &fragment.selections,
         &next_paths,
+        resolve_locally,
     )
 }
 
-#[instrument(level = "trace", skip(graph, override_context, field, paths), fields(
+#[instrument(level = "trace", skip(graph, supergraph, override_context, field, paths), fields(
   field_name = &field.name,
   leaf = field.is_leaf()
 ))]
@@ -304,6 +341,7 @@ fn process_field<'a>(
     override_context: &'a PlannerOverrideContext,
     field: &'a FieldSelection,
     paths: &[OperationPath],
+    resolve_locally: bool,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
     let mut next_stack_to_resolve: ResolutionStack = vec![];
     let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
@@ -341,19 +379,21 @@ fn process_field<'a>(
             }
         }
 
-        let indirect_paths = find_indirect_paths(
-            graph,
-            override_context,
-            path,
-            &NavigationTarget::Field(field),
-            &excluded,
-        )?;
-        trace!("Indirect paths found: {}", indirect_paths.len());
+        if !resolve_locally {
+            let indirect_paths = find_indirect_paths(
+                graph,
+                override_context,
+                path,
+                &NavigationTarget::Field(field),
+                &excluded,
+            )?;
+            trace!("Indirect paths found: {}", indirect_paths.len());
 
-        if !indirect_paths.is_empty() {
-            advanced = true;
-            for indirect_path in indirect_paths {
-                tracker.add(&indirect_path)?;
+            if !indirect_paths.is_empty() {
+                advanced = true;
+                for indirect_path in indirect_paths {
+                    tracker.add(&indirect_path)?;
+                }
             }
         }
 
@@ -368,78 +408,66 @@ fn process_field<'a>(
         );
     }
 
-    let mut next_paths = tracker.get_best_paths();
+    let next_paths = tracker.get_best_paths();
     if next_paths.is_empty() {
         return Err(WalkOperationError::NoPathsFound(field.name.to_string()));
     }
 
-    if !field.name.starts_with("__") {
-        let parent_node_index = paths[0].tail();
-        let parent_node = graph.node(parent_node_index)?;
-        let parent_type_name = parent_node.name_str();
-        let parent_def = supergraph
-            .definitions
-            .get(parent_type_name)
-            .ok_or_else(|| WalkOperationError::TypeNotFound(parent_type_name.to_string()))?;
+    let mut resolve_children_locally_only = false;
+    if !field.is_leaf() {
+        for path in &next_paths {
+            trace!("- {}", path.pretty_print(graph));
+        }
 
-        let field_def = parent_def.fields().get(&field.name).expect(
-            format!(
-                "Field {} not found in type {}",
-                field.name, parent_type_name
-            )
-            .as_str(),
-        );
+        let field_move_paths: Vec<_> = next_paths
+            .iter()
+            .filter(|path| {
+                path.last_segment.as_ref().is_some_and(|seg| {
+                    matches!(graph.edge(seg.edge_index).unwrap(), Edge::FieldMove(_))
+                })
+            })
+            .collect();
 
-        let field_type_name = field_def.field_type.inner_type();
+        if !field_move_paths.is_empty() {
+            let edge_index = field_move_paths[0]
+                .last_segment
+                .as_ref()
+                .unwrap()
+                .edge_index;
 
-        if let Some(SupergraphDefinition::Interface(_)) =
-            supergraph.definitions.get(field_type_name)
-        {
-            let resolvable_subgraphs: HashSet<String> = if field_def.join_field.is_empty() {
-                parent_def
-                    .subgraphs()
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect()
-            } else {
-                field_def
-                    .join_field
-                    .iter()
-                    .filter(|jf| !jf.external)
-                    .filter_map(|jf| jf.graph_id.as_ref().map(|s| s.to_string()))
-                    .collect()
-            };
-            if resolvable_subgraphs.len() > 1 {
-                let filtered_paths: Vec<OperationPath> = next_paths
-                    .into_iter()
-                    .filter_map(|path| {
-                        match pathfinder::is_selection_set_resolvable_without_entity_moves(
-                            graph,
-                            override_context,
-                            &field.selections,
-                            &path,
-                        ) {
-                            Ok(true) => Some(Ok(path)),
-                            Ok(false) => {
-                                trace!(
-                                  "Path discarded because sub-selection requires entity moves: {}",
-                                  path.pretty_print(graph)
-                              );
-                                None
-                            }
-                            Err(e) => Some(Err(e)),
-                        }
-                    })
-                    .collect::<Result<_, _>>()?;
+            let head_index = graph.get_edge_head(&edge_index)?;
+            let tail_index = graph.get_edge_tail(&edge_index)?;
 
-                if !field.selections.is_empty() && filtered_paths.is_empty() {
-                    return Err(WalkOperationError::InconsistentShareableField {
-                        field_name: field.name.clone(),
-                        type_name: parent_type_name.to_string(),
-                    });
-                }
-                next_paths = filtered_paths;
+            let head = graph.node(head_index)?;
+            let tail = graph.node(tail_index)?;
+
+            let parent_type_name = head.name_str();
+            let parent_def = supergraph
+                .definitions
+                .get(parent_type_name)
+                .ok_or_else(|| WalkOperationError::TypeNotFound(parent_type_name.to_string()))?;
+
+            let field_def = parent_def.fields().get(&field.name).ok_or_else(|| {
+                WalkOperationError::FieldNotFound(
+                    field.name.to_string(),
+                    parent_type_name.to_string(),
+                )
+            })?;
+
+            let output_type = supergraph
+                .definitions
+                .get(tail.name_str())
+                .ok_or_else(|| WalkOperationError::TypeNotFound(tail.name_str().to_string()))?;
+
+            if output_type.is_interface_type()
+                && field_def.resolvable_in_graphs(parent_def).len() > 1
+            {
+                trace!("Resolve children locally");
+                resolve_children_locally_only = true
             }
+
+            // TODO: if a path is ending at an interface
+            // can it resolve the entire sub-selection for all possible types (all local - no moves to other subgraphs)
         }
     }
 
@@ -448,7 +476,11 @@ fn process_field<'a>(
     } else {
         trace!("Found {} paths", next_paths.len());
         for next_selection_items in &field.selections.items {
-            next_stack_to_resolve.push((next_selection_items, next_paths.clone()));
+            next_stack_to_resolve.push((
+                next_selection_items,
+                next_paths.clone(),
+                resolve_children_locally_only,
+            ));
         }
     }
     Ok((next_stack_to_resolve, paths_per_leaf))
