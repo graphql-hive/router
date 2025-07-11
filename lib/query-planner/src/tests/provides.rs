@@ -331,21 +331,29 @@ fn provides_on_interface_1_test() -> Result<(), Box<dyn Error>> {
     )?;
 
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
-      QueryPlan {
-        Fetch(service: "b") {
-          {
-            media {
-              __typename
-              id
+    QueryPlan {
+      Fetch(service: "b") {
+        {
+          media {
+            __typename
+            id
+            ... on Book {
               animals {
                 __typename
-                id
-                name
+                ... on Cat {
+                  id
+                  name
+                }
+                ... on Dog {
+                  id
+                  name
+                }
               }
             }
           }
-        },
+        }
       },
+    },
     "#);
 
     Ok(())
