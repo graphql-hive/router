@@ -592,22 +592,38 @@ mod tests {
         let schema = parse_schema(&schema_str);
         let supergraph = SupergraphState::new(&schema);
 
-        let norm_res = normalize_operation(
-            &supergraph,
-            &parse_query(
-                r#"
-                  query nodeid($id: ID!) {
-                    node(id: $id) {
-                      id
-                    }
-                  }
-                "#,
-            )
-            .expect("to parse"),
-            None,
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query nodeid($id: ID!) {
+                          node(id: $id) {
+                            id
+                          }
+                        }
+                        "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+            query nodeid($id: ID!) {
+              node(id: $id) {
+                ... on Account {
+                  id
+                }
+                ... on Chat {
+                  id
+                }
+              }
+            }
+            ",
         );
-
-        assert!(norm_res.is_err());
 
         insta::assert_snapshot!(
             pretty_query(

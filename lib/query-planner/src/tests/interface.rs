@@ -453,34 +453,36 @@ fn node_query_with_multiple_type_fragments() -> Result<(), Box<dyn Error>> {
     let query_plan = build_query_plan(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
-    )?;
+    );
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Parallel {
-        Fetch(service: "a") {
-          {
-            node(id: "a1") {
-              __typename
-              ... on Account {
-                id
-              }
-            }
-          }
-        },
-        Fetch(service: "b") {
-          {
-            node(id: "a1") {
-              __typename
-              ... on Chat {
-                id
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+    assert!(query_plan.is_err());
+
+    // insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    // QueryPlan {
+    //   Parallel {
+    //     Fetch(service: "a") {
+    //       {
+    //         node(id: "a1") {
+    //           __typename
+    //           ... on Account {
+    //             id
+    //           }
+    //         }
+    //       }
+    //     },
+    //     Fetch(service: "b") {
+    //       {
+    //         node(id: "a1") {
+    //           __typename
+    //           ... on Chat {
+    //             id
+    //           }
+    //         }
+    //       }
+    //     },
+    //   },
+    // },
+    // "#);
 
     Ok(())
 }

@@ -397,10 +397,10 @@ fn handle_type_expansion_candidate<'a>(
                 .resolvable_in_graphs(obj_type_def)
                 .is_superset(parent_field_in_graphs)
             {
-                return Err(NormalizationError::InconsistentShareableField {
-                    field_name: field.name.clone(),
-                    type_name: obj.name.clone(),
-                });
+                // return Err(NormalizationError::InconsistentShareableField {
+                //     field_name: field.name.clone(),
+                //     type_name: obj.name.clone(),
+                // });
             }
         }
 
