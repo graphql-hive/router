@@ -750,6 +750,36 @@ pub struct SupergraphField {
     pub join_field: Vec<JoinFieldDirective>,
 }
 
+impl SupergraphField {
+    pub fn resolvable_in_graphs(&self, type_def: &SupergraphDefinition) -> HashSet<String> {
+        // A field is resolvable in all defining subgraph when it has no @join__field
+        if self.join_field.is_empty() {
+            return type_def
+                .join_types()
+                .iter()
+                .map(|j| j.graph_id.to_string())
+                .collect::<HashSet<_>>();
+        }
+
+        // A field is resolvable when it has @join__field and it's not external or overriden
+        return self
+            .join_field
+            .iter()
+            .filter_map(|jf| {
+                if jf.graph_id.is_some()
+                    && !jf.external
+                    && !jf.used_overridden
+                    && jf.override_label.is_none()
+                {
+                    Some(jf.graph_id.as_ref().unwrap().to_string())
+                } else {
+                    None
+                }
+            })
+            .collect::<HashSet<_>>();
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum TypeNode {
     List(Box<TypeNode>),
