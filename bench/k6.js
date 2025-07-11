@@ -60,15 +60,25 @@ export function handleSummary(data) {
   return handleBenchmarkSummary(data, { vus, time });
 }
 
-let identifiersMap = {};
+let printIdentifiersMap = {};
+let runIdentifiersMap = {};
 
 function printOnce(identifier, ...args) {
-  if (identifiersMap[identifier]) {
+  if (printIdentifiersMap[identifier]) {
     return;
   }
 
   console.log(...args);
-  identifiersMap[identifier] = true;
+  printIdentifiersMap[identifier] = true;
+}
+
+function runOnce(identifier, cb) {
+  if (runIdentifiersMap[identifier]) {
+    return true;
+  }
+
+  runIdentifiersMap[identifier] = true;
+  return cb();
 }
 
 const graphqlRequest = {
@@ -176,14 +186,8 @@ function makeGraphQLRequest() {
   check(res, {
     "response code was 200": (res) => res.status == 200,
     "no graphql errors": (resp) => {
-      const json = resp.json();
-      const noErrors =
-        !!json &&
-        typeof json === "object" &&
-        !Array.isArray(json) &&
-        !json.errors;
-
-      if (!noErrors) {
+      let has_errors = resp.body.includes(`"errors"`);
+      if (has_errors) {
         printOnce(
           "graphql_errors",
           `‼️ Got GraphQL errors, here's a sample:`,
@@ -191,22 +195,24 @@ function makeGraphQLRequest() {
         );
       }
 
-      return noErrors;
+      return !has_errors;
     },
     "valid response structure": (resp) => {
-      const json = resp.json();
+      return runOnce("valid response structure", () => {
+        const json = resp.json();
 
-      let isValid = checkResponseStructure(json);
+        let isValid = checkResponseStructure(json);
 
-      if (!isValid) {
-        printOnce(
-          "response_strcuture",
-          `‼️ Got invalid structure, here's a sample:`,
-          res.body,
-        );
-      }
+        if (!isValid) {
+          printOnce(
+            "response_strcuture",
+            `‼️ Got invalid structure, here's a sample:`,
+            res.body,
+          );
+        }
 
-      return isValid;
+        return isValid;
+      });
     },
   });
 }
