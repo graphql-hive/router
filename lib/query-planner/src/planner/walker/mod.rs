@@ -5,7 +5,7 @@ pub(crate) mod path;
 pub(crate) mod pathfinder;
 mod utils;
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use crate::{
     ast::{
@@ -19,7 +19,7 @@ use crate::{
         Graph,
     },
     planner::walker::pathfinder::NavigationTarget,
-    state::supergraph_state::{OperationKind, SupergraphDefinition, SupergraphState},
+    state::supergraph_state::{OperationKind, SupergraphState},
 };
 use best_path::{find_best_paths, BestPathTracker};
 use error::WalkOperationError;
@@ -461,6 +461,14 @@ fn process_field<'a>(
 
             if output_type.is_interface_type()
                 && field_def.resolvable_in_graphs(parent_def).len() > 1
+                // if there's one fragment, the query planner can decide which subgraph to use, based on the fragment's type condition
+                && field
+                    .selections
+                    .items
+                    .iter()
+                    .filter(|item| matches!(item, SelectionItem::InlineFragment(_)))
+                    .count()
+                    > 1
             {
                 trace!("Resolve children locally");
                 resolve_children_locally_only = true
@@ -473,28 +481,41 @@ fn process_field<'a>(
 
     if resolve_children_locally_only {
         trace!("Shareable interface detected. Validating that sub-selections can be resolved from a single path.");
+        let path_span = span!(
+            Level::TRACE,
+            "Shareable interface detected. Validating that sub-selections can be resolved from a single path."
+        );
+        let _enter = path_span.enter();
         let mut valid_paths_for_children: Vec<OperationPath> = Vec::new();
         for candidate_path in &next_paths {
             let mut all_children_resolvable = true;
-            // We don't need the results of the sub-walk here, only whether it was successful.
+            // We don't need the results of the sub-walk here, only whether it was successful
             for child_selection in &field.selections.items {
-                let (child_stack, child_leaves) = process_selection(
+                let finding = process_selection(
                     graph,
                     supergraph,
                     override_context,
                     child_selection,
                     &vec![candidate_path.clone()],
                     true, // Force local resolution for this check
-                )?;
+                );
 
-                if child_leaves.is_empty() && child_stack.is_empty() {
-                    all_children_resolvable = false;
-                    trace!(
-                        "Path {} failed to resolve child '{}' locally.",
-                        candidate_path.pretty_print(graph),
-                        child_selection
-                    );
-                    break; // This candidate_path is invalid.
+                match finding {
+                    Ok((child_stack, child_leaves)) => {
+                        if child_leaves.is_empty() && child_stack.is_empty() {
+                            all_children_resolvable = false;
+                            trace!(
+                                "Path {} failed to resolve child '{}' locally.",
+                                candidate_path.pretty_print(graph),
+                                child_selection
+                            );
+                            break; // This candidate_path is invalid.
+                        }
+                    }
+                    Err(_) => {
+                        all_children_resolvable = false;
+                        break; // This candidate_path is invalid.
+                    }
                 }
             }
 
@@ -506,7 +527,6 @@ fn process_field<'a>(
                 valid_paths_for_children.push(candidate_path.clone());
             }
         }
-        // Replace the original next_paths with only the ones that passed validation.
         next_paths = valid_paths_for_children;
         if !field.is_leaf() && next_paths.is_empty() {
             // If no single path could satisfy all children, we have no valid way forward.
