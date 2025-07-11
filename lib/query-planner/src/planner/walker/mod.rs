@@ -408,7 +408,7 @@ fn process_field<'a>(
         );
     }
 
-    let next_paths = tracker.get_best_paths();
+    let mut next_paths = tracker.get_best_paths();
     if next_paths.is_empty() {
         return Err(WalkOperationError::NoPathsFound(field.name.to_string()));
     }
@@ -471,17 +471,57 @@ fn process_field<'a>(
         }
     }
 
+    if resolve_children_locally_only {
+        trace!("Shareable interface detected. Validating that sub-selections can be resolved from a single path.");
+        let mut valid_paths_for_children: Vec<OperationPath> = Vec::new();
+        for candidate_path in &next_paths {
+            let mut all_children_resolvable = true;
+            // We don't need the results of the sub-walk here, only whether it was successful.
+            for child_selection in &field.selections.items {
+                let (child_stack, child_leaves) = process_selection(
+                    graph,
+                    supergraph,
+                    override_context,
+                    child_selection,
+                    &vec![candidate_path.clone()],
+                    true, // Force local resolution for this check
+                )?;
+
+                if child_leaves.is_empty() && child_stack.is_empty() {
+                    all_children_resolvable = false;
+                    trace!(
+                        "Path {} failed to resolve child '{}' locally.",
+                        candidate_path.pretty_print(graph),
+                        child_selection
+                    );
+                    break; // This candidate_path is invalid.
+                }
+            }
+
+            if all_children_resolvable {
+                trace!(
+                    "Path {} can resolve all children locally and is valid.",
+                    candidate_path.pretty_print(graph)
+                );
+                valid_paths_for_children.push(candidate_path.clone());
+            }
+        }
+        // Replace the original next_paths with only the ones that passed validation.
+        next_paths = valid_paths_for_children;
+        if !field.is_leaf() && next_paths.is_empty() {
+            // If no single path could satisfy all children, we have no valid way forward.
+            return Err(WalkOperationError::NoPathsFound(field.name.to_string()));
+        }
+    }
+
     if field.is_leaf() {
         paths_per_leaf.push(find_best_paths(next_paths));
     } else {
         trace!("Found {} paths", next_paths.len());
         for next_selection_items in &field.selections.items {
-            next_stack_to_resolve.push((
-                next_selection_items,
-                next_paths.clone(),
-                resolve_children_locally_only,
-            ));
+            next_stack_to_resolve.push((next_selection_items, next_paths.clone(), false));
         }
     }
+
     Ok((next_stack_to_resolve, paths_per_leaf))
 }
