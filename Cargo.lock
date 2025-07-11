@@ -874,6 +874,7 @@ dependencies = [
  "graphql-parser",
  "graphql-tools",
  "http",
+ "http-body-util",
  "hyper",
  "lazy_static",
  "mimalloc",
