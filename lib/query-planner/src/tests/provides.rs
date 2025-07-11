@@ -308,3 +308,116 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[test]
+fn provides_on_interface_1_test() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+          query {
+            media {
+              id
+              animals {
+                id
+                name
+              }
+            }
+          }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/provides-on-interface.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+      QueryPlan {
+        Fetch(service: "b") {
+          {
+            media {
+              __typename
+              id
+              animals {
+                __typename
+                id
+                name
+              }
+            }
+          }
+        },
+      },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+          query {
+            media {
+              id
+              animals {
+                id
+                name
+                ... on Cat {
+                  age
+                }
+              }
+            }
+          }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/provides-on-interface.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+      QueryPlan {
+        Sequence {
+          Fetch(service: "b") {
+            {
+              media {
+                __typename
+                id
+                animals {
+                  __typename
+                  id
+                  name
+                }
+                ... on Book {
+                  __typename
+                  id
+                }
+              }
+            }
+          },
+          Flatten(path: "media") {
+            Fetch(service: "c") {
+              {
+                ... on Book {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Book {
+                  animals {
+                    __typename
+                    ... on Cat {
+                      age
+                    }
+                  }
+                }
+              }
+            },
+          },
+        },
+      },
+    "#);
+
+    Ok(())
+}
