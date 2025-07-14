@@ -112,7 +112,11 @@ impl FetchStepSelections {
     }
 
     pub fn is_selecting_definition(&self, definition_name: &str) -> bool {
-        self.selections.contains_key(definition_name)
+        if let Some(selections) = self.selections.get(definition_name) {
+            !selections.is_empty()
+        } else {
+            false
+        }
     }
 
     pub fn variable_usages(&self) -> BTreeSet<String> {

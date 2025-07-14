@@ -1165,7 +1165,7 @@ fn process_requires_field_edge(
 
     let parent_fetch_step = fetch_graph.get_step_data(parent_fetch_step_index)?;
     // In case of a field with `@requires`, the parent will be the current subgraph we're in.
-    let real_parent_fetch_step_index = match parent_fetch_step
+    let real_parent_fetch_step_index = match !parent_fetch_step
         .output_new
         .is_selecting_definition(head_type_name)
     {
@@ -1186,6 +1186,13 @@ fn process_requires_field_edge(
         // We need to stick to the parent of the parent.
         false => parent_parent_index,
     };
+
+    println!(
+        "IF TRUE THEN {}, ELSE {}, picked {}",
+        parent_fetch_step_index.index(),
+        parent_parent_index.index(),
+        real_parent_fetch_step_index.index()
+    );
 
     // When a field (foo) is annotated with `@requires(fields: "bar")`
     // We want to create new FetchStep (entity move) for that field (foo)
