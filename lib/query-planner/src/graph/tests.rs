@@ -366,7 +366,7 @@ mod graph_tests {
         let (viewed_incoming, viewed_outgoing) = find_node(&graph, &node1.display_name());
         viewed_outgoing.assert_field_edge("id", "String/foo");
         assert_eq!(viewed_incoming.edges.len(), 1);
-        assert_eq!(viewed_outgoing.edges.len(), 1);
+        assert_eq!(viewed_outgoing.edges.len(), 2);
 
         let (_, to) = outgoing
             .edges_field("user")
@@ -380,7 +380,7 @@ mod graph_tests {
         let (viewed_incoming, viewed_outgoing) = find_node(&graph, &node2.display_name());
         viewed_outgoing.assert_field_edge("name", "String/foo");
         assert_eq!(viewed_incoming.edges.len(), 1);
-        assert_eq!(viewed_outgoing.edges.len(), 2);
+        assert_eq!(viewed_outgoing.edges.len(), 3);
 
         let (nested_provides_id, nested_provides_node) = viewed_outgoing
             .edge_field("profile")
