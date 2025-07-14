@@ -93,8 +93,12 @@ impl Planner {
         normalized_operation: &OperationDefinition,
         override_context: PlannerOverrideContext,
     ) -> Result<QueryPlan, PlannerError> {
-        let best_paths_per_leaf =
-            walk_operation(&self.graph, &override_context, normalized_operation)?;
+        let best_paths_per_leaf = walk_operation(
+            &self.graph,
+            &self.supergraph,
+            &override_context,
+            normalized_operation,
+        )?;
         let query_tree = find_best_combination(&self.graph, best_paths_per_leaf).unwrap();
         let mut fetch_graph = build_fetch_graph_from_query_tree(
             &self.graph,

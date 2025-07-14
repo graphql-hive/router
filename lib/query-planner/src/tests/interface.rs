@@ -422,34 +422,11 @@ fn node_query_with_id_on_interface_field() -> Result<(), Box<dyn Error>> {
     let query_plan = build_query_plan(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
-    )?;
+    );
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Parallel {
-        Fetch(service: "b") {
-          {
-            node(id: "a1") {
-              __typename
-              ... on Chat {
-                id
-              }
-            }
-          }
-        },
-        Fetch(service: "a") {
-          {
-            node(id: "a1") {
-              __typename
-              ... on Account {
-                id
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+    // By definition @shareable means: QP can pick any field to resolve data, it shouldn't matter which one is used.
+    // Performing type expansion and fetching data from two subgraphs breaks that rule.
+    assert!(query_plan.is_err());
 
     Ok(())
 }
@@ -476,34 +453,9 @@ fn node_query_with_multiple_type_fragments() -> Result<(), Box<dyn Error>> {
     let query_plan = build_query_plan(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
-    )?;
+    );
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Parallel {
-        Fetch(service: "a") {
-          {
-            node(id: "a1") {
-              __typename
-              ... on Account {
-                id
-              }
-            }
-          }
-        },
-        Fetch(service: "b") {
-          {
-            node(id: "a1") {
-              __typename
-              ... on Chat {
-                id
-              }
-            }
-          }
-        },
-      },
-    },
-    "#);
+    assert!(query_plan.is_err());
 
     Ok(())
 }
@@ -513,6 +465,8 @@ fn node_query_with_multiple_type_fragments() -> Result<(), Box<dyn Error>> {
 #[test]
 fn node_query_with_id_and_cross_type_fragment_overlap() -> Result<(), Box<dyn Error>> {
     init_logger();
+    // By definition @shareable means: QP can pick any field to resolve data, it shouldn't matter which one is used.
+    // Performing type expansion and fetching data from two subgraphs breaks that rule.
     let document = parse_operation(
         r#"
         query {
@@ -534,38 +488,9 @@ fn node_query_with_id_and_cross_type_fragment_overlap() -> Result<(), Box<dyn Er
     let query_plan = build_query_plan(
         "fixture/tests/corrupted-supergraph-node-id.supergraph.graphql",
         document,
-    )?;
+    );
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    QueryPlan {
-      Parallel {
-        Fetch(service: "b") {
-          {
-            account: node(id: "a1") {
-              __typename
-              ... on Chat {
-                id
-              }
-            }
-          }
-        },
-        Fetch(service: "a") {
-          {
-            account: node(id: "a1") {
-    ...a        }
-            chat: node(id: "c1") {
-    ...a        }
-          }
-          fragment a on Node {
-            __typename
-            ... on Account {
-              id
-            }
-          }
-        },
-      },
-    },
-    "#);
+    assert!(query_plan.is_err());
 
     Ok(())
 }

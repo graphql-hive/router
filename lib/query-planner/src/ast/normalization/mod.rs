@@ -598,11 +598,11 @@ mod tests {
                     &supergraph,
                     &parse_query(
                         r#"
-                          query nodeid($id: ID!) {
-                            node(id: $id) {
-                              id
-                            }
+                        query nodeid($id: ID!) {
+                          node(id: $id) {
+                            id
                           }
+                        }
                         "#,
                     )
                     .expect("to parse"),
@@ -612,17 +612,17 @@ mod tests {
                 .to_string()
             ),
             @r"
-        query nodeid($id: ID!) {
-          node(id: $id) {
-            ... on Account {
-              id
+            query nodeid($id: ID!) {
+              node(id: $id) {
+                ... on Account {
+                  id
+                }
+                ... on Chat {
+                  id
+                }
+              }
             }
-            ... on Chat {
-              id
-            }
-          }
-        }
-        ",
+            ",
         );
 
         insta::assert_snapshot!(

@@ -162,6 +162,13 @@ fn handle_selection_set(
                     continue;
                 }
 
+                let field_def = type_def.fields().get(&field.name).ok_or_else(|| {
+                    NormalizationError::FieldNotFoundInType {
+                        field_name: field.name.clone(),
+                        type_name: type_def.name().to_string(),
+                    }
+                })?;
+
                 if let Some(possible_object_types) = &possible_object_types {
                     if handle_type_expansion_candidate(
                         state,
@@ -176,15 +183,7 @@ fn handle_selection_set(
                 }
 
                 if !field.selection_set.items.is_empty() {
-                    let inner_type_name = type_def
-                        .fields()
-                        .get(&field.name)
-                        .ok_or_else(|| NormalizationError::FieldNotFoundInType {
-                            field_name: field.name.clone(),
-                            type_name: type_def.name().to_string(),
-                        })?
-                        .field_type
-                        .inner_type();
+                    let inner_type_name = field_def.field_type.inner_type();
                     let inner_type_def =
                         state.definitions.get(inner_type_name).ok_or_else(|| {
                             NormalizationError::SchemaTypeNotFound {

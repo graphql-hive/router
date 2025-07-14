@@ -141,7 +141,8 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
     let graph = Graph::graph_from_supergraph_state(&supergraph).expect("failed to create graph");
     let operation = get_operation(operation_path, &supergraph);
     let override_context = PlannerOverrideContext::default();
-    let best_paths_per_leaf = walk_operation(&graph, &override_context, &operation).unwrap();
+    let best_paths_per_leaf =
+        walk_operation(&graph, &supergraph, &override_context, &operation).unwrap();
     let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
     let fetch_graph =
         build_fetch_graph_from_query_tree(&graph, &supergraph, &override_context, query_tree)
@@ -186,7 +187,8 @@ fn process_paths(
     let graph = Graph::graph_from_supergraph_state(&supergraph).expect("failed to create graph");
     let operation = get_operation(operation_path, &supergraph);
     let override_context = PlannerOverrideContext::default();
-    let best_paths_per_leaf = walk_operation(&graph, &override_context, &operation).unwrap();
+    let best_paths_per_leaf =
+        walk_operation(&graph, &supergraph, &override_context, &operation).unwrap();
 
     (graph, best_paths_per_leaf, operation, supergraph)
 }
