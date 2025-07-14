@@ -383,15 +383,6 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    // ok, so the reason it fails to do it, is that it fails to find a path, because the requirement is to find it only locally.
-
-    // It happens because a field we're checking returns an interface.
-    // Because it's an interface we turn on the local-only mode.
-
-    // Some fields are not part of the interface, so it's fine if they are resolved non-locally.
-
-    // Maybe instead of passing a boolean, it should be a list of fields that belong ot the interface?
-
     insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
@@ -435,51 +426,6 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
       },
     },
     "#);
-
-    // before
-    // insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    //   QueryPlan {
-    //     Sequence {
-    //       Fetch(service: "b") {
-    //         {
-    //           media {
-    //             __typename
-    //             id
-    //             animals {
-    //               __typename
-    //               id
-    //               name
-    //             }
-    //             ... on Book {
-    //               __typename
-    //               id
-    //             }
-    //           }
-    //         }
-    //       },
-    //       Flatten(path: "media") {
-    //         Fetch(service: "c") {
-    //           {
-    //             ... on Book {
-    //               __typename
-    //               id
-    //             }
-    //           } =>
-    //           {
-    //             ... on Book {
-    //               animals {
-    //                 __typename
-    //                 ... on Cat {
-    //                   age
-    //                 }
-    //               }
-    //             }
-    //           }
-    //         },
-    //       },
-    //     },
-    //   },
-    // "#);
 
     Ok(())
 }
