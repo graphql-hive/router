@@ -414,10 +414,6 @@ fn process_field<'a>(
 
     let mut fields_to_resolve_locally: Vec<String> = Vec::new();
     if !field.is_leaf() {
-        for path in &next_paths {
-            trace!("- {}", path.pretty_print(graph));
-        }
-
         let field_move_paths: Vec<_> = next_paths
             .iter()
             .filter(|path| {
@@ -469,7 +465,6 @@ fn process_field<'a>(
                     .count()
                     > 1
             {
-                trace!("Resolve children locally");
                 fields_to_resolve_locally = output_type
                     .fields()
                     .iter()
@@ -480,13 +475,12 @@ fn process_field<'a>(
     }
 
     if !fields_to_resolve_locally.is_empty() {
-        trace!("Shareable interface detected. Validating that sub-selections can be resolved from a single path.");
         let path_span = span!(
             Level::TRACE,
             "Shareable interface detected. Validating that sub-selections can be resolved from a single path."
         );
         let _enter = path_span.enter();
-        let mut valid_paths_for_children: Vec<OperationPath> = Vec::new();
+        let mut valid_paths_for_children: Vec<OperationPath> = Vec::with_capacity(next_paths.len());
         for candidate_path in &next_paths {
             let mut all_children_resolvable = true;
             // We don't need the results of the sub-walk here, only whether it was successful
