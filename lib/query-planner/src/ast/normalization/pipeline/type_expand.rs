@@ -203,7 +203,7 @@ fn handle_selection_set(
                         possible_object_types,
                         type_def,
                         &field,
-                        &parent_field_in_graphs,
+                        parent_field_in_graphs,
                         &mut new_items,
                     )? {
                         continue;

@@ -766,7 +766,7 @@ impl SupergraphField {
         }
 
         // A field is resolvable when it has @join__field and it's not external or overriden
-        return self
+        self
             .join_field
             .iter()
             .filter_map(|jf| {
@@ -780,7 +780,7 @@ impl SupergraphField {
                     None
                 }
             })
-            .collect::<HashSet<_>>();
+            .collect::<HashSet<_>>()
     }
 }
 
