@@ -766,8 +766,7 @@ impl SupergraphField {
         }
 
         // A field is resolvable when it has @join__field and it's not external or overriden
-        self
-            .join_field
+        self.join_field
             .iter()
             .filter_map(|jf| {
                 if jf.graph_id.is_some()

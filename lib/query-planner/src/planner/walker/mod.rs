@@ -476,9 +476,6 @@ fn process_field<'a>(
                     .map(|(name, _)| name.to_string())
                     .collect();
             }
-
-            // TODO: if a path is ending at an interface
-            // can it resolve the entire sub-selection for all possible types (all local - no moves to other subgraphs)
         }
     }
 

@@ -926,7 +926,7 @@ impl Graph {
                 parent_type_def.name(),
                 jt.key.as_ref().unwrap(),
             );
-            println!(
+            trace!(
                 "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
                 parent_type_def.name(),
                 graph_id,
@@ -1176,7 +1176,7 @@ impl Graph {
                             def_name,
                             jt.key.as_ref().unwrap(),
                         );
-                        println!(
+                        trace!(
                             "Creating entity move edge from '{}/{}' to '{}/{}' via key '{}'",
                             def_name,
                             from_graph_id,
