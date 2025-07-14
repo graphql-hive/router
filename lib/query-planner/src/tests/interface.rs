@@ -457,33 +457,6 @@ fn node_query_with_multiple_type_fragments() -> Result<(), Box<dyn Error>> {
 
     assert!(query_plan.is_err());
 
-    // insta::assert_snapshot!(format!("{}", query_plan), @r#"
-    // QueryPlan {
-    //   Parallel {
-    //     Fetch(service: "a") {
-    //       {
-    //         node(id: "a1") {
-    //           __typename
-    //           ... on Account {
-    //             id
-    //           }
-    //         }
-    //       }
-    //     },
-    //     Fetch(service: "b") {
-    //       {
-    //         node(id: "a1") {
-    //           __typename
-    //           ... on Chat {
-    //             id
-    //           }
-    //         }
-    //       }
-    //     },
-    //   },
-    // },
-    // "#);
-
     Ok(())
 }
 
