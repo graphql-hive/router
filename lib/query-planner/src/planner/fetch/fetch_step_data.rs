@@ -44,10 +44,11 @@ impl Display for FetchStepData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{}/{} {} → {} at $.{}",
+            "{}/{} {} → {}/{} at $.{}",
             self.input.type_name,
             self.service_name,
             self.input,
+            self.output.type_name,
             self.output,
             self.response_path.join("."),
         )?;
