@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use hashbrown::HashSet;
 
 use crate::ast::type_aware_selection::TypeAwareSelection;
 

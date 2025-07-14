@@ -1,4 +1,5 @@
-use std::{collections::HashMap, sync::Arc};
+use hashbrown::HashMap;
+use std::sync::Arc;
 
 use axum::{body::Body, extract::rejection::QueryRejection, response::IntoResponse};
 use graphql_tools::validation::utils::ValidationError;

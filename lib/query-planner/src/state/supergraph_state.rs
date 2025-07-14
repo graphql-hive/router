@@ -1,7 +1,5 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::{Debug, Display},
-};
+use hashbrown::{HashMap, HashSet};
+use std::fmt::{Debug, Display};
 
 use graphql_parser::query::Directive;
 use graphql_parser::schema as input;

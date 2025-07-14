@@ -4,8 +4,8 @@ pub(crate) mod node;
 
 mod tests;
 
+use hashbrown::{HashMap, HashSet};
 use std::{
-    collections::{HashMap, HashSet},
     fmt::{Debug, Display},
     hash::Hash,
 };
@@ -1098,7 +1098,7 @@ impl Display for Graph {
 
 fn intersections<T>(sets: Vec<&HashSet<T>>) -> HashSet<T>
 where
-    T: Clone + Eq + Hash,
+    T: Clone + Eq + Hash + std::borrow::Borrow<T>,
 {
     sets.iter()
         .enumerate()
@@ -1112,7 +1112,7 @@ where
             let other_sets = || other_sets_left.iter().chain(other_sets_right);
             smallest_set
                 .iter()
-                .filter(|item| other_sets().all(|o| o.contains(item)))
+                .filter(|item| other_sets().all(|o| o.contains(*item)))
                 .cloned()
                 .collect()
         })

@@ -1,4 +1,4 @@
-use std::{collections::HashSet, vec};
+use std::vec;
 
 use graphql_parser::query::{
     Definition, Field, InlineFragment, Mutation, OperationDefinition, Query, Selection,
@@ -12,6 +12,8 @@ use crate::{
     },
     state::supergraph_state::{SupergraphDefinition, SupergraphObjectType, SupergraphState},
 };
+
+use hashbrown::HashSet;
 
 /// A selection set may target an interface type.
 /// However, not all implementing object types may resolve all interface fields

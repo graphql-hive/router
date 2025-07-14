@@ -91,7 +91,7 @@ fn query_plan_execution_without_projection_via_http(c: &mut Criterion) {
                 schema_metadata,
                 subgraph_executor_map,
                 errors: Vec::new(),
-                extensions: HashMap::new(),
+                extensions: Default::default(),
             };
             let query_plan = black_box(&query_plan);
             let mut data = Value::Null;
@@ -191,7 +191,7 @@ fn query_plan_executor_without_projection_locally(c: &mut Criterion) {
                 schema_metadata,
                 subgraph_executor_map,
                 errors: Vec::new(),
-                extensions: HashMap::new(),
+                extensions: Default::default(),
             };
             let query_plan = black_box(&query_plan);
             let mut data = Value::Null;
@@ -223,7 +223,7 @@ fn project_data_by_operation(c: &mut Criterion) {
             let data = black_box(&mut data);
             let mut errors = vec![];
             let errors = black_box(&mut errors);
-            let extensions = HashMap::new();
+            let extensions = Default::default();
             let extensions = black_box(&extensions);
             let operation = black_box(&operation);
             let schema_metadata = black_box(&schema_metadata);
@@ -354,7 +354,7 @@ fn project_requires(c: &mut Criterion) {
         subgraph_executor_map: &subgraph_executor_map,
         schema_metadata,
         errors: Vec::new(),
-        extensions: HashMap::new(),
+        extensions: Default::default(),
     };
     let requires_selections: Vec<SelectionItem> =
         [SelectionItem::InlineFragment(InlineFragmentSelection {

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use graphql_parser::schema::TypeDefinition;
 use graphql_tools::introspection::{

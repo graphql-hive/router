@@ -1,4 +1,5 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use hashbrown::HashMap;
+use std::{sync::Arc, time::Duration};
 
 use hyper_util::{
     client::legacy::Client,

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use query_planner::state::supergraph_state::TypeNode;
 use serde_json::Value;

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use hashbrown::HashMap;
 use query_planner::{
     ast::{operation::OperationDefinition, selection_item::SelectionItem},
     planner::plan_nodes::{
@@ -10,7 +11,6 @@ use query_planner::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{collections::BTreeSet, fmt::Write};
-use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
 use crate::{

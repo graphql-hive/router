@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use crate::ast::minification::error::MinificationError;
 use crate::ast::minification::selection_id::generate_selection_id;
