@@ -1187,13 +1187,6 @@ fn process_requires_field_edge(
         false => parent_parent_index,
     };
 
-    println!(
-        "IF TRUE THEN {}, ELSE {}, picked {}",
-        parent_fetch_step_index.index(),
-        parent_parent_index.index(),
-        real_parent_fetch_step_index.index()
-    );
-
     // When a field (foo) is annotated with `@requires(fields: "bar")`
     // We want to create new FetchStep (entity move) for that field (foo)
     // or reuse an existing one if the requirement matches
@@ -1213,7 +1206,7 @@ fn process_requires_field_edge(
     let step_for_children = fetch_graph.get_step_data_mut(step_for_children_index)?;
 
     step_for_children.output_new.add_at_path(
-        root_output_type_name,
+        head_type_name,
         &MergePath::default(),
         SelectionSet {
             items: vec![SelectionItem::Field(FieldSelection {
