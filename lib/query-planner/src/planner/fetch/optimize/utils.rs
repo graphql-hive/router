@@ -54,7 +54,7 @@ pub(crate) fn perform_fetch_step_merge(
         (me.used_for_requires, other.used_for_requires),
     );
 
-    if scoped_aliases.len() > 0 {
+    if !scoped_aliases.is_empty() {
         trace!(
             "Total of {} alises applied during safe merge of selections",
             scoped_aliases.len()

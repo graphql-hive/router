@@ -37,9 +37,9 @@ impl FetchGraph {
         );
 
         while let Some((aliased_node_index, scoped_aliases_locations)) = nodes_with_aliases.pop() {
-            let mut bfs = Bfs::new(&self.graph, aliased_node_index);
-
             for (root_type_name, aliases_locations) in scoped_aliases_locations {
+                let mut bfs = Bfs::new(&self.graph, aliased_node_index);
+
                 trace!(
                     "Iterating step [{}], total of {} aliased fields in output selections of type {}",
                     aliased_node_index.index(),
