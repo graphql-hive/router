@@ -1,5 +1,5 @@
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{BuildHasher, Hash, Hasher, RandomState};
+use rustc_hash::{FxBuildHasher, FxHasher};
+use std::hash::{BuildHasher, Hash, Hasher};
 
 use crate::ast::arguments::ArgumentsMap;
 use crate::ast::operation::{OperationDefinition, VariableDefinition};
@@ -14,7 +14,7 @@ pub trait ASTHash {
 }
 
 pub fn ast_hash(query: &OperationDefinition) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = FxHasher::default();
     query.ast_hash(&mut hasher);
     hasher.finish()
 }
@@ -113,7 +113,7 @@ impl ASTHash for &InlineFragmentSelection {
 impl ASTHash for ArgumentsMap {
     fn ast_hash<H: Hasher>(&self, state: &mut H) {
         let mut combined_hash: u64 = 0;
-        let build_hasher = RandomState::new();
+        let build_hasher = FxBuildHasher::default();
 
         // To achieve an order-independent hash, we hash each key-value pair
         // individually and then combine their hashes using XOR (^).
@@ -132,7 +132,7 @@ impl ASTHash for ArgumentsMap {
 impl ASTHash for Vec<VariableDefinition> {
     fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
         let mut combined_hash: u64 = 0;
-        let build_hasher = RandomState::new();
+        let build_hasher = FxBuildHasher::default();
         // To achieve an order-independent hash, we hash each key-value pair
         // individually and then combine their hashes using XOR (^).
         // Since XOR is commutative, the final hash is not affected by the iteration order.
@@ -200,5 +200,166 @@ impl ASTHash for Value {
             Value::String(value) => value.hash(hasher),
             Value::Variable(value) => value.hash(hasher),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::arguments::ArgumentsMap;
+    use crate::ast::operation::{OperationDefinition, VariableDefinition};
+    use crate::ast::selection_item::SelectionItem;
+    use crate::ast::selection_set::{FieldSelection, SelectionSet};
+    use crate::ast::value::Value;
+    use crate::state::supergraph_state::{OperationKind, TypeNode};
+    use std::collections::BTreeMap;
+
+    fn create_test_operation() -> OperationDefinition {
+        let mut arguments = ArgumentsMap::new();
+        arguments.add_argument("limit".to_string(), Value::Int(10));
+        arguments.add_argument("sort".to_string(), Value::Enum("ASC".to_string()));
+
+        let mut nested_object = BTreeMap::new();
+        nested_object.insert(
+            "nestedKey".to_string(),
+            Value::String("nestedValue".to_string()),
+        );
+
+        arguments.add_argument("obj".to_string(), Value::Object(nested_object));
+
+        let field_selection = FieldSelection {
+            name: "users".to_string(),
+            alias: Some("all_users".to_string()),
+            selections: SelectionSet {
+                items: vec![
+                    SelectionItem::Field(FieldSelection {
+                        name: "id".to_string(),
+                        alias: None,
+                        selections: SelectionSet { items: vec![] },
+                        arguments: None,
+                        include_if: None,
+                        skip_if: None,
+                    }),
+                    SelectionItem::Field(FieldSelection {
+                        name: "name".to_string(),
+                        alias: None,
+                        selections: SelectionSet { items: vec![] },
+                        arguments: None,
+                        include_if: Some("includeName".to_string()),
+                        skip_if: None,
+                    }),
+                ],
+            },
+            arguments: Some(arguments),
+            include_if: None,
+            skip_if: Some("skipUsers".to_string()),
+        };
+
+        let selection_set = SelectionSet {
+            items: vec![SelectionItem::Field(field_selection)],
+        };
+
+        let variable_definitions = vec![
+            VariableDefinition {
+                name: "skipUsers".to_string(),
+                variable_type: TypeNode::NonNull(Box::new(TypeNode::Named("Boolean".to_string()))),
+                default_value: Some(Value::Boolean(false)),
+            },
+            VariableDefinition {
+                name: "includeName".to_string(),
+                variable_type: TypeNode::Named("Boolean".to_string()),
+                default_value: None,
+            },
+        ];
+
+        OperationDefinition {
+            operation_kind: Some(OperationKind::Query),
+            selection_set,
+            variable_definitions: Some(variable_definitions),
+            name: Some("TestQuery".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_ast_hash_is_deterministic() {
+        let operation = create_test_operation();
+
+        let hash1 = ast_hash(&operation);
+        let hash2 = ast_hash(&operation);
+
+        // Test that the hash is consistent within the same run
+        assert_eq!(hash1, hash2, "AST hash should be consistent");
+
+        // Snapshot test: compare against a known, pre-calculated hash.
+        // If the hashing logic changes, this value will need to be updated.
+        let expected_hash = 8854078506550230644;
+        assert_eq!(
+            hash1, expected_hash,
+            "AST hash does not match the snapshot value. If this change is intentional, update the snapshot."
+        );
+    }
+
+    #[test]
+    fn test_order_independent_hashing_for_arguments() {
+        let mut args1 = ArgumentsMap::new();
+        args1.add_argument("a".to_string(), Value::Int(1));
+        args1.add_argument("b".to_string(), Value::Int(2));
+
+        let mut args2 = ArgumentsMap::new();
+        args2.add_argument("b".to_string(), Value::Int(2));
+        args2.add_argument("a".to_string(), Value::Int(1));
+
+        let mut hasher1 = FxHasher::default();
+        args1.ast_hash(&mut hasher1);
+
+        let mut hasher2 = FxHasher::default();
+        args2.ast_hash(&mut hasher2);
+
+        assert_eq!(
+            hasher1.finish(),
+            hasher2.finish(),
+            "ArgumentsMap hashing should be order-independent"
+        );
+    }
+
+    #[test]
+    fn test_order_independent_hashing_for_variables() {
+        let vars1 = vec![
+            VariableDefinition {
+                name: "varA".to_string(),
+                variable_type: TypeNode::Named("String".to_string()),
+                default_value: None,
+            },
+            VariableDefinition {
+                name: "varB".to_string(),
+                variable_type: TypeNode::Named("Int".to_string()),
+                default_value: Some(Value::Int(0)),
+            },
+        ];
+
+        let vars2 = vec![
+            VariableDefinition {
+                name: "varB".to_string(),
+                variable_type: TypeNode::Named("Int".to_string()),
+                default_value: Some(Value::Int(0)),
+            },
+            VariableDefinition {
+                name: "varA".to_string(),
+                variable_type: TypeNode::Named("String".to_string()),
+                default_value: None,
+            },
+        ];
+
+        let mut hasher1 = FxHasher::default();
+        vars1.ast_hash(&mut hasher1);
+
+        let mut hasher2 = FxHasher::default();
+        vars2.ast_hash(&mut hasher2);
+
+        assert_eq!(
+            hasher1.finish(),
+            hasher2.finish(),
+            "VariableDefinition vector hashing should be order-independent"
+        );
     }
 }
