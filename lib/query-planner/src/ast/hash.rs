@@ -1,5 +1,5 @@
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::hash::{BuildHasher, Hash, Hasher, RandomState};
 
 use crate::ast::arguments::ArgumentsMap;
 use crate::ast::operation::{OperationDefinition, VariableDefinition};
@@ -111,32 +111,38 @@ impl ASTHash for &InlineFragmentSelection {
 }
 
 impl ASTHash for ArgumentsMap {
-    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
-        // Order does not matter for hashing
-        // The order of arguments does not matter.
-        // To achieve order-insensitivity, we get all keys, sort them, and then
-        // hash them with their values in that order.
-        let mut keys: Vec<_> = self.keys().collect();
-        keys.sort_unstable();
-        for key in keys {
-            key.hash(hasher);
-            // We can unwrap here because we are iterating over existing keys
-            self.get_argument(key).unwrap().ast_hash(hasher);
+    fn ast_hash<H: Hasher>(&self, state: &mut H) {
+        let mut combined_hash: u64 = 0;
+        let build_hasher = RandomState::new();
+
+        // To achieve an order-independent hash, we hash each key-value pair
+        // individually and then combine their hashes using XOR (^).
+        // Since XOR is commutative, the final hash is not affected by the iteration order.
+        for (key, value) in self.into_iter() {
+            let mut key_val_hasher = build_hasher.build_hasher();
+            key.hash(&mut key_val_hasher);
+            value.ast_hash(&mut key_val_hasher);
+            combined_hash ^= key_val_hasher.finish();
         }
+
+        state.write_u64(combined_hash);
     }
 }
 
 impl ASTHash for Vec<VariableDefinition> {
     fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
-        // Order does not matter for hashing
-        // The order of variables does not matter.
-        // We do a similar thing as for ArgumentsMap,
-        // we sort the variables by their names.
-        let mut variables: Vec<_> = self.iter().collect();
-        variables.sort_by_key(|f| &f.name);
-        for var in variables {
-            var.ast_hash(hasher);
+        let mut combined_hash: u64 = 0;
+        let build_hasher = RandomState::new();
+        // To achieve an order-independent hash, we hash each key-value pair
+        // individually and then combine their hashes using XOR (^).
+        // Since XOR is commutative, the final hash is not affected by the iteration order.
+        for variable in self.into_iter() {
+            let mut local_hasher = build_hasher.build_hasher();
+            variable.ast_hash(&mut local_hasher);
+            combined_hash ^= local_hasher.finish();
         }
+
+        hasher.write_u64(combined_hash);
     }
 }
 
