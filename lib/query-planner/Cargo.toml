@@ -6,22 +6,32 @@ edition = "2021"
 [lib]
 
 [dependencies]
-lazy-init = "0.5.1"
+# GraphQL
 graphql-tools = "0.4.0"
 graphql-parser = "0.4.1"
-thiserror = "2.0.12"
-petgraph = "0.8.0"
-rustc-hash = "2.1.1"
-tracing = { version = "0.1.41" }
+# Serialization
 serde = "1.0.219"
 serde_json = { version = "1.0.140", features = ["preserve_order"] }
+# Tracing
+tracing = { version = "0.1.41" }
+# Data Structures
+petgraph = "0.8.0"
+# Utils
+lazy-init = "0.5.1"
+thiserror = "2.0.12"
+rustc-hash = "2.1.1"
+
 
 [dev-dependencies]
+# Testing
 insta = { version = "1.42.1" }
+# Benchmarking
+criterion = { version = "0.6", features = ["html_reports"] }
+# Tracing
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing-tree = "0.4.0"
+# Utils
 lazy_static = "1.5.0"
-criterion = { version = "0.6", features = ["html_reports"] }
 
 [[bench]]
 name = "qp_benches"
