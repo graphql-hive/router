@@ -9,6 +9,6 @@ pub type SelectionId = u64;
 pub fn generate_selection_id(type_name: &str, selection_set: &SelectionSet) -> SelectionId {
     let mut hasher = DefaultHasher::new();
     type_name.hash(&mut hasher);
-    selection_set.ast_hash(&mut hasher);
+    selection_set.ast_hash(true, &mut hasher);
     hasher.finish()
 }

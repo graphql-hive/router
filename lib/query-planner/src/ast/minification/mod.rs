@@ -1,5 +1,4 @@
 use crate::ast::document::Document;
-use crate::ast::minification::sort::sort_operation;
 use crate::ast::minification::stats::Stats;
 use crate::ast::minification::transform::transform_operation;
 use crate::ast::{minification::error::MinificationError, operation::OperationDefinition};
@@ -7,7 +6,6 @@ use crate::state::supergraph_state::{OperationKind, SupergraphState};
 
 pub mod error;
 mod selection_id;
-mod sort;
 mod stats;
 mod transform;
 
@@ -15,7 +13,6 @@ pub fn minify_operation(
     operation: OperationDefinition,
     supergraph: &SupergraphState,
 ) -> Result<Document, MinificationError> {
-    let operation = sort_operation(operation);
     let root_type_name = get_root_type_name(&operation, supergraph)?.to_string();
     let stats = Stats::from_operation(&operation.selection_set, supergraph, &root_type_name)?;
     transform_operation(supergraph, stats, &root_type_name, operation)

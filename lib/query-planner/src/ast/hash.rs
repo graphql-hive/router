@@ -10,12 +10,12 @@ use crate::state::supergraph_state::{self, OperationKind, TypeNode};
 
 /// Order-dependent hashing
 pub trait ASTHash {
-    fn ast_hash<H: Hasher>(&self, hasher: &mut H);
+    fn ast_hash<H: Hasher>(&self, order_independent: bool, hasher: &mut H);
 }
 
 pub fn ast_hash(query: &OperationDefinition) -> u64 {
     let mut hasher = FxHasher::default();
-    query.ast_hash(&mut hasher);
+    query.ast_hash(false, &mut hasher);
     hasher.finish()
 }
 // In all ShapeHash implementations, we never include anything to do with
@@ -23,7 +23,7 @@ pub fn ast_hash(query: &OperationDefinition) -> u64 {
 // `Pos`
 
 impl ASTHash for &OperationKind {
-    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
+    fn ast_hash<H: Hasher>(&self, _order_independent: bool, hasher: &mut H) {
         match self {
             OperationKind::Query => "Query".hash(hasher),
             OperationKind::Mutation => "Mutation".hash(hasher),
@@ -33,55 +33,72 @@ impl ASTHash for &OperationKind {
 }
 
 impl ASTHash for OperationDefinition {
-    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
+    fn ast_hash<H: Hasher>(&self, order_independent: bool, hasher: &mut H) {
         self.operation_kind
             .as_ref()
             .or(Some(&supergraph_state::OperationKind::Query))
-            .ast_hash(hasher);
+            .ast_hash(order_independent, hasher);
 
-        self.selection_set.ast_hash(hasher);
-        self.variable_definitions.ast_hash(hasher);
+        self.selection_set.ast_hash(order_independent, hasher);
+        self.variable_definitions
+            .ast_hash(order_independent, hasher);
     }
 }
 
 impl<T: ASTHash> ASTHash for Option<T> {
-    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
+    fn ast_hash<H: Hasher>(&self, order_independent: bool, hasher: &mut H) {
         match self {
             None => false.hash(hasher),
             Some(t) => {
                 Some(true).hash(hasher);
-                t.ast_hash(hasher);
+                t.ast_hash(order_independent, hasher);
             }
         }
     }
 }
 
 impl ASTHash for SelectionSet {
-    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
-        for item in &self.items {
-            item.ast_hash(hasher);
+    fn ast_hash<H: Hasher>(&self, order_independent: bool, hasher: &mut H) {
+        if order_independent {
+            let mut combined_hash: u64 = 0;
+            let build_hasher = FxBuildHasher;
+
+            // To achieve an order-independent hash, we hash each key-value pair
+            // individually and then combine their hashes using XOR (^).
+            // Since XOR is commutative, the final hash is not affected by the iteration order.
+            for item in &self.items {
+                let mut key_val_hasher = build_hasher.build_hasher();
+                item.ast_hash(true, &mut key_val_hasher);
+                combined_hash ^= key_val_hasher.finish();
+            }
+
+            hasher.write_u64(combined_hash);
+        } else {
+            for item in &self.items {
+                item.ast_hash(false, hasher);
+            }
         }
     }
 }
 
 impl ASTHash for SelectionItem {
-    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
+    fn ast_hash<H: Hasher>(&self, order_independent: bool, hasher: &mut H) {
         match self {
-            SelectionItem::Field(field) => field.ast_hash(hasher),
-            SelectionItem::InlineFragment(frag) => frag.ast_hash(hasher),
+            SelectionItem::Field(field) => field.ast_hash(order_independent, hasher),
+            SelectionItem::InlineFragment(frag) => frag.ast_hash(order_independent, hasher),
             SelectionItem::FragmentSpread(name) => name.hash(hasher),
         }
     }
 }
 
 impl ASTHash for &FieldSelection {
-    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
+    fn ast_hash<H: Hasher>(&self, order_independent: bool, hasher: &mut H) {
         self.name.hash(hasher);
         self.alias.hash(hasher);
-        self.selections.ast_hash(hasher);
+        self.selections.ast_hash(order_independent, hasher);
 
         if let Some(args) = &self.arguments {
-            args.ast_hash(hasher);
+            args.ast_hash(order_independent, hasher);
         }
 
         if let Some(var_name) = self.include_if.as_ref() {
@@ -96,9 +113,9 @@ impl ASTHash for &FieldSelection {
 }
 
 impl ASTHash for &InlineFragmentSelection {
-    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
+    fn ast_hash<H: Hasher>(&self, order_independent: bool, hasher: &mut H) {
         self.type_condition.hash(hasher);
-        self.selections.ast_hash(hasher);
+        self.selections.ast_hash(order_independent, hasher);
         if let Some(var_name) = self.include_if.as_ref() {
             "@include".hash(hasher);
             var_name.hash(hasher);
@@ -111,7 +128,7 @@ impl ASTHash for &InlineFragmentSelection {
 }
 
 impl ASTHash for ArgumentsMap {
-    fn ast_hash<H: Hasher>(&self, state: &mut H) {
+    fn ast_hash<H: Hasher>(&self, order_independent: bool, state: &mut H) {
         let mut combined_hash: u64 = 0;
         let build_hasher = FxBuildHasher;
 
@@ -121,7 +138,7 @@ impl ASTHash for ArgumentsMap {
         for (key, value) in self.into_iter() {
             let mut key_val_hasher = build_hasher.build_hasher();
             key.hash(&mut key_val_hasher);
-            value.ast_hash(&mut key_val_hasher);
+            value.ast_hash(order_independent, &mut key_val_hasher);
             combined_hash ^= key_val_hasher.finish();
         }
 
@@ -130,7 +147,7 @@ impl ASTHash for ArgumentsMap {
 }
 
 impl ASTHash for Vec<VariableDefinition> {
-    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
+    fn ast_hash<H: Hasher>(&self, order_independent: bool, hasher: &mut H) {
         let mut combined_hash: u64 = 0;
         let build_hasher = FxBuildHasher;
         // To achieve an order-independent hash, we hash each key-value pair
@@ -138,7 +155,7 @@ impl ASTHash for Vec<VariableDefinition> {
         // Since XOR is commutative, the final hash is not affected by the iteration order.
         for variable in self.iter() {
             let mut local_hasher = build_hasher.build_hasher();
-            variable.ast_hash(&mut local_hasher);
+            variable.ast_hash(order_independent, &mut local_hasher);
             combined_hash ^= local_hasher.finish();
         }
 
@@ -147,41 +164,41 @@ impl ASTHash for Vec<VariableDefinition> {
 }
 
 impl ASTHash for VariableDefinition {
-    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
+    fn ast_hash<H: Hasher>(&self, order_independent: bool, hasher: &mut H) {
         self.name.hash(hasher);
-        self.variable_type.ast_hash(hasher);
-        self.default_value.ast_hash(hasher);
+        self.variable_type.ast_hash(order_independent, hasher);
+        self.default_value.ast_hash(order_independent, hasher);
     }
 }
 
 impl ASTHash for TypeNode {
-    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
+    fn ast_hash<H: Hasher>(&self, order_independent: bool, hasher: &mut H) {
         match self {
             TypeNode::Named(name) => name.hash(hasher),
             TypeNode::List(inner) => {
                 "list".hash(hasher);
-                inner.ast_hash(hasher);
+                inner.ast_hash(order_independent, hasher);
             }
             TypeNode::NonNull(inner) => {
                 "non_null".hash(hasher);
-                inner.ast_hash(hasher);
+                inner.ast_hash(order_independent, hasher);
             }
         }
     }
 }
 
 impl ASTHash for Value {
-    fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
+    fn ast_hash<H: Hasher>(&self, order_independent: bool, hasher: &mut H) {
         match self {
             Value::List(values) => {
                 for value in values {
-                    value.ast_hash(hasher);
+                    value.ast_hash(order_independent, hasher);
                 }
             }
             Value::Object(map) => {
                 for (name, value) in map {
                     name.hash(hasher);
-                    value.ast_hash(hasher);
+                    value.ast_hash(order_independent, hasher);
                 }
             }
             Value::Null => {
@@ -310,10 +327,10 @@ mod tests {
         args2.add_argument("a".to_string(), Value::Int(1));
 
         let mut hasher1 = FxHasher::default();
-        args1.ast_hash(&mut hasher1);
+        args1.ast_hash(true, &mut hasher1);
 
         let mut hasher2 = FxHasher::default();
-        args2.ast_hash(&mut hasher2);
+        args2.ast_hash(true, &mut hasher2);
 
         assert_eq!(
             hasher1.finish(),
@@ -351,10 +368,10 @@ mod tests {
         ];
 
         let mut hasher1 = FxHasher::default();
-        vars1.ast_hash(&mut hasher1);
+        vars1.ast_hash(true, &mut hasher1);
 
         let mut hasher2 = FxHasher::default();
-        vars2.ast_hash(&mut hasher2);
+        vars2.ast_hash(true, &mut hasher2);
 
         assert_eq!(
             hasher1.finish(),
