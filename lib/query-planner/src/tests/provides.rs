@@ -126,11 +126,11 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
       Fetch(service: "category") {
         {
           products {
+            id
             categories {
               id
               name
             }
-            id
           }
         }
       },
@@ -143,7 +143,7 @@ fn nested_provides() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "category",
         "operationKind": "query",
-        "operation": "query{products{categories{id name} id}}"
+        "operation": "query{products{id categories{id name}}}"
       }
     }
     "#);
@@ -181,8 +181,8 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
           media {
             __typename
             ... on Book {
-              id
               title
+              id
             }
             ... on Movie {
               id
@@ -199,7 +199,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "b",
         "operationKind": "query",
-        "operation": "query{media{__typename ...on Book{id title} ...on Movie{id}}}"
+        "operation": "query{media{__typename ...on Book{title id} ...on Movie{id}}}"
       }
     }
     "#);
@@ -336,7 +336,6 @@ fn provides_on_interface_1_test() -> Result<(), Box<dyn Error>> {
         {
           media {
             __typename
-            id
             ... on Book {
               animals {
                 __typename
@@ -350,6 +349,7 @@ fn provides_on_interface_1_test() -> Result<(), Box<dyn Error>> {
                 }
               }
             }
+            id
           }
         }
       },
@@ -390,7 +390,6 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
           {
             media {
               __typename
-              id
               ... on Book {
                 animals {
                   __typename
@@ -405,6 +404,7 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
                   }
                 }
               }
+              id
             }
           }
         },

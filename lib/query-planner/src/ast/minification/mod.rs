@@ -262,24 +262,24 @@ mod tests {
             @r"
         query($id: ID!) {
           product(id: $id) {
+            id
+            name
             distributor {
               ...a
             }
-            id
-            name
             ... on Book {
               relatedProducts {
+                id
+                name
                 distributor {
                   ...a
                 }
-                id
-                name
                 ... on Book {
                   relatedProducts {
+                    id
                     distributor {
                       ...c
                     }
-                    id
                   }
                 }
               }
@@ -295,22 +295,22 @@ mod tests {
         fragment a on BusinessEntity {
           id
           name
-          ... on Manufacturer {
-            ...b
-          }
           ... on Supplier {
-            __typename
             licenseNumber
+            __typename
           }
           ... on Vendor {
-            __typename
             preferred
+            __typename
+          }
+          ... on Manufacturer {
+            ...b
           }
         }
 
         fragment b on Manufacturer {
-          __typename
           country
+          __typename
         }
 
         fragment c on BusinessEntity {

@@ -520,8 +520,8 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
         Fetch(service: "products") {
           {
             products {
-              __typename
               id
+              __typename
               ... on Book {
                 __typename
                 id
@@ -617,26 +617,26 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
     ...a        }
           }
           fragment a on Product {
-            __typename
             id
+            __typename
             ... on Book {
               __typename
+              sku
+              id
               dimensions {
     ...b          }
-              id
-              sku
             }
             ... on Magazine {
               __typename
+              sku
+              id
               dimensions {
     ...b          }
-              id
-              sku
             }
           }
           fragment b on ProductDimension {
-            size
             weight
+            size
           }
         },
         Parallel {
@@ -655,8 +655,8 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
               {
                 ... on Magazine {
                   delivery(zip: "1234") {
-                    estimatedDelivery
                     fastestDelivery
+                    estimatedDelivery
                   }
                 }
               }
@@ -677,8 +677,8 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
               {
                 ... on Book {
                   delivery(zip: "1234") {
-                    estimatedDelivery
                     fastestDelivery
+                    estimatedDelivery
                   }
                 }
               }
@@ -699,8 +699,8 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
               {
                 ... on Magazine {
                   delivery(zip: "1234") {
-                    estimatedDelivery
                     fastestDelivery
+                    estimatedDelivery
                   }
                 }
               }
@@ -721,8 +721,8 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
               {
                 ... on Book {
                   delivery(zip: "1234") {
-                    estimatedDelivery
                     fastestDelivery
+                    estimatedDelivery
                   }
                 }
               }
@@ -770,8 +770,8 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
         Fetch(service: "products") {
           {
             products {
-              __typename
               id
+              __typename
               ... on Book {
                 __typename
                 id
@@ -796,8 +796,8 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
                 ... on Magazine {
                   reviews {
                     product {
-                      __typename
                       id
+                      __typename
                       ... on Book {
                         __typename
                         id
@@ -824,8 +824,8 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
                 ... on Book {
                   reviews {
                     product {
-                      __typename
                       id
+                      __typename
                       ... on Book {
                         __typename
                         id
@@ -951,8 +951,8 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
         Fetch(service: "products") {
           {
             products {
-              __typename
               id
+              __typename
               ... on Book {
                 __typename
                 id
@@ -977,8 +977,8 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
                 ... on Magazine {
                   reviews {
                     product {
-                      __typename
                       id
+                      __typename
                       ... on Book {
                         __typename
                         id
@@ -1005,8 +1005,8 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
                 ... on Book {
                   reviews {
                     product {
-                      __typename
                       id
+                      __typename
                       ... on Book {
                         __typename
                         id

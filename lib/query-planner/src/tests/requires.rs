@@ -27,8 +27,8 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
         Fetch(service: "inventory") {
           {
             products {
-              __typename
               upc
+              __typename
             }
           }
         },
@@ -42,8 +42,8 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                _internal_qp_alias_0: price(withDiscount: false)
                 price(withDiscount: true)
+                _internal_qp_alias_0: price(withDiscount: false)
               }
             }
           },
@@ -95,7 +95,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "inventory",
             "operationKind": "query",
-            "operation": "query{products{__typename upc}}"
+            "operation": "query{products{upc __typename}}"
           },
           {
             "kind": "Flatten",
@@ -107,7 +107,7 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "products",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{_internal_qp_alias_0: price(withDiscount: false) price(withDiscount: true)}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price(withDiscount: true) _internal_qp_alias_0: price(withDiscount: false)}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -227,8 +227,8 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
         Fetch(service: "inventory") {
           {
             products {
-              __typename
               upc
+              __typename
             }
           }
         },
@@ -276,7 +276,7 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "inventory",
             "operationKind": "query",
-            "operation": "query{products{__typename upc}}"
+            "operation": "query{products{upc __typename}}"
           },
           {
             "kind": "Flatten",
@@ -370,8 +370,8 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
           {
             products {
               __typename
-              price
               upc
+              price
             }
           }
         },
@@ -404,7 +404,7 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "query{products{__typename price upc}}"
+            "operation": "query{products{__typename upc price}}"
           },
           {
             "kind": "Flatten",
@@ -470,8 +470,8 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
           {
             products {
               __typename
-              price
               upc
+              price
             }
           }
         },
@@ -486,8 +486,8 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                isAvailable
                 isExpensive
+                isAvailable
               }
             }
           },
@@ -505,7 +505,7 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "query{products{__typename price upc}}"
+            "operation": "query{products{__typename upc price}}"
           },
           {
             "kind": "Flatten",
@@ -517,7 +517,7 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "inventory",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isAvailable isExpensive}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensive isAvailable}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -568,8 +568,8 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
           {
             products {
               __typename
-              price
               upc
+              price
               weight
             }
           }
@@ -604,7 +604,7 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "query{products{__typename price upc weight}}"
+            "operation": "query{products{__typename upc price weight}}"
           },
           {
             "kind": "Flatten",
@@ -674,8 +674,8 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
           {
             products {
               __typename
-              price
               upc
+              price
               weight
             }
           }
@@ -692,8 +692,8 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                shippingEstimate
                 shippingEstimate2
+                shippingEstimate
               }
             }
           },
@@ -711,7 +711,7 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "query{products{__typename price upc weight}}"
+            "operation": "query{products{__typename upc price weight}}"
           },
           {
             "kind": "Flatten",
@@ -723,7 +723,7 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "inventory",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate shippingEstimate2}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate2 shippingEstimate}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -782,8 +782,8 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
           {
             products {
               __typename
-              price
               upc
+              price
               weight
             }
           }
@@ -820,7 +820,7 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "query{products{__typename price upc weight}}"
+            "operation": "query{products{__typename upc price weight}}"
           },
           {
             "kind": "Flatten",
@@ -890,15 +890,15 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
         Fetch(service: "b") {
           {
             b {
+              id
               a {
                 __typename
-                compositeId {
-                  three
-                  two
-                }
                 id
+                compositeId {
+                  two
+                  three
+                }
               }
-              id
             }
           }
         },
@@ -950,7 +950,7 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{b{a{__typename compositeId{three two} id} id}}"
+            "operation": "query{b{id a{__typename id compositeId{two three}}}}"
           },
           {
             "kind": "Flatten",

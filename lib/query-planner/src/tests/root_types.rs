@@ -38,9 +38,9 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
           {
             product {
               price {
+                id
                 amount
                 currency
-                id
               }
             }
           }
@@ -60,8 +60,8 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
           {
             product {
               name {
-                brand
                 id
+                brand
                 model
               }
             }
@@ -80,7 +80,7 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "price",
             "operationKind": "query",
-            "operation": "query{product{price{amount currency id}}}"
+            "operation": "query{product{price{id amount currency}}}"
           },
           {
             "kind": "Fetch",
@@ -92,7 +92,7 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "name",
             "operationKind": "query",
-            "operation": "query{product{name{brand id model}}}"
+            "operation": "query{product{name{id brand model}}}"
           }
         ]
       }

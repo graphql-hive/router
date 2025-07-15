@@ -45,7 +45,7 @@ fn circular_reference_interface() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r###"
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
@@ -54,13 +54,13 @@ fn circular_reference_interface() -> Result<(), Box<dyn Error>> {
               __typename
               samePriceProduct {
                 __typename
+                ... on Book {
+    ...a            }
                 samePriceProduct {
                   __typename
                   ... on Book {
     ...a              }
                 }
-                ... on Book {
-    ...a            }
               }
               ... on Book {
                 __typename
@@ -93,7 +93,7 @@ fn circular_reference_interface() -> Result<(), Box<dyn Error>> {
         },
       },
     },
-    "###);
+    "#);
 
     Ok(())
 }
@@ -316,8 +316,8 @@ fn aliasing_both_parent_and_leaf() -> Result<(), Box<dyn Error>> {
             {
               ... on Product {
                 price {
-                  currency
                   pricing: amount
+                  currency
                 }
               }
             }
@@ -366,7 +366,7 @@ fn simple_mismatch_between_union_fields() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r###"
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
         Parallel {
@@ -374,12 +374,12 @@ fn simple_mismatch_between_union_fields() -> Result<(), Box<dyn Error>> {
             {
               accounts {
                 __typename
-                ... on Admin {
-                  _internal_qp_alias_0: id
-                  name
-                }
                 ... on User {
                   id
+                  name
+                }
+                ... on Admin {
+                  _internal_qp_alias_0: id
                   name
                 }
               }
@@ -411,9 +411,9 @@ fn simple_mismatch_between_union_fields() -> Result<(), Box<dyn Error>> {
         },
       },
     },
-    "###);
+    "#);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -426,7 +426,7 @@ fn simple_mismatch_between_union_fields() -> Result<(), Box<dyn Error>> {
                 "kind": "Fetch",
                 "serviceName": "b",
                 "operationKind": "query",
-                "operation": "query{accounts{__typename ...on Admin{_internal_qp_alias_0: id name} ...on User{id name}}}",
+                "operation": "query{accounts{__typename ...on User{id name} ...on Admin{_internal_qp_alias_0: id name}}}",
                 "outputRewrites": [
                   {
                     "KeyRenamer": {
@@ -486,7 +486,7 @@ fn simple_mismatch_between_union_fields() -> Result<(), Box<dyn Error>> {
         ]
       }
     }
-    "###);
+    "#);
 
     Ok(())
 }
@@ -539,7 +539,7 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r###"
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
         Parallel {
@@ -547,14 +547,14 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
             {
               accounts {
                 __typename
-                ... on Admin {
-                  _internal_qp_alias_0: id
+                ... on User {
+                  id
                   name
                   similarAccounts {
     ...a              }
                 }
-                ... on User {
-                  id
+                ... on Admin {
+                  _internal_qp_alias_0: id
                   name
                   similarAccounts {
     ...a              }
@@ -563,12 +563,12 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
             }
             fragment a on Account {
               __typename
-              ... on Admin {
-                _internal_qp_alias_0: id
-                name
-              }
               ... on User {
                 id
+                name
+              }
+              ... on Admin {
+                _internal_qp_alias_0: id
                 name
               }
             }
@@ -599,9 +599,9 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
         },
       },
     },
-    "###);
+    "#);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -614,7 +614,7 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
                 "kind": "Fetch",
                 "serviceName": "b",
                 "operationKind": "query",
-                "operation": "query{accounts{__typename ...on Admin{_internal_qp_alias_0: id name similarAccounts{...a}} ...on User{id name similarAccounts{...a}}}}\n\nfragment a on Account {__typename ...on Admin{_internal_qp_alias_0: id name} ...on User{id name}}\n",
+                "operation": "query{accounts{__typename ...on User{id name similarAccounts{...a}} ...on Admin{_internal_qp_alias_0: id name similarAccounts{...a}}}}\n\nfragment a on Account {__typename ...on User{id name} ...on Admin{_internal_qp_alias_0: id name}}\n",
                 "outputRewrites": [
                   {
                     "KeyRenamer": {
@@ -718,7 +718,7 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
         ]
       }
     }
-    "###);
+    "#);
 
     Ok(())
 }
@@ -811,7 +811,7 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r###"
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Sequence {
         Parallel {
@@ -819,14 +819,14 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
             {
               accounts {
                 __typename
-                ... on Admin {
-                  _internal_qp_alias_0: id
+                ... on User {
+                  id
                   name
                   similarAccounts {
     ...a              }
                 }
-                ... on User {
-                  id
+                ... on Admin {
+                  _internal_qp_alias_0: id
                   name
                   similarAccounts {
     ...a              }
@@ -835,14 +835,14 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
             }
             fragment a on Account {
               __typename
-              ... on Admin {
-                _internal_qp_alias_0: id
+              ... on User {
+                id
                 name
                 similarAccounts {
     ...b            }
               }
-              ... on User {
-                id
+              ... on Admin {
+                _internal_qp_alias_0: id
                 name
                 similarAccounts {
     ...b            }
@@ -850,12 +850,12 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
             }
             fragment b on Account {
               __typename
-              ... on Admin {
-                _internal_qp_alias_0: id
-                name
-              }
               ... on User {
                 id
+                name
+              }
+              ... on Admin {
+                _internal_qp_alias_0: id
                 name
               }
             }
@@ -886,9 +886,9 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
         },
       },
     },
-    "###);
+    "#);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -901,7 +901,7 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
                 "kind": "Fetch",
                 "serviceName": "b",
                 "operationKind": "query",
-                "operation": "query{accounts{__typename ...on Admin{_internal_qp_alias_0: id name similarAccounts{...a}} ...on User{id name similarAccounts{...a}}}}\n\nfragment a on Account {__typename ...on Admin{_internal_qp_alias_0: id name similarAccounts{...b}} ...on User{id name similarAccounts{...b}}}\nfragment b on Account {__typename ...on Admin{_internal_qp_alias_0: id name} ...on User{id name}}\n",
+                "operation": "query{accounts{__typename ...on User{id name similarAccounts{...a}} ...on Admin{_internal_qp_alias_0: id name similarAccounts{...a}}}}\n\nfragment a on Account {__typename ...on User{id name similarAccounts{...b}} ...on Admin{_internal_qp_alias_0: id name similarAccounts{...b}}}\nfragment b on Account {__typename ...on User{id name} ...on Admin{_internal_qp_alias_0: id name}}\n",
                 "outputRewrites": [
                   {
                     "KeyRenamer": {
@@ -1117,7 +1117,7 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
         ]
       }
     }
-    "###);
+    "#);
 
     Ok(())
 }
@@ -1192,18 +1192,18 @@ fn deeply_nested_no_conflicts() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r###"
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
     QueryPlan {
       Fetch(service: "b") {
         {
           accounts {
             __typename
-            ... on Admin {
+            ... on User {
               name
               similarAccounts {
     ...a          }
             }
-            ... on User {
+            ... on Admin {
               name
               similarAccounts {
     ...a          }
@@ -1212,12 +1212,12 @@ fn deeply_nested_no_conflicts() -> Result<(), Box<dyn Error>> {
         }
         fragment a on Account {
           __typename
-          ... on Admin {
+          ... on User {
             name
             similarAccounts {
     ...b        }
           }
-          ... on User {
+          ... on Admin {
             name
             similarAccounts {
     ...b        }
@@ -1225,28 +1225,28 @@ fn deeply_nested_no_conflicts() -> Result<(), Box<dyn Error>> {
         }
         fragment b on Account {
           __typename
-          ... on Admin {
+          ... on User {
             name
           }
-          ... on User {
+          ... on Admin {
             name
           }
         }
       },
     },
-    "###);
+    "#);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
         "kind": "Fetch",
         "serviceName": "b",
         "operationKind": "query",
-        "operation": "query{accounts{__typename ...on Admin{name similarAccounts{...a}} ...on User{name similarAccounts{...a}}}}\n\nfragment a on Account {__typename ...on Admin{name similarAccounts{...b}} ...on User{name similarAccounts{...b}}}\nfragment b on Account {__typename ...on Admin{name} ...on User{name}}\n"
+        "operation": "query{accounts{__typename ...on User{name similarAccounts{...a}} ...on Admin{name similarAccounts{...a}}}}\n\nfragment a on Account {__typename ...on User{name similarAccounts{...b}} ...on Admin{name similarAccounts{...b}}}\nfragment b on Account {__typename ...on User{name} ...on Admin{name}}\n"
       }
     }
-    "###);
+    "#);
 
     Ok(())
 }

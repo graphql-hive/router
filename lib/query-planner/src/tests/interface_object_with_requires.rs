@@ -525,8 +525,8 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
             } =>
             {
               ... on NodeWithName {
-                __typename
                 name
+                __typename
                 ... on User {
                   age
                   name
@@ -592,7 +592,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
               "kind": "Fetch",
               "serviceName": "a",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename name ...on User{age name}}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{name __typename ...on User{age name}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -714,14 +714,14 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
           {
             users {
               __typename
-              id
-              name
               ... on User {
                 __typename
                 age
                 id
                 name
               }
+              id
+              name
             }
           }
         },
@@ -745,7 +745,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
     },
     "#);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -755,7 +755,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "query{users{__typename id name ...on User{__typename age id name}}}",
+            "operation": "query{users{__typename ...on User{__typename age id name} id name}}",
             "inputRewrites": [
               {
                 "ValueSetter": {
@@ -823,7 +823,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
         ]
       }
     }
-    "###);
+    "#);
 
     Ok(())
 }

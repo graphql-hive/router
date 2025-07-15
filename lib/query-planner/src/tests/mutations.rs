@@ -30,9 +30,9 @@ fn mutations() -> Result<(), Box<dyn Error>> {
           mutation {
             addProduct(input: {name: "new", price: 599.99}) {
               __typename
-              id
               name
               price
+              id
             }
           }
         },
@@ -47,8 +47,8 @@ fn mutations() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                isAvailable
                 isExpensive
+                isAvailable
               }
             }
           },
@@ -67,7 +67,7 @@ fn mutations() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "mutation",
-            "operation": "mutation{addProduct(input: {name: \"new\", price: 599.99}){__typename id name price}}"
+            "operation": "mutation{addProduct(input: {name: \"new\", price: 599.99}){__typename name price id}}"
           },
           {
             "kind": "Flatten",
@@ -78,7 +78,7 @@ fn mutations() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isAvailable isExpensive}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensive isAvailable}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",

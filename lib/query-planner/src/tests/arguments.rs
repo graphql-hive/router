@@ -32,14 +32,14 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
           {
             products {
               __typename
+              upc
+              name
+              price(currency: "USD")
+              weight
               _internal_qp_alias_0: price(currency: "EUR")
               category {
                 averagePrice(currency: "USD")
               }
-              name
-              price(currency: "USD")
-              upc
-              weight
             }
           }
         },
@@ -59,8 +59,8 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Product {
-                isExpensiveCategory
                 shippingEstimate
+                isExpensiveCategory
                 shippingEstimateEUR
               }
             }
@@ -80,7 +80,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{products{__typename _internal_qp_alias_0: price(currency: \"EUR\") category{averagePrice(currency: \"USD\")} name price(currency: \"USD\") upc weight}}"
+            "operation": "query{products{__typename upc name price(currency: \"USD\") weight _internal_qp_alias_0: price(currency: \"EUR\") category{averagePrice(currency: \"USD\")}}}"
           },
           {
             "kind": "Flatten",
@@ -92,7 +92,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "a",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensiveCategory shippingEstimate shippingEstimateEUR}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate isExpensiveCategory shippingEstimateEUR}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -830,8 +830,8 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             test {
-              __typename
               id
+              __typename
             }
           }
         },
@@ -845,8 +845,8 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
             } =>
             {
               ... on Test {
-                _internal_qp_alias_0: otherField(arg: 3)
                 otherField(arg: 2)
+                _internal_qp_alias_0: otherField(arg: 3)
               }
             }
           },
@@ -899,7 +899,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "query{test{__typename id}}"
+            "operation": "query{test{id __typename}}"
           },
           {
             "kind": "Flatten",
@@ -910,7 +910,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{_internal_qp_alias_0: otherField(arg: 3) otherField(arg: 2)}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{otherField(arg: 2) _internal_qp_alias_0: otherField(arg: 3)}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1051,8 +1051,8 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
             } =>
             {
               ... on Test {
-                _internal_qp_alias_0: otherField(arg: 3)
                 _internal_qp_alias_1: otherField(arg: 2)
+                _internal_qp_alias_0: otherField(arg: 3)
                 otherField(arg: 1)
               }
             }
@@ -1117,7 +1117,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{_internal_qp_alias_0: otherField(arg: 3) _internal_qp_alias_1: otherField(arg: 2) otherField(arg: 1)}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Test{_internal_qp_alias_1: otherField(arg: 2) _internal_qp_alias_0: otherField(arg: 3) otherField(arg: 1)}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -1386,8 +1386,8 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
         Fetch(service: "a") {
           {
             test {
-              __typename
               id
+              __typename
             }
           }
         },
@@ -1436,7 +1436,7 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "query{test{__typename id}}"
+            "operation": "query{test{id __typename}}"
           },
           {
             "kind": "Flatten",
@@ -1624,8 +1624,8 @@ fn arguments_in_different_levels() -> Result<(), Box<dyn Error>> {
         {
           album(id: "5") {
             albumType
-            genres
             name
+            genres
             tracks(limit: 5, offset: 10) {
               edges {
                 node {
@@ -1646,7 +1646,7 @@ fn arguments_in_different_levels() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "spotify",
         "operationKind": "query",
-        "operation": "query{album(id: \"5\"){albumType genres name tracks(limit: 5, offset: 10){edges{node{name}}}}}"
+        "operation": "query{album(id: \"5\"){albumType name genres tracks(limit: 5, offset: 10){edges{node{name}}}}}"
       }
     }
     "#);
@@ -1683,8 +1683,8 @@ fn arguments_and_variables() -> Result<(), Box<dyn Error>> {
         query ($id:ID!,$limit:Int) {
           album(id: $id) {
             albumType
-            genres
             name
+            genres
             tracks(limit: $limit, offset: 10) {
               edges {
                 node {
@@ -1708,7 +1708,7 @@ fn arguments_and_variables() -> Result<(), Box<dyn Error>> {
           "limit"
         ],
         "operationKind": "query",
-        "operation": "query($id:ID!, $limit:Int){album(id: $id){albumType genres name tracks(limit: $limit, offset: 10){edges{node{name}}}}}"
+        "operation": "query($id:ID!, $limit:Int){album(id: $id){albumType name genres tracks(limit: $limit, offset: 10){edges{node{name}}}}}"
       }
     }
     "#);
