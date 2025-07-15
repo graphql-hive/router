@@ -1,6 +1,7 @@
 mod apply_internal_aliases_patching;
 mod deduplicate_and_prune_fetch_steps;
 mod merge_children_with_parents;
+mod merge_leafs;
 mod merge_passthrough_child;
 mod merge_siblings;
 mod turn_mutations_into_sequence;
@@ -20,6 +21,7 @@ impl FetchGraph {
         self.merge_passthrough_child()?;
         self.merge_children_with_parents()?;
         self.merge_siblings()?;
+        self.merge_leafs()?;
         self.deduplicate_and_prune_fetch_steps()?;
         self.turn_mutations_into_sequence()?;
         self.fix_conflicting_type_mismatches(supergraph_state)?;

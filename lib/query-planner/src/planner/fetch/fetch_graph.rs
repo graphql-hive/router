@@ -12,6 +12,7 @@ use crate::planner::tree::query_tree_node::{MutationFieldPosition, QueryTreeNode
 use crate::planner::walker::path::OperationPath;
 use crate::planner::walker::pathfinder::can_satisfy_edge;
 use crate::state::supergraph_state::{SubgraphName, SupergraphState};
+use petgraph::algo::has_path_connecting;
 use petgraph::graph::EdgeReference;
 use petgraph::stable_graph::{EdgeIndex, NodeIndex, NodeIndices, NodeReferences, StableDiGraph};
 use petgraph::visit::EdgeRef;
@@ -56,6 +57,10 @@ impl FetchGraph {
 
     pub fn children_of(&self, index: NodeIndex) -> petgraph::stable_graph::Edges<'_, (), Directed> {
         self.graph.edges_directed(index, Direction::Outgoing)
+    }
+
+    pub fn is_descendant_of(&self, descendant: NodeIndex, ancestor: NodeIndex) -> bool {
+        has_path_connecting(&self.graph, ancestor, descendant, None)
     }
 
     pub fn step_indices(&self) -> NodeIndices<FetchStepData> {
