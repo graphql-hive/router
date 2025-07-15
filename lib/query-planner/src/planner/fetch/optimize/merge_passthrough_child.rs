@@ -12,7 +12,7 @@ use crate::planner::fetch::{
 };
 
 impl FetchGraph {
-    /// When a child has the input identical as the output,
+    /// When a child has the input contains the output,
     /// it gets squashed into its parent.
     /// Its children becomes children of the parent.
     #[instrument(level = "trace", skip_all)]
@@ -103,7 +103,7 @@ impl FetchStepData {
             return false;
         }
 
-        other.input.eq(&other.output)
+        other.input.contains(&other.output)
     }
 }
 
