@@ -113,7 +113,7 @@ impl ASTHash for &InlineFragmentSelection {
 impl ASTHash for ArgumentsMap {
     fn ast_hash<H: Hasher>(&self, state: &mut H) {
         let mut combined_hash: u64 = 0;
-        let build_hasher = FxBuildHasher::default();
+        let build_hasher = FxBuildHasher;
 
         // To achieve an order-independent hash, we hash each key-value pair
         // individually and then combine their hashes using XOR (^).
@@ -132,11 +132,11 @@ impl ASTHash for ArgumentsMap {
 impl ASTHash for Vec<VariableDefinition> {
     fn ast_hash<H: Hasher>(&self, hasher: &mut H) {
         let mut combined_hash: u64 = 0;
-        let build_hasher = FxBuildHasher::default();
+        let build_hasher = FxBuildHasher;
         // To achieve an order-independent hash, we hash each key-value pair
         // individually and then combine their hashes using XOR (^).
         // Since XOR is commutative, the final hash is not affected by the iteration order.
-        for variable in self.into_iter() {
+        for variable in self.iter() {
             let mut local_hasher = build_hasher.build_hasher();
             variable.ast_hash(&mut local_hasher);
             combined_hash ^= local_hasher.finish();
