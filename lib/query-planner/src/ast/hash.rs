@@ -8,7 +8,7 @@ use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, Selecti
 use crate::ast::value::Value;
 use crate::state::supergraph_state::{self, OperationKind, TypeNode};
 
-/// Order-dependent hashing
+/// A trait for hashing AST nodes, with support for both order-dependent and order-independent hashing.
 pub trait ASTHash {
     fn ast_hash<H: Hasher>(&self, order_independent: bool, hasher: &mut H);
 }
