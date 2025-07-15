@@ -54,8 +54,14 @@ pub(crate) fn perform_fetch_step_merge(
         (me.used_for_requires, other.used_for_requires),
     );
 
-    // In cases where merging a step resulted in internal aliasing, keep a record of the aliases.
-    me.internal_aliases_locations.extend(scoped_aliases);
+    if scoped_aliases.len() > 0 {
+        trace!(
+            "Total of {} alises applied during safe merge of selections",
+            scoped_aliases.len()
+        );
+        // In cases where merging a step resulted in internal aliasing, keep a record of the aliases.
+        me.internal_aliases_locations.extend(scoped_aliases);
+    }
 
     if let Some(input_rewrites) = other.input_rewrites.take() {
         if !input_rewrites.is_empty() {
