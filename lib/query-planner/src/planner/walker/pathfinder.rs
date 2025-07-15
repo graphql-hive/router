@@ -225,6 +225,50 @@ pub fn find_indirect_paths(
     Ok(best_paths)
 }
 
+fn try_advance_direct_path<'a>(
+    graph: &'a Graph,
+    path: &OperationPath,
+    override_context: &PlannerOverrideContext,
+    edge_ref: &EdgeReference,
+    target: &NavigationTarget<'a>,
+) -> Result<Option<OperationPath>, WalkOperationError> {
+    trace!(
+        "Checking edge {}",
+        graph.pretty_print_edge(edge_ref.id(), false)
+    );
+
+    let can_be_satisfied = can_satisfy_edge(
+        graph,
+        override_context,
+        edge_ref,
+        path,
+        &ExcludedFromLookup::new(),
+        false,
+    )?;
+
+    match can_be_satisfied {
+        Some(paths) => {
+            trace!(
+                "Advancing path {} with edge {}",
+                path.pretty_print(graph),
+                graph.pretty_print_edge(edge_ref.id(), false)
+            );
+
+            let next_resolution_path = path.advance(
+                edge_ref,
+                QueryTreeNode::from_paths(graph, &paths, None)?,
+                target,
+            );
+
+            Ok(Some(next_resolution_path))
+        }
+        None => {
+            trace!("Edge not satisfied, continue look up...");
+            Ok(None)
+        }
+    }
+}
+
 #[instrument(level = "trace",skip(graph, target, override_context), fields(
     path = path.pretty_print(graph),
     current_cost = path.cost,
@@ -238,93 +282,28 @@ pub fn find_direct_paths(
     let mut result: Vec<OperationPath> = vec![];
     let path_tail_index = path.tail();
 
-    match target {
-        NavigationTarget::Field(field) => {
-            let edges_iter = graph
+    let edges_iter: Box<dyn Iterator<Item = _>> = match target {
+        NavigationTarget::Field(field) => Box::new(
+            graph
                 .edges_from(path_tail_index)
-                .filter(|e| matches!(e.weight(), Edge::FieldMove(f) if f.name == field.name));
-            for edge_ref in edges_iter {
-                trace!(
-                    "checking edge {}",
-                    graph.pretty_print_edge(edge_ref.id(), false)
-                );
-
-                let can_be_satisfied = can_satisfy_edge(
-                    graph,
-                    override_context,
-                    &edge_ref,
-                    path,
-                    &ExcludedFromLookup::new(),
-                    false,
-                )?;
-
-                match can_be_satisfied {
-                    Some(paths) => {
-                        trace!(
-                            "Advancing path {} with edge {}",
-                            path.pretty_print(graph),
-                            graph.pretty_print_edge(edge_ref.id(), false)
-                        );
-
-                        let next_resolution_path = path.advance(
-                            &edge_ref,
-                            QueryTreeNode::from_paths(graph, &paths, None)?,
-                            target,
-                        );
-
-                        result.push(next_resolution_path);
-                    }
-                    None => {
-                        trace!("Edge not satisfied, continue look up...");
-                    }
-                }
-            }
-        }
-        NavigationTarget::ConcreteType(type_name, _condition) => {
-            let edges_iter = graph
+                .filter(move |e| matches!(e.weight(), Edge::FieldMove(f) if f.name == field.name)),
+        ),
+        NavigationTarget::ConcreteType(type_name, _condition) => Box::new(
+            graph
                 .edges_from(path_tail_index)
-                .filter(|e| match e.weight() {
+                .filter(move |e| match e.weight() {
                     Edge::AbstractMove(t) => t == type_name,
                     Edge::InterfaceObjectTypeMove(t) => &t.object_type_name == type_name,
                     _ => false,
-                });
+                }),
+        ),
+    };
 
-            for edge_ref in edges_iter {
-                trace!(
-                    "Checking edge {}",
-                    graph.pretty_print_edge(edge_ref.id(), false)
-                );
-
-                let can_be_satisfied = can_satisfy_edge(
-                    graph,
-                    override_context,
-                    &edge_ref,
-                    path,
-                    &ExcludedFromLookup::new(),
-                    false,
-                )?;
-
-                match can_be_satisfied {
-                    Some(paths) => {
-                        trace!(
-                            "Advancing path {} with edge {}",
-                            path.pretty_print(graph),
-                            graph.pretty_print_edge(edge_ref.id(), false)
-                        );
-
-                        let next_resolution_path = path.advance(
-                            &edge_ref,
-                            QueryTreeNode::from_paths(graph, &paths, None)?,
-                            target,
-                        );
-
-                        result.push(next_resolution_path);
-                    }
-                    None => {
-                        trace!("Edge not satisfied, continue look up...");
-                    }
-                }
-            }
+    for edge_ref in edges_iter {
+        if let Some(new_path) =
+            try_advance_direct_path(graph, path, override_context, &edge_ref, target)?
+        {
+            result.push(new_path);
         }
     }
 
