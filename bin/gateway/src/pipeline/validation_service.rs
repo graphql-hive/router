@@ -26,8 +26,8 @@ impl GatewayPipelineLayer for GraphQLValidationService {
     #[tracing::instrument(level = "trace", name = "GraphQLValidationService", skip_all)]
     async fn process(
         &self,
-        req: Request<Body>,
-    ) -> Result<(Request<Body>, GatewayPipelineStepDecision), PipelineError> {
+        req: &mut Request<Body>,
+    ) -> Result<GatewayPipelineStepDecision, PipelineError> {
         let parser_payload = req
             .extensions()
             .get::<GraphQLParserPayload>()
@@ -95,6 +95,6 @@ impl GatewayPipelineLayer for GraphQLValidationService {
             ));
         }
 
-        Ok((req, GatewayPipelineStepDecision::Continue))
+        Ok(GatewayPipelineStepDecision::Continue)
     }
 }
