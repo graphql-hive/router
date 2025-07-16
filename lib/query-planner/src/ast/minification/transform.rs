@@ -4,14 +4,14 @@ use std::mem::take;
 use crate::ast::document::Document;
 use crate::ast::fragment::FragmentDefinition;
 use crate::ast::minification::error::MinificationError;
-use crate::ast::minification::selection_id::generate_selection_id;
+use crate::ast::minification::selection_id::{generate_selection_id, SelectionId};
 use crate::ast::minification::stats::Stats;
 use crate::ast::operation::OperationDefinition;
 use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet};
 use crate::state::supergraph_state::SupergraphState;
 
-type Fragments = HashMap<u64, FragmentDefinition>;
+type Fragments = HashMap<SelectionId, FragmentDefinition>;
 
 pub fn transform_operation(
     supergraph: &SupergraphState,
@@ -253,7 +253,7 @@ pub fn get_or_create_fragment(
     stats: &Stats,
     fragments: &mut Fragments,
     next_fragment_name_idx: &mut usize,
-    id: &u64,
+    id: &SelectionId,
     type_name: &str,
     selection_set: &mut SelectionSet,
 ) -> Result<String, MinificationError> {

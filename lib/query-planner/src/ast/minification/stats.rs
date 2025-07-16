@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use crate::ast::minification::error::MinificationError;
-use crate::ast::minification::selection_id::generate_selection_id;
+use crate::ast::minification::selection_id::{generate_selection_id, SelectionId};
 use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::SelectionSet;
 use crate::state::supergraph_state::SupergraphState;
 
 pub struct Stats {
-    state: HashMap<u64, usize>,
+    state: HashMap<SelectionId, usize>,
     contains_duplicates: bool,
 }
 
@@ -30,11 +30,11 @@ impl Stats {
         self.contains_duplicates
     }
 
-    pub fn is_duplicated(&self, key: &u64) -> bool {
+    pub fn is_duplicated(&self, key: &SelectionId) -> bool {
         self.state.get(key).unwrap_or(&0) > &1
     }
 
-    pub fn increase(&mut self, key: u64) -> &usize {
+    pub fn increase(&mut self, key: SelectionId) -> &usize {
         let occurrences = self.state.entry(key).or_insert_with(|| 0);
         *occurrences += 1;
 
