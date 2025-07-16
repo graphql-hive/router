@@ -16,17 +16,16 @@ use crate::{
 
 #[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
-    pub endpoint: String,
+    pub endpoint: http::Uri,
     pub http_client: Arc<Client<HttpConnector, Full<Bytes>>>,
-    pub uri: http::Uri,
     pub header_map: HeaderMap,
 }
 
 const FIRST_VARIABLE_STR: &str = ",\"variables\":{";
 
 impl HTTPSubgraphExecutor {
-    pub fn new(endpoint: String, http_client: Arc<Client<HttpConnector, Full<Bytes>>>) -> Self {
-        let uri = endpoint
+    pub fn new(endpoint: &str, http_client: Arc<Client<HttpConnector, Full<Bytes>>>) -> Self {
+        let endpoint = endpoint
             .parse::<http::Uri>()
             .expect("Failed to parse endpoint as URI");
         let mut header_map = HeaderMap::new();
@@ -36,7 +35,6 @@ impl HTTPSubgraphExecutor {
         );
         HTTPSubgraphExecutor {
             endpoint,
-            uri,
             http_client,
             header_map,
         }
@@ -88,7 +86,7 @@ impl HTTPSubgraphExecutor {
 
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
-            .uri(&self.uri)
+            .uri(&self.endpoint)
             .version(Version::HTTP_11)
             .body(body.into())
             .map_err(|e| {

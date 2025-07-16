@@ -65,7 +65,7 @@ impl SubgraphExecutorMap {
             .into_iter()
             .map(|(subgraph_name, endpoint)| {
                 let executor =
-                    HTTPSubgraphExecutor::new(endpoint, http_client_arc.clone()).to_boxed_arc();
+                    HTTPSubgraphExecutor::new(&endpoint, http_client_arc.clone()).to_boxed_arc();
                 (subgraph_name, executor)
             })
             .collect::<HashMap<_, _>>();
