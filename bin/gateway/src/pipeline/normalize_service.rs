@@ -45,8 +45,8 @@ impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
     )]
     async fn process(
         &self,
-        mut req: Request<Body>,
-    ) -> Result<(Request<Body>, GatewayPipelineStepDecision), PipelineError> {
+        req: &mut Request<Body>,
+    ) -> Result<GatewayPipelineStepDecision, PipelineError> {
         let parser_payload = req
             .extensions()
             .get::<GraphQLParserPayload>()
@@ -86,7 +86,7 @@ impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
                     payload.normalized_document.operation
                 );
                 req.extensions_mut().insert(payload);
-                Ok((req, GatewayPipelineStepDecision::Continue))
+                Ok(GatewayPipelineStepDecision::Continue)
             }
             None => match normalize_operation(
                 &app_state.planner.supergraph,
@@ -121,7 +121,7 @@ impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
                         .insert(cache_key, payload_arc.clone())
                         .await;
                     req.extensions_mut().insert(payload_arc);
-                    Ok((req, GatewayPipelineStepDecision::Continue))
+                    Ok(GatewayPipelineStepDecision::Continue)
                 }
                 Err(err) => {
                     error!("Failed to normalize GraphQL operation: {}", err);

@@ -37,8 +37,8 @@ impl GatewayPipelineLayer for HttpRequestParamsExtractor {
     #[tracing::instrument(level = "trace", name = "HttpRequestParamsExtractor", skip_all)]
     async fn process(
         &self,
-        mut req: Request<Body>,
-    ) -> Result<(Request<Body>, GatewayPipelineStepDecision), PipelineError> {
+        req: &mut Request<Body>,
+    ) -> Result<GatewayPipelineStepDecision, PipelineError> {
         let http_method = req.method().to_owned();
         let accept_header = req
             .headers()
@@ -93,6 +93,6 @@ impl GatewayPipelineLayer for HttpRequestParamsExtractor {
 
         req.extensions_mut().insert(extracted_params);
 
-        Ok((req, GatewayPipelineStepDecision::Continue))
+        Ok(GatewayPipelineStepDecision::Continue)
     }
 }

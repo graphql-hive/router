@@ -36,8 +36,8 @@ impl GatewayPipelineLayer for CoerceVariablesService {
     #[tracing::instrument(level = "trace", name = "CoerceVariablesService", skip_all)]
     async fn process(
         &self,
-        mut req: Request<Body>,
-    ) -> Result<(Request<Body>, GatewayPipelineStepDecision), PipelineError> {
+        req: &mut Request<Body>,
+    ) -> Result<GatewayPipelineStepDecision, PipelineError> {
         let normalized_operation = req
             .extensions()
             .get::<Arc<GraphQLNormalizationPayload>>()
@@ -87,7 +87,7 @@ impl GatewayPipelineLayer for CoerceVariablesService {
                     variables_map: values,
                 });
 
-                Ok((req, GatewayPipelineStepDecision::Continue))
+                Ok(GatewayPipelineStepDecision::Continue)
             }
             Err(err_msg) => {
                 warn!(

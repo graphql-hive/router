@@ -1,4 +1,12 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use http::HeaderMap;
+use http::HeaderValue;
+use http_body_util::BodyExt;
+use http_body_util::Full;
+use hyper::{body::Bytes, Version};
+use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tracing::{error, instrument, trace};
 
 use crate::{
@@ -9,16 +17,28 @@ use crate::{
 #[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
     pub endpoint: String,
-    pub http_client: reqwest::Client,
+    pub http_client: Arc<Client<HttpConnector, Full<Bytes>>>,
+    pub uri: http::Uri,
+    pub header_map: HeaderMap,
 }
 
 const FIRST_VARIABLE_STR: &str = ",\"variables\":{";
 
 impl HTTPSubgraphExecutor {
-    pub fn new(endpoint: String, http_client: reqwest::Client) -> Self {
+    pub fn new(endpoint: String, http_client: Arc<Client<HttpConnector, Full<Bytes>>>) -> Self {
+        let uri = endpoint
+            .parse::<http::Uri>()
+            .expect("Failed to parse endpoint as URI");
+        let mut header_map = HeaderMap::new();
+        header_map.insert(
+            "Content-Type",
+            HeaderValue::from_static("application/json; charset=utf-8"),
+        );
         HTTPSubgraphExecutor {
             endpoint,
+            uri,
             http_client,
+            header_map,
         }
     }
 
@@ -66,26 +86,47 @@ impl HTTPSubgraphExecutor {
         }
         body.push('}');
 
-        self.http_client
-            .post(&self.endpoint)
-            .body(body)
-            .header("Content-Type", "application/json; charset=utf-8")
-            .send()
-            .await
+        let mut req = hyper::Request::builder()
+            .method(http::Method::POST)
+            .uri(&self.uri)
+            .version(Version::HTTP_11)
+            .body(body.into())
             .map_err(|e| {
                 format!(
-                    "Failed to send request to subgraph {}: {}",
+                    "Failed to build request to subgraph {}: {}",
                     self.endpoint, e
                 )
-            })?
-            .json::<ExecutionResult>()
+            })?;
+
+        *req.headers_mut() = self.header_map.clone();
+
+        let res = self.http_client.request(req).await.map_err(|e| {
+            format!(
+                "Failed to send request to subgraph {}: {}",
+                self.endpoint, e
+            )
+        })?;
+
+        let bytes = res
+            .into_body()
+            .collect()
             .await
             .map_err(|e| {
                 format!(
                     "Failed to parse response from subgraph {}: {}",
                     self.endpoint, e
                 )
+            })?
+            .to_bytes();
+
+        unsafe {
+            sonic_rs::from_slice_unchecked(&bytes).map_err(|e| {
+                format!(
+                    "Failed to parse response from subgraph {}: {}",
+                    self.endpoint, e
+                )
             })
+        }
     }
 }
 
