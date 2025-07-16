@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
-use axum::body::{to_bytes, Body};
+use axum::body::Body;
 use axum::extract::Query;
 use http::{Method, Request};
+use http_body_util::BodyExt;
 use serde::Deserialize;
 use serde_json::Value;
 use tracing::{trace, warn};
@@ -12,8 +13,6 @@ use crate::pipeline::gateway_layer::{
     GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer,
 };
 use crate::pipeline::http_request_params::{HttpRequestParams, APPLICATION_JSON};
-
-static MAX_BODY_SIZE: usize = 2 * 1024 * 1024; // 2 MB in bytes, like Axum's default
 
 #[derive(Clone, Debug, Default)]
 pub struct GraphQLRequestParamsExtractor;
@@ -83,8 +82,8 @@ impl GatewayPipelineLayer for GraphQLRequestParamsExtractor {
     #[tracing::instrument(level = "trace", name = "GraphQLRequestParamsExtractor", skip_all)]
     async fn process(
         &self,
-        mut req: Request<Body>,
-    ) -> Result<(Request<Body>, GatewayPipelineStepDecision), PipelineError> {
+        req: &mut Request<Body>,
+    ) -> Result<GatewayPipelineStepDecision, PipelineError> {
         let http_params = req.extensions().get::<HttpRequestParams>().ok_or_else(|| {
             PipelineErrorVariant::InternalServiceError("HttpRequestParams is missing")
         })?;
@@ -131,15 +130,19 @@ impl GatewayPipelineLayer for GraphQLRequestParamsExtractor {
                     }
                 }
 
-                let (parts, body) = req.into_parts();
-                let body_bytes = to_bytes(body, MAX_BODY_SIZE).await.map_err(|err| {
-                    warn!("Failed to read body bytes: {}", err);
+                let body_bytes = req
+                    .body_mut()
+                    .collect()
+                    .await
+                    .map_err(|err| {
+                        warn!("Failed to read body bytes: {}", err);
 
-                    PipelineError::new_with_accept_header(
-                        PipelineErrorVariant::FailedToReadBodyBytes(err),
-                        accept_header.clone(),
-                    )
-                })?;
+                        PipelineError::new_with_accept_header(
+                            PipelineErrorVariant::FailedToReadBodyBytes(err),
+                            accept_header.clone(),
+                        )
+                    })?
+                    .to_bytes();
 
                 let execution_request = unsafe {
                     sonic_rs::from_slice_unchecked::<ExecutionRequest>(&body_bytes).map_err(
@@ -153,9 +156,6 @@ impl GatewayPipelineLayer for GraphQLRequestParamsExtractor {
                         },
                     )?
                 };
-
-                trace!("Body is parsed, will proceed");
-                req = Request::from_parts(parts, Body::from(body_bytes));
 
                 execution_request
             }
@@ -171,7 +171,7 @@ impl GatewayPipelineLayer for GraphQLRequestParamsExtractor {
 
         req.extensions_mut().insert(execution_request);
 
-        Ok((req, GatewayPipelineStepDecision::Continue))
+        Ok(GatewayPipelineStepDecision::Continue)
     }
 }
 
