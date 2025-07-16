@@ -2,6 +2,7 @@ use axum::body::Body;
 use axum::response::IntoResponse;
 use http::{Request, Response};
 use std::convert::Infallible;
+use std::sync::Arc;
 use std::{
     future::Future,
     pin::Pin,
@@ -16,8 +17,8 @@ use crate::pipeline::error::PipelineError;
 pub trait GatewayPipelineLayer: Clone + Send + Sync + 'static {
     async fn process(
         &self,
-        req: Request<Body>,
-    ) -> Result<(Request<Body>, GatewayPipelineStepDecision), PipelineError>;
+        req: &mut Request<Body>,
+    ) -> Result<GatewayPipelineStepDecision, PipelineError>;
 }
 
 pub enum GatewayPipelineStepDecision {
@@ -28,12 +29,15 @@ pub enum GatewayPipelineStepDecision {
 #[derive(Debug, Clone)]
 pub struct ProcessorService<S, P> {
     inner: S,
-    processor: P,
+    processor_arc: Arc<P>,
 }
 
 impl<S, P> ProcessorService<S, P> {
-    pub fn new_layer(inner: S, processor: P) -> Self {
-        Self { inner, processor }
+    pub fn new_layer(inner: S, processor_arc: Arc<P>) -> Self {
+        Self {
+            inner,
+            processor_arc,
+        }
     }
 }
 
@@ -42,6 +46,7 @@ where
     S: Service<Request<Body>, Response = Response<Body>, Error = Infallible>
         + Clone
         + Send
+        + Sync
         + 'static,
     S::Future: Send + 'static,
     P: GatewayPipelineLayer,
@@ -54,12 +59,12 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: Request<Body>) -> Self::Future {
+    fn call(&mut self, mut req: Request<Body>) -> Self::Future {
         let mut inner = self.inner.clone();
-        let processor = self.processor.clone();
+        let processor_arc = self.processor_arc.clone();
 
         Box::pin(async move {
-            let result = processor.process(req).await;
+            let result = processor_arc.process(&mut req).await;
 
             match result {
                 Err(err) => {
@@ -68,12 +73,12 @@ where
 
                     Ok(err.into_response())
                 }
-                Ok((req, GatewayPipelineStepDecision::Continue)) => {
+                Ok(GatewayPipelineStepDecision::Continue) => {
                     trace!("Pipeline step decision is to continue");
 
                     inner.call(req).await
                 }
-                Ok((_req, GatewayPipelineStepDecision::RespondWith(response))) => {
+                Ok(GatewayPipelineStepDecision::RespondWith(response)) => {
                     trace!("Pipeline step decision is to short circuit");
 
                     Ok(response)
@@ -85,12 +90,14 @@ where
 
 #[derive(Debug, Clone)]
 pub struct ProcessorLayer<P> {
-    processor: P,
+    processor_arc: Arc<P>,
 }
 
 impl<P> ProcessorLayer<P> {
     pub fn new(processor: P) -> Self {
-        Self { processor }
+        Self {
+            processor_arc: Arc::new(processor),
+        }
     }
 }
 
@@ -101,6 +108,7 @@ where
     type Service = ProcessorService<S, P>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        ProcessorService::new_layer(inner, self.processor.clone())
+        let processor_arc = self.processor_arc.clone();
+        ProcessorService::new_layer(inner, processor_arc)
     }
 }

@@ -119,12 +119,14 @@ impl HTTPSubgraphExecutor {
             })?
             .to_bytes();
 
-        serde_json::from_slice(&bytes).map_err(|e| {
-            format!(
-                "Failed to parse response from subgraph {}: {}",
-                self.endpoint, e
-            )
-        })
+        unsafe {
+            sonic_rs::from_slice_unchecked(&bytes).map_err(|e| {
+                format!(
+                    "Failed to parse response from subgraph {}: {}",
+                    self.endpoint, e
+                )
+            })
+        }
     }
 }
 

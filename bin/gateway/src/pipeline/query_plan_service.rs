@@ -30,8 +30,8 @@ impl GatewayPipelineLayer for QueryPlanService {
     #[tracing::instrument(level = "trace", name = "QueryPlanService", skip_all)]
     async fn process(
         &self,
-        mut req: Request<Body>,
-    ) -> Result<(Request<Body>, GatewayPipelineStepDecision), PipelineError> {
+        req: &mut Request<Body>,
+    ) -> Result<GatewayPipelineStepDecision, PipelineError> {
         let normalized_operation = req
             .extensions()
             .get::<Arc<GraphQLNormalizationPayload>>()
@@ -102,6 +102,6 @@ impl GatewayPipelineLayer for QueryPlanService {
             query_plan: query_plan_arc,
         });
 
-        Ok((req, GatewayPipelineStepDecision::Continue))
+        Ok(GatewayPipelineStepDecision::Continue)
     }
 }

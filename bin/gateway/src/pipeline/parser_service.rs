@@ -35,8 +35,8 @@ impl GatewayPipelineLayer for GraphQLParserService {
     #[tracing::instrument(level = "trace", name = "GraphQLParserService", skip_all)]
     async fn process(
         &self,
-        mut req: Request<Body>,
-    ) -> Result<(Request<Body>, GatewayPipelineStepDecision), PipelineError> {
+        req: &mut Request<Body>,
+    ) -> Result<GatewayPipelineStepDecision, PipelineError> {
         let execution_params = req.extensions().get::<ExecutionRequest>().ok_or_else(|| {
             PipelineErrorVariant::InternalServiceError("ExecutionRequest is missing")
         })?;
@@ -82,6 +82,6 @@ impl GatewayPipelineLayer for GraphQLParserService {
             cache_key,
         });
 
-        Ok((req, GatewayPipelineStepDecision::Continue))
+        Ok(GatewayPipelineStepDecision::Continue)
     }
 }
