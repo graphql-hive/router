@@ -32,8 +32,8 @@ impl GatewayPipelineLayer for ProgressiveOverrideExtractor {
     #[tracing::instrument(level = "trace", name = "ProgressiveOverrideExtractor", skip_all)]
     async fn process(
         &self,
-        mut req: Request<Body>,
-    ) -> Result<(Request<Body>, GatewayPipelineStepDecision), PipelineError> {
+        req: &mut Request<Body>,
+    ) -> Result<GatewayPipelineStepDecision, PipelineError> {
         // No active flags by default - until we implement it
         let active_flags = HashSet::new();
 
@@ -52,7 +52,7 @@ impl GatewayPipelineLayer for ProgressiveOverrideExtractor {
 
         req.extensions_mut().insert(override_context);
 
-        Ok((req, GatewayPipelineStepDecision::Continue))
+        Ok(GatewayPipelineStepDecision::Continue)
     }
 }
 
