@@ -105,8 +105,10 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "products",
-                  "@"
+                  {
+                    "Field": "products"
+                  },
+                  "List"
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -153,8 +155,10 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "products",
-                  "@"
+                  {
+                    "Field": "products"
+                  },
+                  "List"
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -307,8 +311,10 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "feed",
-              "@"
+              {
+                "Field": "feed"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -336,10 +342,14 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "feed",
-              "@",
-              "_internal_qp_alias_0",
-              "@"
+              {
+                "Field": "feed"
+              },
+              "List",
+              {
+                "Field": "_internal_qp_alias_0"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -367,8 +377,10 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "feed",
-              "@"
+              {
+                "Field": "feed"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -521,8 +533,10 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
           {
             "kind": "Flatten",
             "path": [
-              "feed",
-              "@"
+              {
+                "Field": "feed"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -553,10 +567,14 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
           {
             "kind": "Flatten",
             "path": [
-              "feed",
-              "@",
-              "_internal_qp_alias_0",
-              "@"
+              {
+                "Field": "feed"
+              },
+              "List",
+              {
+                "Field": "_internal_qp_alias_0"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -584,8 +602,10 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
           {
             "kind": "Flatten",
             "path": [
-              "feed",
-              "@"
+              {
+                "Field": "feed"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -749,8 +769,10 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
           {
             "kind": "Flatten",
             "path": [
-              "feed",
-              "@"
+              {
+                "Field": "feed"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -781,10 +803,14 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
           {
             "kind": "Flatten",
             "path": [
-              "feed",
-              "@",
-              "_internal_qp_alias_0",
-              "@"
+              {
+                "Field": "feed"
+              },
+              "List",
+              {
+                "Field": "_internal_qp_alias_0"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -812,8 +838,10 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
           {
             "kind": "Flatten",
             "path": [
-              "feed",
-              "@"
+              {
+                "Field": "feed"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -959,7 +987,9 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "test"
+              {
+                "Field": "test"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -990,7 +1020,9 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "test"
+                  {
+                    "Field": "test"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -1023,7 +1055,9 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "test"
+                  {
+                    "Field": "test"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -1166,7 +1200,9 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
           {
             "kind": "Flatten",
             "path": [
-              "test"
+              {
+                "Field": "test"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -1197,7 +1233,9 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
               {
                 "kind": "Flatten",
                 "path": [
-                  "test"
+                  {
+                    "Field": "test"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -1230,7 +1268,9 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
               {
                 "kind": "Flatten",
                 "path": [
-                  "test"
+                  {
+                    "Field": "test"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -1353,7 +1393,9 @@ fn multiple_plain_field_and_requires_with_args_that_does_not_conflicts_should_me
           {
             "kind": "Flatten",
             "path": [
-              "test"
+              {
+                "Field": "test"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -1381,7 +1423,9 @@ fn multiple_plain_field_and_requires_with_args_that_does_not_conflicts_should_me
           {
             "kind": "Flatten",
             "path": [
-              "test"
+              {
+                "Field": "test"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -1496,7 +1540,9 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "test"
+              {
+                "Field": "test"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -1524,7 +1570,9 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "test"
+              {
+                "Field": "test"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -2103,7 +2151,9 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "secondProduct"
+                  {
+                    "Field": "secondProduct"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -2131,7 +2181,9 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "secondProduct"
+                  {
+                    "Field": "secondProduct"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -2159,7 +2211,9 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "firstProduct"
+                  {
+                    "Field": "firstProduct"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -2187,7 +2241,9 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "firstProduct"
+                  {
+                    "Field": "firstProduct"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -2220,8 +2276,12 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "secondProduct",
-                  "category"
+                  {
+                    "Field": "secondProduct"
+                  },
+                  {
+                    "Field": "category"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -2249,8 +2309,12 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "firstProduct",
-                  "category"
+                  {
+                    "Field": "firstProduct"
+                  },
+                  {
+                    "Field": "category"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",

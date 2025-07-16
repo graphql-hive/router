@@ -8,6 +8,7 @@ use query_plan_executor::executors::map::SubgraphExecutorMap;
 use query_planner::ast::selection_item::SelectionItem;
 use query_planner::ast::selection_set::InlineFragmentSelection;
 use query_planner::graph::PlannerOverrideContext;
+use query_planner::planner::plan_nodes::FlattenNodePathSegment;
 use std::hint::black_box;
 
 use query_plan_executor::execute_query_plan;
@@ -242,8 +243,17 @@ fn project_data_by_operation(c: &mut Criterion) {
 
 fn traverse_and_collect(c: &mut Criterion) {
     let path = [
-        "users", "@", "reviews", "@", "product", "reviews", "@", "author", "reviews", "@",
-        "product",
+        FlattenNodePathSegment::Field("users".into()),
+        FlattenNodePathSegment::List,
+        FlattenNodePathSegment::Field("reviews".into()),
+        FlattenNodePathSegment::List,
+        FlattenNodePathSegment::Field("product".into()),
+        FlattenNodePathSegment::Field("reviews".into()),
+        FlattenNodePathSegment::List,
+        FlattenNodePathSegment::Field("author".into()),
+        FlattenNodePathSegment::Field("reviews".into()),
+        FlattenNodePathSegment::List,
+        FlattenNodePathSegment::Field("product".into()),
     ];
     let mut result: Value = non_projected_result::get_result();
     c.bench_function("traverse_and_collect", |b| {
@@ -328,8 +338,19 @@ fn deep_merge_with_complex(c: &mut Criterion) {
 
 fn project_requires(c: &mut Criterion) {
     let path = [
-        "users", "@", "reviews", "@", "product", "reviews", "@", "author", "reviews", "@",
-        "product",
+        FlattenNodePathSegment::Field("users".into()),
+        FlattenNodePathSegment::List,
+        FlattenNodePathSegment::Field("reviews".into()),
+        FlattenNodePathSegment::List,
+        FlattenNodePathSegment::Field("product".into()),
+        FlattenNodePathSegment::List,
+        FlattenNodePathSegment::Field("reviews".into()),
+        FlattenNodePathSegment::List,
+        FlattenNodePathSegment::Field("author".into()),
+        FlattenNodePathSegment::List,
+        FlattenNodePathSegment::Field("reviews".into()),
+        FlattenNodePathSegment::List,
+        FlattenNodePathSegment::Field("product".into()),
     ];
     let mut result: Value = non_projected_result::get_result();
     let data = result.get_mut("data").unwrap();

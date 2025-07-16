@@ -233,7 +233,9 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "userInC"
+                  {
+                    "Field": "userInC"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -261,7 +263,9 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "userInB"
+                  {
+                    "Field": "userInB"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -293,7 +297,9 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "userInB"
+                  {
+                    "Field": "userInB"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -325,7 +331,9 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "userInA"
+                  {
+                    "Field": "userInA"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -358,7 +366,9 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "userInC"
+                  {
+                    "Field": "userInC"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -390,7 +400,9 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "userInC"
+                  {
+                    "Field": "userInC"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -422,7 +434,9 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "userInA"
+                  {
+                    "Field": "userInA"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -454,7 +468,9 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "userInA"
+                  {
+                    "Field": "userInA"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -568,7 +584,9 @@ fn override_with_requires_cname_in_c() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "userInC"
+              {
+                "Field": "userInC"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -596,7 +614,9 @@ fn override_with_requires_cname_in_c() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "userInC"
+              {
+                "Field": "userInC"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -708,7 +728,9 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "userInA"
+              {
+                "Field": "userInA"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -736,7 +758,9 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "userInA"
+              {
+                "Field": "userInA"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -848,7 +872,9 @@ fn override_with_requires_aname_in_a() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "userInA"
+              {
+                "Field": "userInA"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -876,7 +902,9 @@ fn override_with_requires_aname_in_a() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "userInA"
+              {
+                "Field": "userInA"
+              }
             ],
             "node": {
               "kind": "Fetch",

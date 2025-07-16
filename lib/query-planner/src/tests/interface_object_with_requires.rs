@@ -84,8 +84,10 @@ fn interface_object_requiring_interface_fields() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "anotherUsers",
-              "@"
+              {
+                "Field": "anotherUsers"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -128,8 +130,10 @@ fn interface_object_requiring_interface_fields() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "anotherUsers",
-              "@"
+              {
+                "Field": "anotherUsers"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -262,8 +266,10 @@ fn interface_field_from_remote_graph_with_requires() -> Result<(), Box<dyn Error
           {
             "kind": "Flatten",
             "path": [
-              "users",
-              "@"
+              {
+                "Field": "users"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -367,7 +373,7 @@ fn inline_fragment_on_interface_object_for_remote_type_field() -> Result<(), Box
     },
     "#);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -382,8 +388,10 @@ fn inline_fragment_on_interface_object_for_remote_type_field() -> Result<(), Box
           {
             "kind": "Flatten",
             "path": [
-              "anotherUsers",
-              "@"
+              {
+                "Field": "anotherUsers"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -426,7 +434,7 @@ fn inline_fragment_on_interface_object_for_remote_type_field() -> Result<(), Box
         ]
       }
     }
-    "###);
+    "#);
 
     Ok(())
 }
@@ -572,8 +580,10 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
           {
             "kind": "Flatten",
             "path": [
-              "anotherUsers",
-              "@"
+              {
+                "Field": "anotherUsers"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -616,8 +626,10 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
           {
             "kind": "Flatten",
             "path": [
-              "anotherUsers",
-              "@"
+              {
+                "Field": "anotherUsers"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -712,7 +724,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
             }
           }
         },
-        Flatten(path: "users.@") {
+        Flatten(path: "users.@|[User]") {
           Fetch(service: "b") {
             {
               ... on NodeWithName {
@@ -762,8 +774,13 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
           {
             "kind": "Flatten",
             "path": [
-              "users",
-              "@"
+              {
+                "Field": "users"
+              },
+              "List",
+              {
+                "Cast": "User"
+              }
             ],
             "node": {
               "kind": "Fetch",

@@ -100,8 +100,10 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
-              "@"
+              {
+                "Field": "products"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -132,8 +134,10 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "products",
-                  "@"
+                  {
+                    "Field": "products"
+                  },
+                  "List"
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -166,8 +170,10 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "products",
-                  "@"
+                  {
+                    "Field": "products"
+                  },
+                  "List"
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -281,8 +287,10 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
-              "@"
+              {
+                "Field": "products"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -310,8 +318,10 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
-              "@"
+              {
+                "Field": "products"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -409,8 +419,10 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
-              "@"
+              {
+                "Field": "products"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -510,8 +522,10 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
-              "@"
+              {
+                "Field": "products"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -609,8 +623,10 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
-              "@"
+              {
+                "Field": "products"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -716,8 +732,10 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
-              "@"
+              {
+                "Field": "products"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -825,8 +843,10 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
-              "@"
+              {
+                "Field": "products"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -955,9 +975,13 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "b",
-              "a",
-              "@"
+              {
+                "Field": "b"
+              },
+              {
+                "Field": "a"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",
@@ -985,9 +1009,13 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "b",
-              "a",
-              "@"
+              {
+                "Field": "b"
+              },
+              {
+                "Field": "a"
+              },
+              "List"
             ],
             "node": {
               "kind": "Fetch",

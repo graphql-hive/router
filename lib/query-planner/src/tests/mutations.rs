@@ -72,7 +72,9 @@ fn mutations() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "addProduct"
+              {
+                "Field": "addProduct"
+              }
             ],
             "node": {
               "kind": "Fetch",

@@ -534,7 +534,7 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
           }
         },
         Parallel {
-          Flatten(path: "products.@") {
+          Flatten(path: "products.@|[Magazine]") {
             Fetch(service: "reviews") {
               {
                 ... on Magazine {
@@ -551,7 +551,7 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
               }
             },
           },
-          Flatten(path: "products.@") {
+          Flatten(path: "products.@|[Book]") {
             Fetch(service: "reviews") {
               {
                 ... on Book {
@@ -640,7 +640,7 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
           }
         },
         Parallel {
-          Flatten(path: "magazine.@") {
+          Flatten(path: "magazine.@|[Magazine]") {
             Fetch(service: "inventory") {
               {
                 ... on Magazine {
@@ -662,7 +662,7 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
               }
             },
           },
-          Flatten(path: "magazine.@") {
+          Flatten(path: "magazine.@|[Book]") {
             Fetch(service: "inventory") {
               {
                 ... on Book {
@@ -684,7 +684,7 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
               }
             },
           },
-          Flatten(path: "book.@") {
+          Flatten(path: "book.@|[Magazine]") {
             Fetch(service: "inventory") {
               {
                 ... on Magazine {
@@ -706,7 +706,7 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
               }
             },
           },
-          Flatten(path: "book.@") {
+          Flatten(path: "book.@|[Book]") {
             Fetch(service: "inventory") {
               {
                 ... on Book {
@@ -784,7 +784,7 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
           }
         },
         Parallel {
-          Flatten(path: "products.@") {
+          Flatten(path: "products.@|[Magazine]") {
             Fetch(service: "reviews") {
               {
                 ... on Magazine {
@@ -812,7 +812,7 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
               }
             },
           },
-          Flatten(path: "products.@") {
+          Flatten(path: "products.@|[Book]") {
             Fetch(service: "reviews") {
               {
                 ... on Book {
@@ -842,7 +842,7 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
           },
         },
         Parallel {
-          Flatten(path: "products.@.reviews.@.product") {
+          Flatten(path: "products.@|[Magazine].reviews.@.product|[Magazine]") {
             Fetch(service: "products") {
               {
                 ... on Magazine {
@@ -858,7 +858,7 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
             },
           },
           Include(if: $title) {
-            Flatten(path: "products.@.reviews.@.product") {
+            Flatten(path: "products.@|[Magazine].reviews.@.product|[Book]") {
               Fetch(service: "books") {
                 {
                   ... on Book {
@@ -874,7 +874,7 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
               },
             },
           },
-          Flatten(path: "products.@.reviews.@.product") {
+          Flatten(path: "products.@|[Book].reviews.@.product|[Magazine]") {
             Fetch(service: "products") {
               {
                 ... on Magazine {
@@ -890,7 +890,7 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
             },
           },
           Include(if: $title) {
-            Flatten(path: "products.@.reviews.@.product") {
+            Flatten(path: "products.@|[Book].reviews.@.product|[Book]") {
               Fetch(service: "books") {
                 {
                   ... on Book {
@@ -965,7 +965,7 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
           }
         },
         Parallel {
-          Flatten(path: "products.@") {
+          Flatten(path: "products.@|[Magazine]") {
             Fetch(service: "reviews") {
               {
                 ... on Magazine {
@@ -993,7 +993,7 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
               }
             },
           },
-          Flatten(path: "products.@") {
+          Flatten(path: "products.@|[Book]") {
             Fetch(service: "reviews") {
               {
                 ... on Book {
@@ -1023,7 +1023,7 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
           },
         },
         Parallel {
-          Flatten(path: "products.@.reviews.@.product") {
+          Flatten(path: "products.@|[Magazine].reviews.@.product|[Magazine]") {
             Fetch(service: "products") {
               {
                 ... on Magazine {
@@ -1039,7 +1039,7 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
             },
           },
           Include(if: $title) {
-            Flatten(path: "products.@.reviews.@.product") {
+            Flatten(path: "products.@|[Magazine].reviews.@.product|[Book]") {
               Fetch(service: "products") {
                 {
                   ... on Book {
@@ -1056,7 +1056,7 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
             },
           },
           Include(if: $title) {
-            Flatten(path: "products.@.reviews.@.product") {
+            Flatten(path: "products.@|[Magazine].reviews.@.product|[Book]") {
               Fetch(service: "books") {
                 {
                   ... on Book {
@@ -1072,7 +1072,7 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
               },
             },
           },
-          Flatten(path: "products.@.reviews.@.product") {
+          Flatten(path: "products.@|[Book].reviews.@.product|[Magazine]") {
             Fetch(service: "products") {
               {
                 ... on Magazine {
@@ -1088,7 +1088,7 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
             },
           },
           Include(if: $title) {
-            Flatten(path: "products.@.reviews.@.product") {
+            Flatten(path: "products.@|[Book].reviews.@.product|[Book]") {
               Fetch(service: "products") {
                 {
                   ... on Book {
@@ -1105,7 +1105,7 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
             },
           },
           Include(if: $title) {
-            Flatten(path: "products.@.reviews.@.product") {
+            Flatten(path: "products.@|[Book].reviews.@.product|[Book]") {
               Fetch(service: "books") {
                 {
                   ... on Book {
