@@ -51,11 +51,11 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
             {
               ... on User {
                 reviews {
+                  id
                   author {
                     id
                     username
                   }
-                  id
                   product {
                     __typename
                     upc
@@ -104,7 +104,7 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
               "kind": "Fetch",
               "serviceName": "reviews",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{reviews{author{id username} id product{__typename upc}}}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{reviews{id author{id username} product{__typename upc}}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",

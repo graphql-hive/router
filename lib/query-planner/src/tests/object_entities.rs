@@ -478,11 +478,11 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
             topProducts {
               products {
                 __typename
-                category {
-                  id
-                  tag
-                }
                 id
+                category {
+                  tag
+                  id
+                }
               }
             }
           }
@@ -537,7 +537,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "products",
             "operationKind": "query",
-            "operation": "query{topProducts{products{__typename category{id tag} id}}}"
+            "operation": "query{topProducts{products{__typename id category{tag id}}}}"
           },
           {
             "kind": "Flatten",

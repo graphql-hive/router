@@ -150,9 +150,9 @@ fn union_member_entity_call() -> Result<(), Box<dyn Error>> {
               __typename
               ... on Book {
                 __typename
+                title
                 aTitle
                 id
-                title
               }
             }
           }
@@ -220,15 +220,15 @@ fn union_member_entity_call_many_local() -> Result<(), Box<dyn Error>> {
             viewer {
               song {
                 __typename
+                ... on Song {
+                  title
+                  aTitle
+                }
                 ... on Book {
                   __typename
+                  title
                   aTitle
                   id
-                  title
-                }
-                ... on Song {
-                  aTitle
-                  title
                 }
               }
             }
@@ -328,9 +328,9 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
           Fetch(service: "b") {
             {
               viewer {
-                book {
-    ...a            }
                 media {
+    ...a            }
+                book {
     ...a            }
               }
             }
@@ -344,21 +344,21 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
           Fetch(service: "a") {
             {
               viewer {
-                book {
-    ...a            }
                 media {
+    ...a            }
+                book {
     ...a            }
                 song {
                   __typename
+                  ... on Song {
+                    title
+                    aTitle
+                  }
                   ... on Book {
                     __typename
+                    title
                     aTitle
                     id
-                    title
-                  }
-                  ... on Song {
-                    aTitle
-                    title
                   }
                 }
               }

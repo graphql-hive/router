@@ -29,12 +29,12 @@ fn include_basic_test() -> Result<(), Box<dyn Error>> {
           query ($bool:Boolean) {
             product {
               __typename
-              id
               price
+              id
               ... on Product @include(if: $bool) {
+                price
                 __typename
                 id
-                price
               }
             }
           }
@@ -107,12 +107,12 @@ fn skip_basic_test() -> Result<(), Box<dyn Error>> {
           query ($bool:Boolean=false) {
             product {
               __typename
-              id
               price
+              id
               ... on Product @skip(if: $bool) {
+                price
                 __typename
                 id
-                price
               }
             }
           }
