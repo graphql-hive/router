@@ -18,6 +18,8 @@ use crate::{
 impl FetchGraph {
     #[instrument(level = "trace", skip_all)]
     pub fn optimize(&mut self, supergraph_state: &SupergraphState) -> Result<(), FetchGraphError> {
+        // Run optimization passes repeatedly until the graph stabilizes, as one optimization can create
+        // opportunities for others.
         loop {
             let node_count_before = self.graph.node_count();
             let edge_count_before = self.graph.edge_count();

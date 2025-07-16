@@ -53,8 +53,8 @@ fn one() -> Result<(), Box<dyn Error>> {
             {
               ... on Product {
                 __typename
-                id
                 isExpensiveWithDiscount
+                id
               }
             } =>
             {
@@ -132,11 +132,11 @@ fn one() -> Result<(), Box<dyn Error>> {
                     },
                     {
                       "kind": "Field",
-                      "name": "id"
+                      "name": "isExpensiveWithDiscount"
                     },
                     {
                       "kind": "Field",
-                      "name": "isExpensiveWithDiscount"
+                      "name": "id"
                     }
                   ]
                 }
@@ -348,8 +348,8 @@ fn two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>> {
             {
               ... on Product {
                 __typename
-                id
                 isExpensiveWithDiscount
+                id
               }
             } =>
             {
@@ -428,11 +428,11 @@ fn two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>> {
                     },
                     {
                       "kind": "Field",
-                      "name": "id"
+                      "name": "isExpensiveWithDiscount"
                     },
                     {
                       "kind": "Field",
-                      "name": "isExpensiveWithDiscount"
+                      "name": "id"
                     }
                   ]
                 }
@@ -509,8 +509,8 @@ fn one_more() -> Result<(), Box<dyn Error>> {
             {
               ... on Product {
                 __typename
-                id
                 isExpensive
+                id
               }
             } =>
             {
@@ -616,11 +616,11 @@ fn one_more() -> Result<(), Box<dyn Error>> {
                     },
                     {
                       "kind": "Field",
-                      "name": "id"
+                      "name": "isExpensive"
                     },
                     {
                       "kind": "Field",
-                      "name": "isExpensive"
+                      "name": "id"
                     }
                   ]
                 }
@@ -698,8 +698,8 @@ fn another_two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>>
             {
               ... on Product {
                 __typename
-                id
                 isExpensive
+                id
               }
             } =>
             {
@@ -806,11 +806,11 @@ fn another_two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>>
                     },
                     {
                       "kind": "Field",
-                      "name": "id"
+                      "name": "isExpensive"
                     },
                     {
                       "kind": "Field",
-                      "name": "isExpensive"
+                      "name": "id"
                     }
                   ]
                 }
@@ -907,8 +907,8 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
             {
               ... on Product {
                 __typename
-                id
                 isExpensiveWithDiscount
+                id
                 isExpensive
               }
             } =>
@@ -1053,11 +1053,11 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
                     },
                     {
                       "kind": "Field",
-                      "name": "id"
+                      "name": "isExpensiveWithDiscount"
                     },
                     {
                       "kind": "Field",
-                      "name": "isExpensiveWithDiscount"
+                      "name": "id"
                     },
                     {
                       "kind": "Field",
@@ -1158,9 +1158,9 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
             {
               ... on Product {
                 __typename
-                id
                 isExpensive
                 isExpensiveWithDiscount
+                id
               }
             } =>
             {
@@ -1304,15 +1304,15 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
                     },
                     {
                       "kind": "Field",
-                      "name": "id"
-                    },
-                    {
-                      "kind": "Field",
                       "name": "isExpensive"
                     },
                     {
                       "kind": "Field",
                       "name": "isExpensiveWithDiscount"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
                     }
                   ]
                 }
@@ -1416,8 +1416,8 @@ fn many() -> Result<(), Box<dyn Error>> {
             {
               ... on Product {
                 __typename
-                id
                 isExpensive
+                id
                 isExpensiveWithDiscount
               }
             } =>
@@ -1564,11 +1564,11 @@ fn many() -> Result<(), Box<dyn Error>> {
                     },
                     {
                       "kind": "Field",
-                      "name": "id"
+                      "name": "isExpensive"
                     },
                     {
                       "kind": "Field",
-                      "name": "isExpensive"
+                      "name": "id"
                     },
                     {
                       "kind": "Field",

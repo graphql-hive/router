@@ -62,8 +62,8 @@ fn include_basic_test() -> Result<(), Box<dyn Error>> {
                 {
                   ... on Product {
                     __typename
-                    id
                     isExpensive
+                    id
                   }
                 } =>
                 {
@@ -140,8 +140,8 @@ fn skip_basic_test() -> Result<(), Box<dyn Error>> {
                 {
                   ... on Product {
                     __typename
-                    id
                     isExpensive
+                    id
                   }
                 } =>
                 {

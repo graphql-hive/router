@@ -5,7 +5,7 @@ use crate::ast::type_aware_selection::TypeAwareSelection;
 use crate::graph::edge::{Edge, FieldMove, InterfaceObjectTypeMove, PlannerOverrideContext};
 use crate::graph::node::Node;
 use crate::graph::Graph;
-use crate::planner::fetch::fetch_step_data::{FetchStepData, FetchStepKind};
+use crate::planner::fetch::fetch_step_data::{FetchStepData, FetchStepFlags, FetchStepKind};
 use crate::planner::plan_nodes::{FetchNodePathSegment, FetchRewrite, ValueSetter};
 use crate::planner::tree::query_tree::QueryTree;
 use crate::planner::tree::query_tree_node::{MutationFieldPosition, QueryTreeNode};
@@ -236,6 +236,11 @@ impl Display for FetchGraph {
 }
 
 fn create_noop_fetch_step(fetch_graph: &mut FetchGraph, created_from_requires: bool) -> NodeIndex {
+    let flags = if created_from_requires {
+        FetchStepFlags::USED_FOR_REQUIRES
+    } else {
+        FetchStepFlags::empty()
+    };
     fetch_graph.add_step(FetchStepData {
         service_name: SubgraphName::any(),
         response_path: MergePath::default(),
@@ -247,7 +252,7 @@ fn create_noop_fetch_step(fetch_graph: &mut FetchGraph, created_from_requires: b
             selection_set: SelectionSet::default(),
             type_name: "*".to_string(),
         },
-        used_for_requires: created_from_requires,
+        flags,
         condition: None,
         kind: FetchStepKind::Root,
         input_rewrites: None,
@@ -268,6 +273,11 @@ fn create_fetch_step_for_entity_call(
     condition: Option<&Condition>,
     used_for_requires: bool,
 ) -> NodeIndex {
+    let flags = if used_for_requires {
+        FetchStepFlags::USED_FOR_REQUIRES
+    } else {
+        FetchStepFlags::empty()
+    };
     fetch_graph.add_step(FetchStepData {
         service_name: subgraph_name.clone(),
         response_path: response_path.clone(),
@@ -281,7 +291,7 @@ fn create_fetch_step_for_entity_call(
             selection_set: SelectionSet::default(),
             type_name: output_type_name.to_string(),
         },
-        used_for_requires,
+        flags,
         condition: condition.cloned(),
         kind: FetchStepKind::Entity,
         input_rewrites: None,
@@ -311,7 +321,7 @@ fn create_fetch_step_for_root_move(
             selection_set: SelectionSet::default(),
             type_name: type_name.to_string(),
         },
-        used_for_requires: false,
+        flags: FetchStepFlags::empty(),
         condition: None,
         kind: FetchStepKind::Root,
         variable_usages: None,
@@ -373,7 +383,9 @@ fn ensure_fetch_step_for_subgraph(
 
                     // If there are requirements, then we do not re-use
                     // optimizations will try to re-use the existing step later, if possible.
-                    if fetch_step.used_for_requires || requires.is_some() {
+                    if fetch_step.flags.contains(FetchStepFlags::USED_FOR_REQUIRES)
+                        || requires.is_some()
+                    {
                         return None;
                     }
 
@@ -713,6 +725,7 @@ fn process_entity_move_edge(
             output_type_name,
             fetch_step_index.index()
         );
+
         fetch_step.add_input_rewrite(FetchRewrite::ValueSetter(ValueSetter {
             path: vec![
                 FetchNodePathSegment::TypenameEquals(output_type_name.to_string()),
@@ -720,6 +733,10 @@ fn process_entity_move_edge(
             ],
             set_value_to: output_type_name.clone().into(),
         }));
+
+        fetch_step
+            .flags
+            .insert(FetchStepFlags::USED_FOR_TYPE_CONDITION);
     }
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
