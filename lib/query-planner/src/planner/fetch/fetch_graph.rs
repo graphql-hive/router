@@ -274,10 +274,7 @@ fn create_noop_fetch_step(
     fetch_graph.add_step(FetchStepData {
         service_name: SubgraphName::any(),
         response_path: MergePath::default(),
-        input: TypeAwareSelection {
-            selection_set: SelectionSet::default(),
-            type_name: "*".to_string(),
-        },
+        input: FetchStepSelections::new_empty(),
         output: FetchStepSelections::new_empty(),
         flags,
         condition: None,
@@ -305,15 +302,17 @@ fn create_fetch_step_for_entity_call(
     } else {
         FetchStepFlags::empty()
     };
+    let mut input = FetchStepSelections::new(input_type_name);
+    input
+        .add(&SelectionSet {
+            items: vec![SelectionItem::Field(FieldSelection::new_typename())],
+        })
+        .unwrap();
+
     fetch_graph.add_step(FetchStepData {
         service_name: subgraph_name.clone(),
         response_path: response_path.clone(),
-        input: TypeAwareSelection {
-            selection_set: SelectionSet {
-                items: vec![SelectionItem::Field(FieldSelection::new_typename())],
-            },
-            type_name: input_type_name.to_string(),
-        },
+        input,
         output: FetchStepSelections::new(output_type_name),
         flags,
         condition: condition.cloned(),
@@ -337,10 +336,7 @@ fn create_fetch_step_for_root_move(
     let idx = fetch_graph.add_step(FetchStepData {
         service_name: subgraph_name.clone(),
         response_path: MergePath::default(),
-        input: TypeAwareSelection {
-            selection_set: SelectionSet::default(),
-            type_name: type_name.to_string(),
-        },
+        input: FetchStepSelections::new(type_name),
         output: FetchStepSelections::new(type_name),
         flags: FetchStepFlags::empty(),
         condition: None,
@@ -383,7 +379,7 @@ fn ensure_fetch_step_for_subgraph(
                         return None;
                     }
 
-                    if fetch_step.input.type_name != *input_type_name {
+                    if fetch_step.input.definition_name() != input_type_name {
                         return None;
                     }
 
@@ -396,7 +392,12 @@ fn ensure_fetch_step_for_subgraph(
                     }
 
                     if let Some(key) = &key {
-                        if !fetch_step.input.contains(key) {
+                        if fetch_step.input.definition_name() != key.type_name
+                            || !fetch_step
+                                .input
+                                .selection_set()
+                                .contains(&key.selection_set)
+                        {
                             // requested key fields are not part of the input
                             return None;
                         }
@@ -440,7 +441,7 @@ fn ensure_fetch_step_for_subgraph(
             );
             if let Some(selection) = key {
                 let step = fetch_graph.get_step_data_mut(step_index)?;
-                step.input.add(selection)
+                step.input.add(&selection.selection_set)?
             }
 
             trace!(
@@ -480,7 +481,7 @@ fn ensure_fetch_step_for_requirement(
                         return None;
                     }
 
-                    if fetch_step.input.type_name != *type_name {
+                    if fetch_step.input.definition_name() != *type_name {
                         return None;
                     }
 
@@ -488,7 +489,10 @@ fn ensure_fetch_step_for_requirement(
                         return None;
                     }
 
-                    if !fetch_step.input.contains(requirement) {
+                    if !fetch_step
+                        .input
+                        .contains(&requirement.type_name, &requirement.selection_set)
+                    {
                         return None;
                     }
 
@@ -717,7 +721,7 @@ fn process_entity_move_edge(
         requirement,
         fetch_step_index.index()
     );
-    fetch_step.input.add(&requirement);
+    fetch_step.input.add(&requirement.selection_set)?;
 
     if is_interface {
         // We use `output_type_name` as there's no connection from `Interface` to `Object`,
@@ -854,19 +858,20 @@ fn process_interface_object_type_move_edge(
         requirement,
         step_for_children_index.index()
     );
-    step_for_children.input.add(&requirement);
+    step_for_children.input.add(&requirement.selection_set)?;
     let key_to_reenter_subgraph = find_satisfiable_key(
         graph,
         override_context,
         query_node.requirements.first().unwrap(),
     )?;
-    step_for_children.input.add(&requirement);
     trace!(
         "adding key '{}' to fetch step [{}]",
         key_to_reenter_subgraph,
         step_for_children_index.index()
     );
-    step_for_children.input.add(key_to_reenter_subgraph);
+    step_for_children
+        .input
+        .add(&key_to_reenter_subgraph.selection_set)?;
 
     trace!(
         "adding input rewrite '... on {} {{ __typename }}' to '{}' of [{}]",
@@ -904,7 +909,9 @@ fn process_interface_object_type_move_edge(
         key_to_reenter_subgraph,
         step_for_requirements_index.index()
     );
-    step_for_requirements.input.add(key_to_reenter_subgraph);
+    step_for_requirements
+        .input
+        .add(&key_to_reenter_subgraph.selection_set)?;
 
     //
     // Given `f0 { ... on User { f1 } }` where f1 is a field contributed by @interfaceObject,
@@ -1277,13 +1284,15 @@ fn process_requires_field_edge(
         requires,
         step_for_children_index.index()
     );
-    step_for_children.input.add(requires);
+    step_for_children.input.add(&requires.selection_set)?;
     trace!(
         "Adding {} to fetch([{}]).input (key re-enter)",
         key_to_reenter_subgraph,
         step_for_children_index.index()
     );
-    step_for_children.input.add(key_to_reenter_subgraph);
+    step_for_children
+        .input
+        .add(&key_to_reenter_subgraph.selection_set)?;
 
     trace!("Creating a fetch step for requirement of @requires");
     let step_for_requirements_index = create_fetch_step_for_entity_call(
@@ -1301,7 +1310,9 @@ fn process_requires_field_edge(
         key_to_reenter_subgraph,
         step_for_requirements_index.index()
     );
-    step_for_requirements.input.add(key_to_reenter_subgraph);
+    step_for_requirements
+        .input
+        .add(&key_to_reenter_subgraph.selection_set)?;
 
     let real_parent_fetch_step = fetch_graph.get_step_data_mut(real_parent_fetch_step_index)?;
 

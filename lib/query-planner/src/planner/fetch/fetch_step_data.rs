@@ -9,7 +9,7 @@ use crate::{
         merge_path::{Condition, MergePath},
         operation::VariableDefinition,
         safe_merge::AliasesRecords,
-        type_aware_selection::{find_arguments_conflicts, TypeAwareSelection},
+        selection_set::find_arguments_conflicts,
     },
     planner::{
         fetch::{
@@ -37,7 +37,7 @@ bitflags! {
 pub struct FetchStepData<State> {
     pub service_name: SubgraphName,
     pub response_path: MergePath,
-    pub input: TypeAwareSelection,
+    pub input: FetchStepSelections<State>,
     pub output: FetchStepSelections<State>,
     pub kind: FetchStepKind,
     pub flags: FetchStepFlags,
@@ -58,17 +58,19 @@ pub enum FetchStepKind {
 
 impl<State> Display for FetchStepData<State> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}/{} {} → ",
-            self.input.type_name, self.service_name, self.input,
-        )?;
+        write!(f, "[{}]: ", self.service_name)?;
+
+        for (def_name, selections) in self.input.iter() {
+            write!(f, "{}/{} ", def_name, selections)?;
+        }
+
+        write!(f, "-> ")?;
 
         for (def_name, selections) in self.output.iter() {
             write!(f, "{}/{} ", def_name, selections)?;
         }
 
-        write!(f, " at $.{}", self.response_path.join("."))?;
+        write!(f, "at $.{}", self.response_path.join("."))?;
 
         if self.flags.contains(FetchStepFlags::USED_FOR_REQUIRES) {
             write!(f, " [@requires]")?;
@@ -99,9 +101,7 @@ impl<State> FetchStepData<State> {
     }
 
     pub fn is_entity_call(&self) -> bool {
-        self.input.type_name != "Query"
-            && self.input.type_name != "Mutation"
-            && self.input.type_name != "Subscription"
+        self.kind == FetchStepKind::Entity
     }
 
     pub fn add_input_rewrite(&mut self, rewrite: FetchRewrite) {
@@ -155,13 +155,18 @@ impl FetchStepData<MultiTypeFetchStep> {
             }
         }
 
-        let input_conflicts = find_arguments_conflicts(&self.input, &other.input);
+        let has_input_conflicts =
+            FetchStepSelections::iter_matching_types(&self.input, &other.input, |_, s1, s2| {
+                find_arguments_conflicts(s1, s2)
+            })
+            .iter()
+            .any(|(_, conflicts)| !conflicts.is_empty());
 
-        if !input_conflicts.is_empty() {
+        if has_input_conflicts {
             trace!(
                 "preventing merge of [{}]+[{}] due to input conflicts",
                 self_index.index(),
-                other_index.index()
+                other_index.index(),
             );
 
             return false;
@@ -194,7 +199,7 @@ impl FetchStepData<SingleTypeFetchStep> {
         FetchStepData::<MultiTypeFetchStep> {
             service_name: self.service_name,
             response_path: self.response_path,
-            input: self.input,
+            input: self.input.into_multi_type(),
             output: self.output.into_multi_type(),
             kind: self.kind,
             flags: self.flags,

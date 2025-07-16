@@ -2,10 +2,11 @@ use petgraph::graph::NodeIndex;
 use tracing::{instrument, trace};
 
 use crate::{
-    ast::type_aware_selection::find_arguments_conflicts,
+    ast::selection_set::find_arguments_conflicts,
     planner::fetch::{
         error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
-        optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
+        optimize::utils::perform_fetch_step_merge, selections::FetchStepSelections,
+        state::MultiTypeFetchStep,
     },
 };
 
@@ -29,7 +30,7 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        if self.input.type_name != other.input.type_name {
+        if !self.input.selecting_same_types(&other.input) {
             return false;
         }
 
@@ -56,9 +57,19 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        let input_conflicts = find_arguments_conflicts(&self.input, &other.input);
+        let input_conflicts = FetchStepSelections::<MultiTypeFetchStep>::iter_matching_types(
+            &self.input,
+            &other.input,
+            |_, self_selections, other_selections| {
+                find_arguments_conflicts(self_selections, other_selections)
+            },
+        );
 
-        if !input_conflicts.is_empty() {
+        let has_conflicts = input_conflicts
+            .iter()
+            .any(|(_, conflicts)| !conflicts.is_empty());
+
+        if has_conflicts {
             return false;
         }
 

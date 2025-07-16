@@ -8,7 +8,7 @@ use petgraph::{
 use tracing::{instrument, trace};
 
 use crate::{
-    ast::type_aware_selection::selection_items_are_subset_of,
+    ast::selection_set::selection_items_are_subset_of,
     planner::fetch::{
         error::FetchGraphError,
         fetch_graph::FetchGraph,
@@ -116,15 +116,12 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        // TODO: Use selection_items_are_subset_of
         for (output_def_name, output_selections) in other.output.iter_selections() {
-            if &other.input.type_name == output_def_name
-                && selection_items_are_subset_of(
-                    &other.input.selection_set.items,
-                    &output_selections.items,
-                )
-            {
-                return true;
+            if let Some(input_selections) = other.input.selections_for_definition(output_def_name) {
+                if selection_items_are_subset_of(&input_selections.items, &output_selections.items)
+                {
+                    return true;
+                }
             }
         }
 

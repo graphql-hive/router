@@ -6,9 +6,12 @@ use petgraph::{
 };
 use tracing::{instrument, trace};
 
-use crate::planner::fetch::{
-    error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepFlags,
-    state::MultiTypeFetchStep,
+use crate::{
+    ast::merge_path::MergePath,
+    planner::fetch::{
+        error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepFlags,
+        state::MultiTypeFetchStep,
+    },
 };
 
 // Return true in case an alias was applied during the merge process.
@@ -41,7 +44,11 @@ pub(crate) fn perform_fetch_step_merge(
         // We can't do it when both are entity calls fetch steps.
         other
             .output
-            .add(&other.input.type_name, &other.input.selection_set)?;
+            .migrate_from_another(&other.input, &MergePath::default())?;
+        // TODO: Validate
+        // other
+        //     .output
+        //     .add(&other.input.type_name, &other.input.selection_set)?;
 
         other.output.wrap_with_condition(condition);
     } else if me.is_entity_call() && other.condition.is_some() {
@@ -80,12 +87,13 @@ pub(crate) fn perform_fetch_step_merge(
     // It's safe to not check if a condition was turned into an inline fragment,
     // because if a condition is present and "me" is a non-entity fetch step,
     // then the type_name values of the inputs are different.
-    if me.input.type_name == other.input.type_name {
+    if me.input.selecting_same_types(&other.input) {
         if me.response_path != other.response_path {
             return Err(FetchGraphError::MismatchedResponsePath);
         }
 
-        me.input.add(&other.input);
+        me.input
+            .migrate_from_another(&other.input, &MergePath::default())?;
     }
 
     let mut children_indexes: Vec<NodeIndex> = vec![];

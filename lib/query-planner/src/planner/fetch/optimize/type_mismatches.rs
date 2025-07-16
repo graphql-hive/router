@@ -7,7 +7,7 @@ use crate::{
         mismatch_finder::SelectionMismatchFinder,
         safe_merge::SafeSelectionSetMerger,
         selection_item::SelectionItem,
-        type_aware_selection::{field_condition_equal, find_selection_set_by_path_mut},
+        selection_set::{field_condition_equal, find_selection_set_by_path_mut},
     },
     planner::{
         fetch::{error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep},

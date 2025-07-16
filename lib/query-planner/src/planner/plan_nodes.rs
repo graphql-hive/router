@@ -4,11 +4,12 @@ use crate::{
         minification::minify_operation,
         operation::{OperationDefinition, SubgraphFetchOperation, VariableDefinition},
         selection_item::SelectionItem,
-        selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
-        type_aware_selection::TypeAwareSelection,
+        selection_set::{FieldSelection, SelectionSet},
         value::Value,
     },
-    planner::fetch::{fetch_step_data::FetchStepData, state::MultiTypeFetchStep},
+    planner::fetch::{
+        fetch_step_data::FetchStepData, selections::FetchStepSelections, state::MultiTypeFetchStep,
+    },
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
@@ -256,15 +257,12 @@ impl PlanNode {
     }
 }
 
-fn create_input_selection_set(input_selections: &TypeAwareSelection) -> SelectionSet {
-    SelectionSet {
-        items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-            selections: input_selections.selection_set.strip_for_plan_input(),
-            type_condition: input_selections.type_name.clone(),
-            skip_if: None,
-            include_if: None,
-        })],
-    }
+fn create_input_selection_set(
+    input_selections: &FetchStepSelections<MultiTypeFetchStep>,
+) -> SelectionSet {
+    let selection_set: SelectionSet = input_selections.into();
+
+    selection_set.strip_for_plan_input()
 }
 
 fn create_output_operation(
@@ -316,10 +314,10 @@ fn create_output_operation(
 
 impl From<&FetchStepData<MultiTypeFetchStep>> for OperationKind {
     fn from(step: &FetchStepData<MultiTypeFetchStep>) -> Self {
-        match &step.input.type_name {
-            str if str == "Query" => OperationKind::Query,
-            str if str == "Mutation" => OperationKind::Mutation,
-            str if str == "Subscription" => OperationKind::Subscription,
+        match step.input.iter().next().unwrap().0.as_str() {
+            "Query" => OperationKind::Query,
+            "Mutation" => OperationKind::Mutation,
+            "Subscription" => OperationKind::Subscription,
             _ => OperationKind::Query,
         }
     }

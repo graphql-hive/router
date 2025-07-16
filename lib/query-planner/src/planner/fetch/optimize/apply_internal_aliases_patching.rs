@@ -5,7 +5,7 @@ use crate::{
     ast::{
         merge_path::{MergePath, Segment},
         selection_item::SelectionItem,
-        type_aware_selection::find_selection_set_by_path_mut,
+        selection_set::find_selection_set_by_path_mut,
     },
     planner::fetch::{error::FetchGraphError, fetch_graph::FetchGraph, state::MultiTypeFetchStep},
 };
@@ -68,18 +68,29 @@ impl FetchGraph<MultiTypeFetchStep> {
                             if let Some(Segment::Field(field_name, args_hash, condition)) =
                                 maybe_patched_field
                             {
+                                // TODO: Avoid "except" here of course.
+                                let decendent_type_name = decendent
+                                    .input
+                                    .try_as_single()
+                                    .expect("to be a single input")
+                                    .to_string();
+
+                                let selection = decendent
+                                    .input
+                                    .selections_for_definition_mut(&decendent_type_name)
+                                    .expect("selection set is missing");
+
                                 trace!(
                               "field '{}' was aliased, relative selection path: '{}', checking if need to patch selection '{}'",
                               field_name,
                               relative_path,
-                              decendent.input.selection_set
+                              selection
                           );
 
                                 // First, check if the node's input selection set contains the field that was aliased
-                                if let Some(selection) = find_selection_set_by_path_mut(
-                                    &mut decendent.input.selection_set,
-                                    &relative_path,
-                                ) {
+                                if let Some(selection) =
+                                    find_selection_set_by_path_mut(selection, &relative_path)
+                                {
                                     trace!("found selection to patch: {}", selection);
                                     let item_to_patch = selection.items.iter_mut().find(|item| matches!(item, SelectionItem::Field(field) if field.name == *field_name && field.arguments_hash() == *args_hash));
 
@@ -99,7 +110,7 @@ impl FetchGraph<MultiTypeFetchStep> {
                                     trace!(
                                         "path '{}' was not found in selection '{}', skipping...",
                                         relative_path,
-                                        decendent.input.selection_set
+                                        selection
                                     );
                                 }
 

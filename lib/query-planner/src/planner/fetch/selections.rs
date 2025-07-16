@@ -9,8 +9,10 @@ use crate::{
         merge_path::{Condition, MergePath},
         safe_merge::{AliasesRecords, SafeSelectionSetMerger},
         selection_item::SelectionItem,
-        selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
-        type_aware_selection::{find_selection_set_by_path_mut, merge_selection_set},
+        selection_set::{
+            find_selection_set_by_path_mut, merge_selection_set, selection_items_are_subset_of,
+            FieldSelection, InlineFragmentSelection, SelectionSet,
+        },
     },
     planner::fetch::state::{MultiTypeFetchStep, SingleTypeFetchStep},
 };
@@ -95,6 +97,14 @@ impl FetchStepSelections<SingleTypeFetchStep> {
             .1
     }
 
+    pub fn selection_set_mut(&mut self) -> &mut SelectionSet {
+        self.selections
+            .iter_mut()
+            .next()
+            .expect("SingleTypeFetchStep should have exactly one selection")
+            .1
+    }
+
     pub fn add_at_path(
         &mut self,
         fetch_path: &MergePath,
@@ -123,6 +133,14 @@ impl FetchStepSelections<SingleTypeFetchStep> {
 }
 
 impl<State> FetchStepSelections<State> {
+    pub fn contains(&self, definition_name: &str, selection_set: &SelectionSet) -> bool {
+        if let Some(self_selections) = self.selections.get(definition_name) {
+            return selection_items_are_subset_of(&self_selections.items, &selection_set.items);
+        }
+
+        false
+    }
+
     pub fn is_selecting_definition(&self, definition_name: &str) -> bool {
         self.selections.contains_key(definition_name)
     }
@@ -156,6 +174,10 @@ impl<State> FetchStepSelections<State> {
         self.selections.get_mut(definition_name)
     }
 
+    pub fn selections_for_definition(&self, definition_name: &str) -> Option<&SelectionSet> {
+        self.selections.get(definition_name)
+    }
+
     fn add_at_path_inner(
         &mut self,
         definition_name: &str,
@@ -184,6 +206,37 @@ impl<State> FetchStepSelections<State> {
 }
 
 impl FetchStepSelections<MultiTypeFetchStep> {
+    pub fn selecting_same_types(&self, other: &Self) -> bool {
+        if self.selections.len() != other.selections.len() {
+            return false;
+        }
+
+        for key in self.selections.keys() {
+            if !other.selections.contains_key(key) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    pub fn iter_matching_types<'a, 'b, R>(
+        input: &'a FetchStepSelections<MultiTypeFetchStep>,
+        other: &'b FetchStepSelections<MultiTypeFetchStep>,
+        mut callback: impl FnMut(&str, &SelectionSet, &SelectionSet) -> R,
+    ) -> Vec<(&'a str, R)> {
+        let mut result: Vec<(&'a str, R)> = Vec::new();
+
+        for (definition_name, input_selections) in input.iter_selections() {
+            if let Some(other_selections) = other.selections.get(definition_name) {
+                let r = callback(definition_name, input_selections, other_selections);
+                result.push((definition_name, r));
+            }
+        }
+
+        result
+    }
+
     pub fn try_as_single(&self) -> Option<&str> {
         if self.selections.len() == 1 {
             self.selections.keys().next().map(|key| key.as_str())
@@ -207,22 +260,6 @@ impl FetchStepSelections<MultiTypeFetchStep> {
             let target_type = maybe_merge_into.as_ref().unwrap_or(definition_name);
             self.add_at_path_inner(target_type, fetch_path, selection_set.clone(), false)?;
         }
-
-        Ok(())
-    }
-
-    pub fn add(
-        &mut self,
-        definition_name: &str,
-        selection_set: &SelectionSet,
-    ) -> Result<(), FetchStepSelectionsError> {
-        let selections = self
-            .selections_for_definition_mut(definition_name)
-            .ok_or_else(|| {
-                FetchStepSelectionsError::UnexpectedMissingDefinition(definition_name.to_string())
-            })?;
-
-        merge_selection_set(selections, selection_set, false);
 
         Ok(())
     }
@@ -296,6 +333,12 @@ impl FetchStepSelections<MultiTypeFetchStep> {
 }
 
 impl FetchStepSelections<SingleTypeFetchStep> {
+    pub fn add(&mut self, selection_set: &SelectionSet) -> Result<(), FetchStepSelectionsError> {
+        merge_selection_set(self.selection_set_mut(), selection_set, false);
+
+        Ok(())
+    }
+
     pub fn new(definition_name: &str) -> Self {
         let mut map = HashMap::new();
         map.insert(definition_name.to_string(), SelectionSet::default());
