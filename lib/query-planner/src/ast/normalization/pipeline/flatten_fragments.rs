@@ -68,15 +68,34 @@ fn build_possible_types_map<'a>(ctx: &NormalizationContext<'a>) -> PossibleTypes
     let mut possible_types = PossibleTypesMap::new();
     let maybe_subgraph_name = ctx.subgraph_name.as_ref();
 
-    let relevant_definitions = ctx.supergraph.definitions.iter().filter(|(_, def)| {
-        if let Some(subgraph_name) = maybe_subgraph_name {
-            def.is_defined_in_subgraph(subgraph_name.as_str())
-        } else {
-            true
-        }
-    });
+    let mut object_types_list = Vec::new();
+    let mut abstract_types_list = Vec::new();
 
-    for (type_name, type_def) in relevant_definitions.clone() {
+    for (name, def) in &ctx.supergraph.definitions {
+        match def {
+            SupergraphDefinition::Union(_) | SupergraphDefinition::Interface(_) => {
+                if maybe_subgraph_name.is_none()
+                    || maybe_subgraph_name.is_some_and(|subgraph_name| {
+                        def.is_defined_in_subgraph(subgraph_name.as_str())
+                    })
+                {
+                    abstract_types_list.push((name, def));
+                }
+            }
+            SupergraphDefinition::Object(_) => {
+                if maybe_subgraph_name.is_none()
+                    || maybe_subgraph_name.is_some_and(|subgraph_name| {
+                        def.is_defined_in_subgraph(subgraph_name.as_str())
+                    })
+                {
+                    object_types_list.push((name, def));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for (type_name, type_def) in &abstract_types_list {
         match type_def {
             SupergraphDefinition::Union(union_type) => {
                 let members = union_type
@@ -95,14 +114,14 @@ fn build_possible_types_map<'a>(ctx: &NormalizationContext<'a>) -> PossibleTypes
             }
             SupergraphDefinition::Interface(_) => {
                 let mut object_types: HashSet<&str> = HashSet::new();
-                for (obj_type_name, obj_type_def) in relevant_definitions.clone() {
+                for (obj_type_name, obj_type_def) in &object_types_list {
                     if let SupergraphDefinition::Object(object_type) = obj_type_def {
                         if object_type.join_implements.iter().any(|j| {
                             let belongs = match maybe_subgraph_name {
                                 Some(subgraph_name) => &j.graph_id == *subgraph_name,
                                 None => true,
                             };
-                            belongs && &j.interface == type_name
+                            belongs && &j.interface == *type_name
                         }) {
                             object_types.insert(obj_type_name.as_str());
                         }
