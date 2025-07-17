@@ -134,7 +134,7 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
               {
                 "Field": "reviews"
               },
-              "List",
+              "@",
               {
                 "Field": "product"
               }

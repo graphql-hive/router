@@ -221,7 +221,7 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
               {
                 "Field": "products"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -562,7 +562,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
               {
                 "Field": "products"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -596,7 +596,7 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
               {
                 "Field": "products"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",

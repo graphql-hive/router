@@ -87,7 +87,7 @@ fn interface_object_requiring_interface_fields() -> Result<(), Box<dyn Error>> {
               {
                 "Field": "anotherUsers"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -133,7 +133,7 @@ fn interface_object_requiring_interface_fields() -> Result<(), Box<dyn Error>> {
               {
                 "Field": "anotherUsers"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -269,7 +269,7 @@ fn interface_field_from_remote_graph_with_requires() -> Result<(), Box<dyn Error
               {
                 "Field": "users"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -391,7 +391,7 @@ fn inline_fragment_on_interface_object_for_remote_type_field() -> Result<(), Box
               {
                 "Field": "anotherUsers"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -583,7 +583,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
               {
                 "Field": "anotherUsers"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -629,7 +629,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
               {
                 "Field": "anotherUsers"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -777,7 +777,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
               {
                 "Field": "users"
               },
-              "List",
+              "@",
               {
                 "Cast": "User"
               }

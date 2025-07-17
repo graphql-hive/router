@@ -106,6 +106,7 @@ pub enum FetchRewrite {
 pub enum FlattenNodePathSegment {
     Field(String),
     Cast(String),
+    #[serde(rename = "@")]
     List,
 }
 

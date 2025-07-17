@@ -108,7 +108,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
                   {
                     "Field": "products"
                   },
-                  "List"
+                  "@"
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -158,7 +158,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
                   {
                     "Field": "products"
                   },
-                  "List"
+                  "@"
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -314,7 +314,7 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
               {
                 "Field": "feed"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -345,11 +345,11 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
               {
                 "Field": "feed"
               },
-              "List",
+              "@",
               {
                 "Field": "_internal_qp_alias_0"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -380,7 +380,7 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
               {
                 "Field": "feed"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -536,7 +536,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
               {
                 "Field": "feed"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -570,11 +570,11 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
               {
                 "Field": "feed"
               },
-              "List",
+              "@",
               {
                 "Field": "_internal_qp_alias_0"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -605,7 +605,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
               {
                 "Field": "feed"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -772,7 +772,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
               {
                 "Field": "feed"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -806,11 +806,11 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
               {
                 "Field": "feed"
               },
-              "List",
+              "@",
               {
                 "Field": "_internal_qp_alias_0"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -841,7 +841,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
               {
                 "Field": "feed"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",

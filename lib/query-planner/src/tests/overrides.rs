@@ -132,7 +132,7 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
               {
                 "Field": "aFeed"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",

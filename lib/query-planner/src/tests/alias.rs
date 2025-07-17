@@ -460,7 +460,7 @@ fn simple_mismatch_between_union_fields() -> Result<(), Box<dyn Error>> {
               {
                 "Field": "users"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -694,7 +694,7 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
               {
                 "Field": "users"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -1095,7 +1095,7 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
               {
                 "Field": "users"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",

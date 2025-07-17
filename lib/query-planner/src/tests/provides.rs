@@ -73,7 +73,7 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
               {
                 "Field": "products"
               },
-              "List"
+              "@"
             ],
             "node": {
               "kind": "Fetch",
