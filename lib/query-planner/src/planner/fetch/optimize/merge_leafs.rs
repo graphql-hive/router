@@ -1,13 +1,9 @@
 use petgraph::graph::NodeIndex;
 use tracing::{instrument, trace};
 
-use crate::{
-    ast::selection_set::find_arguments_conflicts,
-    planner::fetch::{
-        error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
-        optimize::utils::perform_fetch_step_merge, selections::FetchStepSelections,
-        state::MultiTypeFetchStep,
-    },
+use crate::planner::fetch::{
+    error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
+    optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
 };
 
 impl FetchStepData<MultiTypeFetchStep> {
@@ -57,19 +53,7 @@ impl FetchStepData<MultiTypeFetchStep> {
             return false;
         }
 
-        let input_conflicts = FetchStepSelections::<MultiTypeFetchStep>::iter_matching_types(
-            &self.input,
-            &other.input,
-            |_, self_selections, other_selections| {
-                find_arguments_conflicts(self_selections, other_selections)
-            },
-        );
-
-        let has_conflicts = input_conflicts
-            .iter()
-            .any(|(_, conflicts)| !conflicts.is_empty());
-
-        if has_conflicts {
+        if self.has_arguments_conflicts_with(other) {
             return false;
         }
 
@@ -85,7 +69,7 @@ impl FetchGraph<MultiTypeFetchStep> {
     /// meaning the overall depth (amount of parallel layers) is not increased.
     pub(crate) fn merge_leafs(&mut self) -> Result<(), FetchGraphError> {
         while let Some((target_idx, leaf_idx)) = self.find_merge_candidate()? {
-            perform_fetch_step_merge(target_idx, leaf_idx, self)?;
+            perform_fetch_step_merge(target_idx, leaf_idx, self, false)?;
         }
 
         Ok(())

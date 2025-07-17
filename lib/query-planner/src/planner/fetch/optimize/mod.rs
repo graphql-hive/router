@@ -1,4 +1,5 @@
 mod apply_internal_aliases_patching;
+mod batch_multi_type;
 mod deduplicate_and_prune_fetch_steps;
 mod merge_children_with_parents;
 mod merge_leafs;
@@ -29,6 +30,7 @@ impl FetchGraph<MultiTypeFetchStep> {
             self.merge_siblings()?;
             self.merge_leafs()?;
             self.deduplicate_and_prune_fetch_steps()?;
+            self.batch_multi_type()?;
 
             let node_count_after = self.graph.node_count();
             let edge_count_after = self.graph.edge_count();

@@ -1,19 +1,16 @@
 use std::{collections::BTreeSet, fmt::Display};
 
 use bitflags::bitflags;
-use petgraph::{graph::NodeIndex, visit::EdgeRef};
-use tracing::trace;
+use petgraph::graph::NodeIndex;
 
 use crate::{
     ast::{
         merge_path::{Condition, MergePath},
         operation::VariableDefinition,
         safe_merge::AliasesRecords,
-        selection_set::find_arguments_conflicts,
     },
     planner::{
         fetch::{
-            fetch_graph::FetchGraph,
             selections::FetchStepSelections,
             state::{MultiTypeFetchStep, SingleTypeFetchStep},
         },
@@ -121,76 +118,9 @@ impl<State> FetchStepData<State> {
     }
 }
 
-impl FetchStepData<MultiTypeFetchStep> {
-    pub fn can_merge(
-        &self,
-        self_index: NodeIndex,
-        other_index: NodeIndex,
-        other: &Self,
-        fetch_graph: &FetchGraph<MultiTypeFetchStep>,
-    ) -> bool {
-        if self_index == other_index {
-            return false;
-        }
-
-        if self.service_name != other.service_name {
-            return false;
-        }
-
-        // We allow to merge root with entity calls by adding an inline fragment with the @include/@skip
-        if self.is_entity_call() && other.is_entity_call() && self.condition != other.condition {
-            return false;
-        }
-
-        // If both are entities, their response_paths should match,
-        // as we can't merge entity calls resolving different entities
-        if matches!(self.kind, FetchStepKind::Entity) && self.kind == other.kind {
-            if !self.response_path.eq(&other.response_path) {
-                return false;
-            }
-        } else {
-            // otherwise we can merge
-            if !other.response_path.starts_with(&self.response_path) {
-                return false;
-            }
-        }
-
-        let has_input_conflicts =
-            FetchStepSelections::iter_matching_types(&self.input, &other.input, |_, s1, s2| {
-                find_arguments_conflicts(s1, s2)
-            })
-            .iter()
-            .any(|(_, conflicts)| !conflicts.is_empty());
-
-        if has_input_conflicts {
-            trace!(
-                "preventing merge of [{}]+[{}] due to input conflicts",
-                self_index.index(),
-                other_index.index(),
-            );
-
-            return false;
-        }
-
-        // if the `other` FetchStep has a single parent and it's `this` FetchStep
-        if fetch_graph.parents_of(other_index).count() == 1
-            && fetch_graph
-                .parents_of(other_index)
-                .all(|edge| edge.source() == self_index)
-        {
-            return true;
-        }
-
-        // if they do not share parents, they can't be merged
-        if !fetch_graph.parents_of(self_index).all(|self_edge| {
-            fetch_graph
-                .parents_of(other_index)
-                .any(|other_edge| other_edge.source() == self_edge.source())
-        }) {
-            return false;
-        }
-
-        true
+impl<State> FetchStepData<State> {
+    pub fn is_fetching_multiple_types(&self) -> bool {
+        self.input.is_fetching_multiple_types() || self.output.is_fetching_multiple_types()
     }
 }
 

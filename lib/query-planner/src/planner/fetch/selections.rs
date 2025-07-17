@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     fmt::Display,
     marker::PhantomData,
 };
@@ -27,7 +27,7 @@ pub enum FetchStepSelectionsError {
 
 #[derive(Debug, Clone)]
 pub struct FetchStepSelections<State> {
-    selections: HashMap<String, SelectionSet>,
+    selections: BTreeMap<String, SelectionSet>,
     _state: PhantomData<State>,
 }
 
@@ -133,6 +133,10 @@ impl FetchStepSelections<SingleTypeFetchStep> {
 }
 
 impl<State> FetchStepSelections<State> {
+    pub fn is_fetching_multiple_types(&self) -> bool {
+        self.selections.len() > 1
+    }
+
     pub fn contains(&self, definition_name: &str, selection_set: &SelectionSet) -> bool {
         if let Some(self_selections) = self.selections.get(definition_name) {
             return selection_items_are_subset_of(&self_selections.items, &selection_set.items);
@@ -249,6 +253,13 @@ impl FetchStepSelections<MultiTypeFetchStep> {
         self.selections.iter()
     }
 
+    /// Creates a slot in the internal HashMap and will allow to add selections for the given definition name.
+    /// Without that, trying to add selections using any function will either fail or result in trying to force-add to a root type.
+    /// Calling this method is crucial if you wish to create multi-type steps.
+    pub fn declare_known_type(&mut self, def_name: &str) {
+        self.selections.entry(def_name.to_string()).or_default();
+    }
+
     pub fn migrate_from_another(
         &mut self,
         other: &Self,
@@ -340,7 +351,7 @@ impl FetchStepSelections<SingleTypeFetchStep> {
     }
 
     pub fn new(definition_name: &str) -> Self {
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
         map.insert(definition_name.to_string(), SelectionSet::default());
 
         Self {

@@ -92,7 +92,12 @@ impl FetchGraph<MultiTypeFetchStep> {
                     .get(&other_child_index)
                     .ok_or(FetchGraphError::IndexMappingLost)?;
 
-                perform_fetch_step_merge(*child_index_latest, *other_child_index_latest, self)?;
+                perform_fetch_step_merge(
+                    *child_index_latest,
+                    *other_child_index_latest,
+                    self,
+                    false,
+                )?;
 
                 // Because `other_child` was merged into `child`,
                 // then everything that was pointing to `other_child`
