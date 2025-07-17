@@ -18,11 +18,25 @@ use crate::{
 impl FetchGraph {
     #[instrument(level = "trace", skip_all)]
     pub fn optimize(&mut self, supergraph_state: &SupergraphState) -> Result<(), FetchGraphError> {
-        self.merge_passthrough_child()?;
-        self.merge_children_with_parents()?;
-        self.merge_siblings()?;
-        self.merge_leafs()?;
-        self.deduplicate_and_prune_fetch_steps()?;
+        // Run optimization passes repeatedly until the graph stabilizes, as one optimization can create
+        // opportunities for others.
+        loop {
+            let node_count_before = self.graph.node_count();
+            let edge_count_before = self.graph.edge_count();
+
+            self.merge_passthrough_child()?;
+            self.merge_children_with_parents()?;
+            self.merge_siblings()?;
+            self.merge_leafs()?;
+            self.deduplicate_and_prune_fetch_steps()?;
+
+            let node_count_after = self.graph.node_count();
+            let edge_count_after = self.graph.edge_count();
+
+            if node_count_before == node_count_after && edge_count_before == edge_count_after {
+                break;
+            }
+        }
         self.turn_mutations_into_sequence()?;
         self.fix_conflicting_type_mismatches(supergraph_state)?;
 

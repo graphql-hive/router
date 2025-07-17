@@ -8,11 +8,13 @@ use petgraph::{
 use tracing::{instrument, trace};
 
 use crate::planner::fetch::{
-    error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
+    error::FetchGraphError,
+    fetch_graph::FetchGraph,
+    fetch_step_data::{FetchStepData, FetchStepFlags},
 };
 
 impl FetchGraph {
-    /// When a child has the input identical as the output,
+    /// When a child's input contains its output,
     /// it gets squashed into its parent.
     /// Its children becomes children of the parent.
     #[instrument(level = "trace", skip_all)]
@@ -94,6 +96,13 @@ impl FetchStepData {
             return false;
         }
 
+        if other
+            .flags
+            .contains(FetchStepFlags::USED_FOR_TYPE_CONDITION)
+        {
+            return false;
+        }
+
         // if the `other` FetchStep has a single parent and it's `this` FetchStep
         if fetch_graph.parents_of(other_index).count() != 1 {
             return false;
@@ -103,7 +112,7 @@ impl FetchStepData {
             return false;
         }
 
-        other.input.eq(&other.output)
+        other.input.contains(&other.output)
     }
 }
 

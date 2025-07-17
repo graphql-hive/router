@@ -11,7 +11,9 @@ use crate::{
         merge_path::Condition, selection_item::SelectionItem,
         selection_set::InlineFragmentSelection,
     },
-    planner::fetch::{error::FetchGraphError, fetch_graph::FetchGraph},
+    planner::fetch::{
+        error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepFlags,
+    },
 };
 
 // Return true in case an alias was applied during the merge process.
@@ -75,7 +77,10 @@ pub(crate) fn perform_fetch_step_merge(
     let maybe_aliases = me.output.add_at_path_and_solve_conflicts(
         &other.output,
         other.response_path.slice_from(me.response_path.len()),
-        (me.used_for_requires, other.used_for_requires),
+        (
+            me.flags.contains(FetchStepFlags::USED_FOR_REQUIRES),
+            other.flags.contains(FetchStepFlags::USED_FOR_REQUIRES),
+        ),
         false,
     );
 

@@ -1,5 +1,6 @@
 use std::{collections::BTreeSet, fmt::Display};
 
+use bitflags::bitflags;
 use petgraph::{graph::NodeIndex, visit::EdgeRef};
 use tracing::trace;
 
@@ -17,6 +18,16 @@ use crate::{
     state::supergraph_state::SubgraphName,
 };
 
+bitflags! {
+    #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct FetchStepFlags: u8 {
+        /// This fetch is for resolving a @requires directive.
+        const USED_FOR_REQUIRES = 1 << 0;
+        /// This fetch is for resolving a type condition on an interface.
+        const USED_FOR_TYPE_CONDITION = 1 << 1;
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FetchStepData {
     pub service_name: SubgraphName,
@@ -24,7 +35,7 @@ pub struct FetchStepData {
     pub input: TypeAwareSelection,
     pub output: TypeAwareSelection,
     pub kind: FetchStepKind,
-    pub used_for_requires: bool,
+    pub flags: FetchStepFlags,
     pub condition: Option<Condition>,
     pub variable_usages: Option<BTreeSet<String>>,
     pub variable_definitions: Option<Vec<VariableDefinition>>,
@@ -52,8 +63,12 @@ impl Display for FetchStepData {
             self.response_path.join("."),
         )?;
 
-        if self.used_for_requires {
+        if self.flags.contains(FetchStepFlags::USED_FOR_REQUIRES) {
             write!(f, " [@requires]")?;
+        }
+
+        if self.flags.contains(FetchStepFlags::USED_FOR_TYPE_CONDITION) {
+            write!(f, " [no_pass_through]")?;
         }
 
         if let Some(condition) = &self.condition {

@@ -675,7 +675,7 @@ impl SupergraphDefinition {
     }
 
     pub fn is_defined_in_subgraph(&self, graph_id: &str) -> bool {
-        !self.extract_join_types_for(graph_id).is_empty()
+        self.join_types().iter().any(|jt| jt.graph_id == graph_id)
     }
 
     pub fn try_into_root_type(&self) -> Option<&OperationKind> {

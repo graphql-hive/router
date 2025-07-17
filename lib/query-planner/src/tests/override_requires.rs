@@ -131,22 +131,6 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
         },
         Parallel {
           Flatten(path: "userInC") {
-            Fetch(service: "a") {
-              {
-                ... on User {
-                  __typename
-                  id
-                  name
-                }
-              } =>
-              {
-                ... on User {
-                  aName
-                }
-              }
-            },
-          },
-          Flatten(path: "userInC") {
             Fetch(service: "c") {
               {
                 ... on User {
@@ -162,13 +146,29 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
               }
             },
           },
+          Flatten(path: "userInC") {
+            Fetch(service: "a") {
+              {
+                ... on User {
+                  __typename
+                  name
+                  id
+                }
+              } =>
+              {
+                ... on User {
+                  aName
+                }
+              }
+            },
+          },
           Flatten(path: "userInA") {
             Fetch(service: "c") {
               {
                 ... on User {
                   __typename
-                  id
                   name
+                  id
                 }
               } =>
               {
@@ -362,9 +362,9 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
-                  "serviceName": "a",
+                  "serviceName": "c",
                   "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{aName}}}",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{cName}}}",
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -376,11 +376,11 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                         },
                         {
                           "kind": "Field",
-                          "name": "id"
+                          "name": "name"
                         },
                         {
                           "kind": "Field",
-                          "name": "name"
+                          "name": "id"
                         }
                       ]
                     }
@@ -394,9 +394,9 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                 ],
                 "node": {
                   "kind": "Fetch",
-                  "serviceName": "c",
+                  "serviceName": "a",
                   "operationKind": "query",
-                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{cName}}}",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{aName}}}",
                   "requires": [
                     {
                       "kind": "InlineFragment",
@@ -440,11 +440,11 @@ fn override_with_requires_many() -> Result<(), Box<dyn Error>> {
                         },
                         {
                           "kind": "Field",
-                          "name": "id"
+                          "name": "name"
                         },
                         {
                           "kind": "Field",
-                          "name": "name"
+                          "name": "id"
                         }
                       ]
                     }
@@ -679,8 +679,8 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
             {
               ... on User {
                 __typename
-                id
                 name
+                id
               }
             } =>
             {
@@ -754,11 +754,11 @@ fn override_with_requires_cname_in_a() -> Result<(), Box<dyn Error>> {
                     },
                     {
                       "kind": "Field",
-                      "name": "id"
+                      "name": "name"
                     },
                     {
                       "kind": "Field",
-                      "name": "name"
+                      "name": "id"
                     }
                   ]
                 }

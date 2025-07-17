@@ -232,7 +232,7 @@ fn interface_field_from_remote_graph_with_requires() -> Result<(), Box<dyn Error
     },
     "#);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -310,7 +310,7 @@ fn interface_field_from_remote_graph_with_requires() -> Result<(), Box<dyn Error
         ]
       }
     }
-    "###);
+    "#);
 
     Ok(())
 }
@@ -525,8 +525,9 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
             } =>
             {
               ... on NodeWithName {
-                name
                 __typename
+                id
+                name
                 ... on User {
                   age
                   name
@@ -547,6 +548,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
             {
               ... on NodeWithName {
                 username
+                id
               }
             }
           },
@@ -565,22 +567,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{anotherUsers{__typename id}}",
-            "inputRewrites": [
-              {
-                "ValueSetter": {
-                  "path": [
-                    {
-                      "TypenameEquals": "NodeWithName"
-                    },
-                    {
-                      "Key": "__typename"
-                    }
-                  ],
-                  "setValueTo": "NodeWithName"
-                }
-              }
-            ]
+            "operation": "query{anotherUsers{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -592,7 +579,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
               "kind": "Fetch",
               "serviceName": "a",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{name __typename ...on User{age name}}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{__typename id name ...on User{age name}}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",
@@ -636,7 +623,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
               "kind": "Fetch",
               "serviceName": "b",
               "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{username}}}",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on NodeWithName{username id}}}",
               "requires": [
                 {
                   "kind": "InlineFragment",

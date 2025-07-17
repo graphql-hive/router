@@ -43,27 +43,44 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Flatten(path: "products.@") {
-          Fetch(service: "a") {
-            {
-              ... on Product {
-                __typename
-                price
-                weight
-                upc
-                category {
-                  averagePrice
+        Parallel {
+          Flatten(path: "products.@") {
+            Fetch(service: "a") {
+              {
+                ... on Product {
+                  __typename
+                  category {
+                    averagePrice
+                  }
+                  upc
+                  price: _internal_qp_alias_0
+                  weight
                 }
-                price: _internal_qp_alias_0
+              } =>
+              {
+                ... on Product {
+                  isExpensiveCategory
+                  shippingEstimateEUR
+                }
               }
-            } =>
-            {
-              ... on Product {
-                shippingEstimate
-                isExpensiveCategory
-                shippingEstimateEUR
+            },
+          },
+          Flatten(path: "products.@") {
+            Fetch(service: "a") {
+              {
+                ... on Product {
+                  __typename
+                  price
+                  weight
+                  upc
+                }
+              } =>
+              {
+                ... on Product {
+                  shippingEstimate
+                }
               }
-            }
+            },
           },
         },
       },
@@ -83,56 +100,94 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
             "operation": "query{products{__typename upc name price(currency: \"USD\") weight _internal_qp_alias_0: price(currency: \"EUR\") category{averagePrice(currency: \"USD\")}}}"
           },
           {
-            "kind": "Flatten",
-            "path": [
-              "products",
-              "@"
-            ],
-            "node": {
-              "kind": "Fetch",
-              "serviceName": "a",
-              "operationKind": "query",
-              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate isExpensiveCategory shippingEstimateEUR}}}",
-              "requires": [
-                {
-                  "kind": "InlineFragment",
-                  "typeCondition": "Product",
-                  "selections": [
+            "kind": "Parallel",
+            "nodes": [
+              {
+                "kind": "Flatten",
+                "path": [
+                  "products",
+                  "@"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "a",
+                  "operationKind": "query",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{isExpensiveCategory shippingEstimateEUR}}}",
+                  "requires": [
                     {
-                      "kind": "Field",
-                      "name": "__typename"
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "price"
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "weight"
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "upc"
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "category",
+                      "kind": "InlineFragment",
+                      "typeCondition": "Product",
                       "selections": [
                         {
                           "kind": "Field",
-                          "name": "averagePrice"
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "category",
+                          "selections": [
+                            {
+                              "kind": "Field",
+                              "name": "averagePrice"
+                            }
+                          ]
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "upc"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "_internal_qp_alias_0",
+                          "alias": "price"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "weight"
                         }
                       ]
-                    },
-                    {
-                      "kind": "Field",
-                      "name": "_internal_qp_alias_0",
-                      "alias": "price"
                     }
                   ]
                 }
-              ]
-            }
+              },
+              {
+                "kind": "Flatten",
+                "path": [
+                  "products",
+                  "@"
+                ],
+                "node": {
+                  "kind": "Fetch",
+                  "serviceName": "a",
+                  "operationKind": "query",
+                  "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate}}}",
+                  "requires": [
+                    {
+                      "kind": "InlineFragment",
+                      "typeCondition": "Product",
+                      "selections": [
+                        {
+                          "kind": "Field",
+                          "name": "__typename"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "price"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "weight"
+                        },
+                        {
+                          "kind": "Field",
+                          "name": "upc"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
           }
         ]
       }
