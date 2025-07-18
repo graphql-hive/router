@@ -1,5 +1,6 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 
+use hashbrown::HashMap;
 use petgraph::{graph::NodeIndex, visit::EdgeRef};
 
 use crate::{planner::plan_nodes::ConditionNode, state::supergraph_state::SupergraphState};

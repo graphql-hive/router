@@ -1,6 +1,5 @@
-use std::collections::HashSet;
-
 use crate::ast::type_aware_selection::TypeAwareSelection;
+use hashbrown::HashSet;
 
 // TODO: Consider interior mutability with Rc<RefCell<ExcludedFromLookup>> to avoid full clone while traversing
 #[derive(Default)]

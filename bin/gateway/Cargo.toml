@@ -49,6 +49,9 @@ tower-http = { version = "0.6.6", features = [
   "request-id",
 ] }
 
+# Data Structures
+hashbrown = "0.15.4"
+
 # Utils
 thiserror = "2.0.12"
 lazy_static = "1.5.0"

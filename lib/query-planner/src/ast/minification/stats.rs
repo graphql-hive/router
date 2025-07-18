@@ -1,10 +1,9 @@
-use std::collections::HashMap;
-
 use crate::ast::minification::error::MinificationError;
 use crate::ast::minification::selection_id::{generate_selection_id, SelectionId};
 use crate::ast::selection_item::SelectionItem;
 use crate::ast::selection_set::SelectionSet;
 use crate::state::supergraph_state::SupergraphState;
+use hashbrown::HashMap;
 
 pub struct Stats {
     state: HashMap<SelectionId, usize>,

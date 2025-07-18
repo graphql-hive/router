@@ -1,5 +1,6 @@
+use hashbrown::HashSet;
 use std::collections::VecDeque;
-use std::{cmp, collections::HashSet, fmt::Debug, sync::Arc};
+use std::{cmp, fmt::Debug, sync::Arc};
 
 use petgraph::{
     graph::{EdgeIndex, NodeIndex},

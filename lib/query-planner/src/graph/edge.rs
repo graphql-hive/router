@@ -1,5 +1,5 @@
+use hashbrown::HashSet;
 use std::{
-    collections::HashSet,
     fmt::{Debug, Display},
     hash::Hash,
 };

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::mem::take;
 
 use crate::ast::document::Document;

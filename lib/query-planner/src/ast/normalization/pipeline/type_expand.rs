@@ -1,9 +1,11 @@
-use std::{collections::HashSet, vec};
+use std::vec;
 
 use graphql_parser::query::{
     Definition, Field, InlineFragment, Mutation, OperationDefinition, Query, Selection,
     SelectionSet, Subscription, TypeCondition,
 };
+
+use hashbrown::HashSet;
 
 use crate::{
     ast::normalization::{

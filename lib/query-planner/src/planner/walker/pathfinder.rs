@@ -1,4 +1,5 @@
-use std::collections::{HashSet, VecDeque};
+use hashbrown::HashSet;
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use petgraph::visit::{EdgeRef, NodeRef};

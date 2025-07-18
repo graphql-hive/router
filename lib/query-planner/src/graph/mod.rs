@@ -8,7 +8,6 @@ pub use self::edge::PERCENTAGE_SCALE_FACTOR;
 mod tests;
 
 use std::{
-    collections::{HashMap, HashSet},
     fmt::{Debug, Display},
     hash::Hash,
 };
@@ -24,6 +23,7 @@ use crate::{
 };
 use error::GraphError;
 use graphql_parser::query::{Selection, SelectionSet};
+use hashbrown::{HashMap, HashSet};
 use petgraph::{
     dot::Dot,
     graph::{EdgeIndex, Edges, NodeIndex},
@@ -1225,7 +1225,7 @@ where
             let other_sets = || other_sets_left.iter().chain(other_sets_right);
             smallest_set
                 .iter()
-                .filter(|item| other_sets().all(|o| o.contains(item)))
+                .filter(|item| other_sets().all(|o| o.contains(*item)))
                 .cloned()
                 .collect()
         })

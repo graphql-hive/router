@@ -14,6 +14,7 @@ reqwest = { version = "0.12", features = ["json"] }
 query-planner = { path = "../query-planner" }
 graphql-parser = "0.4.1"
 graphql-tools = "0.4.0"
+hashbrown = "0.15.4"
 tracing = "0.1.41"
 # TODO: Move this to dev-dependencies but currently benchmarks need it
 async-graphql = { version = "7.0.17" }

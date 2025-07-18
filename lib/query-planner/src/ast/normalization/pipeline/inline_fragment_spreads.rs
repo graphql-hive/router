@@ -1,11 +1,10 @@
-use std::collections::HashMap;
-
 use graphql_parser::query::{
     Definition, FragmentDefinition, InlineFragment, Mutation, OperationDefinition, Query,
     Selection, SelectionSet, Subscription,
 };
 
 use crate::ast::normalization::{context::NormalizationContext, error::NormalizationError};
+use hashbrown::HashMap;
 
 pub fn inline_fragment_spreads(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     let mut fragment_map: HashMap<String, FragmentDefinition<'static, String>> = HashMap::new();

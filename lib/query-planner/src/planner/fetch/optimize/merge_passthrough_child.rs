@@ -1,4 +1,5 @@
-use std::collections::{HashMap, VecDeque};
+use hashbrown::HashMap;
+use std::collections::VecDeque;
 
 use petgraph::{
     graph::NodeIndex,
