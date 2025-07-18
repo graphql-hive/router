@@ -498,16 +498,16 @@ fn deep_merge_with_simple(c: &mut Criterion) {
 }
 
 fn all_benchmarks(c: &mut Criterion) {
-    // query_plan_executor_without_projection_locally(c);
-    // query_plan_executor_pipeline_locally(c);
+    query_plan_executor_without_projection_locally(c);
+    query_plan_executor_pipeline_locally(c);
 
-    // query_plan_execution_without_projection_via_http(c);
-    // query_plan_executor_pipeline_via_http(c);
+    query_plan_execution_without_projection_via_http(c);
+    query_plan_executor_pipeline_via_http(c);
 
-    // deep_merge_with_simple(c);
-    // deep_merge_with_complex(c);
-    // project_requires(c);
-    // traverse_and_collect(c);
+    deep_merge_with_simple(c);
+    deep_merge_with_complex(c);
+    project_requires(c);
+    traverse_and_collect(c);
     project_data_by_operation(c);
 }
 
