@@ -1,7 +1,7 @@
 use query_planner::planner::plan_nodes::FlattenNodePathSegment;
-use serde_json::json;
+use serde_json::{json};
 
-use crate::traverse_and_collect;
+use crate::{schema_metadata::SchemaMetadata, traverse_and_callback};
 
 #[test]
 fn array_cast_test() -> () {
@@ -35,7 +35,10 @@ fn array_cast_test() -> () {
       ]
     });
 
-    let result = traverse_and_collect(&mut data, &path);
+    let mut result = vec![];
+    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
+        result.push(value);
+    });
     let expected = json!([{
         "id": "p4",
         "__typename": "Magazine",
@@ -56,7 +59,11 @@ fn array_cast_test() -> () {
 fn simple_field_access() {
     let path = [FlattenNodePathSegment::Field("a".into())];
     let mut data = json!({"a": 1, "b": 2});
-    let result = traverse_and_collect(&mut data, &path);
+    
+    let mut result = vec![];
+    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
+        result.push(value);
+    });
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         serde_json::to_string_pretty(&json!([1])).unwrap_or_default()
@@ -70,7 +77,11 @@ fn nested_field_access() {
         FlattenNodePathSegment::Field("b".into()),
     ];
     let mut data = json!({"a": {"b": 3}});
-    let result = traverse_and_collect(&mut data, &path);
+    
+    let mut result = vec![];
+    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
+        result.push(value);
+    });
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         serde_json::to_string_pretty(&json!([3])).unwrap_or_default()
@@ -84,7 +95,11 @@ fn simple_list_access() {
         FlattenNodePathSegment::List,
     ];
     let mut data = json!({"a": [1, 2, 3]});
-    let result = traverse_and_collect(&mut data, &path);
+    
+    let mut result = vec![];
+    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
+        result.push(value);
+    });
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         serde_json::to_string_pretty(&json!([1, 2, 3])).unwrap_or_default()
@@ -99,7 +114,11 @@ fn field_access_in_list() {
         FlattenNodePathSegment::Field("b".into()),
     ];
     let mut data = json!({"a": [{"b": 1}, {"b": 2}]});
-    let result = traverse_and_collect(&mut data, &path);
+    
+    let mut result = vec![];
+    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
+        result.push(value);
+    });
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         serde_json::to_string_pretty(&json!([1, 2])).unwrap_or_default()
@@ -119,7 +138,11 @@ fn cast_in_list_with_field_access() {
         {"__typename": "TypeB", "b": 2},
         {"__typename": "TypeA", "b": 3}
     ]});
-    let result = traverse_and_collect(&mut data, &path);
+    
+    let mut result = vec![];
+    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
+        result.push(value);
+    });
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         serde_json::to_string_pretty(&json!([1, 3])).unwrap_or_default()
@@ -146,7 +169,11 @@ fn filter_list_by_cast() {
           }
         ]
     });
-    let result = traverse_and_collect(&mut data, &path);
+    
+    let mut result = vec![];
+    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
+        result.push(value);
+    });
     let expected = json!([
         {
             "__typename": "Movie",
@@ -163,7 +190,11 @@ fn filter_list_by_cast() {
 fn invalid_field() {
     let path = [FlattenNodePathSegment::Field("c".into())];
     let mut data = json!({"a": 1});
-    let result = traverse_and_collect(&mut data, &path);
+    
+    let mut result = vec![];
+    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
+        result.push(value);
+    });
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         "[]"
@@ -177,7 +208,11 @@ fn invalid_nested_field() {
         FlattenNodePathSegment::Field("c".into()),
     ];
     let mut data = json!({"a": {"b": 1}});
-    let result = traverse_and_collect(&mut data, &path);
+    
+    let mut result = vec![];
+    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
+        result.push(value);
+    });
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         "[]"
@@ -188,7 +223,11 @@ fn invalid_nested_field() {
 fn initial_data_is_array() {
     let path = [FlattenNodePathSegment::List];
     let mut data = json!([1, 2, 3]);
-    let result = traverse_and_collect(&mut data, &path);
+    
+    let mut result = vec![];
+    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
+        result.push(value);
+    });
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         serde_json::to_string_pretty(&json!([1, 2, 3])).unwrap_or_default()
@@ -202,7 +241,11 @@ fn initial_data_is_array_with_field_access() {
         FlattenNodePathSegment::Field("a".into()),
     ];
     let mut data = json!([{"a": 1}, {"a": 2}]);
-    let result = traverse_and_collect(&mut data, &path);
+    
+    let mut result = vec![];
+    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
+        result.push(value);
+    });
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         serde_json::to_string_pretty(&json!([1, 2])).unwrap_or_default()
@@ -216,7 +259,11 @@ fn cast_on_object_without_typename() {
         FlattenNodePathSegment::Field("a".into()),
     ];
     let mut data = json!({"a": 1});
-    let result = traverse_and_collect(&mut data, &path);
+    
+    let mut result = vec![];
+    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
+        result.push(value);
+    });
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         serde_json::to_string_pretty(&json!([1])).unwrap_or_default()
@@ -234,7 +281,11 @@ fn no_match_on_cast() {
         {"__typename": "TypeA", "b": 1},
         {"__typename": "TypeB", "b": 2}
     ]});
-    let result = traverse_and_collect(&mut data, &path);
+    
+    let mut result = vec![];
+    traverse_and_callback(&mut data, &path, &SchemaMetadata::default(), &mut |value| {
+        result.push(value);
+    });
     assert_eq!(
         serde_json::to_string_pretty(&result).unwrap_or_default(),
         "[]"

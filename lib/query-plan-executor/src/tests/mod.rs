@@ -3,7 +3,7 @@ use subgraphs::accounts;
 
 use crate::executors::{common::SubgraphExecutor, map::SubgraphExecutorMap};
 
-mod traverse_and_collect;
+mod traverse_and_callback;
 
 #[test]
 fn query_executor_pipeline_locally() {
