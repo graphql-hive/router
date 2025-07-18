@@ -157,7 +157,7 @@ fn union_member_entity_call() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Flatten(path: "aMedia") {
+        Flatten(path: "aMedia|[Book]") {
           Fetch(service: "b") {
             {
               ... on Book {
@@ -234,7 +234,7 @@ fn union_member_entity_call_many_local() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Flatten(path: "viewer.song") {
+        Flatten(path: "viewer.song|[Book]") {
           Fetch(service: "b") {
             {
               ... on Book {
@@ -372,7 +372,7 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
             }
           },
         },
-        Flatten(path: "viewer.song") {
+        Flatten(path: "viewer.song|[Book]") {
           Fetch(service: "b") {
             {
               ... on Book {
@@ -385,6 +385,110 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
                 bTitle
               }
             }
+          },
+        },
+      },
+    },
+    "#);
+
+    Ok(())
+}
+
+#[test]
+fn union_overfetching_test() -> Result<(), Box<dyn Error>> {
+    init_logger();
+
+    let document = parse_operation(
+        r#"
+        query {
+          review {
+            ... on AnonymousReview {
+              product {
+                b
+              }
+            }
+            ... on UserReview {
+              product {
+                c
+                d
+              }
+            }
+          }
+        }
+        "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/union-overfetching.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "a") {
+          {
+            review {
+              __typename
+              ... on AnonymousReview {
+                product {
+    ...a            }
+              }
+              ... on UserReview {
+                product {
+    ...a            }
+              }
+            }
+          }
+          fragment a on Product {
+            __typename
+            id
+          }
+        },
+        Parallel {
+          Flatten(path: "review|[UserReview].product") {
+            Fetch(service: "d") {
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Product {
+                  d
+                }
+              }
+            },
+          },
+          Flatten(path: "review|[UserReview].product") {
+            Fetch(service: "c") {
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Product {
+                  c
+                }
+              }
+            },
+          },
+          Flatten(path: "review|[AnonymousReview].product") {
+            Fetch(service: "b") {
+              {
+                ... on Product {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Product {
+                  b
+                }
+              }
+            },
           },
         },
       },

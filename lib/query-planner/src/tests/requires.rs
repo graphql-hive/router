@@ -100,7 +100,9 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
+              {
+                "Field": "products"
+              },
               "@"
             ],
             "node": {
@@ -132,7 +134,9 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "products",
+                  {
+                    "Field": "products"
+                  },
                   "@"
                 ],
                 "node": {
@@ -166,7 +170,9 @@ fn two_same_service_calls_with_args_conflicts() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "products",
+                  {
+                    "Field": "products"
+                  },
                   "@"
                 ],
                 "node": {
@@ -281,7 +287,9 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
+              {
+                "Field": "products"
+              },
               "@"
             ],
             "node": {
@@ -310,7 +318,9 @@ fn two_same_service_calls() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
+              {
+                "Field": "products"
+              },
               "@"
             ],
             "node": {
@@ -409,7 +419,9 @@ fn simplest_requires() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
+              {
+                "Field": "products"
+              },
               "@"
             ],
             "node": {
@@ -510,7 +522,9 @@ fn simplest_requires_with_local_sibling() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
+              {
+                "Field": "products"
+              },
               "@"
             ],
             "node": {
@@ -609,7 +623,9 @@ fn simple_requires() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
+              {
+                "Field": "products"
+              },
               "@"
             ],
             "node": {
@@ -716,7 +732,9 @@ fn two_fields_same_subgraph_same_requirement() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
+              {
+                "Field": "products"
+              },
               "@"
             ],
             "node": {
@@ -825,7 +843,9 @@ fn simple_requires_with_child() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
+              {
+                "Field": "products"
+              },
               "@"
             ],
             "node": {
@@ -955,8 +975,12 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "b",
-              "a",
+              {
+                "Field": "b"
+              },
+              {
+                "Field": "a"
+              },
               "@"
             ],
             "node": {
@@ -985,8 +1009,12 @@ fn keys_mashup() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "b",
-              "a",
+              {
+                "Field": "b"
+              },
+              {
+                "Field": "a"
+              },
               "@"
             ],
             "node": {

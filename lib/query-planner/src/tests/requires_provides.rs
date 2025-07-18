@@ -98,7 +98,9 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "me"
+              {
+                "Field": "me"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -126,10 +128,16 @@ fn simple_requires_provides() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "me",
-              "reviews",
+              {
+                "Field": "me"
+              },
+              {
+                "Field": "reviews"
+              },
               "@",
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",

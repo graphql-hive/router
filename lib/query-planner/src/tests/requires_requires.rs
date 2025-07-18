@@ -82,7 +82,9 @@ fn one() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -114,7 +116,9 @@ fn one() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -230,7 +234,9 @@ fn one_with_one_local() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -262,7 +268,9 @@ fn one_with_one_local() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -378,7 +386,9 @@ fn two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -410,7 +420,9 @@ fn two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -538,7 +550,9 @@ fn one_more() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -566,7 +580,9 @@ fn one_more() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -598,7 +614,9 @@ fn one_more() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -728,7 +746,9 @@ fn another_two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>>
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -756,7 +776,9 @@ fn another_two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>>
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -788,7 +810,9 @@ fn another_two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>>
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -941,7 +965,9 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "product"
+                  {
+                    "Field": "product"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -973,7 +999,9 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "product"
+                  {
+                    "Field": "product"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -1003,7 +1031,9 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -1035,7 +1065,9 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -1192,7 +1224,9 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "product"
+                  {
+                    "Field": "product"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -1224,7 +1258,9 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "product"
+                  {
+                    "Field": "product"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -1254,7 +1290,9 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -1286,7 +1324,9 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -1452,7 +1492,9 @@ fn many() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "product"
+                  {
+                    "Field": "product"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -1484,7 +1526,9 @@ fn many() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "product"
+                  {
+                    "Field": "product"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -1514,7 +1558,9 @@ fn many() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -1546,7 +1592,9 @@ fn many() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "product"
+              {
+                "Field": "product"
+              }
             ],
             "node": {
               "kind": "Fetch",

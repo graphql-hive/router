@@ -70,7 +70,9 @@ fn simple_provides() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
+              {
+                "Field": "products"
+              },
               "@"
             ],
             "node": {
@@ -243,7 +245,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Flatten(path: "media") {
+        Flatten(path: "media|[Movie]") {
           Fetch(service: "c") {
             {
               ... on Movie {
@@ -276,7 +278,12 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "media"
+              {
+                "Field": "media"
+              },
+              {
+                "Cast": "Movie"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -408,7 +415,7 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Flatten(path: "media.animals.@") {
+        Flatten(path: "media|[Book].animals.@|[Cat]") {
           Fetch(service: "c") {
             {
               ... on Cat {

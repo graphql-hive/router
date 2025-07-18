@@ -84,7 +84,9 @@ fn testing() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products"
+              {
+                "Field": "products"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -112,7 +114,9 @@ fn testing() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products"
+              {
+                "Field": "products"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -214,7 +218,9 @@ fn parent_entity_call() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "products",
+              {
+                "Field": "products"
+              },
               "@"
             ],
             "node": {
@@ -358,7 +364,9 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "productFromD"
+                  {
+                    "Field": "productFromD"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -386,7 +394,9 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
               {
                 "kind": "Flatten",
                 "path": [
-                  "productFromD"
+                  {
+                    "Field": "productFromD"
+                  }
                 ],
                 "node": {
                   "kind": "Fetch",
@@ -416,8 +426,12 @@ fn parent_entity_call_complex() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "productFromD",
-              "category"
+              {
+                "Field": "productFromD"
+              },
+              {
+                "Field": "category"
+              }
             ],
             "node": {
               "kind": "Fetch",
@@ -542,8 +556,12 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "topProducts",
-              "products",
+              {
+                "Field": "topProducts"
+              },
+              {
+                "Field": "products"
+              },
               "@"
             ],
             "node": {
@@ -572,8 +590,12 @@ fn complex_entity_call() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "topProducts",
-              "products",
+              {
+                "Field": "topProducts"
+              },
+              {
+                "Field": "products"
+              },
               "@"
             ],
             "node": {

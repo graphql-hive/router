@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display, Write},
     sync::Arc,
@@ -8,7 +9,7 @@ use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection};
 // Can be either the alias or the name of the field. This will be used to identify the field in the selection set.
 type SelectionIdentifier = String;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Condition {
     Skip(String),
     Include(String),
@@ -61,7 +62,7 @@ impl From<&InlineFragmentSelection> for Option<Condition> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Segment {
     // A field with a unique identifier and the arguments hash
     // We used this to uniquely identify the field in the selection set.
@@ -76,9 +77,9 @@ impl Display for Segment {
             Self::List => write!(f, "@"),
             Self::Cast(type_name, condition) => {
                 if let Some(condition) = condition {
-                    write!(f, "... on {} {}", type_name, condition)
+                    write!(f, "|[{}] {}", type_name, condition)
                 } else {
-                    write!(f, "... on {}", type_name)
+                    write!(f, "|[{}]", type_name)
                 }
             }
             Self::Field(field_name, _, condition) => {
@@ -124,10 +125,8 @@ impl MergePath {
         }
 
         let mut result = String::new();
-        let mut iter = self
-            .inner
-            .iter()
-            .filter(|segment| !matches!(segment, Segment::Cast(_, _)));
+        let mut iter = self.inner.iter();
+        // .filter(|segment| !matches!(segment, Segment::Cast(_, _)));
 
         // We take the first to avoid a leading separator
         if let Some(first_segment) = iter.next() {
@@ -184,10 +183,8 @@ impl MergePath {
 
 impl Display for MergePath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut iter = self
-            .inner
-            .iter()
-            .filter(|segment| !matches!(segment, Segment::Cast(_, _)));
+        let mut iter = self.inner.iter();
+        // .filter(|segment| !matches!(segment, Segment::Cast(_, _)));
 
         // We take the first to avoid a leading separator
         if let Some(first_segment) = iter.next() {
@@ -212,7 +209,7 @@ impl From<&MergePath> for Vec<String> {
     fn from(path: &MergePath) -> Self {
         path.inner
             .iter()
-            .filter(|segment| !matches!(segment, Segment::Cast(_, _)))
+            // .filter(|segment| !matches!(segment, Segment::Cast(_, _)))
             .cloned()
             .map(|segment| format!("{}", segment))
             .collect()

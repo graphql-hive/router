@@ -61,7 +61,7 @@ pub struct FetchNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FlattenNode {
-    pub path: Vec<String>,
+    pub path: FlattenNodePath,
     pub node: Box<PlanNode>,
 }
 
@@ -102,6 +102,14 @@ pub enum FetchRewrite {
     KeyRenamer(KeyRenamer),
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum FlattenNodePathSegment {
+    Field(String),
+    Cast(String),
+    #[serde(rename = "@")]
+    List,
+}
+
 impl From<&MergePath> for Vec<FetchNodePathSegment> {
     fn from(value: &MergePath) -> Self {
         value
@@ -117,6 +125,76 @@ impl From<&MergePath> for Vec<FetchNodePathSegment> {
                 Segment::List => None,
             })
             .collect()
+    }
+}
+
+impl FlattenNodePathSegment {
+    pub fn to_field(&self) -> Option<&String> {
+        match self {
+            FlattenNodePathSegment::Field(field_name) => Some(field_name),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct FlattenNodePath(Vec<FlattenNodePathSegment>);
+
+impl FlattenNodePath {
+    pub fn as_slice(&self) -> &[FlattenNodePathSegment] {
+        &self.0
+    }
+}
+
+impl Display for FlattenNodePathSegment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FlattenNodePathSegment::Field(field_name) => write!(f, "{}", field_name),
+            FlattenNodePathSegment::Cast(type_name) => write!(f, "|[{}]", type_name),
+            FlattenNodePathSegment::List => write!(f, "@"),
+        }
+    }
+}
+
+impl Display for FlattenNodePath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut segments_iter = self.0.iter().peekable();
+
+        while let Some(segment) = segments_iter.next() {
+            write!(f, "{}", segment)?;
+            if let Some(peeked) = segments_iter.peek() {
+                match peeked {
+                    FlattenNodePathSegment::Cast(_) => {
+                        // Don't add a dot before Cast
+                    }
+                    _ => write!(f, ".")?,
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl From<&MergePath> for FlattenNodePath {
+    fn from(path: &MergePath) -> Self {
+        FlattenNodePath(
+            path.inner
+                .iter()
+                .map(|seg| match seg {
+                    Segment::Cast(type_name, _) => FlattenNodePathSegment::Cast(type_name.clone()),
+                    Segment::Field(field_name, _args_hash, _) => {
+                        FlattenNodePathSegment::Field(field_name.clone())
+                    }
+                    Segment::List => FlattenNodePathSegment::List,
+                })
+                .collect(),
+        )
+    }
+}
+
+impl From<MergePath> for FlattenNodePath {
+    fn from(path: MergePath) -> Self {
+        (&path).into()
     }
 }
 
@@ -391,7 +469,8 @@ impl PrettyDisplay for FetchNode {
 impl PrettyDisplay for FlattenNode {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
-        writeln!(f, "{indent}Flatten(path: \"{}\") {{", self.path.join("."))?;
+
+        writeln!(f, "{indent}Flatten(path: \"{}\") {{", self.path)?;
         self.node.pretty_fmt(f, depth + 1)?;
         writeln!(f, "{indent}}},")?;
 

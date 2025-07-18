@@ -409,7 +409,9 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
           {
             "kind": "Flatten",
             "path": [
-              "anotherUsers",
+              {
+                "Field": "anotherUsers"
+              },
               "@"
             ],
             "node": {
@@ -453,7 +455,9 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
           {
             "kind": "Flatten",
             "path": [
-              "anotherUsers",
+              {
+                "Field": "anotherUsers"
+              },
               "@"
             ],
             "node": {
@@ -550,7 +554,7 @@ fn interface_field_with_inline_fragment_resolving_remote_interface_object_field(
             }
           }
         },
-        Flatten(path: "users.@") {
+        Flatten(path: "users.@|[User]") {
           Fetch(service: "b") {
             {
               ... on User {

@@ -3,6 +3,8 @@ use subgraphs::accounts;
 
 use crate::executors::{common::SubgraphExecutor, map::SubgraphExecutorMap};
 
+mod traverse_and_collect;
+
 #[test]
 fn query_executor_pipeline_locally() {
     tokio_test::block_on(async {

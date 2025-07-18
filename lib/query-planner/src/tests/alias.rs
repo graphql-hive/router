@@ -76,7 +76,7 @@ fn circular_reference_interface() -> Result<(), Box<dyn Error>> {
             id
           }
         },
-        Flatten(path: "product") {
+        Flatten(path: "product|[Book]") {
           Fetch(service: "b") {
             {
               ... on Book {
@@ -457,7 +457,9 @@ fn simple_mismatch_between_union_fields() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "users",
+              {
+                "Field": "users"
+              },
               "@"
             ],
             "node": {
@@ -689,7 +691,9 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "users",
+              {
+                "Field": "users"
+              },
               "@"
             ],
             "node": {
@@ -1088,7 +1092,9 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
           {
             "kind": "Flatten",
             "path": [
-              "users",
+              {
+                "Field": "users"
+              },
               "@"
             ],
             "node": {

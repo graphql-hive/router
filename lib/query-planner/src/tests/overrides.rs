@@ -129,7 +129,9 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
           {
             "kind": "Flatten",
             "path": [
-              "aFeed",
+              {
+                "Field": "aFeed"
+              },
               "@"
             ],
             "node": {
@@ -195,7 +197,7 @@ fn override_object_field_but_interface_is_requested() -> Result<(), Box<dyn Erro
             }
           }
         },
-        Flatten(path: "feed.@") {
+        Flatten(path: "feed.@|[ImagePost]") {
           Fetch(service: "b") {
             {
               ... on ImagePost {
