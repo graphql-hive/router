@@ -16,7 +16,7 @@ use crate::{schema_metadata::SchemaMetadata, GraphQLError, TYPENAME_FIELD};
 pub fn project_by_operation(
     data: &Value,
     errors: &mut Vec<GraphQLError>,
-    extensions: &HashMap<String, Value>,
+    _extensions: &HashMap<String, Value>,
     operation: &OperationDefinition,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
