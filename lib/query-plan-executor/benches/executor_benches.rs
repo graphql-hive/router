@@ -342,11 +342,14 @@ fn deep_merge_with_complex(c: &mut Criterion) {
     }
 
     c.bench_function("deep_merge_with_complex", |b| {
-        b.iter(|| {
-            let mut target = black_box(data_1.clone());
-            let source = black_box(data_2.clone());
-            query_plan_executor::deep_merge::deep_merge(&mut target, source);
-        });
+        b.iter_with_setup(
+            || (data_1.clone(), data_2.clone()),
+            |(data_1, data_2)| {
+                let mut target = black_box(data_1);
+                let source = black_box(data_2);
+                query_plan_executor::deep_merge::deep_merge(&mut target, &source);
+            },
+        );
     });
 }
 
@@ -489,11 +492,14 @@ fn deep_merge_with_simple(c: &mut Criterion) {
     }
 
     c.bench_function("deep_merge_with_simple", |b| {
-        b.iter(|| {
-            let mut target = black_box(data_1.clone());
-            let source = black_box(data_2.clone());
-            query_plan_executor::deep_merge::deep_merge(&mut target, source);
-        });
+        b.iter_with_setup(
+            || (data_1.clone(), data_2.clone()),
+            |(data_1, data_2)| {
+                let mut target = black_box(data_1);
+                let source = black_box(data_2);
+                query_plan_executor::deep_merge::deep_merge(&mut target, &source);
+            },
+        );
     });
 }
 

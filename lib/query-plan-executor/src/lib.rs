@@ -437,9 +437,9 @@ fn process_root_result(
     data: &mut Value,
 ) {
     // 4. Process the response
-    if let Some(new_data) = fetch_result.data {
+    if let Some(new_data) = fetch_result.data.as_ref() {
         if data.is_null() {
-            *data = new_data; // Initialize with new_data
+            *data = new_data.clone(); // Initialize with new_data
         } else {
             deep_merge::deep_merge(data, new_data);
         }
@@ -570,9 +570,9 @@ impl ExecutablePlanNode for ParallelNode {
                 match result {
                     ParallelJob::Root(fetch_result) => {
                         // Process root FetchNode results
-                        if let Some(new_data) = fetch_result.data {
+                        if let Some(new_data) = fetch_result.data.as_ref() {
                             if data.is_null() {
-                                *data = new_data; // Initialize with new_data
+                                *data = new_data.clone(); // Initialize with new_data
                             } else {
                                 deep_merge::deep_merge(data, new_data);
                             }
@@ -586,7 +586,7 @@ impl ExecutablePlanNode for ParallelNode {
                         }
                     }
                     ParallelJob::Flatten(result, path) => {
-                        if let Some(mut entities) = result.entities {
+                        if let Some(entities) = result.entities {
                             let mut index_of_traverse = 0;
                             let mut index_of_entities = 0;
                             traverse_and_callback(
@@ -595,8 +595,7 @@ impl ExecutablePlanNode for ParallelNode {
                                 execution_context.schema_metadata,
                                 &mut |target| {
                                     if result.indexes.contains(&index_of_traverse) {
-                                        let entity =
-                                            entities.get_mut(index_of_entities).unwrap().take();
+                                        let entity = entities.get(index_of_entities).unwrap();
                                         // Merge the entity into the target
                                         deep_merge::deep_merge(target, entity);
                                         index_of_entities += 1;
@@ -716,7 +715,7 @@ impl ExecutablePlanNode for FlattenNode {
             )
             .await;
         if let Some(entities) = result.entities {
-            for (entity, target) in entities.into_iter().zip(representations.iter_mut()) {
+            for (entity, target) in entities.iter().zip(representations.iter_mut()) {
                 // Merge the entity into the representation
                 deep_merge::deep_merge(target, entity);
             }

@@ -3,7 +3,7 @@ use tracing::{instrument, trace};
 
 // Deeply merges two serde_json::Values (mutates target in place)
 #[instrument(level = "trace", name = "deep_merge", skip_all)]
-pub fn deep_merge(target: &mut Value, source: Value) {
+pub fn deep_merge(target: &mut Value, source: &Value) {
     match (target, source) {
         (_, Value::Null) => {
             trace!("Source is Null, keeping target as is");
@@ -38,25 +38,25 @@ pub fn deep_merge(target: &mut Value, source: Value) {
                 source
             );
             // source is guaranteed not Null here due to arm 1
-            *target_val = source;
+            *target_val = source.clone();
         }
     }
 }
 
 #[instrument(
-    level = "trace", 
-    name = "deep_merge_objects", 
+    level = "trace",
+    name = "deep_merge_objects",
     skip_all,
     fields(target_map_len = target_map.len(), source_map_len = source_map.len(), typename= %target_map.get("typename").and_then(|a| a.as_str()).unwrap_or("unknown"))
 )]
 pub fn deep_merge_objects(
     target_map: &mut serde_json::Map<String, Value>,
-    source_map: serde_json::Map<String, Value>,
+    source_map: &serde_json::Map<String, Value>,
 ) {
     if target_map.is_empty() {
         // If target is empty, just replace it with source
         trace!("Target map is empty, replacing with source map");
-        *target_map = source_map;
+        *target_map = source_map.clone();
         return;
     }
     if source_map.is_empty() {
@@ -70,14 +70,14 @@ pub fn deep_merge_objects(
         source_map.len()
     );
     for (key, source_val) in source_map {
-        if let Some(target_val) = target_map.get_mut(&key) {
+        if let Some(target_val) = target_map.get_mut(key) {
             // If key exists in target, merge recursively
             trace!("Key '{}' exists in target, merging values", key);
             deep_merge(target_val, source_val);
         } else {
             trace!("Key '{}' does not exist in target, inserting value", key);
             // If key does not exist in target, insert it
-            target_map.insert(key, source_val);
+            target_map.insert(key.to_string(), source_val.clone());
         }
     }
 }
