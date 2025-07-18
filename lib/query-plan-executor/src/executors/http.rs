@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -9,10 +10,8 @@ use hyper::{body::Bytes, Version};
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tracing::{error, instrument, trace};
 
-use crate::{
-    executors::common::SubgraphExecutor, json_writer::write_and_escape_string, ExecutionResult,
-    SubgraphExecutionRequest,
-};
+use crate::json_writer::write_and_escape_string_writer;
+use crate::{executors::common::SubgraphExecutor, ExecutionResult, SubgraphExecutionRequest};
 
 #[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
@@ -21,7 +20,7 @@ pub struct HTTPSubgraphExecutor {
     pub header_map: HeaderMap,
 }
 
-const FIRST_VARIABLE_STR: &str = ",\"variables\":{";
+const FIRST_VARIABLE_STR: &[u8] = ",\"variables\":{".as_bytes();
 
 impl HTTPSubgraphExecutor {
     pub fn new(endpoint: &str, http_client: Arc<Client<HttpConnector, Full<Bytes>>>) -> Self {
@@ -47,42 +46,42 @@ impl HTTPSubgraphExecutor {
         trace!("Executing HTTP request to subgraph at {}", self.endpoint);
 
         // We may want to remove it, but let's see.
-        let mut body = String::with_capacity(4096);
-        body.push_str("{\"query\":");
-        write_and_escape_string(&mut body, execution_request.query);
+        let mut body: Vec<u8> = Vec::with_capacity(4096);
+        body.write_all(b"{\"query\":").unwrap();
+        write_and_escape_string_writer(&mut body, execution_request.query).unwrap();
         let mut first_variable = true;
         if let Some(variables) = &execution_request.variables {
             for (variable_name, variable_value) in variables {
                 if first_variable {
-                    body.push_str(FIRST_VARIABLE_STR);
+                    body.write_all(FIRST_VARIABLE_STR).unwrap();
                     first_variable = false;
                 } else {
-                    body.push(',');
+                    body.push(b',');
                 }
-                body.push('"');
-                body.push_str(variable_name);
-                body.push_str("\":");
-                let value_str = serde_json::to_string(variable_value).map_err(|err| {
+                body.push(b'"');
+                body.write_all(variable_name.as_bytes()).unwrap();
+                body.write_all(b"\":").unwrap();
+                let value_str = serde_json::to_vec(variable_value).map_err(|err| {
                     format!("Failed to serialize variable '{}': {}", variable_name, err)
                 })?;
-                body.push_str(&value_str);
+                body.write_all(&value_str).unwrap();
             }
         }
         if let Some(representations) = &execution_request.representations {
             if first_variable {
-                body.push_str(FIRST_VARIABLE_STR);
+                body.write_all(FIRST_VARIABLE_STR).unwrap();
                 first_variable = false;
             } else {
-                body.push(',');
+                body.push(b',');
             }
-            body.push_str("\"representations\":");
-            body.push_str(representations);
+            body.write_all(b"\"representations\":").unwrap();
+            body.write_all(representations).unwrap();
         }
         // "first_variable" should be still true if there are no variables
         if !first_variable {
-            body.push('}');
+            body.push(b'}');
         }
-        body.push('}');
+        body.push(b'}');
 
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)

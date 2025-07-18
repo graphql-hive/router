@@ -50,6 +50,7 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
             let operation = black_box(&normalized_operation);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
             let has_introspection = false;
+            let mut buffer = Vec::<u8>::with_capacity(4098);
             let result = execute_query_plan(
                 query_plan,
                 subgraph_executor_map,
@@ -58,6 +59,7 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
                 operation,
                 has_introspection,
                 ExposeQueryPlanMode::No,
+                &mut buffer,
             )
             .await;
             black_box(result)
@@ -142,6 +144,7 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
             let operation = black_box(&normalized_operation);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
             let has_introspection = false;
+            let mut buffer = Vec::<u8>::with_capacity(4098);
             let result = execute_query_plan(
                 query_plan,
                 subgraph_executor_map,
@@ -150,6 +153,7 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
                 operation,
                 has_introspection,
                 ExposeQueryPlanMode::No,
+                &mut buffer,
             )
             .await;
             black_box(result)
@@ -223,26 +227,25 @@ fn project_data_by_operation(c: &mut Criterion) {
     let normalized_operation = normalized_document.executable_operation();
     let schema_metadata = planner.consumer_schema.schema_metadata();
     let operation = black_box(&normalized_operation);
+    let data = non_projected_result::get_result();
+    let extensions = HashMap::new();
     c.bench_function("project_data_by_operation", |b| {
-        b.iter(|| {
-            let mut data = non_projected_result::get_result();
-            let data = black_box(&mut data);
-            let mut errors = vec![];
-            let errors = black_box(&mut errors);
-            let extensions = HashMap::new();
-            let extensions = black_box(&extensions);
-            let operation = black_box(&operation);
-            let schema_metadata = black_box(&schema_metadata);
-            let result = query_plan_executor::projection::project_by_operation(
-                data,
-                errors,
-                extensions,
-                operation,
-                schema_metadata,
-                &None,
-            );
-            black_box(result);
-        });
+        b.iter_with_setup(
+            || Vec::<u8>::with_capacity(4098),
+            |mut buffer| {
+                let mut errors = Vec::new();
+                black_box(query_plan_executor::projection::project_by_operation(
+                    &data,
+                    &mut errors,
+                    &extensions,
+                    &operation,
+                    &schema_metadata,
+                    &None,
+                    &mut buffer,
+                ))
+                .expect("Failed to project data by operation");
+            },
+        );
     });
 }
 
@@ -438,7 +441,7 @@ fn project_requires(c: &mut Criterion) {
     c.bench_function("project_requires", |b| {
         b.iter(|| {
             let execution_context = black_box(&execution_context);
-            let mut buffer = String::with_capacity(1024);
+            let mut buffer: Vec<u8> = Vec::with_capacity(1024);
             let mut first = true;
             for representation in black_box(&representations) {
                 let requires = execution_context.project_requires(
@@ -495,16 +498,16 @@ fn deep_merge_with_simple(c: &mut Criterion) {
 }
 
 fn all_benchmarks(c: &mut Criterion) {
-    query_plan_executor_without_projection_locally(c);
-    query_plan_executor_pipeline_locally(c);
+    // query_plan_executor_without_projection_locally(c);
+    // query_plan_executor_pipeline_locally(c);
 
-    query_plan_execution_without_projection_via_http(c);
-    query_plan_executor_pipeline_via_http(c);
+    // query_plan_execution_without_projection_via_http(c);
+    // query_plan_executor_pipeline_via_http(c);
 
-    deep_merge_with_simple(c);
-    deep_merge_with_complex(c);
-    project_requires(c);
-    traverse_and_collect(c);
+    // deep_merge_with_simple(c);
+    // deep_merge_with_complex(c);
+    // project_requires(c);
+    // traverse_and_collect(c);
     project_data_by_operation(c);
 }
 

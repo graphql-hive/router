@@ -10,13 +10,14 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::{collections::BTreeSet, fmt::Write};
+use std::collections::BTreeSet;
+use std::io;
 use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
 use crate::{
     executors::map::SubgraphExecutorMap,
-    json_writer::write_and_escape_string,
+    json_writer::write_and_escape_string_writer,
     schema_metadata::{PossibleTypes, SchemaMetadata},
 };
 pub mod deep_merge;
@@ -114,7 +115,7 @@ trait ExecutableFetchNode {
     async fn execute_for_projected_representations(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
-        filtered_representations: String,
+        filtered_representations: Vec<u8>,
         indexes: BTreeSet<usize>,
     ) -> ExecuteForRepresentationsResult;
     fn apply_output_rewrites(&self, possible_types: &PossibleTypes, data: &mut Value);
@@ -188,7 +189,7 @@ impl ExecutableFetchNode for FetchNode {
     async fn execute_for_projected_representations(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
-        filtered_representations: String,
+        filtered_representations: Vec<u8>,
         indexes: BTreeSet<usize>,
     ) -> ExecuteForRepresentationsResult {
         // 2. Prepare variables for fetch
@@ -496,7 +497,7 @@ impl ExecutablePlanNode for ParallelNode {
                         jobs.push(Box::pin(job.map(ParallelJob::Root)));
                     }
                     PlanNode::Flatten(flatten_node) => {
-                        let mut filtered_representations = String::with_capacity(1024);
+                        let mut filtered_representations: Vec<u8> = Vec::with_capacity(1024);
                         let fetch_node = match flatten_node.node.as_ref() {
                             PlanNode::Fetch(fetch_node) => fetch_node,
                             _ => {
@@ -511,7 +512,7 @@ impl ExecutablePlanNode for ParallelNode {
                         let mut index = 0;
                         let mut indexes = BTreeSet::new();
                         let normalized_path = flatten_node.path.as_slice();
-                        filtered_representations.push('[');
+                        filtered_representations.push(b'[');
                         traverse_and_callback(
                             data,
                             normalized_path,
@@ -549,7 +550,7 @@ impl ExecutablePlanNode for ParallelNode {
                                 index += 1;
                             },
                         );
-                        filtered_representations.push(']');
+                        filtered_representations.push(b']');
                         let job = fetch_node.execute_for_projected_representations(
                             execution_context,
                             filtered_representations,
@@ -647,7 +648,7 @@ impl ExecutablePlanNode for FlattenNode {
         // because `collected_representations` borrows `data_for_flatten`, not `execution_context.data`.
         let now = std::time::Instant::now();
         let mut representations = vec![];
-        let mut filtered_representations = String::with_capacity(1024);
+        let mut filtered_representations: Vec<u8> = Vec::with_capacity(1024);
         let fetch_node = match self.node.as_ref() {
             PlanNode::Fetch(fetch_node) => fetch_node,
             _ => {
@@ -659,7 +660,7 @@ impl ExecutablePlanNode for FlattenNode {
             }
         };
         let requires_nodes = fetch_node.requires.as_ref().unwrap();
-        filtered_representations.push('[');
+        filtered_representations.push(b'[');
         let mut first = true;
         traverse_and_callback(
             data,
@@ -697,7 +698,7 @@ impl ExecutablePlanNode for FlattenNode {
                 }
             },
         );
-        filtered_representations.push(']');
+        filtered_representations.push(b']');
         trace!(
             "traversed and collected representations: {:?} in {:#?}",
             representations.len(),
@@ -839,7 +840,7 @@ pub struct SubgraphExecutionRequest<'a> {
     pub operation_name: Option<&'a str>,
     pub variables: Option<HashMap<&'a str, &'a Value>>,
     pub extensions: Option<HashMap<String, Value>>,
-    pub representations: Option<String>,
+    pub representations: Option<Vec<u8>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -872,7 +873,7 @@ impl QueryPlanExecutionContext<'_> {
         &self,
         requires_selections: &Vec<SelectionItem>,
         entity: &Value,
-        buffer: &mut String,
+        buffer: &mut impl io::Write,
         first: bool,
         response_key: Option<&str>,
     ) -> bool {
@@ -882,52 +883,54 @@ impl QueryPlanExecutionContext<'_> {
             }
             Value::Bool(b) => {
                 if !first {
-                    buffer.push(',');
+                    buffer.write_all(b",").unwrap();
                 }
                 if let Some(response_key) = response_key {
-                    buffer.push('"');
-                    buffer.push_str(response_key);
-                    buffer.push('"');
-                    buffer.push(':');
-                    buffer.push_str(if *b { "true" } else { "false" });
+                    buffer.write_all(b"\"").unwrap();
+                    buffer.write_all(response_key.as_bytes()).unwrap();
+                    buffer.write_all(b"\":").unwrap();
+                    buffer
+                        .write_all(if *b { b"true" } else { b"false" })
+                        .unwrap();
                 } else {
-                    buffer.push_str(if *b { "true" } else { "false" });
+                    buffer
+                        .write_all(if *b { b"true" } else { b"false" })
+                        .unwrap();
                 }
             }
             Value::Number(n) => {
                 if !first {
-                    buffer.push(',');
+                    buffer.write_all(b",").unwrap();
                 }
                 if let Some(response_key) = response_key {
-                    buffer.push('"');
-                    buffer.push_str(response_key);
-                    buffer.push_str("\":");
+                    buffer.write_all(b"\"").unwrap();
+                    buffer.write_all(response_key.as_bytes()).unwrap();
+                    buffer.write_all(b"\":").unwrap();
                 }
 
-                write!(buffer, "{}", n).unwrap()
+                buffer.write_all(n.to_string().as_bytes()).unwrap();
             }
             Value::String(s) => {
                 if !first {
-                    buffer.push(',');
+                    buffer.write_all(b",").unwrap();
                 }
                 if let Some(response_key) = response_key {
-                    buffer.push('"');
-                    buffer.push_str(response_key);
-                    buffer.push_str("\":");
+                    buffer.write_all(b"\"").unwrap();
+                    buffer.write_all(response_key.as_bytes()).unwrap();
+                    buffer.write_all(b"\":").unwrap();
                 }
-                write_and_escape_string(buffer, s);
+                write_and_escape_string_writer(buffer, s).unwrap();
             }
             Value::Array(entity_array) => {
                 if !first {
-                    buffer.push(',');
+                    buffer.write_all(b",").unwrap();
                 }
                 if let Some(response_key) = response_key {
-                    buffer.push('"');
-                    buffer.push_str(response_key);
-                    buffer.push_str("\":[");
-                } else {
-                    buffer.push('[');
+                    buffer.write_all(b"\"").unwrap();
+                    buffer.write_all(response_key.as_bytes()).unwrap();
+                    buffer.write_all(b"\":").unwrap();
                 }
+                buffer.write_all(b"[").unwrap();
                 let mut first = true;
                 for entity_item in entity_array {
                     let projected = self.project_requires(
@@ -942,12 +945,14 @@ impl QueryPlanExecutionContext<'_> {
                         first = false;
                     }
                 }
-                buffer.push(']');
+                buffer.write_all(b"]").unwrap();
             }
             Value::Object(entity_obj) => {
                 if requires_selections.is_empty() {
                     // It is probably a scalar with an object value, so we write it directly
-                    buffer.push_str(&serde_json::to_string(entity_obj).unwrap());
+                    buffer
+                        .write_all(&serde_json::to_vec(entity_obj).unwrap())
+                        .unwrap();
                     return true;
                 }
                 if entity_obj.is_empty() {
@@ -969,7 +974,7 @@ impl QueryPlanExecutionContext<'_> {
                     // so we skip writing the closing brace
                     return false;
                 } else {
-                    buffer.push('}');
+                    buffer.write_all(b"}").unwrap();
                 }
             }
         };
@@ -980,7 +985,7 @@ impl QueryPlanExecutionContext<'_> {
         &self,
         requires_selections: &Vec<SelectionItem>,
         entity_obj: &Map<String, Value>,
-        buffer: &mut String,
+        buffer: &mut impl io::Write,
         first: &mut bool,
         parent_response_key: Option<&str>,
         parent_first: bool,
@@ -1005,19 +1010,19 @@ impl QueryPlanExecutionContext<'_> {
 
                     if *first {
                         if !parent_first {
-                            buffer.push(',');
+                            buffer.write_all(b",").unwrap();
                         }
                         if let Some(parent_response_key) = parent_response_key {
-                            buffer.push('"');
-                            buffer.push_str(parent_response_key);
-                            buffer.push_str("\":");
+                            buffer.write_all(b"\"").unwrap();
+                            buffer.write_all(parent_response_key.as_bytes()).unwrap();
+                            buffer.write_all(b"\":").unwrap();
                         }
-                        buffer.push('{');
+                        buffer.write_all(b"{").unwrap();
                         // Write __typename only if the object has other fields
                         if let Some(Value::String(type_name)) = entity_obj.get(TYPENAME_FIELD) {
-                            buffer.push_str("\"__typename\":");
-                            write_and_escape_string(buffer, type_name);
-                            buffer.push(',');
+                            buffer.write_all(b"\"__typename\":").unwrap();
+                            write_and_escape_string_writer(buffer, type_name).unwrap();
+                            buffer.write_all(b",").unwrap();
                         }
                     }
 
@@ -1156,7 +1161,8 @@ pub async fn execute_query_plan(
     operation: &OperationDefinition,
     has_introspection: bool,
     expose_query_plan: ExposeQueryPlanMode,
-) -> String {
+    writer: &mut impl io::Write,
+) -> io::Result<()> {
     let mut result_data = Value::Null; // Initialize data as Null
     let mut result_errors = vec![]; // Initial errors are empty
     #[allow(unused_mut)]
@@ -1193,7 +1199,10 @@ pub async fn execute_query_plan(
         operation,
         schema_metadata,
         variable_values,
-    )
+        writer,
+    )?;
+
+    Ok(())
 }
 
 #[cfg(test)]

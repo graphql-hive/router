@@ -78,8 +78,9 @@ impl Service<Request<Body>> for ExecutionService {
                 .extensions()
                 .get::<HttpRequestParams>()
                 .expect("HttpRequestParams missing");
+            let mut buffer: Vec<u8> = Vec::with_capacity(4096);
 
-            let execution_result = execute_query_plan(
+            let res = execute_query_plan(
                 &query_plan_payload.query_plan,
                 &app_state.subgraph_executor_map,
                 &variable_payload.variables_map,
@@ -87,10 +88,12 @@ impl Service<Request<Body>> for ExecutionService {
                 &normalized_payload.normalized_document.operation,
                 normalized_payload.has_introspection,
                 expose_query_plan,
+                &mut buffer,
             )
             .await;
+            res.expect("Failed to execute query plan");
 
-            let mut response = Response::new(Body::from(execution_result));
+            let mut response = Response::new(Body::from(buffer));
             response.headers_mut().insert(
                 CONTENT_TYPE,
                 http_request_params.response_content_type.clone(),

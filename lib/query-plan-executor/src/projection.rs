@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::fmt::Write;
+use std::{collections::HashMap, io};
 
 use query_planner::{
     ast::{
@@ -10,20 +9,19 @@ use query_planner::{
 use serde_json::{Map, Value};
 use tracing::{instrument, warn};
 
-use crate::{
-    json_writer::write_and_escape_string, schema_metadata::SchemaMetadata, GraphQLError,
-    TYPENAME_FIELD,
-};
+use crate::json_writer::write_and_escape_string_writer;
+use crate::{schema_metadata::SchemaMetadata, GraphQLError, TYPENAME_FIELD};
 
 #[instrument(level = "trace", skip_all)]
 pub fn project_by_operation(
-    data: &mut Value,
+    data: &Value,
     errors: &mut Vec<GraphQLError>,
     extensions: &HashMap<String, Value>,
     operation: &OperationDefinition,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
-) -> String {
+    buffer: &mut impl io::Write,
+) -> io::Result<()> {
     let root_type_name = match operation.operation_kind {
         Some(OperationKind::Query) => "Query",
         Some(OperationKind::Mutation) => "Mutation",
@@ -31,14 +29,7 @@ pub fn project_by_operation(
         None => "Query",
     };
 
-    // We may want to remove it, but let's see.
-    let mut buffer = String::with_capacity(4096);
-
-    buffer.push('{');
-    buffer.push('"');
-    buffer.push_str("data");
-    buffer.push('"');
-    buffer.push(':');
+    buffer.write_all(b"{\"data\":")?;
 
     project_selection_set(
         data,
@@ -47,28 +38,88 @@ pub fn project_by_operation(
         root_type_name,
         schema_metadata,
         variable_values,
-        &mut buffer,
-    );
+        buffer,
+    )?;
 
-    if !errors.is_empty() {
-        write!(
-            buffer,
-            ",\"errors\":{}",
-            serde_json::to_string(&errors).unwrap()
-        )
-        .unwrap();
-    }
-    if !extensions.is_empty() {
-        write!(
-            buffer,
-            ",\"extensions\":{}",
-            serde_json::to_string(&extensions).unwrap()
-        )
-        .unwrap();
-    }
+    // if !errors.is_empty() {
+    //     buffer.write_all(b",\"errors\":")?;
+    //     serde_json::to_writer(buffer, &errors).unwrap()
+    //     // buffer.write(serde_json::to(&errors).unwrap())
+    //     // write!(
+    //     //     buffer,
+    //     //     "{}",
+    //     //     serde_json::to_string(&errors).unwrap()
+    //     // )?
+    // }
+    // if !extensions.is_empty() {
+    //     write!(
+    //         buffer,
+    //         ",\"extensions\":{}",
+    //         serde_json::to_string(&extensions).unwrap()
+    //     )?;
+    // }
 
-    buffer.push('}');
-    buffer
+    buffer.write_all(b"}")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn project_array(
+    arr: &[Value],
+    errors: &mut Vec<GraphQLError>,
+    selection_set: &SelectionSet,
+    type_name: &str,
+    schema_metadata: &SchemaMetadata,
+    variable_values: &Option<HashMap<String, Value>>,
+    buffer: &mut impl io::Write,
+) -> Result<(), io::Error> {
+    buffer.write_all(b"[")?;
+    let mut first = true;
+    for item in arr.iter() {
+        if !first {
+            buffer.write_all(b",")?;
+        }
+        project_selection_set(
+            item,
+            errors,
+            selection_set,
+            type_name,
+            schema_metadata,
+            variable_values,
+            buffer,
+        )?;
+        first = false;
+    }
+    buffer.write_all(b"]")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn project_object(
+    obj: &Map<String, Value>,
+    errors: &mut Vec<GraphQLError>,
+    selection_set: &SelectionSet,
+    type_name: &str,
+    schema_metadata: &SchemaMetadata,
+    variable_values: &Option<HashMap<String, Value>>,
+    buffer: &mut impl io::Write,
+) -> Result<(), io::Error> {
+    let mut first = true;
+    let is_projected = project_selection_set_with_map(
+        obj,
+        errors,
+        selection_set,
+        type_name,
+        schema_metadata,
+        variable_values,
+        buffer,
+        &mut first,
+    )?;
+    if !is_projected {
+        buffer.write_all(b"null")
+    } else if !first {
+        buffer.write_all(b"}")
+    } else {
+        buffer.write_all(b"{}")
+    }
 }
 
 #[instrument(
@@ -87,13 +138,13 @@ fn project_selection_set(
     type_name: &str,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
-    buffer: &mut String,
-) {
+    buffer: &mut impl io::Write,
+) -> Result<(), io::Error> {
     match data {
-        Value::Null => buffer.push_str("null"),
-        Value::Bool(true) => buffer.push_str("true"),
-        Value::Bool(false) => buffer.push_str("false"),
-        Value::Number(num) => write!(buffer, "{}", num).unwrap(),
+        Value::Null => buffer.write_all(b"null"),
+        Value::Bool(true) => buffer.write_all(b"true"),
+        Value::Bool(false) => buffer.write_all(b"false"),
+        Value::Number(num) => buffer.write_all(num.to_string().as_bytes()),
         Value::String(value) => {
             if let Some(enum_values) = schema_metadata.enum_values.get(type_name) {
                 if !enum_values.contains(value) {
@@ -106,55 +157,30 @@ fn project_selection_set(
                         path: None,
                         extensions: None,
                     });
-                    buffer.push_str("null");
-                    return;
+                    return buffer.write_all(b"null");
                 }
             }
-            write_and_escape_string(buffer, value);
+            write_and_escape_string_writer(buffer, value)?;
+            Ok(())
         }
-        Value::Array(arr) => {
-            buffer.push('[');
-            let mut first = true;
-            for item in arr.iter() {
-                if !first {
-                    buffer.push(',');
-                }
-                project_selection_set(
-                    item,
-                    errors,
-                    selection_set,
-                    type_name,
-                    schema_metadata,
-                    variable_values,
-                    buffer,
-                );
-                first = false;
-            }
-            buffer.push(']');
-        }
-        Value::Object(obj) => {
-            let mut first = true;
-            let is_projected = project_selection_set_with_map(
-                obj,
-                errors,
-                selection_set,
-                type_name,
-                schema_metadata,
-                variable_values,
-                buffer,
-                &mut first,
-            );
-            if !is_projected {
-                buffer.push_str("null");
-            } else
-            // If first is mutated, it means we added "{"
-            if !first {
-                buffer.push('}');
-            } else {
-                // If first is still true, it means we didn't add anything, so we should just send an empty object
-                buffer.push_str("{}");
-            }
-        }
+        Value::Array(arr) => project_array(
+            arr,
+            errors,
+            selection_set,
+            type_name,
+            schema_metadata,
+            variable_values,
+            buffer,
+        ),
+        Value::Object(obj) => project_object(
+            obj,
+            errors,
+            selection_set,
+            type_name,
+            schema_metadata,
+            variable_values,
+            buffer,
+        ),
     }
 }
 
@@ -226,9 +252,9 @@ fn project_selection_set_with_map(
     type_name: &str,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
-    buffer: &mut String,
+    buffer: &mut impl io::Write,
     first: &mut bool,
-) -> bool {
+) -> Result<bool, io::Error> {
     let type_name = match obj.get(TYPENAME_FIELD) {
         Some(Value::String(type_name)) => type_name,
         _ => type_name,
@@ -241,7 +267,7 @@ fn project_selection_set_with_map(
                 "Type {} not found in schema metadata. Skipping projection.",
                 type_name
             );
-            return false;
+            return Ok(false);
         }
     };
 
@@ -255,24 +281,25 @@ fn project_selection_set_with_map(
                 let response_key = field.alias.as_ref().unwrap_or(&field.name);
 
                 if *first {
-                    buffer.push('{');
+                    buffer.write_all(b"{")?;
                 } else {
-                    buffer.push(',');
+                    buffer.write_all(b",")?;
                 }
                 *first = false;
 
                 if field.name == TYPENAME_FIELD {
-                    buffer.push('"');
-                    buffer.push_str(response_key);
-                    buffer.push_str("\":\"");
-                    buffer.push_str(type_name);
-                    buffer.push('"');
+                    // write!(buffer, "\"{}\": \"{}\"", response_key, type_name)?;
+                    buffer.write_all(b"\"")?;
+                    buffer.write(response_key.as_bytes())?;
+                    buffer.write_all(b"\": \"")?;
+                    buffer.write(type_name.as_bytes())?;
+                    buffer.write_all(b"\"")?;
                     continue;
                 }
 
-                buffer.push('"');
-                buffer.push_str(response_key);
-                buffer.push_str("\":");
+                buffer.write_all(b"\"")?;
+                buffer.write(response_key.as_bytes())?;
+                buffer.write_all(b"\":")?;
 
                 let field_type: &str = field_map
                     .get(&field.name)
@@ -294,10 +321,10 @@ fn project_selection_set_with_map(
                         schema_metadata,
                         variable_values,
                         buffer,
-                    );
+                    )?;
                 } else {
                     // If the field is not found in the object, set it to Null
-                    buffer.push_str("null");
+                    buffer.write_all(b"null")?;
                     continue;
                 }
             }
@@ -315,7 +342,7 @@ fn project_selection_set_with_map(
                         variable_values,
                         buffer,
                         first,
-                    );
+                    )?;
                 }
             }
             SelectionItem::FragmentSpread(_name_ref) => {
@@ -326,5 +353,5 @@ fn project_selection_set_with_map(
             }
         }
     }
-    true
+    Ok(true)
 }

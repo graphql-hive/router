@@ -39,6 +39,7 @@ fn query_executor_pipeline_locally() {
         subgraph_executor_map.insert_boxed_arc("inventory".to_string(), inventory.to_boxed_arc());
         subgraph_executor_map.insert_boxed_arc("products".to_string(), products.to_boxed_arc());
         subgraph_executor_map.insert_boxed_arc("reviews".to_string(), reviews.to_boxed_arc());
+        let mut buffer = Vec::with_capacity(4098);
         let result = crate::execute_query_plan(
             &query_plan,
             &subgraph_executor_map,
@@ -47,8 +48,9 @@ fn query_executor_pipeline_locally() {
             normalized_operation,
             false,
             crate::ExposeQueryPlanMode::No,
+            &mut buffer,
         )
         .await;
-        insta::assert_snapshot!(result);
+        insta::assert_snapshot!(String::from_utf8(buffer).unwrap());
     });
 }
