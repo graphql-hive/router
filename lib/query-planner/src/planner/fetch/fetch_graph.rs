@@ -64,8 +64,8 @@ impl FetchGraph {
     }
 
     /// Checks if one is ancestor of the other and vice versa
-    pub fn is_ancestor_or_descendant(&self, ancestor: NodeIndex, descendant: NodeIndex) -> bool {
-        self.is_descendant_of(descendant, ancestor) || self.is_descendant_of(ancestor, descendant)
+    pub fn is_ancestor_or_descendant(&self, a: NodeIndex, b: NodeIndex) -> bool {
+        self.is_descendant_of(a, b) || self.is_descendant_of(b, a)
     }
 
     pub fn step_indices(&self) -> NodeIndices<FetchStepData> {
