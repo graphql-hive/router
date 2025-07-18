@@ -128,6 +128,11 @@ impl FetchStepData {
             }
         }
 
+        if fetch_graph.is_ancestor_or_descendant(self_index, other_index) {
+            // Looks like they depend on each other
+            return false;
+        }
+
         can_merge_base
     }
 }

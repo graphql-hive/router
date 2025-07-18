@@ -63,6 +63,11 @@ impl FetchGraph {
         has_path_connecting(&self.graph, ancestor, descendant, None)
     }
 
+    /// Checks if one is ancestor of the other and vice versa
+    pub fn is_ancestor_or_descendant(&self, ancestor: NodeIndex, descendant: NodeIndex) -> bool {
+        self.is_descendant_of(descendant, ancestor) || self.is_descendant_of(ancestor, descendant)
+    }
+
     pub fn step_indices(&self) -> NodeIndices<FetchStepData> {
         self.graph.node_indices()
     }
