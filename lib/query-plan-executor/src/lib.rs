@@ -3,7 +3,9 @@ use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt}
 use query_planner::{
     ast::{operation::OperationDefinition, selection_item::SelectionItem},
     planner::plan_nodes::{
-        ConditionNode, FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode, FlattenNodePathSegment, KeyRenamer, ParallelNode, PlanNode, QueryPlan, SequenceNode, ValueSetter
+        ConditionNode, FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode,
+        FlattenNodePathSegment, KeyRenamer, ParallelNode, PlanNode, QueryPlan, SequenceNode,
+        ValueSetter,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -451,7 +453,10 @@ fn process_root_result(
 
 enum ParallelJob<'a> {
     Root(ExecutionResult),
-    Flatten(ExecuteForRepresentationsResult, &'a[FlattenNodePathSegment]),
+    Flatten(
+        ExecuteForRepresentationsResult,
+        &'a [FlattenNodePathSegment],
+    ),
 }
 
 #[async_trait]
@@ -507,38 +512,43 @@ impl ExecutablePlanNode for ParallelNode {
                         let mut indexes = BTreeSet::new();
                         let normalized_path = flatten_node.path.as_slice();
                         filtered_representations.push('[');
-                        traverse_and_callback(data, normalized_path, execution_context.schema_metadata, &mut |entity| {
-                            let is_projected =
-                                if let Some(input_rewrites) = &fetch_node.input_rewrites {
-                                    // We need to own the value and not modify the original entity
-                                    let mut entity_owned = entity.to_owned();
-                                    for input_rewrite in input_rewrites {
-                                        input_rewrite.apply(
-                                            &execution_context.schema_metadata.possible_types,
-                                            &mut entity_owned,
-                                        );
-                                    }
-                                    execution_context.project_requires(
-                                        &requires_nodes.items,
-                                        &entity_owned,
-                                        &mut filtered_representations,
-                                        indexes.is_empty(),
-                                        None,
-                                    )
-                                } else {
-                                    execution_context.project_requires(
-                                        &requires_nodes.items,
-                                        entity,
-                                        &mut filtered_representations,
-                                        indexes.is_empty(),
-                                        None,
-                                    )
-                                };
-                            if is_projected {
-                                indexes.insert(index);
-                            }
-                            index += 1;
-                        });
+                        traverse_and_callback(
+                            data,
+                            normalized_path,
+                            execution_context.schema_metadata,
+                            &mut |entity| {
+                                let is_projected =
+                                    if let Some(input_rewrites) = &fetch_node.input_rewrites {
+                                        // We need to own the value and not modify the original entity
+                                        let mut entity_owned = entity.to_owned();
+                                        for input_rewrite in input_rewrites {
+                                            input_rewrite.apply(
+                                                &execution_context.schema_metadata.possible_types,
+                                                &mut entity_owned,
+                                            );
+                                        }
+                                        execution_context.project_requires(
+                                            &requires_nodes.items,
+                                            &entity_owned,
+                                            &mut filtered_representations,
+                                            indexes.is_empty(),
+                                            None,
+                                        )
+                                    } else {
+                                        execution_context.project_requires(
+                                            &requires_nodes.items,
+                                            entity,
+                                            &mut filtered_representations,
+                                            indexes.is_empty(),
+                                            None,
+                                        )
+                                    };
+                                if is_projected {
+                                    indexes.insert(index);
+                                }
+                                index += 1;
+                            },
+                        );
                         filtered_representations.push(']');
                         let job = fetch_node.execute_for_projected_representations(
                             execution_context,
@@ -578,16 +588,21 @@ impl ExecutablePlanNode for ParallelNode {
                         if let Some(mut entities) = result.entities {
                             let mut index_of_traverse = 0;
                             let mut index_of_entities = 0;
-                            traverse_and_callback(data, path, execution_context.schema_metadata, &mut |target| {
-                                if result.indexes.contains(&index_of_traverse) {
-                                    let entity =
-                                        entities.get_mut(index_of_entities).unwrap().take();
-                                    // Merge the entity into the target
-                                    deep_merge::deep_merge(target, entity);
-                                    index_of_entities += 1;
-                                }
-                                index_of_traverse += 1;
-                            });
+                            traverse_and_callback(
+                                data,
+                                path,
+                                execution_context.schema_metadata,
+                                &mut |target| {
+                                    if result.indexes.contains(&index_of_traverse) {
+                                        let entity =
+                                            entities.get_mut(index_of_entities).unwrap().take();
+                                        // Merge the entity into the target
+                                        deep_merge::deep_merge(target, entity);
+                                        index_of_entities += 1;
+                                    }
+                                    index_of_traverse += 1;
+                                },
+                            );
                         }
                         // Process errors and extensions
                         if let Some(errors) = result.errors {
@@ -646,37 +661,42 @@ impl ExecutablePlanNode for FlattenNode {
         let requires_nodes = fetch_node.requires.as_ref().unwrap();
         filtered_representations.push('[');
         let mut first = true;
-        traverse_and_callback(data, self.path.as_slice(), execution_context.schema_metadata, &mut |entity| {
-            let is_projected = if let Some(input_rewrites) = &fetch_node.input_rewrites {
-                // We need to own the value and not modify the original entity
-                let mut entity_owned = entity.to_owned();
-                for input_rewrite in input_rewrites {
-                    input_rewrite.apply(
-                        &execution_context.schema_metadata.possible_types,
-                        &mut entity_owned,
-                    );
+        traverse_and_callback(
+            data,
+            self.path.as_slice(),
+            execution_context.schema_metadata,
+            &mut |entity| {
+                let is_projected = if let Some(input_rewrites) = &fetch_node.input_rewrites {
+                    // We need to own the value and not modify the original entity
+                    let mut entity_owned = entity.to_owned();
+                    for input_rewrite in input_rewrites {
+                        input_rewrite.apply(
+                            &execution_context.schema_metadata.possible_types,
+                            &mut entity_owned,
+                        );
+                    }
+                    execution_context.project_requires(
+                        &requires_nodes.items,
+                        &entity_owned,
+                        &mut filtered_representations,
+                        first,
+                        None,
+                    )
+                } else {
+                    execution_context.project_requires(
+                        &requires_nodes.items,
+                        entity,
+                        &mut filtered_representations,
+                        first,
+                        None,
+                    )
+                };
+                if is_projected {
+                    representations.push(entity);
+                    first = false;
                 }
-                execution_context.project_requires(
-                    &requires_nodes.items,
-                    &entity_owned,
-                    &mut filtered_representations,
-                    first,
-                    None,
-                )
-            } else {
-                execution_context.project_requires(
-                    &requires_nodes.items,
-                    entity,
-                    &mut filtered_representations,
-                    first,
-                    None,
-                )
-            };
-            if is_projected {
-                representations.push(entity);
-                first = false;
-            }
-        });
+            },
+        );
         filtered_representations.push(']');
         trace!(
             "traversed and collected representations: {:?} in {:#?}",
@@ -1078,7 +1098,7 @@ pub fn traverse_and_callback<'a, Callback>(
                     traverse_and_callback(item, rest_of_path, schema_metadata, callback);
                 }
             }
-        },
+        }
         FlattenNodePathSegment::Field(field_name) => {
             // If the key is Field, we expect current_data to be an object
             if let Value::Object(map) = current_data {
@@ -1095,10 +1115,10 @@ pub fn traverse_and_callback<'a, Callback>(
                     Some(Value::String(type_name)) => type_name,
                     _ => type_condition, // Default to type_condition if not found
                 };
-                if schema_metadata.possible_types.entity_satisfies_type_condition(
-                    type_name,
-                    type_condition,
-                ) {
+                if schema_metadata
+                    .possible_types
+                    .entity_satisfies_type_condition(type_name, type_condition)
+                {
                     let rest_of_path = &remaining_path[1..];
                     traverse_and_callback(current_data, rest_of_path, schema_metadata, callback);
                 }
@@ -1110,8 +1130,7 @@ pub fn traverse_and_callback<'a, Callback>(
             }
         }
     }
-
- }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExposeQueryPlanMode {

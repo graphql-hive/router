@@ -11,7 +11,7 @@ use query_planner::graph::PlannerOverrideContext;
 use query_planner::planner::plan_nodes::FlattenNodePathSegment;
 use std::hint::black_box;
 
-use query_plan_executor::schema_metadata::SchemaWithMetadata;
+use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
 use query_plan_executor::ExecutableQueryPlan;
 use query_plan_executor::{execute_query_plan, ExposeQueryPlanMode};
 use query_planner::ast::normalization::normalize_operation;
@@ -261,13 +261,15 @@ fn traverse_and_collect(c: &mut Criterion) {
         FlattenNodePathSegment::Field("product".into()),
     ];
     let mut result: Value = non_projected_result::get_result();
+    let schema_metadata = SchemaMetadata::default();
     c.bench_function("traverse_and_collect", |b| {
         b.iter(|| {
             let result = black_box(&mut result);
+            let schema_metadata = black_box(&schema_metadata);
             let data = result.get_mut("data").unwrap();
             let path = black_box(&path);
             let mut results = vec![];
-            query_plan_executor::traverse_and_callback(data, path, &mut |data| {
+            query_plan_executor::traverse_and_callback(data, path, schema_metadata, &mut |data| {
                 results.push(data);
             });
             black_box(());
@@ -363,16 +365,16 @@ fn project_requires(c: &mut Criterion) {
     ];
     let mut result: Value = non_projected_result::get_result();
     let data = result.get_mut("data").unwrap();
-    let mut representations = vec![];
-    query_plan_executor::traverse_and_callback(data, &path, &mut |data| {
-        representations.push(data);
-    });
     let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
         .expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
     let planner = query_planner::planner::Planner::new_from_supergraph(&parsed_schema)
         .expect("Failed to create planner from supergraph");
     let schema_metadata = &planner.consumer_schema.schema_metadata();
+    let mut representations = vec![];
+    query_plan_executor::traverse_and_callback(data, &path, schema_metadata, &mut |data| {
+        representations.push(data);
+    });
     let subgraph_executor_map =
         SubgraphExecutorMap::from_http_endpoint_map(planner.supergraph.subgraph_endpoint_map);
     let execution_context = query_plan_executor::QueryPlanExecutionContext {
