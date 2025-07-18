@@ -3,9 +3,7 @@ use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt}
 use query_planner::{
     ast::{operation::OperationDefinition, selection_item::SelectionItem},
     planner::plan_nodes::{
-        ConditionNode, FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode, FlattenNodePath,
-        FlattenNodePathSegment, KeyRenamer, ParallelNode, PlanNode, QueryPlan, SequenceNode,
-        ValueSetter,
+        ConditionNode, FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode, FlattenNodePathSegment, KeyRenamer, ParallelNode, PlanNode, QueryPlan, SequenceNode, ValueSetter
     },
 };
 use serde::{Deserialize, Serialize};
@@ -453,7 +451,7 @@ fn process_root_result(
 
 enum ParallelJob<'a> {
     Root(ExecutionResult),
-    Flatten((ExecuteForRepresentationsResult, Vec<&'a str>)),
+    Flatten(ExecuteForRepresentationsResult, &'a[FlattenNodePathSegment]),
 }
 
 #[async_trait]
@@ -493,8 +491,6 @@ impl ExecutablePlanNode for ParallelNode {
                         jobs.push(Box::pin(job.map(ParallelJob::Root)));
                     }
                     PlanNode::Flatten(flatten_node) => {
-                        let normalized_path: Vec<&str> =
-                            flatten_node.path.iter().map(String::as_str).collect();
                         let mut filtered_representations = String::with_capacity(1024);
                         let fetch_node = match flatten_node.node.as_ref() {
                             PlanNode::Fetch(fetch_node) => fetch_node,
@@ -509,8 +505,9 @@ impl ExecutablePlanNode for ParallelNode {
                         let requires_nodes = fetch_node.requires.as_ref().unwrap();
                         let mut index = 0;
                         let mut indexes = BTreeSet::new();
+                        let normalized_path = flatten_node.path.as_slice();
                         filtered_representations.push('[');
-                        traverse_and_callback(data, &normalized_path, &mut |entity| {
+                        traverse_and_callback(data, normalized_path, execution_context.schema_metadata, &mut |entity| {
                             let is_projected =
                                 if let Some(input_rewrites) = &fetch_node.input_rewrites {
                                     // We need to own the value and not modify the original entity
@@ -549,7 +546,7 @@ impl ExecutablePlanNode for ParallelNode {
                             indexes,
                         );
                         jobs.push(Box::pin(
-                            job.map(|r| ParallelJob::Flatten((r, normalized_path))),
+                            job.map(|r| ParallelJob::Flatten(r, normalized_path)),
                         ));
                     }
                     _ => {}
@@ -577,11 +574,11 @@ impl ExecutablePlanNode for ParallelNode {
                             all_extensions.push(extensions);
                         }
                     }
-                    ParallelJob::Flatten((result, path)) => {
+                    ParallelJob::Flatten(result, path) => {
                         if let Some(mut entities) = result.entities {
                             let mut index_of_traverse = 0;
                             let mut index_of_entities = 0;
-                            traverse_and_callback(data, &path, &mut |target| {
+                            traverse_and_callback(data, path, execution_context.schema_metadata, &mut |target| {
                                 if result.indexes.contains(&index_of_traverse) {
                                     let entity =
                                         entities.get_mut(index_of_entities).unwrap().take();
@@ -649,7 +646,7 @@ impl ExecutablePlanNode for FlattenNode {
         let requires_nodes = fetch_node.requires.as_ref().unwrap();
         filtered_representations.push('[');
         let mut first = true;
-        traverse_and_callback(data, &normalized_path, &mut |entity| {
+        traverse_and_callback(data, self.path.as_slice(), execution_context.schema_metadata, &mut |entity| {
             let is_projected = if let Some(input_rewrites) = &fetch_node.input_rewrites {
                 // We need to own the value and not modify the original entity
                 let mut entity_owned = entity.to_owned();
@@ -1052,7 +1049,8 @@ impl QueryPlanExecutionContext<'_> {
 
 pub fn traverse_and_callback<'a, Callback>(
     current_data: &'a mut Value,
-    remaining_path: &[&str],
+    remaining_path: &[FlattenNodePathSegment],
+    schema_metadata: &SchemaMetadata,
     callback: &mut Callback,
 ) where
     Callback: FnMut(&'a mut Value),
@@ -1071,30 +1069,49 @@ pub fn traverse_and_callback<'a, Callback>(
         return;
     }
 
-    let key = remaining_path[0];
-    let rest_of_path = &remaining_path[1..];
-
-    if key == "@" {
-        if let Value::Array(list) = current_data {
-            for item in list.iter_mut() {
-                traverse_and_callback(item, rest_of_path, callback);
+    match &remaining_path[0] {
+        FlattenNodePathSegment::List => {
+            // If the key is List, we expect current_data to be an array
+            if let Value::Array(arr) = current_data {
+                let rest_of_path = &remaining_path[1..];
+                for item in arr.iter_mut() {
+                    traverse_and_callback(item, rest_of_path, schema_metadata, callback);
+                }
+            }
+        },
+        FlattenNodePathSegment::Field(field_name) => {
+            // If the key is Field, we expect current_data to be an object
+            if let Value::Object(map) = current_data {
+                if let Some(next_data) = map.get_mut(field_name) {
+                    let rest_of_path = &remaining_path[1..];
+                    traverse_and_callback(next_data, rest_of_path, schema_metadata, callback);
+                }
             }
         }
-    } else if let Value::Object(map) = current_data {
-        if let Some(next_data) = map.get_mut(key) {
-            traverse_and_callback(next_data, rest_of_path, callback);
+        FlattenNodePathSegment::Cast(type_condition) => {
+            // If the key is Cast, we expect current_data to be an object or an array
+            if let Value::Object(obj) = current_data {
+                let type_name = match obj.get(TYPENAME_FIELD) {
+                    Some(Value::String(type_name)) => type_name,
+                    _ => type_condition, // Default to type_condition if not found
+                };
+                if schema_metadata.possible_types.entity_satisfies_type_condition(
+                    type_name,
+                    type_condition,
+                ) {
+                    let rest_of_path = &remaining_path[1..];
+                    traverse_and_callback(current_data, rest_of_path, schema_metadata, callback);
+                }
+            } else if let Value::Array(arr) = current_data {
+                // If the current data is an array, we need to check each item
+                for item in arr.iter_mut() {
+                    traverse_and_callback(item, remaining_path, schema_metadata, callback);
+                }
+            }
         }
     }
-}
 
-/// Checks if a serde_json::Value has a `__typename` that matches the given `type_name`.
-fn contains_typename(value: &Value, type_name: &str, default_for_missing: bool) -> bool {
-    value
-        .as_object()
-        .and_then(|obj| obj.get("__typename"))
-        .and_then(Value::as_str)
-        .map_or(default_for_missing, |s| s == type_name)
-}
+ }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExposeQueryPlanMode {

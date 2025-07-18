@@ -7,7 +7,7 @@ use graphql_parser::{
 use query_planner::consumer_schema::ConsumerSchema;
 use serde_json::{json, Value};
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SchemaMetadata {
     pub possible_types: PossibleTypes,
     pub enum_values: HashMap<String, Vec<String>>,
@@ -15,7 +15,7 @@ pub struct SchemaMetadata {
     pub introspection_schema_root_json: Value,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PossibleTypes {
     map: HashMap<String, HashSet<String>>,
 }
