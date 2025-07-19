@@ -4,11 +4,12 @@ use crate::{
         minification::minify_operation,
         operation::{OperationDefinition, SubgraphFetchOperation, VariableDefinition},
         selection_item::SelectionItem,
-        selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
-        type_aware_selection::TypeAwareSelection,
+        selection_set::{FieldSelection, SelectionSet},
         value::Value,
     },
-    planner::fetch::fetch_step_data::FetchStepData,
+    planner::fetch::{
+        fetch_step_data::FetchStepData, selections::FetchStepSelections, state::MultiTypeFetchStep,
+    },
     state::supergraph_state::{OperationKind, SupergraphState, TypeNode},
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
@@ -256,22 +257,18 @@ impl PlanNode {
     }
 }
 
-fn create_input_selection_set(input_selections: &TypeAwareSelection) -> SelectionSet {
-    SelectionSet {
-        items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-            selections: input_selections.selection_set.strip_for_plan_input(),
-            type_condition: input_selections.type_name.clone(),
-            skip_if: None,
-            include_if: None,
-        })],
-    }
+fn create_input_selection_set(
+    input_selections: &FetchStepSelections<MultiTypeFetchStep>,
+) -> SelectionSet {
+    let selection_set: SelectionSet = input_selections.into();
+
+    selection_set.strip_for_plan_input()
 }
 
 fn create_output_operation(
-    step: &FetchStepData,
+    step: &FetchStepData<MultiTypeFetchStep>,
     supergraph: &SupergraphState,
 ) -> SubgraphFetchOperation {
-    let type_aware_selection = &step.output;
     let mut variables = vec![VariableDefinition {
         name: "representations".to_string(),
         variable_type: TypeNode::NonNull(Box::new(TypeNode::List(Box::new(TypeNode::NonNull(
@@ -291,14 +288,7 @@ fn create_output_operation(
         selection_set: SelectionSet {
             items: vec![SelectionItem::Field(FieldSelection {
                 name: "_entities".to_string(),
-                selections: SelectionSet {
-                    items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                        selections: type_aware_selection.selection_set.clone(),
-                        type_condition: type_aware_selection.type_name.clone(),
-                        skip_if: None,
-                        include_if: None,
-                    })],
-                },
+                selections: (&step.output).into(),
                 alias: None,
                 arguments: Some(
                     (
@@ -322,24 +312,22 @@ fn create_output_operation(
     }
 }
 
-impl From<&FetchStepData> for OperationKind {
-    fn from(step: &FetchStepData) -> Self {
-        let type_name = step.output.type_name.as_str();
-
-        if type_name == "Query" {
-            OperationKind::Query
-        } else if type_name == "Mutation" {
-            OperationKind::Mutation
-        } else if type_name == "Subscription" {
-            OperationKind::Subscription
-        } else {
-            OperationKind::Query
+impl From<&FetchStepData<MultiTypeFetchStep>> for OperationKind {
+    fn from(step: &FetchStepData<MultiTypeFetchStep>) -> Self {
+        match step.input.iter().next().unwrap().0.as_str() {
+            "Query" => OperationKind::Query,
+            "Mutation" => OperationKind::Mutation,
+            "Subscription" => OperationKind::Subscription,
+            _ => OperationKind::Query,
         }
     }
 }
 
 impl FetchNode {
-    pub fn from_fetch_step(step: &FetchStepData, supergraph: &SupergraphState) -> Self {
+    pub fn from_fetch_step(
+        step: &FetchStepData<MultiTypeFetchStep>,
+        supergraph: &SupergraphState,
+    ) -> Self {
         match step.is_entity_call() {
             true => FetchNode {
                 service_name: step.service_name.0.clone(),
@@ -355,7 +343,7 @@ impl FetchNode {
                 let operation_def = OperationDefinition {
                     name: None,
                     operation_kind: Some(step.into()),
-                    selection_set: step.output.selection_set.clone(),
+                    selection_set: (&step.output).into(),
                     variable_definitions: step.variable_definitions.clone(),
                 };
                 let document =
@@ -381,7 +369,10 @@ impl FetchNode {
 }
 
 impl PlanNode {
-    pub fn from_fetch_step(step: &FetchStepData, supergraph: &SupergraphState) -> Self {
+    pub fn from_fetch_step(
+        step: &FetchStepData<MultiTypeFetchStep>,
+        supergraph: &SupergraphState,
+    ) -> Self {
         let node = if step.response_path.is_empty() {
             PlanNode::Fetch(FetchNode::from_fetch_step(step, supergraph))
         } else {

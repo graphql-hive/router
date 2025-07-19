@@ -513,8 +513,7 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
     );
     let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
 
-    // TODO: this should be batched (turned into a sequence of two fetch steps)
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
       Sequence {
         Fetch(service: "products") {
@@ -533,45 +532,36 @@ fn type_expand_interface_field() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Parallel {
-          Flatten(path: "products.@|[Magazine]") {
-            Fetch(service: "reviews") {
-              {
-                ... on Magazine {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Magazine {
-                  reviews {
-                    id
-                  }
-                }
+        Flatten(path: "products.@") {
+          Fetch(service: "reviews") {
+            {
+              ... on Book {
+                __typename
+                id
               }
-            },
-          },
-          Flatten(path: "products.@|[Book]") {
-            Fetch(service: "reviews") {
-              {
-                ... on Book {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Book {
-                  reviews {
-                    id
-                  }
-                }
+              ... on Magazine {
+                __typename
+                id
               }
-            },
+            } =>
+            {
+              ... on Book {
+                reviews {
+    ...a            }
+              }
+              ... on Magazine {
+                reviews {
+    ...a            }
+              }
+            }
+            fragment a on Review {
+              id
+            }
           },
         },
       },
     },
-    "#);
+    "###);
 
     Ok(())
 }
@@ -604,9 +594,7 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
     );
     let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
 
-    // TODO: there are duplicated calls in the plan,
-    //       but it's because of the #206
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
       Sequence {
         Fetch(service: "products") {
@@ -640,9 +628,17 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
           }
         },
         Parallel {
-          Flatten(path: "magazine.@|[Magazine]") {
+          Flatten(path: "magazine.@") {
             Fetch(service: "inventory") {
               {
+                ... on Book {
+                  __typename
+                  dimensions {
+                    size
+                    weight
+                  }
+                  id
+                }
                 ... on Magazine {
                   __typename
                   dimensions {
@@ -653,16 +649,22 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
                 }
               } =>
               {
+                ... on Book {
+                  delivery(zip: "1234") {
+    ...a              }
+                }
                 ... on Magazine {
                   delivery(zip: "1234") {
-                    fastestDelivery
-                    estimatedDelivery
-                  }
+    ...a              }
                 }
+              }
+              fragment a on DeliveryEstimates {
+                fastestDelivery
+                estimatedDelivery
               }
             },
           },
-          Flatten(path: "magazine.@|[Book]") {
+          Flatten(path: "book.@") {
             Fetch(service: "inventory") {
               {
                 ... on Book {
@@ -673,20 +675,6 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
                   }
                   id
                 }
-              } =>
-              {
-                ... on Book {
-                  delivery(zip: "1234") {
-                    fastestDelivery
-                    estimatedDelivery
-                  }
-                }
-              }
-            },
-          },
-          Flatten(path: "book.@|[Magazine]") {
-            Fetch(service: "inventory") {
-              {
                 ... on Magazine {
                   __typename
                   dimensions {
@@ -697,41 +685,25 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
                 }
               } =>
               {
+                ... on Book {
+                  delivery(zip: "1234") {
+    ...a              }
+                }
                 ... on Magazine {
                   delivery(zip: "1234") {
-                    fastestDelivery
-                    estimatedDelivery
-                  }
+    ...a              }
                 }
               }
-            },
-          },
-          Flatten(path: "book.@|[Book]") {
-            Fetch(service: "inventory") {
-              {
-                ... on Book {
-                  __typename
-                  dimensions {
-                    size
-                    weight
-                  }
-                  id
-                }
-              } =>
-              {
-                ... on Book {
-                  delivery(zip: "1234") {
-                    fastestDelivery
-                    estimatedDelivery
-                  }
-                }
+              fragment a on DeliveryEstimates {
+                fastestDelivery
+                estimatedDelivery
               }
             },
           },
         },
       },
     },
-    "#);
+    "###);
 
     Ok(())
 }
@@ -762,9 +734,7 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
     );
     let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
 
-    // TODO: there are duplicated calls in the plan,
-    //       but it's because of the #206
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
       Sequence {
         Fetch(service: "products") {
@@ -783,82 +753,47 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
             }
           }
         },
-        Parallel {
-          Flatten(path: "products.@|[Magazine]") {
-            Fetch(service: "reviews") {
-              {
-                ... on Magazine {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Magazine {
-                  reviews {
-                    product {
-                      id
-                      __typename
-                      ... on Book {
-                        __typename
-                        id
-                      }
-                      ... on Magazine {
-                        __typename
-                        id
-                      }
-                    }
-                  }
-                }
+        Flatten(path: "products.@") {
+          Fetch(service: "reviews") {
+            {
+              ... on Book {
+                __typename
+                id
               }
-            },
-          },
-          Flatten(path: "products.@|[Book]") {
-            Fetch(service: "reviews") {
-              {
+              ... on Magazine {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Book {
+                reviews {
+    ...a            }
+              }
+              ... on Magazine {
+                reviews {
+    ...a            }
+              }
+            }
+            fragment a on Review {
+              product {
+                id
+                __typename
                 ... on Book {
                   __typename
                   id
                 }
-              } =>
-              {
-                ... on Book {
-                  reviews {
-                    product {
-                      id
-                      __typename
-                      ... on Book {
-                        __typename
-                        id
-                      }
-                      ... on Magazine {
-                        __typename
-                        id
-                      }
-                    }
-                  }
+                ... on Magazine {
+                  __typename
+                  id
                 }
               }
-            },
+            }
           },
         },
         Parallel {
-          Flatten(path: "products.@|[Magazine].reviews.@.product|[Magazine]") {
-            Fetch(service: "products") {
-              {
-                ... on Magazine {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Magazine {
-                  sku
-                }
-              }
-            },
-          },
           Include(if: $title) {
-            Flatten(path: "products.@|[Magazine].reviews.@.product|[Book]") {
+            Flatten(path: "products.@|[Book].reviews.@.product|[Book]") {
               Fetch(service: "books") {
                 {
                   ... on Book {
@@ -889,27 +824,10 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
               }
             },
           },
-          Include(if: $title) {
-            Flatten(path: "products.@|[Book].reviews.@.product|[Book]") {
-              Fetch(service: "books") {
-                {
-                  ... on Book {
-                    __typename
-                    id
-                  }
-                } =>
-                {
-                  ... on Book {
-                    title
-                  }
-                }
-              },
-            },
-          },
         },
       },
     },
-    "#);
+    "###);
 
     Ok(())
 }
@@ -943,9 +861,7 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
     );
     let query_plan = build_query_plan("fixture/tests/abstract-types.supergraph.graphql", document)?;
 
-    // TODO: there are duplicated calls in the plan,
-    //       but it's because of the #206
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
       Sequence {
         Fetch(service: "products") {
@@ -964,146 +880,45 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
             }
           }
         },
-        Parallel {
-          Flatten(path: "products.@|[Magazine]") {
-            Fetch(service: "reviews") {
-              {
-                ... on Magazine {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Magazine {
-                  reviews {
-                    product {
-                      id
-                      __typename
-                      ... on Book {
-                        __typename
-                        id
-                      }
-                      ... on Magazine {
-                        __typename
-                        id
-                      }
-                    }
-                  }
-                }
+        Flatten(path: "products.@") {
+          Fetch(service: "reviews") {
+            {
+              ... on Book {
+                __typename
+                id
               }
-            },
-          },
-          Flatten(path: "products.@|[Book]") {
-            Fetch(service: "reviews") {
-              {
+              ... on Magazine {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Book {
+                reviews {
+    ...a            }
+              }
+              ... on Magazine {
+                reviews {
+    ...a            }
+              }
+            }
+            fragment a on Review {
+              product {
+                id
+                __typename
                 ... on Book {
                   __typename
                   id
                 }
-              } =>
-              {
-                ... on Book {
-                  reviews {
-                    product {
-                      id
-                      __typename
-                      ... on Book {
-                        __typename
-                        id
-                      }
-                      ... on Magazine {
-                        __typename
-                        id
-                      }
-                    }
-                  }
+                ... on Magazine {
+                  __typename
+                  id
                 }
               }
-            },
+            }
           },
         },
         Parallel {
-          Flatten(path: "products.@|[Magazine].reviews.@.product|[Magazine]") {
-            Fetch(service: "products") {
-              {
-                ... on Magazine {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Magazine {
-                  sku
-                }
-              }
-            },
-          },
-          Include(if: $title) {
-            Flatten(path: "products.@|[Magazine].reviews.@.product|[Book]") {
-              Fetch(service: "products") {
-                {
-                  ... on Book {
-                    __typename
-                    id
-                  }
-                } =>
-                {
-                  ... on Book {
-                    sku
-                  }
-                }
-              },
-            },
-          },
-          Include(if: $title) {
-            Flatten(path: "products.@|[Magazine].reviews.@.product|[Book]") {
-              Fetch(service: "books") {
-                {
-                  ... on Book {
-                    __typename
-                    id
-                  }
-                } =>
-                {
-                  ... on Book {
-                    title
-                  }
-                }
-              },
-            },
-          },
-          Flatten(path: "products.@|[Book].reviews.@.product|[Magazine]") {
-            Fetch(service: "products") {
-              {
-                ... on Magazine {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Magazine {
-                  sku
-                }
-              }
-            },
-          },
-          Include(if: $title) {
-            Flatten(path: "products.@|[Book].reviews.@.product|[Book]") {
-              Fetch(service: "products") {
-                {
-                  ... on Book {
-                    __typename
-                    id
-                  }
-                } =>
-                {
-                  ... on Book {
-                    sku
-                  }
-                }
-              },
-            },
-          },
           Include(if: $title) {
             Flatten(path: "products.@|[Book].reviews.@.product|[Book]") {
               Fetch(service: "books") {
@@ -1116,6 +931,30 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
                 {
                   ... on Book {
                     title
+                  }
+                }
+              },
+            },
+          },
+          Include(if: $title) {
+            Flatten(path: "products.@.reviews.@.product") {
+              Fetch(service: "products") {
+                {
+                  ... on Book {
+                    __typename
+                    id
+                  }
+                  ... on Magazine {
+                    __typename
+                    id
+                  }
+                } =>
+                {
+                  ... on Book {
+                    sku
+                  }
+                  ... on Magazine {
+                    sku
                   }
                 }
               },
@@ -1124,7 +963,7 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
         },
       },
     },
-    "#);
+    "###);
 
     Ok(())
 }
