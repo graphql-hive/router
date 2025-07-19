@@ -22,6 +22,7 @@ use tracing::{error, trace};
 pub struct GraphQLNormalizationPayload {
     /// The operation to execute, without introspection fields.
     pub operation_for_plan: OperationDefinition,
+    pub root_type_name: &'static str,
     pub projection_selections: Vec<ProjectionFieldSelection>,
     pub has_introspection: bool,
 }
@@ -109,11 +110,13 @@ impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
                         filtered_operation_for_plan
                     );
 
-                    let projection_selections = ProjectionFieldSelection::from_operation(
-                        operation,
-                        &app_state.schema_metadata,
-                    );
+                    let (root_type_name, projection_selections) =
+                        ProjectionFieldSelection::from_operation(
+                            operation,
+                            &app_state.schema_metadata,
+                        );
                     let payload = GraphQLNormalizationPayload {
+                        root_type_name,
                         projection_selections,
                         operation_for_plan: filtered_operation_for_plan,
                         has_introspection,

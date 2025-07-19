@@ -1148,11 +1148,13 @@ pub enum ExposeQueryPlanMode {
         variable_values = ?variable_values,
     )
 )]
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_query_plan(
     query_plan: &QueryPlan,
     subgraph_executor_map: &SubgraphExecutorMap,
     variable_values: &Option<HashMap<String, Value>>,
     schema_metadata: &SchemaMetadata,
+    operation_type_name: &str,
     selections: &Vec<ProjectionFieldSelection>,
     has_introspection: bool,
     expose_query_plan: ExposeQueryPlanMode,
@@ -1190,6 +1192,7 @@ pub async fn execute_query_plan(
         &mut result_data,
         &mut result_errors,
         &result_extensions,
+        operation_type_name,
         selections,
         schema_metadata,
         variable_values,

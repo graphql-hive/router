@@ -220,20 +220,23 @@ impl ProjectionFieldSelection {
     pub fn from_operation(
         operation: &OperationDefinition,
         schema_metadata: &SchemaMetadata,
-    ) -> Vec<ProjectionFieldSelection> {
+    ) -> (&'static str, Vec<ProjectionFieldSelection>) {
         let root_type_name = match operation.operation_kind {
             Some(OperationKind::Query) => "Query",
             Some(OperationKind::Mutation) => "Mutation",
             Some(OperationKind::Subscription) => "Subscription",
             None => "Query",
         };
-        ProjectionFieldSelection::from_selection_set(
-            &operation.selection_set,
+        (
             root_type_name,
-            None,
-            schema_metadata,
-            None,
-            None,
+            ProjectionFieldSelection::from_selection_set(
+                &operation.selection_set,
+                root_type_name,
+                None,
+                schema_metadata,
+                None,
+                None,
+            ),
         )
     }
 }
@@ -243,6 +246,7 @@ pub fn project_by_operation(
     data: &mut Value,
     errors: &mut Vec<GraphQLError>,
     extensions: &HashMap<String, Value>,
+    operation_type_name: &str,
     selections: &Vec<ProjectionFieldSelection>,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
@@ -264,6 +268,7 @@ pub fn project_by_operation(
             selections,
             schema_metadata,
             variable_values,
+            operation_type_name,
             &mut buffer,
             &mut first, // Start with first as true to add the opening brace
         );
@@ -360,6 +365,7 @@ fn project_selection_set(
                 selection.selections.as_ref().unwrap(),
                 schema_metadata,
                 variable_values,
+                &selection.type_name,
                 buffer,
                 &mut first,
             );
@@ -428,12 +434,13 @@ fn project_selection_set_with_map(
     selections: &Vec<ProjectionFieldSelection>,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
+    parent_type_name: &str,
     buffer: &mut String,
     first: &mut bool,
 ) -> bool {
-    let type_name = match obj.get(TYPENAME_FIELD) {
-        Some(Value::String(type_name)) => Some(type_name),
-        _ => None,
+    let parent_type_name = match obj.get(TYPENAME_FIELD) {
+        Some(Value::String(type_name)) => type_name,
+        _ => parent_type_name,
     };
     for selection in selections {
         if !selection.include_or_skip_by_variable(variable_values) {
@@ -441,11 +448,9 @@ fn project_selection_set_with_map(
             continue;
         }
         if let Some(parent_conditions) = &selection.parent_type_conditions {
-            if let Some(type_name) = type_name {
-                if !parent_conditions.contains(type_name) {
-                    // If the type name is not in the parent type conditions, skip it
-                    continue;
-                }
+            if !parent_conditions.contains(parent_type_name) {
+                // If the type name is not in the parent type conditions, skip it
+                continue;
             }
         }
 
@@ -460,11 +465,7 @@ fn project_selection_set_with_map(
             buffer.push('"');
             buffer.push_str(&selection.response_key);
             buffer.push_str("\":\"");
-            let type_name = obj
-                .get(TYPENAME_FIELD)
-                .and_then(|v| v.as_str())
-                .unwrap_or(&selection.type_name);
-            buffer.push_str(type_name);
+            buffer.push_str(parent_type_name);
             buffer.push('"');
             continue;
         }
@@ -473,7 +474,7 @@ fn project_selection_set_with_map(
         buffer.push_str(&selection.response_key);
         buffer.push_str("\":");
 
-        let field_val = if selection.field_name == "__schema" && selection.type_name == "Query" {
+        let field_val = if selection.field_name == "__schema" && parent_type_name == "Query" {
             Some(&schema_metadata.introspection_schema_root_json)
         } else {
             obj.get(selection.response_key.as_str())
