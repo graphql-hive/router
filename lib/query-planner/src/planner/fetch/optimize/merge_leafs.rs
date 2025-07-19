@@ -1,21 +1,18 @@
 use petgraph::graph::NodeIndex;
 use tracing::{instrument, trace};
 
-use crate::{
-    ast::type_aware_selection::find_arguments_conflicts,
-    planner::fetch::{
-        error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
-        optimize::utils::perform_fetch_step_merge,
-    },
+use crate::planner::fetch::{
+    error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepData,
+    optimize::utils::perform_fetch_step_merge, state::MultiTypeFetchStep,
 };
 
-impl FetchStepData {
+impl FetchStepData<MultiTypeFetchStep> {
     pub fn can_merge_leafs(
         &self,
         self_index: NodeIndex,
         other_index: NodeIndex,
         other: &Self,
-        fetch_graph: &FetchGraph,
+        fetch_graph: &FetchGraph<MultiTypeFetchStep>,
     ) -> bool {
         if self_index == other_index {
             return false;
@@ -29,7 +26,7 @@ impl FetchStepData {
             return false;
         }
 
-        if self.input.type_name != other.input.type_name {
+        if !self.input.selecting_same_types(&other.input) {
             return false;
         }
 
@@ -56,9 +53,7 @@ impl FetchStepData {
             return false;
         }
 
-        let input_conflicts = find_arguments_conflicts(&self.input, &other.input);
-
-        if !input_conflicts.is_empty() {
+        if self.has_arguments_conflicts_with(other) {
             return false;
         }
 
@@ -66,7 +61,7 @@ impl FetchStepData {
     }
 }
 
-impl FetchGraph {
+impl FetchGraph<MultiTypeFetchStep> {
     #[instrument(level = "trace", skip_all)]
     /// This optimization is about merging leaf nodes in the fetch nodes with other nodes.
     /// It reduces the number of fetch steps, without degrading the query performance.
@@ -74,7 +69,7 @@ impl FetchGraph {
     /// meaning the overall depth (amount of parallel layers) is not increased.
     pub(crate) fn merge_leafs(&mut self) -> Result<(), FetchGraphError> {
         while let Some((target_idx, leaf_idx)) = self.find_merge_candidate()? {
-            perform_fetch_step_merge(target_idx, leaf_idx, self)?;
+            perform_fetch_step_merge(target_idx, leaf_idx, self, false)?;
         }
 
         Ok(())
