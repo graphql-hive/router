@@ -17,7 +17,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct ProjectionFieldSelection {
+pub struct FieldProjectionPlan {
     field_name: String,
     response_key: String,
     type_name: String,
@@ -25,10 +25,10 @@ pub struct ProjectionFieldSelection {
     skip_if: Option<String>,
     parent_type_conditions: HashSet<String>,
     enum_values: Option<HashSet<String>>,
-    selections: Option<Vec<ProjectionFieldSelection>>,
+    selections: Option<Vec<FieldProjectionPlan>>,
 }
 
-impl ProjectionFieldSelection {
+impl FieldProjectionPlan {
     pub fn from_selection_set(
         selection_set: &SelectionSet,
         parent_type_name: &str,
@@ -36,8 +36,8 @@ impl ProjectionFieldSelection {
         schema_metadata: &SchemaMetadata,
         include_if: Option<String>,
         skip_if: Option<String>,
-    ) -> Option<Vec<ProjectionFieldSelection>> {
-        let mut field_selections: IndexMap<String, ProjectionFieldSelection> = IndexMap::new();
+    ) -> Option<Vec<FieldProjectionPlan>> {
+        let mut field_selections: IndexMap<String, FieldProjectionPlan> = IndexMap::new();
         for selection_item in &selection_set.items {
             match selection_item {
                 SelectionItem::Field(field) => {
@@ -106,7 +106,7 @@ impl ProjectionFieldSelection {
                             let field_type_conditions = schema_metadata
                                 .possible_types
                                 .get_possible_types(field_type);
-                            ProjectionFieldSelection::from_selection_set(
+                            FieldProjectionPlan::from_selection_set(
                                 &field.selections,
                                 field_type,
                                 field_type_conditions,
@@ -130,13 +130,13 @@ impl ProjectionFieldSelection {
                             .get_possible_types(field_type);
                         field_selections.insert(
                             response_key.to_string(),
-                            ProjectionFieldSelection {
+                            FieldProjectionPlan {
                                 field_name,
                                 response_key: response_key.clone(),
                                 include_if: final_include_if.clone(),
                                 skip_if: final_skip_if.clone(),
                                 parent_type_conditions: parent_type_conditions.clone(),
-                                selections: ProjectionFieldSelection::from_selection_set(
+                                selections: FieldProjectionPlan::from_selection_set(
                                     &field.selections,
                                     field_type,
                                     field_type_conditions,
@@ -169,7 +169,7 @@ impl ProjectionFieldSelection {
                         .possible_types
                         .get_possible_types(&inline_fragment.type_condition);
                     if let Some(inline_fragment_selections) =
-                        ProjectionFieldSelection::from_selection_set(
+                        FieldProjectionPlan::from_selection_set(
                             &inline_fragment.selections,
                             &inline_fragment.type_condition,
                             parent_type_conditions,
@@ -230,7 +230,7 @@ impl ProjectionFieldSelection {
     pub fn from_operation(
         operation: &OperationDefinition,
         schema_metadata: &SchemaMetadata,
-    ) -> (&'static str, Vec<ProjectionFieldSelection>) {
+    ) -> (&'static str, Vec<FieldProjectionPlan>) {
         let root_type_name = match operation.operation_kind {
             Some(OperationKind::Query) => "Query",
             Some(OperationKind::Mutation) => "Mutation",
@@ -240,7 +240,7 @@ impl ProjectionFieldSelection {
         let type_conditions = HashSet::from([root_type_name.to_string()]);
         (
             root_type_name,
-            ProjectionFieldSelection::from_selection_set(
+            FieldProjectionPlan::from_selection_set(
                 &operation.selection_set,
                 root_type_name,
                 type_conditions,
@@ -248,7 +248,7 @@ impl ProjectionFieldSelection {
                 None,
                 None,
             )
-            .unwrap(),
+            .unwrap_or_default(),
         )
     }
 }
@@ -259,7 +259,7 @@ pub fn project_by_operation(
     errors: &mut Vec<GraphQLError>,
     extensions: &HashMap<String, Value>,
     operation_type_name: &str,
-    selections: &Vec<ProjectionFieldSelection>,
+    selections: &Vec<FieldProjectionPlan>,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
 ) -> String {
@@ -323,7 +323,7 @@ pub fn project_by_operation(
 fn project_selection_set(
     data: &Value,
     errors: &mut Vec<GraphQLError>,
-    selection: &ProjectionFieldSelection,
+    selection: &FieldProjectionPlan,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
     buffer: &mut String,
@@ -413,7 +413,7 @@ trait IncludeOrSkipByVariable {
         -> bool;
 }
 
-impl IncludeOrSkipByVariable for ProjectionFieldSelection {
+impl IncludeOrSkipByVariable for FieldProjectionPlan {
     fn include_or_skip_by_variable(
         &self,
         variable_values: &Option<HashMap<String, Value>>,
@@ -456,7 +456,7 @@ impl IncludeOrSkipByVariable for ProjectionFieldSelection {
 fn project_selection_set_with_map(
     obj: &Map<String, Value>,
     errors: &mut Vec<GraphQLError>,
-    selections: &Vec<ProjectionFieldSelection>,
+    selections: &Vec<FieldProjectionPlan>,
     schema_metadata: &SchemaMetadata,
     variable_values: &Option<HashMap<String, Value>>,
     parent_type_name: &str,

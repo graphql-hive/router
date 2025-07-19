@@ -17,7 +17,7 @@ use tracing::{instrument, trace, warn}; // For reading file in main
 use crate::{
     executors::map::SubgraphExecutorMap,
     json_writer::write_and_escape_string,
-    projection::ProjectionFieldSelection,
+    projection::FieldProjectionPlan,
     schema_metadata::{PossibleTypes, SchemaMetadata},
 };
 pub mod deep_merge;
@@ -1155,7 +1155,7 @@ pub async fn execute_query_plan(
     variable_values: &Option<HashMap<String, Value>>,
     schema_metadata: &SchemaMetadata,
     operation_type_name: &str,
-    selections: &Vec<ProjectionFieldSelection>,
+    selections: &Vec<FieldProjectionPlan>,
     has_introspection: bool,
     expose_query_plan: ExposeQueryPlanMode,
 ) -> String {

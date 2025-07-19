@@ -44,7 +44,7 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
     let schema_metadata = planner.consumer_schema.schema_metadata();
     let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(subgraph_endpoint_map);
     let (root_type_name, projection_selections) =
-        query_plan_executor::projection::ProjectionFieldSelection::from_operation(
+        query_plan_executor::projection::FieldProjectionPlan::from_operation(
             normalized_operation,
             &schema_metadata,
         );
@@ -143,7 +143,7 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
     subgraph_executor_map.insert_boxed_arc("reviews".to_string(), reviews.to_boxed_arc());
 
     let (root_type_name, projection_selections) =
-        query_plan_executor::projection::ProjectionFieldSelection::from_operation(
+        query_plan_executor::projection::FieldProjectionPlan::from_operation(
             normalized_operation,
             &schema_metadata,
         );
@@ -238,7 +238,7 @@ fn project_data_by_operation(c: &mut Criterion) {
     let normalized_operation = normalized_document.executable_operation();
     let schema_metadata = planner.consumer_schema.schema_metadata();
     let (root_type_name, projection_selections) =
-        query_plan_executor::projection::ProjectionFieldSelection::from_operation(
+        query_plan_executor::projection::FieldProjectionPlan::from_operation(
             normalized_operation,
             &schema_metadata,
         );

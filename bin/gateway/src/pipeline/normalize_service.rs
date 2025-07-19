@@ -4,7 +4,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use http::Request;
 use query_plan_executor::introspection::filter_introspection_fields_in_operation;
-use query_plan_executor::projection::ProjectionFieldSelection;
+use query_plan_executor::projection::FieldProjectionPlan;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
 
@@ -23,7 +23,7 @@ pub struct GraphQLNormalizationPayload {
     /// The operation to execute, without introspection fields.
     pub operation_for_plan: OperationDefinition,
     pub root_type_name: &'static str,
-    pub projection_selections: Vec<ProjectionFieldSelection>,
+    pub projection_plan: Vec<FieldProjectionPlan>,
     pub has_introspection: bool,
 }
 
@@ -110,14 +110,11 @@ impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
                         filtered_operation_for_plan
                     );
 
-                    let (root_type_name, projection_selections) =
-                        ProjectionFieldSelection::from_operation(
-                            operation,
-                            &app_state.schema_metadata,
-                        );
+                    let (root_type_name, projection_plan) =
+                        FieldProjectionPlan::from_operation(operation, &app_state.schema_metadata);
                     let payload = GraphQLNormalizationPayload {
                         root_type_name,
-                        projection_selections,
+                        projection_plan,
                         operation_for_plan: filtered_operation_for_plan,
                         has_introspection,
                     };

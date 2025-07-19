@@ -43,10 +43,7 @@ fn query_executor_pipeline_locally() {
         subgraph_executor_map.insert_boxed_arc("products".to_string(), products.to_boxed_arc());
         subgraph_executor_map.insert_boxed_arc("reviews".to_string(), reviews.to_boxed_arc());
         let (root_type_name, projection_selections) =
-            projection::ProjectionFieldSelection::from_operation(
-                normalized_operation,
-                &schema_metadata,
-            );
+            projection::FieldProjectionPlan::from_operation(normalized_operation, &schema_metadata);
         let result = crate::execute_query_plan(
             &query_plan,
             &subgraph_executor_map,
