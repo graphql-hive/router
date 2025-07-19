@@ -4,7 +4,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use http::Request;
 use query_plan_executor::introspection::filter_introspection_fields_in_operation;
-use query_planner::ast::document::NormalizedDocument;
+use query_plan_executor::projection::ProjectionFieldSelection;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
 
@@ -20,10 +20,9 @@ use tracing::{error, trace};
 
 #[derive(Debug, Clone)]
 pub struct GraphQLNormalizationPayload {
-    /// The raw, normalized GraphQL document.
-    pub normalized_document: NormalizedDocument,
     /// The operation to execute, without introspection fields.
     pub operation_for_plan: OperationDefinition,
+    pub projection_selections: Vec<ProjectionFieldSelection>,
     pub has_introspection: bool,
 }
 
@@ -82,8 +81,8 @@ impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
             Some(payload) => {
                 trace!(
                     "Found normalized GraphQL operation in cache (operation name={:?}): {}",
-                    payload.normalized_document.operation_name,
-                    payload.normalized_document.operation
+                    payload.operation_for_plan.name,
+                    payload.operation_for_plan
                 );
                 req.extensions_mut().insert(payload);
                 Ok(GatewayPipelineStepDecision::Continue)
@@ -110,8 +109,12 @@ impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
                         filtered_operation_for_plan
                     );
 
+                    let projection_selections = ProjectionFieldSelection::from_operation(
+                        operation,
+                        &app_state.schema_metadata,
+                    );
                     let payload = GraphQLNormalizationPayload {
-                        normalized_document: doc,
+                        projection_selections,
                         operation_for_plan: filtered_operation_for_plan,
                         has_introspection,
                     };

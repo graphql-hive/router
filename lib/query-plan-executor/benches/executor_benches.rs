@@ -43,19 +43,24 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
     let subgraph_endpoint_map = planner.supergraph.subgraph_endpoint_map;
     let schema_metadata = planner.consumer_schema.schema_metadata();
     let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(subgraph_endpoint_map);
+    let projection_selections =
+        query_plan_executor::projection::ProjectionFieldSelection::from_operation(
+            normalized_operation,
+            &schema_metadata,
+        );
     c.bench_function("query_plan_executor_pipeline_via_http", |b| {
         b.to_async(&rt).iter(|| async {
             let query_plan = black_box(&query_plan);
             let schema_metadata = black_box(&schema_metadata);
-            let operation = black_box(&normalized_operation);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
+            let projection_selections = black_box(&projection_selections);
             let has_introspection = false;
             let result = execute_query_plan(
                 query_plan,
                 subgraph_executor_map,
                 &None,
                 schema_metadata,
-                operation,
+                projection_selections,
                 has_introspection,
                 ExposeQueryPlanMode::No,
             )
@@ -135,19 +140,25 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
     subgraph_executor_map.insert_boxed_arc("products".to_string(), products.to_boxed_arc());
     subgraph_executor_map.insert_boxed_arc("reviews".to_string(), reviews.to_boxed_arc());
 
+    let projection_selections =
+        query_plan_executor::projection::ProjectionFieldSelection::from_operation(
+            normalized_operation,
+            &schema_metadata,
+        );
+
     c.bench_function("query_plan_executor_pipeline_locally", |b| {
         b.to_async(&rt).iter(|| async {
             let query_plan = black_box(&query_plan);
             let schema_metadata = black_box(&schema_metadata);
-            let operation = black_box(&normalized_operation);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
+            let projection_selections = black_box(&projection_selections);
             let has_introspection = false;
             let result = execute_query_plan(
                 query_plan,
                 subgraph_executor_map,
                 &None,
                 schema_metadata,
-                operation,
+                projection_selections,
                 has_introspection,
                 ExposeQueryPlanMode::No,
             )
@@ -222,7 +233,11 @@ fn project_data_by_operation(c: &mut Criterion) {
         .expect("Failed to normalize operation");
     let normalized_operation = normalized_document.executable_operation();
     let schema_metadata = planner.consumer_schema.schema_metadata();
-    let operation = black_box(&normalized_operation);
+    let projection_selections =
+        query_plan_executor::projection::ProjectionFieldSelection::from_operation(
+            normalized_operation,
+            &schema_metadata,
+        );
     c.bench_function("project_data_by_operation", |b| {
         b.iter(|| {
             let mut data = non_projected_result::get_result();
@@ -231,13 +246,13 @@ fn project_data_by_operation(c: &mut Criterion) {
             let errors = black_box(&mut errors);
             let extensions = HashMap::new();
             let extensions = black_box(&extensions);
-            let operation = black_box(&operation);
             let schema_metadata = black_box(&schema_metadata);
+            let projection_selections = black_box(&projection_selections);
             let result = query_plan_executor::projection::project_by_operation(
                 data,
                 errors,
                 extensions,
-                operation,
+                projection_selections,
                 schema_metadata,
                 &None,
             );

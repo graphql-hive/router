@@ -1,7 +1,10 @@
 use query_planner::graph::PlannerOverrideContext;
 use subgraphs::accounts;
 
-use crate::executors::{common::SubgraphExecutor, map::SubgraphExecutorMap};
+use crate::{
+    executors::{common::SubgraphExecutor, map::SubgraphExecutorMap},
+    projection,
+};
 
 mod traverse_and_callback;
 
@@ -39,12 +42,16 @@ fn query_executor_pipeline_locally() {
         subgraph_executor_map.insert_boxed_arc("inventory".to_string(), inventory.to_boxed_arc());
         subgraph_executor_map.insert_boxed_arc("products".to_string(), products.to_boxed_arc());
         subgraph_executor_map.insert_boxed_arc("reviews".to_string(), reviews.to_boxed_arc());
+        let projection_selections = projection::ProjectionFieldSelection::from_operation(
+            normalized_operation,
+            &schema_metadata,
+        );
         let result = crate::execute_query_plan(
             &query_plan,
             &subgraph_executor_map,
             &None,
             &schema_metadata,
-            normalized_operation,
+            &projection_selections,
             false,
             crate::ExposeQueryPlanMode::No,
         )

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use query_planner::{
-    ast::{operation::OperationDefinition, selection_item::SelectionItem},
+    ast::selection_item::SelectionItem,
     planner::plan_nodes::{
         ConditionNode, FetchNode, FetchNodePathSegment, FetchRewrite, FlattenNode,
         FlattenNodePathSegment, KeyRenamer, ParallelNode, PlanNode, QueryPlan, SequenceNode,
@@ -17,6 +17,7 @@ use tracing::{instrument, trace, warn}; // For reading file in main
 use crate::{
     executors::map::SubgraphExecutorMap,
     json_writer::write_and_escape_string,
+    projection::ProjectionFieldSelection,
     schema_metadata::{PossibleTypes, SchemaMetadata},
 };
 pub mod deep_merge;
@@ -1145,7 +1146,6 @@ pub enum ExposeQueryPlanMode {
     fields(
         query_plan = ?query_plan,
         variable_values = ?variable_values,
-        operation = ?operation.to_string(),
     )
 )]
 pub async fn execute_query_plan(
@@ -1153,7 +1153,7 @@ pub async fn execute_query_plan(
     subgraph_executor_map: &SubgraphExecutorMap,
     variable_values: &Option<HashMap<String, Value>>,
     schema_metadata: &SchemaMetadata,
-    operation: &OperationDefinition,
+    selections: &Vec<ProjectionFieldSelection>,
     has_introspection: bool,
     expose_query_plan: ExposeQueryPlanMode,
 ) -> String {
@@ -1190,7 +1190,7 @@ pub async fn execute_query_plan(
         &mut result_data,
         &mut result_errors,
         &result_extensions,
-        operation,
+        selections,
         schema_metadata,
         variable_values,
     )
