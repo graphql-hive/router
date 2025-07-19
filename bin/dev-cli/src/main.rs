@@ -11,6 +11,7 @@ use hive_router_query_planner::graph::PlannerOverrideContext;
 use hive_router_query_planner::planner::best::find_best_combination;
 use hive_router_query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
 use hive_router_query_planner::planner::fetch::fetch_graph::FetchGraph;
+use hive_router_query_planner::planner::fetch::state::MultiTypeFetchStep;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
 use hive_router_query_planner::planner::tree::query_tree::QueryTree;
@@ -138,7 +139,10 @@ fn process_consumer_schema(path: &str) {
     println!("{}", consumer_schema.document);
 }
 
-fn process_fetch_graph(supergraph_path: &str, operation_path: &str) -> FetchGraph {
+fn process_fetch_graph(
+    supergraph_path: &str,
+    operation_path: &str,
+) -> FetchGraph<MultiTypeFetchStep> {
     let (graph, query_tree, supergraph_state) =
         process_merged_tree(supergraph_path, operation_path);
 

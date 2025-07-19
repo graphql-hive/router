@@ -255,7 +255,7 @@ impl Edge {
         };
 
         let requirement_cost = match self.requirements() {
-            Some(selection) => selection.cost(),
+            Some(selection) => selection.selection_set.cost(),
             None => 0,
         };
 

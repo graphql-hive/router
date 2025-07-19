@@ -192,6 +192,17 @@ impl MergePath {
         }
         self.common_prefix_len(other) == other.len()
     }
+
+    pub fn without_type_castings(&self) -> Self {
+        let new_segments = self
+            .inner
+            .iter()
+            .filter(|segment| !matches!(segment, Segment::Cast(_, _)))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        Self::new(new_segments)
+    }
 }
 
 impl Display for MergePath {
