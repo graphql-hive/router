@@ -23,7 +23,7 @@ pub struct ProjectionFieldSelection {
     type_name: String,
     include_if: Option<String>,
     skip_if: Option<String>,
-    parent_type_conditions: Option<HashSet<String>>,
+    parent_type_conditions: HashSet<String>,
     enum_values: Option<HashSet<String>>,
     selections: Option<Vec<ProjectionFieldSelection>>,
 }
@@ -32,23 +32,41 @@ impl ProjectionFieldSelection {
     pub fn from_selection_set(
         selection_set: &SelectionSet,
         parent_type_name: &str,
-        parent_type_conditions: Option<HashSet<String>>,
+        parent_type_conditions: HashSet<String>,
         schema_metadata: &SchemaMetadata,
         include_if: Option<String>,
         skip_if: Option<String>,
-    ) -> Vec<ProjectionFieldSelection> {
+    ) -> Option<Vec<ProjectionFieldSelection>> {
         let mut field_selections: IndexMap<String, ProjectionFieldSelection> = IndexMap::new();
         for selection_item in &selection_set.items {
             match selection_item {
                 SelectionItem::Field(field) => {
-                    let response_key = field.alias.as_ref().unwrap_or(&field.name);
                     let field_name = field.name.clone();
-                    let field_type = schema_metadata
-                        .type_fields
-                        .get(parent_type_name)
-                        .and_then(|fields| fields.get(&field_name))
-                        .map(|s| s.as_str())
-                        .unwrap_or("Any");
+                    let response_key = field.alias.as_ref().unwrap_or(&field.name);
+                    let field_type = if field_name == TYPENAME_FIELD {
+                        "String"
+                    } else {
+                        let field_map = match schema_metadata.type_fields.get(parent_type_name) {
+                            Some(fields) => fields,
+                            None => {
+                                warn!(
+                                    "No fields found for type {} in schema metadata.",
+                                    parent_type_name
+                                );
+                                return None;
+                            }
+                        };
+                        match field_map.get(&field_name) {
+                            Some(field_type) => field_type,
+                            None => {
+                                warn!(
+                                    "Field {} not found in type {} in schema metadata.",
+                                    field_name, parent_type_name
+                                );
+                                continue;
+                            }
+                        }
+                    };
                     let mut final_include_if = None;
                     let mut final_skip_if = None;
 
@@ -73,43 +91,43 @@ impl ProjectionFieldSelection {
                     }
 
                     if let Some(existing_field) = field_selections.get_mut(response_key.as_str()) {
-                        if let Some(existing_conditions) =
-                            &mut existing_field.parent_type_conditions
-                        {
-                            if let Some(ref parent_type_conditions) = parent_type_conditions {
-                                existing_conditions.extend(parent_type_conditions.clone());
-                            }
+                        existing_field
+                            .parent_type_conditions
+                            .extend(parent_type_conditions.clone());
+                        if existing_field.include_if != final_include_if {
+                            existing_field.include_if = None;
                         }
-                        if let (Some(existing_field_include_if), Some(field_include_if)) =
-                            (&existing_field.include_if, &field.include_if)
-                        {
-                            if existing_field_include_if != field_include_if {
-                                existing_field.include_if = None;
-                            }
-                        }
-                        if let (Some(_existing_field_skip_if), Some(_new_skip_if)) =
-                            (&existing_field.skip_if, &field.skip_if)
-                        {
-                            if existing_field.skip_if != field.skip_if {
-                                existing_field.skip_if = None;
-                            }
+                        if existing_field.skip_if != final_skip_if {
+                            existing_field.skip_if = None;
                         }
                         if field.selections.items.is_empty() {
                             existing_field.selections = None;
-                        } else {
-                            existing_field
-                                .selections
-                                .get_or_insert_with(Vec::new)
-                                .extend(ProjectionFieldSelection::from_selection_set(
-                                    &field.selections,
-                                    field_type,
-                                    parent_type_conditions.clone(),
-                                    schema_metadata,
-                                    final_include_if.clone(),
-                                    final_skip_if.clone(),
-                                ));
+                        } else if let Some(new_selections) = {
+                            let field_type_conditions = schema_metadata
+                                .possible_types
+                                .get_possible_types(field_type);
+                            ProjectionFieldSelection::from_selection_set(
+                                &field.selections,
+                                field_type,
+                                field_type_conditions,
+                                schema_metadata,
+                                final_include_if.clone(),
+                                final_skip_if.clone(),
+                            )
+                        } {
+                            match existing_field.selections {
+                                Some(ref mut selections) => {
+                                    selections.extend(new_selections);
+                                }
+                                None => {
+                                    existing_field.selections = Some(new_selections);
+                                }
+                            }
                         }
                     } else {
+                        let field_type_conditions = schema_metadata
+                            .possible_types
+                            .get_possible_types(field_type);
                         field_selections.insert(
                             response_key.to_string(),
                             ProjectionFieldSelection {
@@ -118,18 +136,14 @@ impl ProjectionFieldSelection {
                                 include_if: final_include_if.clone(),
                                 skip_if: final_skip_if.clone(),
                                 parent_type_conditions: parent_type_conditions.clone(),
-                                selections: if field.selections.items.is_empty() {
-                                    None
-                                } else {
-                                    Some(ProjectionFieldSelection::from_selection_set(
-                                        &field.selections,
-                                        field_type,
-                                        None,
-                                        schema_metadata,
-                                        final_include_if.clone(),
-                                        final_skip_if.clone(),
-                                    ))
-                                },
+                                selections: ProjectionFieldSelection::from_selection_set(
+                                    &field.selections,
+                                    field_type,
+                                    field_type_conditions,
+                                    schema_metadata,
+                                    final_include_if.clone(),
+                                    final_skip_if.clone(),
+                                ),
                                 type_name: field_type.to_string(),
                                 enum_values: schema_metadata.enum_values.get(field_type).cloned(),
                             },
@@ -151,59 +165,45 @@ impl ProjectionFieldSelection {
                     if inline_fragment.skip_if.is_some() {
                         final_skip_if = inline_fragment.skip_if.clone();
                     }
-                    let mut parent_type_conditions = schema_metadata
+                    let parent_type_conditions = schema_metadata
                         .possible_types
-                        .get_possible_types(&inline_fragment.type_condition)
-                        .cloned();
-                    if parent_type_conditions.is_none() {
-                        let mut new_parent_type_conditions = HashSet::new();
-                        new_parent_type_conditions.insert(inline_fragment.type_condition.clone());
-                        parent_type_conditions = Some(new_parent_type_conditions);
-                    }
-                    let inline_fragment_selections = ProjectionFieldSelection::from_selection_set(
-                        &inline_fragment.selections,
-                        &inline_fragment.type_condition,
-                        parent_type_conditions,
-                        schema_metadata,
-                        final_include_if,
-                        final_skip_if,
-                    );
-                    for selection in inline_fragment_selections {
-                        if let Some(existing_field) =
-                            field_selections.get_mut(selection.response_key.as_str())
-                        {
-                            if let Some(existing_conditions) =
-                                &mut existing_field.parent_type_conditions
+                        .get_possible_types(&inline_fragment.type_condition);
+                    if let Some(inline_fragment_selections) =
+                        ProjectionFieldSelection::from_selection_set(
+                            &inline_fragment.selections,
+                            &inline_fragment.type_condition,
+                            parent_type_conditions,
+                            schema_metadata,
+                            final_include_if,
+                            final_skip_if,
+                        )
+                    {
+                        for selection in inline_fragment_selections {
+                            if let Some(existing_field) =
+                                field_selections.get_mut(selection.response_key.as_str())
                             {
-                                if let Some(parent_type_conditions) =
-                                    selection.parent_type_conditions
-                                {
-                                    existing_conditions.extend(parent_type_conditions.clone());
-                                }
-                            }
-                            if let (Some(existing_field_include_if), Some(selection_include_if)) =
-                                (&existing_field.include_if, &selection.include_if)
-                            {
-                                if existing_field_include_if != selection_include_if {
+                                existing_field
+                                    .parent_type_conditions
+                                    .extend(selection.parent_type_conditions);
+                                if existing_field.include_if != selection.include_if {
                                     existing_field.include_if = None;
                                 }
-                            }
-                            if let (Some(existing_field_skip_if), Some(selection_skip_if)) =
-                                (&existing_field.skip_if, &selection.skip_if)
-                            {
-                                if existing_field_skip_if != selection_skip_if {
+                                if existing_field.skip_if != selection.skip_if {
                                     existing_field.skip_if = None;
                                 }
+                                if let Some(subselections) = selection.selections {
+                                    if let Some(existing_selections) =
+                                        &mut existing_field.selections
+                                    {
+                                        existing_selections.extend(subselections);
+                                    } else {
+                                        existing_field.selections = Some(subselections);
+                                    }
+                                }
+                            } else {
+                                field_selections
+                                    .insert(selection.response_key.to_string(), selection);
                             }
-                            if let Some(subselections) = selection.selections {
-                                existing_field
-                                    .selections
-                                    .get_or_insert_with(Vec::new)
-                                    .extend(subselections);
-                            }
-                        } else {
-                            field_selections
-                                .insert(selection.response_key.to_string(), selection.clone());
                         }
                     }
                 }
@@ -215,7 +215,17 @@ impl ProjectionFieldSelection {
                 }
             }
         }
-        field_selections.into_values().collect::<Vec<_>>()
+
+        if field_selections.is_empty() {
+            None
+        } else {
+            Some(
+                field_selections
+                    .into_iter()
+                    .map(|(_, selection)| selection)
+                    .collect::<Vec<_>>(),
+            )
+        }
     }
     pub fn from_operation(
         operation: &OperationDefinition,
@@ -227,16 +237,18 @@ impl ProjectionFieldSelection {
             Some(OperationKind::Subscription) => "Subscription",
             None => "Query",
         };
+        let type_conditions = HashSet::from([root_type_name.to_string()]);
         (
             root_type_name,
             ProjectionFieldSelection::from_selection_set(
                 &operation.selection_set,
                 root_type_name,
-                None,
+                type_conditions,
                 schema_metadata,
                 None,
                 None,
-            ),
+            )
+            .unwrap(),
         )
     }
 }
@@ -278,8 +290,6 @@ pub fn project_by_operation(
             // If no selections were made, we should return an empty object
             buffer.push_str("{}");
         }
-    } else {
-        buffer.push_str("null");
     }
 
     if !errors.is_empty() {
@@ -358,26 +368,41 @@ fn project_selection_set(
             buffer.push(']');
         }
         Value::Object(obj) => {
-            let mut first = true;
-            let is_projected = project_selection_set_with_map(
-                obj,
-                errors,
-                selection.selections.as_ref().unwrap(),
-                schema_metadata,
-                variable_values,
-                &selection.type_name,
-                buffer,
-                &mut first,
-            );
-            if !is_projected {
-                buffer.push_str("null");
-            } else
-            // If first is mutated, it means we added "{"
-            if !first {
-                buffer.push('}');
-            } else {
-                // If first is still true, it means we didn't add anything, so we should just send an empty object
-                buffer.push_str("{}");
+            match selection.selections.as_ref() {
+                Some(selections) => {
+                    let type_name = obj
+                        .get(TYPENAME_FIELD)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&selection.type_name);
+                    if !schema_metadata
+                        .possible_types
+                        .entity_satisfies_type_condition(type_name, &selection.type_name)
+                    {
+                        buffer.push_str("null");
+                    } else {
+                        let mut first = true;
+                        project_selection_set_with_map(
+                            obj,
+                            errors,
+                            selections,
+                            schema_metadata,
+                            variable_values,
+                            type_name,
+                            buffer,
+                            &mut first,
+                        );
+                        if !first {
+                            buffer.push('}');
+                        } else {
+                            // If no selections were made, we should return an empty object
+                            buffer.push_str("{}");
+                        }
+                    }
+                }
+                None => {
+                    // If the selection set is not projected, we should return null
+                    buffer.push_str("null");
+                }
             }
         }
     }
@@ -437,23 +462,16 @@ fn project_selection_set_with_map(
     parent_type_name: &str,
     buffer: &mut String,
     first: &mut bool,
-) -> bool {
-    let parent_type_name = match obj.get(TYPENAME_FIELD) {
-        Some(Value::String(type_name)) => type_name,
-        _ => parent_type_name,
-    };
+) {
     for selection in selections {
         if !selection.include_or_skip_by_variable(variable_values) {
             // If the selection is not included by variable, skip it
             continue;
         }
-        if let Some(parent_conditions) = &selection.parent_type_conditions {
-            if !parent_conditions.contains(parent_type_name) {
-                // If the type name is not in the parent type conditions, skip it
-                continue;
-            }
+        if !selection.parent_type_conditions.contains(parent_type_name) {
+            // If the type name is not in the parent type conditions, skip it
+            continue;
         }
-
         if *first {
             buffer.push('{');
         } else {
@@ -495,5 +513,4 @@ fn project_selection_set_with_map(
             continue;
         }
     }
-    true
 }

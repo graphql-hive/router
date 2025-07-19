@@ -30,8 +30,10 @@ impl PossibleTypes {
             false
         }
     }
-    pub fn get_possible_types(&self, type_name: &str) -> Option<&HashSet<String>> {
-        self.map.get(type_name)
+    pub fn get_possible_types(&self, type_name: &str) -> HashSet<String> {
+        let mut possible_types = self.map.get(type_name).cloned().unwrap_or_default();
+        possible_types.insert(type_name.to_string());
+        possible_types
     }
 }
 
