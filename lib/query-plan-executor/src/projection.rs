@@ -105,9 +105,9 @@ impl FieldProjectionCondition {
             }
             FieldProjectionCondition::ParentTypeCondition(possible_types) => {
                 if possible_types.contains(parent_type_name) {
-                    Err(FieldProjectionConditionError::InvalidParentType)
-                } else {
                     Ok(())
+                } else {
+                    Err(FieldProjectionConditionError::InvalidParentType)
                 }
             }
             FieldProjectionCondition::FieldTypeCondition(possible_types) => {
