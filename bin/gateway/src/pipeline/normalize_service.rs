@@ -18,7 +18,7 @@ use crate::pipeline::parser_service::GraphQLParserPayload;
 use crate::shared_state::GatewaySharedState;
 use tracing::{error, trace};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct GraphQLNormalizationPayload {
     /// The operation to execute, without introspection fields.
     pub operation_for_plan: OperationDefinition,
