@@ -128,8 +128,8 @@ impl FieldProjectionPlan {
         for selection_item in &selection_set.items {
             match selection_item {
                 SelectionItem::Field(field) => {
-                    let field_name = field.name.clone();
-                    let response_key = field.alias.as_ref().unwrap_or(&field.name);
+                    let field_name = &field.name;
+                    let response_key = field.alias.as_ref().unwrap_or(field_name);
                     let field_type = if field_name == TYPENAME_FIELD {
                         "String"
                     } else {
@@ -140,7 +140,7 @@ impl FieldProjectionPlan {
                                 return None;
                             }
                         };
-                        match field_map.get(&field_name) {
+                        match field_map.get(field_name) {
                             Some(field_type) => field_type,
                             None => {
                                 warn!(
@@ -229,9 +229,9 @@ impl FieldProjectionPlan {
                         }
                     } else {
                         let new_plan = FieldProjectionPlan {
-                            field_name,
+                            field_name: field_name.to_string(),
                             field_type: field_type.to_string(),
-                            response_key: response_key.clone(),
+                            response_key: response_key.to_string(),
                             conditions: condition_for_field,
                             selections: FieldProjectionPlan::from_selection_set(
                                 &field.selections,
