@@ -22,7 +22,6 @@ pub struct FieldProjectionPlan {
     field_type: String,
     response_key: String,
     conditions: FieldProjectionCondition,
-    enum_values: Option<HashSet<String>>,
     selections: Option<Vec<FieldProjectionPlan>>,
 }
 
@@ -32,63 +31,106 @@ pub enum FieldProjectionCondition {
     SkipIfVariable(String),
     ParentTypeCondition(HashSet<String>),
     FieldTypeCondition(HashSet<String>),
+    EnumValuesCondition(HashSet<String>),
     Or(Box<FieldProjectionCondition>, Box<FieldProjectionCondition>),
     And(Box<FieldProjectionCondition>, Box<FieldProjectionCondition>),
 }
 
+pub enum FieldProjectionConditionError {
+    InvalidParentType,
+    InvalidFieldType,
+    Skip,
+    InvalidEnumValue,
+}
+
 impl FieldProjectionCondition {
-    pub fn should_continue_selection(
+    pub fn check(
         &self,
         parent_type_name: &str,
         field_type_name: &str,
+        field_value: &Option<&Value>,
         variable_values: &Option<HashMap<String, Value>>,
-    ) -> bool {
+    ) -> Result<(), FieldProjectionConditionError> {
         match self {
-            FieldProjectionCondition::And(condition_a, condition_b) => {
-                condition_a.should_continue_selection(
+            FieldProjectionCondition::And(condition_a, condition_b) => condition_a
+                .check(
                     parent_type_name,
                     field_type_name,
-                    variable_values,
-                ) && condition_b.should_continue_selection(
-                    parent_type_name,
-                    field_type_name,
+                    field_value,
                     variable_values,
                 )
-            }
-            FieldProjectionCondition::Or(condition_a, condition_b) => {
-                condition_a.should_continue_selection(
+                .and(condition_b.check(
                     parent_type_name,
                     field_type_name,
+                    field_value,
                     variable_values,
-                ) || condition_b.should_continue_selection(
+                )),
+            FieldProjectionCondition::Or(condition_a, condition_b) => condition_a
+                .check(
                     parent_type_name,
                     field_type_name,
+                    field_value,
                     variable_values,
                 )
-            }
+                .or(condition_b.check(
+                    parent_type_name,
+                    field_type_name,
+                    field_value,
+                    variable_values,
+                )),
             FieldProjectionCondition::IncludeIfVariable(variable_name) => {
                 if let Some(values) = variable_values {
-                    values
+                    if values
                         .get(variable_name)
                         .is_some_and(|v| v.as_bool().unwrap_or(false))
+                    {
+                        Ok(())
+                    } else {
+                        Err(FieldProjectionConditionError::Skip)
+                    }
                 } else {
-                    false
+                    Err(FieldProjectionConditionError::Skip)
                 }
             }
             FieldProjectionCondition::SkipIfVariable(variable_name) => {
                 if let Some(values) = variable_values {
-                    !values
+                    if values
                         .get(variable_name)
                         .is_some_and(|v| v.as_bool().unwrap_or(false))
-                } else {
-                    true
+                    {
+                        return Err(FieldProjectionConditionError::Skip);
+                    }
                 }
+                Ok(())
             }
             FieldProjectionCondition::ParentTypeCondition(possible_types) => {
-                possible_types.contains(parent_type_name)
+                if possible_types.contains(parent_type_name) {
+                    Ok(())
+                } else {
+                    Err(FieldProjectionConditionError::InvalidParentType)
+                }
             }
             FieldProjectionCondition::FieldTypeCondition(possible_types) => {
-                possible_types.contains(field_type_name)
+                let field_type_name = field_value
+                    .and_then(|value| value.get(TYPENAME_FIELD))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(field_type_name);
+                if possible_types.contains(field_type_name) {
+                    Ok(())
+                } else {
+                    Err(FieldProjectionConditionError::InvalidFieldType)
+                }
+            }
+            FieldProjectionCondition::EnumValuesCondition(enum_values) => {
+                if let Some(Value::String(string_value)) = field_value {
+                    if enum_values.contains(string_value) {
+                        Ok(())
+                    } else {
+                        Err(FieldProjectionConditionError::InvalidEnumValue)
+                    }
+                } else {
+                    Ok(())
+                }
             }
         }
     }
@@ -133,7 +175,9 @@ impl FieldProjectionPlan {
                         .possible_types
                         .get_possible_types(field_type);
                     let mut conditions_for_selections =
-                        FieldProjectionCondition::ParentTypeCondition(possible_types_for_field);
+                        FieldProjectionCondition::ParentTypeCondition(
+                            possible_types_for_field.clone(),
+                        );
                     if let Some(include_if) = &field.include_if {
                         conditions_for_selections = FieldProjectionCondition::And(
                             Box::new(conditions_for_selections),
@@ -150,6 +194,12 @@ impl FieldProjectionPlan {
                     }
 
                     let mut condition_for_field: FieldProjectionCondition = condition.clone();
+                    condition_for_field = FieldProjectionCondition::And(
+                        Box::new(condition_for_field),
+                        Box::new(FieldProjectionCondition::FieldTypeCondition(
+                            possible_types_for_field,
+                        )),
+                    );
                     if let Some(include_if) = &field.include_if {
                         condition_for_field = FieldProjectionCondition::And(
                             Box::new(condition_for_field),
@@ -162,6 +212,14 @@ impl FieldProjectionPlan {
                         condition_for_field = FieldProjectionCondition::And(
                             Box::new(condition_for_field),
                             Box::new(FieldProjectionCondition::SkipIfVariable(skip_if.clone())),
+                        );
+                    }
+                    if let Some(enum_values) = schema_metadata.enum_values.get(field_type) {
+                        condition_for_field = FieldProjectionCondition::And(
+                            Box::new(condition_for_field),
+                            Box::new(FieldProjectionCondition::EnumValuesCondition(
+                                enum_values.clone(),
+                            )),
                         );
                     }
 
@@ -202,7 +260,6 @@ impl FieldProjectionPlan {
                                 field_type,
                                 &conditions_for_selections,
                             ),
-                            enum_values: schema_metadata.enum_values.get(field_type).cloned(),
                         };
                         field_selections.insert(response_key.to_string(), new_plan);
                     }
@@ -392,19 +449,6 @@ fn project_selection_set(
         Value::Bool(false) => buffer.push_str("false"),
         Value::Number(num) => write!(buffer, "{}", num).unwrap(),
         Value::String(value) => {
-            if let Some(enum_values) = &selection.enum_values {
-                // If the selection is an enum, we need to check if the value is valid
-                if !enum_values.contains(value) {
-                    errors.push(GraphQLError {
-                        message: "Value is not a valid enum value".to_string(),
-                        locations: None,
-                        path: None,
-                        extensions: None,
-                    });
-                    buffer.push_str("null");
-                    return;
-                }
-            }
             write_and_escape_string(buffer, value);
         }
         Value::Array(arr) => {
@@ -440,7 +484,7 @@ fn project_selection_set(
                         buffer.push('}');
                     } else {
                         // If no selections were made, we should return an empty object
-                        buffer.push_str("null");
+                        buffer.push_str("{}");
                     }
                 }
                 None => {
@@ -474,40 +518,75 @@ fn project_selection_set_with_map(
         let field_val = obj
             .get(&selection.field_name)
             .or_else(|| obj.get(&selection.response_key));
-        let field_type_name = field_val
-            .map(|v| {
-                v.as_str()
-                    .or_else(|| {
-                        v.as_object()
-                            .and_then(|o| o.get(TYPENAME_FIELD).and_then(Value::as_str))
-                    })
-                    .unwrap_or(&selection.field_type)
-            })
-            .unwrap_or(&selection.field_type);
-        if !selection.conditions.should_continue_selection(
+        match selection.conditions.check(
             parent_type_name,
-            field_type_name,
+            &selection.field_type,
+            &field_val,
             variable_values,
         ) {
-            continue;
-        }
-        if *first {
-            buffer.push('{');
-        } else {
-            buffer.push(',');
-        }
-        *first = false;
+            Ok(_) => {
+                if *first {
+                    buffer.push('{');
+                } else {
+                    buffer.push(',');
+                }
+                *first = false;
 
-        buffer.push('"');
-        buffer.push_str(&selection.response_key);
-        buffer.push_str("\":");
+                buffer.push('"');
+                buffer.push_str(&selection.response_key);
+                buffer.push_str("\":");
 
-        if let Some(field_val) = field_val {
-            project_selection_set(field_val, errors, selection, variable_values, buffer);
-        } else {
-            // If the field is not found in the object, set it to Null
-            buffer.push_str("null");
-            continue;
+                if let Some(field_val) = field_val {
+                    project_selection_set(field_val, errors, selection, variable_values, buffer);
+                } else if selection.field_name == TYPENAME_FIELD {
+                    // If the field is TYPENAME_FIELD, we should set it to the parent type name
+                    buffer.push('"');
+                    buffer.push_str(parent_type_name);
+                    buffer.push('"');
+                } else {
+                    // If the field is not found in the object, set it to Null
+                    buffer.push_str("null");
+                }
+            }
+            Err(FieldProjectionConditionError::Skip) => {
+                // Skip this field
+                continue;
+            }
+            Err(FieldProjectionConditionError::InvalidParentType) => {
+                // Skip this field as the parent type does not match
+                continue;
+            }
+            Err(FieldProjectionConditionError::InvalidEnumValue) => {
+                if *first {
+                    buffer.push('{');
+                } else {
+                    buffer.push(',');
+                }
+                *first = false;
+
+                buffer.push('"');
+                buffer.push_str(&selection.response_key);
+                buffer.push_str("\":null");
+                errors.push(GraphQLError {
+                    message: "Value is not a valid enum value".to_string(),
+                    locations: None,
+                    path: None,
+                    extensions: None,
+                });
+            }
+            Err(FieldProjectionConditionError::InvalidFieldType) => {
+                if *first {
+                    buffer.push('{');
+                } else {
+                    buffer.push(',');
+                }
+                *first = false;
+
+                // Skip this field as the field type does not match
+                buffer.push('"');
+                buffer.push_str(&selection.response_key);
+                buffer.push_str("\":null");
+            }
         }
     }
 }
