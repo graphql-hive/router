@@ -1194,7 +1194,6 @@ pub async fn execute_query_plan(
         &result_extensions,
         operation_type_name,
         selections,
-        schema_metadata,
         variable_values,
     )
 }

@@ -250,7 +250,6 @@ fn project_data_by_operation(c: &mut Criterion) {
             let errors = black_box(&mut errors);
             let extensions = HashMap::new();
             let extensions = black_box(&extensions);
-            let schema_metadata = black_box(&schema_metadata);
             let projection_selections = black_box(&projection_selections);
             let root_type_name = black_box(root_type_name);
             let result = query_plan_executor::projection::project_by_operation(
@@ -259,7 +258,6 @@ fn project_data_by_operation(c: &mut Criterion) {
                 extensions,
                 root_type_name,
                 projection_selections,
-                schema_metadata,
                 &None,
             );
             black_box(result);
