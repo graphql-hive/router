@@ -12,7 +12,7 @@ pub struct SchemaMetadata {
     pub possible_types: PossibleTypes,
     pub enum_values: HashMap<String, HashSet<String>>,
     pub type_fields: HashMap<String, HashMap<String, String>>,
-    pub introspection_schema_root_json: Value,
+    pub introspection_query_json: Value,
 }
 
 #[derive(Debug, Default)]
@@ -117,7 +117,7 @@ impl SchemaWithMetadata for ConsumerSchema {
 
         let introspection_query =
             crate::introspection::introspection_query_from_ast(&self.document);
-        let introspection_schema_root_json = json!(introspection_query.__schema);
+        let introspection_query_json = json!(introspection_query);
 
         SchemaMetadata {
             possible_types: PossibleTypes {
@@ -125,7 +125,7 @@ impl SchemaWithMetadata for ConsumerSchema {
             },
             enum_values,
             type_fields,
-            introspection_schema_root_json,
+            introspection_query_json,
         }
     }
 }

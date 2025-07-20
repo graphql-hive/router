@@ -1159,10 +1159,22 @@ pub async fn execute_query_plan(
     has_introspection: bool,
     expose_query_plan: ExposeQueryPlanMode,
 ) -> String {
-    let mut result_data = Value::Null; // Initialize data as Null
+    let mut result_data = if has_introspection {
+        schema_metadata.introspection_query_json.clone()
+    } else {
+        Value::Null
+    };
     let mut result_errors = vec![]; // Initial errors are empty
-    #[allow(unused_mut)]
-    let mut result_extensions = HashMap::new(); // Initial extensions are empty
+    let mut result_extensions = if expose_query_plan == ExposeQueryPlanMode::Yes
+        || expose_query_plan == ExposeQueryPlanMode::DryRun
+    {
+        HashMap::from_iter([(
+            "queryPlan".to_string(),
+            serde_json::to_value(query_plan).unwrap(),
+        )])
+    } else {
+        HashMap::new()
+    };
     let mut execution_context = QueryPlanExecutionContext {
         variable_values,
         subgraph_executor_map,
@@ -1177,17 +1189,6 @@ pub async fn execute_query_plan(
     }
     result_errors = execution_context.errors; // Get the final errors from the execution context
     result_extensions = execution_context.extensions; // Get the final extensions from the execution context
-    if result_data.is_null() && has_introspection {
-        result_data = Value::Object(Map::new()); // Ensure data is an empty object if it was null
-    }
-    if expose_query_plan == ExposeQueryPlanMode::Yes
-        || expose_query_plan == ExposeQueryPlanMode::DryRun
-    {
-        result_extensions.insert(
-            "queryPlan".to_string(),
-            serde_json::to_value(query_plan).unwrap(),
-        );
-    }
     projection::project_by_operation(
         &mut result_data,
         &mut result_errors,

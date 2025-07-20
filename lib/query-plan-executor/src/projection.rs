@@ -640,12 +640,7 @@ fn project_selection_set_with_map(
         buffer.push_str(&selection.response_key);
         buffer.push_str("\":");
 
-        let field_val = if selection.field_name == "__schema" && parent_type_name == "Query" {
-            None
-            // Some(&schema_metadata.introspection_schema_root_json)
-        } else {
-            obj.get(selection.response_key.as_str())
-        };
+        let field_val = obj.get(selection.response_key.as_str());
 
         if let Some(field_val) = field_val {
             project_selection_set(field_val, errors, selection, variable_values, buffer);
