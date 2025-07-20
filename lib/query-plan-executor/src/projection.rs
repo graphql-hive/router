@@ -46,18 +46,38 @@ pub enum FieldProjectionConditionError {
 impl FieldProjectionCondition {
     pub fn check(
         &self,
-        parent_obj: &Map<String, Value>,
+        parent_type_name: &str,
         field_type_name: &str,
         field_value: &Option<&Value>,
         variable_values: &Option<HashMap<String, Value>>,
     ) -> Result<(), FieldProjectionConditionError> {
         match self {
             FieldProjectionCondition::And(condition_a, condition_b) => condition_a
-                .check(parent_obj, field_type_name, field_value, variable_values)
-                .and(condition_b.check(parent_obj, field_type_name, field_value, variable_values)),
+                .check(
+                    parent_type_name,
+                    field_type_name,
+                    field_value,
+                    variable_values,
+                )
+                .and(condition_b.check(
+                    parent_type_name,
+                    field_type_name,
+                    field_value,
+                    variable_values,
+                )),
             FieldProjectionCondition::Or(condition_a, condition_b) => condition_a
-                .check(parent_obj, field_type_name, field_value, variable_values)
-                .or(condition_b.check(parent_obj, field_type_name, field_value, variable_values)),
+                .check(
+                    parent_type_name,
+                    field_type_name,
+                    field_value,
+                    variable_values,
+                )
+                .or(condition_b.check(
+                    parent_type_name,
+                    field_type_name,
+                    field_value,
+                    variable_values,
+                )),
             FieldProjectionCondition::IncludeIfVariable(variable_name) => {
                 if let Some(values) = variable_values {
                     if values
@@ -84,18 +104,13 @@ impl FieldProjectionCondition {
                 Ok(())
             }
             FieldProjectionCondition::ParentTypeCondition(possible_types) => {
-                if let Some(type_name) = parent_obj.get(TYPENAME_FIELD).and_then(|v| v.as_str()) {
-                    if !possible_types.contains(type_name) {
-                        return Err(FieldProjectionConditionError::InvalidParentType);
-                    }
+                if possible_types.contains(parent_type_name) {
+                    Err(FieldProjectionConditionError::InvalidParentType)
+                } else {
+                    Ok(())
                 }
-                Ok(())
             }
             FieldProjectionCondition::FieldTypeCondition(possible_types) => {
-                let field_type_name = field_value
-                    .and_then(|value| value.get(TYPENAME_FIELD))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(field_type_name);
                 if possible_types.contains(field_type_name) {
                     Ok(())
                 } else {
@@ -446,12 +461,16 @@ fn project_selection_set(
             match selection.selections.as_ref() {
                 Some(selections) => {
                     let mut first = true;
+                    let type_name = obj
+                        .get(TYPENAME_FIELD)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&selection.field_type);
                     project_selection_set_with_map(
                         obj,
                         errors,
                         selections,
                         variable_values,
-                        &selection.field_type,
+                        type_name,
                         buffer,
                         &mut first,
                     );
@@ -493,10 +512,16 @@ fn project_selection_set_with_map(
         let field_val = obj
             .get(&selection.field_name)
             .or_else(|| obj.get(&selection.response_key));
-        match selection
-            .conditions
-            .check(obj, &selection.field_type, &field_val, variable_values)
-        {
+        let field_type_name = field_val
+            .and_then(|value| value.get(TYPENAME_FIELD))
+            .and_then(|v| v.as_str())
+            .unwrap_or(&selection.field_type);
+        match selection.conditions.check(
+            parent_type_name,
+            field_type_name,
+            &field_val,
+            variable_values,
+        ) {
             Ok(_) => {
                 if *first {
                     buffer.push('{');
