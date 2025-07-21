@@ -2,12 +2,12 @@ use std::{collections::HashMap, sync::Arc};
 
 use axum::{body::Body, extract::rejection::QueryRejection, response::IntoResponse};
 use graphql_tools::validation::utils::ValidationError;
-use http::{header::ACCEPT, HeaderName, Method, Request, Response, StatusCode};
+use http::{HeaderName, Method, Request, Response, StatusCode};
 use query_plan_executor::{ExecutionResult, GraphQLError};
 use query_planner::{ast::normalization::error::NormalizationError, planner::PlannerError};
 use serde_json::Value;
 
-use crate::pipeline::header::{APPLICATION_JSON, APPLICATION_JSON_STR};
+use crate::pipeline::header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR};
 
 #[derive(Debug)]
 pub struct PipelineError {
@@ -21,12 +21,7 @@ pub trait PipelineErrorFromAcceptHeader {
 
 impl PipelineErrorFromAcceptHeader for Request<Body> {
     fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError {
-        let accept_header = self.headers().get(ACCEPT);
-        let accept_ok = accept_header
-            .unwrap_or(&APPLICATION_JSON)
-            .to_str()
-            .unwrap_or(&APPLICATION_JSON_STR)
-            .contains(*APPLICATION_JSON_STR);
+        let accept_ok = !self.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
         PipelineError { accept_ok, error }
     }
 }
