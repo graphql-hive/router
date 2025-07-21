@@ -14,7 +14,7 @@ use std::hint::black_box;
 mod non_projected_result_simd;
 
 use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
-use query_plan_executor::{execute_query_plan, ExposeQueryPlanMode};
+use query_plan_executor::{execute_query_plan, ExposeQueryPlanMode, ResponsesStorage};
 use query_plan_executor::{ExecutableQueryPlan, ResponseValue};
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::utils::parsing::parse_operation;
@@ -377,116 +377,141 @@ fn project_data_by_operation(c: &mut Criterion) {
 //     });
 // }
 
-// fn project_requires(c: &mut Criterion) {
-//     let path = [
-//         FlattenNodePathSegment::Field("users".into()),
-//         FlattenNodePathSegment::List,
-//         FlattenNodePathSegment::Field("reviews".into()),
-//         FlattenNodePathSegment::List,
-//         FlattenNodePathSegment::Field("product".into()),
-//         FlattenNodePathSegment::List,
-//         FlattenNodePathSegment::Field("reviews".into()),
-//         FlattenNodePathSegment::List,
-//         FlattenNodePathSegment::Field("author".into()),
-//         FlattenNodePathSegment::List,
-//         FlattenNodePathSegment::Field("reviews".into()),
-//         FlattenNodePathSegment::List,
-//         FlattenNodePathSegment::Field("product".into()),
-//     ];
-//     let mut result: Value = non_projected_result::get_result();
-//     let data = result.get_mut("data").unwrap();
-//     let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
-//         .expect("Unable to read input file");
-//     let parsed_schema = parse_schema(&supergraph_sdl);
-//     let planner = query_planner::planner::Planner::new_from_supergraph(&parsed_schema)
-//         .expect("Failed to create planner from supergraph");
-//     let schema_metadata = &planner.consumer_schema.schema_metadata();
-//     let mut representations = vec![];
-//     query_plan_executor::traverse_and_callback(data, &path, schema_metadata, &mut |data| {
-//         representations.push(data);
-//     });
-//     let subgraph_executor_map =
-//         SubgraphExecutorMap::from_http_endpoint_map(planner.supergraph.subgraph_endpoint_map);
-//     let execution_context = query_plan_executor::QueryPlanExecutionContext {
-//         variable_values: &None,
-//         subgraph_executor_map: &subgraph_executor_map,
-//         schema_metadata,
-//         errors: Vec::new(),
-//         extensions: HashMap::new(),
-//     };
-//     let requires_selections: Vec<SelectionItem> =
-//         [SelectionItem::InlineFragment(InlineFragmentSelection {
-//             type_condition: "Product".to_string(),
-//             skip_if: None,
-//             include_if: None,
-//             selections: query_planner::ast::selection_set::SelectionSet {
-//                 items: vec![
-//                     SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
-//                         name: "__typename".to_string(),
-//                         selections: query_planner::ast::selection_set::SelectionSet {
-//                             items: vec![],
-//                         },
-//                         alias: None,
-//                         arguments: None,
-//                         include_if: None,
-//                         skip_if: None,
-//                     }),
-//                     SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
-//                         name: "price".to_string(),
-//                         selections: query_planner::ast::selection_set::SelectionSet {
-//                             items: vec![],
-//                         },
-//                         alias: None,
-//                         arguments: None,
-//                         include_if: None,
-//                         skip_if: None,
-//                     }),
-//                     SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
-//                         name: "weight".to_string(),
-//                         selections: query_planner::ast::selection_set::SelectionSet {
-//                             items: vec![],
-//                         },
-//                         alias: None,
-//                         arguments: None,
-//                         include_if: None,
-//                         skip_if: None,
-//                     }),
-//                     SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
-//                         name: "upc".to_string(),
-//                         selections: query_planner::ast::selection_set::SelectionSet {
-//                             items: vec![],
-//                         },
-//                         alias: None,
-//                         arguments: None,
-//                         include_if: None,
-//                         skip_if: None,
-//                     }),
-//                 ],
-//             },
-//         })]
-//         .to_vec();
-//     c.bench_function("project_requires", |b| {
-//         b.iter(|| {
-//             let execution_context = black_box(&execution_context);
-//             let mut buffer = String::with_capacity(1024);
-//             let mut first = true;
-//             for representation in black_box(&representations) {
-//                 let requires = execution_context.project_requires(
-//                     &requires_selections,
-//                     representation,
-//                     &mut buffer,
-//                     first,
-//                     None,
-//                 );
-//                 if requires {
-//                     first = false;
-//                 }
-//                 black_box(requires);
-//             }
-//             black_box(buffer)
-//         });
-//     });
-// }
+fn project_requires(c: &mut Criterion) {
+    let path = [
+        FlattenNodePathSegment::Field("users".into()),
+        FlattenNodePathSegment::List,
+        FlattenNodePathSegment::Field("reviews".into()),
+        FlattenNodePathSegment::List,
+        FlattenNodePathSegment::Field("product".into()),
+        FlattenNodePathSegment::List,
+        FlattenNodePathSegment::Field("reviews".into()),
+        FlattenNodePathSegment::List,
+        FlattenNodePathSegment::Field("author".into()),
+        FlattenNodePathSegment::List,
+        FlattenNodePathSegment::Field("reviews".into()),
+        FlattenNodePathSegment::List,
+        FlattenNodePathSegment::Field("product".into()),
+    ];
+    let mut result: Value = non_projected_result::get_result();
+    let data = result.get_mut("data").unwrap();
+    let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
+        .expect("Unable to read input file");
+    let parsed_schema = parse_schema(&supergraph_sdl);
+    let planner = query_planner::planner::Planner::new_from_supergraph(&parsed_schema)
+        .expect("Failed to create planner from supergraph");
+    let schema_metadata = &planner.consumer_schema.schema_metadata();
+    let mut representations = vec![];
+    query_plan_executor::traverse_and_callback(data, &path, schema_metadata, &mut |data| {
+        representations.push(data);
+    });
+    let mut representations: Vec<String> =
+        representations.iter().map(|val| val.to_string()).collect();
+
+    let representations: Vec<BorrowedValue> = representations
+        .iter_mut() // Start with a mutable iterator over the strings.
+        .map(|string| {
+            // Each `string` is a `&mut String`.
+            // Get a mutable byte slice inside the closure.
+            let bytes = unsafe { string.as_bytes_mut() };
+
+            // Parse the JSON from the byte slice.
+            let json_value: BorrowedValue = simd_json::from_slice(bytes).unwrap();
+
+            // Convert to the final type and return it.
+            json_value
+        })
+        .collect();
+    let final_representations: Vec<ResponseValue> = representations
+        .iter() // Start with a mutable iterator over the strings.
+        .map(|val| (val).into())
+        .collect();
+
+    // simd_json::from_slice(projected_data_as_bytes).unwrap();
+    // .collect::<Vec<&mut [u8]>>();
+    let subgraph_executor_map =
+        SubgraphExecutorMap::from_http_endpoint_map(planner.supergraph.subgraph_endpoint_map);
+    let execution_context = query_plan_executor::QueryPlanExecutionContext {
+        variable_values: &None,
+        subgraph_executor_map: &subgraph_executor_map,
+        schema_metadata,
+        errors: Vec::new(),
+        extensions: HashMap::new(),
+        response_storage: ResponsesStorage::new(),
+    };
+    let requires_selections: Vec<SelectionItem> =
+        [SelectionItem::InlineFragment(InlineFragmentSelection {
+            type_condition: "Product".to_string(),
+            skip_if: None,
+            include_if: None,
+            selections: query_planner::ast::selection_set::SelectionSet {
+                items: vec![
+                    SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                        name: "__typename".to_string(),
+                        selections: query_planner::ast::selection_set::SelectionSet {
+                            items: vec![],
+                        },
+                        alias: None,
+                        arguments: None,
+                        include_if: None,
+                        skip_if: None,
+                    }),
+                    SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                        name: "price".to_string(),
+                        selections: query_planner::ast::selection_set::SelectionSet {
+                            items: vec![],
+                        },
+                        alias: None,
+                        arguments: None,
+                        include_if: None,
+                        skip_if: None,
+                    }),
+                    SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                        name: "weight".to_string(),
+                        selections: query_planner::ast::selection_set::SelectionSet {
+                            items: vec![],
+                        },
+                        alias: None,
+                        arguments: None,
+                        include_if: None,
+                        skip_if: None,
+                    }),
+                    SelectionItem::Field(query_planner::ast::selection_set::FieldSelection {
+                        name: "upc".to_string(),
+                        selections: query_planner::ast::selection_set::SelectionSet {
+                            items: vec![],
+                        },
+                        alias: None,
+                        arguments: None,
+                        include_if: None,
+                        skip_if: None,
+                    }),
+                ],
+            },
+        })]
+        .to_vec();
+    c.bench_function("project_requires", |b| {
+        b.iter(|| {
+            let execution_context = black_box(&execution_context);
+            let mut buffer = String::with_capacity(1024);
+            let mut first = true;
+            for representation in black_box(&final_representations) {
+                let requires = execution_context.project_requires(
+                    &requires_selections,
+                    representation,
+                    &mut buffer,
+                    first,
+                    None,
+                );
+                if requires {
+                    first = false;
+                }
+                black_box(requires);
+            }
+            black_box(buffer)
+        });
+    });
+}
 
 fn deep_merge_with_simple(c: &mut Criterion) {
     let mut data_1 = serde_json::json!({
@@ -533,7 +558,7 @@ fn all_benchmarks(c: &mut Criterion) {
 
     // deep_merge_with_simple(c);
     // deep_merge_with_complex(c);
-    // project_requires(c);
+    project_requires(c);
     // traverse_and_collect(c);
     project_data_by_operation(c);
 }

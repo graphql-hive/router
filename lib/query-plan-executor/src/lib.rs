@@ -14,12 +14,11 @@ use std::{collections::BTreeSet, fmt::Write};
 use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
-pub use crate::responses::Value as ResponseValue;
+pub use crate::responses::{ResponsesStorage, Value as ResponseValue};
 use crate::{
     executors::map::SubgraphExecutorMap,
     json_writer::write_and_escape_string,
     projection::FieldProjectionPlan,
-    responses::ResponsesStorage,
     schema_metadata::{PossibleTypes, SchemaMetadata},
 };
 pub mod deep_merge;
@@ -843,16 +842,16 @@ impl QueryPlanExecutionContext<'_> {
     pub fn project_requires(
         &self,
         requires_selections: &Vec<SelectionItem>,
-        entity: &Value,
+        entity: &ResponseValue,
         buffer: &mut String,
         first: bool,
         response_key: Option<&str>,
     ) -> bool {
         match entity {
-            Value::Null => {
+            ResponseValue::Null => {
                 return false;
             }
-            Value::Bool(b) => {
+            ResponseValue::Bool(b) => {
                 if !first {
                     buffer.push(',');
                 }
@@ -861,12 +860,12 @@ impl QueryPlanExecutionContext<'_> {
                     buffer.push_str(response_key);
                     buffer.push('"');
                     buffer.push(':');
-                    buffer.push_str(if *b { "true" } else { "false" });
+                    buffer.push_str(if b == &&true { "true" } else { "false" });
                 } else {
-                    buffer.push_str(if *b { "true" } else { "false" });
+                    buffer.push_str(if b == &&true { "true" } else { "false" });
                 }
             }
-            Value::Number(n) => {
+            ResponseValue::F64(n) => {
                 if !first {
                     buffer.push(',');
                 }
@@ -878,7 +877,31 @@ impl QueryPlanExecutionContext<'_> {
 
                 write!(buffer, "{}", n).unwrap()
             }
-            Value::String(s) => {
+            ResponseValue::I64(n) => {
+                if !first {
+                    buffer.push(',');
+                }
+                if let Some(response_key) = response_key {
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push_str("\":");
+                }
+
+                write!(buffer, "{}", n).unwrap()
+            }
+            ResponseValue::U64(n) => {
+                if !first {
+                    buffer.push(',');
+                }
+                if let Some(response_key) = response_key {
+                    buffer.push('"');
+                    buffer.push_str(response_key);
+                    buffer.push_str("\":");
+                }
+
+                write!(buffer, "{}", n).unwrap()
+            }
+            ResponseValue::String(s) => {
                 if !first {
                     buffer.push(',');
                 }
@@ -889,7 +912,7 @@ impl QueryPlanExecutionContext<'_> {
                 }
                 write_and_escape_string(buffer, s);
             }
-            Value::Array(entity_array) => {
+            ResponseValue::Array(entity_array) => {
                 if !first {
                     buffer.push(',');
                 }
@@ -916,10 +939,11 @@ impl QueryPlanExecutionContext<'_> {
                 }
                 buffer.push(']');
             }
-            Value::Object(entity_obj) => {
+            ResponseValue::Object(entity_obj) => {
                 if requires_selections.is_empty() {
                     // It is probably a scalar with an object value, so we write it directly
-                    buffer.push_str(&serde_json::to_string(entity_obj).unwrap());
+                    // buffer.push_str(&serde_json::to_string(entity_obj).unwrap());
+                    buffer.push_str("{}");
                     return true;
                 }
                 if entity_obj.is_empty() {
@@ -951,7 +975,7 @@ impl QueryPlanExecutionContext<'_> {
     fn project_requires_map_mut(
         &self,
         requires_selections: &Vec<SelectionItem>,
-        entity_obj: &Map<String, Value>,
+        entity_obj: &Vec<(&str, ResponseValue<'_>)>,
         buffer: &mut String,
         first: &mut bool,
         parent_response_key: Option<&str>,
@@ -968,8 +992,16 @@ impl QueryPlanExecutionContext<'_> {
                     }
 
                     let original = entity_obj
-                        .get(field_name)
-                        .unwrap_or(entity_obj.get(response_key).unwrap_or(&Value::Null));
+                        .iter()
+                        .find(|(k, _)| k == field_name)
+                        .map(|(_, val)| val)
+                        .unwrap_or(
+                            entity_obj
+                                .iter()
+                                .find(|(k, _)| k == &response_key)
+                                .map(|(_, val)| val)
+                                .unwrap_or(&ResponseValue::Null),
+                        );
 
                     if original.is_null() {
                         continue;
@@ -986,7 +1018,11 @@ impl QueryPlanExecutionContext<'_> {
                         }
                         buffer.push('{');
                         // Write __typename only if the object has other fields
-                        if let Some(Value::String(type_name)) = entity_obj.get(TYPENAME_FIELD) {
+                        if let Some(type_name) = entity_obj
+                            .iter()
+                            .find(|(key, _)| key == &TYPENAME_FIELD)
+                            .and_then(|(_, val)| val.as_str())
+                        {
                             buffer.push_str("\"__typename\":");
                             write_and_escape_string(buffer, type_name);
                             buffer.push(',');
@@ -1006,8 +1042,12 @@ impl QueryPlanExecutionContext<'_> {
                 SelectionItem::InlineFragment(requires_selection) => {
                     let type_condition = &requires_selection.type_condition;
 
-                    let type_name = match entity_obj.get(TYPENAME_FIELD) {
-                        Some(Value::String(type_name)) => type_name,
+                    let type_name = match entity_obj
+                        .iter()
+                        .find(|(key, _)| key == &TYPENAME_FIELD)
+                        .and_then(|(_, val)| val.as_str())
+                    {
+                        Some(type_name) => type_name,
                         _ => type_condition,
                     };
                     // For projection, both sides of the condition are valid

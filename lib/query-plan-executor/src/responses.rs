@@ -47,6 +47,12 @@ impl Value<'_> {
             _ => None,
         }
     }
+    pub fn is_null(&self) -> bool {
+        match self {
+            Value::Null => true,
+            _ => false,
+        }
+    }
 }
 
 impl<'a> From<&'a BorrowedValue<'a>> for Value<'a> {
