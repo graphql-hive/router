@@ -1169,7 +1169,7 @@ pub async fn execute_query_plan(
     selections: &Vec<FieldProjectionPlan>,
     has_introspection: bool,
     expose_query_plan: ExposeQueryPlanMode,
-) -> String {
+) -> Vec<u8> {
     let mut result_data = if has_introspection {
         schema_metadata.introspection_query_json.clone()
     } else {
