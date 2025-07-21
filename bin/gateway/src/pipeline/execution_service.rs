@@ -5,15 +5,18 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use crate::pipeline::coerce_variables_service::CoerceVariablesPayload;
-use crate::pipeline::http_request_params::HttpRequestParams;
+use crate::pipeline::header::{
+    APPLICATION_GRAPHQL_RESPONSE_JSON, APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON,
+};
 use crate::pipeline::normalize_service::GraphQLNormalizationPayload;
 use crate::pipeline::query_plan_service::QueryPlanPayload;
 use crate::shared_state::GatewaySharedState;
 use axum::body::Body;
-use http::header::CONTENT_TYPE;
-use http::{HeaderName, Request, Response};
+use http::header::ACCEPT;
+use http::{HeaderName, HeaderValue, Request, Response};
 use query_plan_executor::{execute_query_plan, ExposeQueryPlanMode};
 use tower::Service;
+use tracing::trace;
 
 #[derive(Clone, Debug, Default)]
 pub struct ExecutionService {
@@ -74,11 +77,6 @@ impl Service<Request<Body>> for ExecutionService {
                 .get::<CoerceVariablesPayload>()
                 .expect("CoerceVariablesPayload missing");
 
-            let http_request_params = req
-                .extensions()
-                .get::<HttpRequestParams>()
-                .expect("HttpRequestParams missing");
-
             let execution_result = execute_query_plan(
                 &query_plan_payload.query_plan,
                 &app_state.subgraph_executor_map,
@@ -92,10 +90,27 @@ impl Service<Request<Body>> for ExecutionService {
             .await;
 
             let mut response = Response::new(Body::from(execution_result));
-            response.headers_mut().insert(
-                CONTENT_TYPE,
-                http_request_params.response_content_type.clone(),
+
+            let accept_header = req
+                .headers()
+                .get(ACCEPT)
+                .map(|v| v.to_str().unwrap_or_default())
+                .unwrap_or_default();
+            let response_content_type: &'static HeaderValue =
+                if accept_header.contains(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR) {
+                    &APPLICATION_GRAPHQL_RESPONSE_JSON
+                } else {
+                    &APPLICATION_JSON
+                };
+
+            trace!(
+                "Will use the following Content-Type header for response: {:?}",
+                response_content_type
             );
+
+            response
+                .headers_mut()
+                .insert(http::header::CONTENT_TYPE, response_content_type.clone());
 
             Ok(response)
         })

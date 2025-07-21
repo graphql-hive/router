@@ -2,12 +2,12 @@ use std::{collections::HashMap, sync::Arc};
 
 use axum::{body::Body, extract::rejection::QueryRejection, response::IntoResponse};
 use graphql_tools::validation::utils::ValidationError;
-use http::{Response, StatusCode};
+use http::{HeaderName, Method, Request, Response, StatusCode};
 use query_plan_executor::{ExecutionResult, GraphQLError};
 use query_planner::{ast::normalization::error::NormalizationError, planner::PlannerError};
 use serde_json::Value;
 
-use crate::pipeline::http_request_params::APPLICATION_JSON;
+use crate::pipeline::header::{APPLICATION_JSON, APPLICATION_JSON_STR};
 
 #[derive(Debug)]
 pub struct PipelineError {
@@ -15,12 +15,19 @@ pub struct PipelineError {
     pub error: PipelineErrorVariant,
 }
 
-impl PipelineError {
-    pub fn new_with_accept_header(
-        error: PipelineErrorVariant,
-        accept_header_value: String,
-    ) -> Self {
-        Self {
+pub trait PipelineErrorFromAcceptHeader {
+    fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError;
+}
+
+impl PipelineErrorFromAcceptHeader for Request<Body> {
+    fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError {
+        let accept_header = self.headers().get(http::header::ACCEPT);
+        let accept_header_value = accept_header
+            .unwrap_or(&APPLICATION_JSON)
+            .to_str()
+            .unwrap_or_default()
+            .to_string();
+        PipelineError {
             accept_header: Some(accept_header_value),
             error,
         }
@@ -35,9 +42,9 @@ pub enum PipelineErrorVariant {
 
     // HTTP-related errors
     #[error("Unsupported HTTP method: {0}")]
-    UnsupportedHttpMethod(String),
+    UnsupportedHttpMethod(Method),
     #[error("Header '{0}' has invalid value")]
-    InvalidHeaderValue(String),
+    InvalidHeaderValue(HeaderName),
     #[error("Failed to read body: {0}")]
     FailedToReadBodyBytes(axum::Error),
     #[error("Content-Type header is missing")]
@@ -96,13 +103,9 @@ impl PipelineErrorVariant {
 
     pub fn graphql_error_message(&self) -> String {
         match self {
-            Self::PlannerError(_) | Self::InternalServiceError(_) => {
-                return "Unexpected error".to_string()
-            }
-            _ => {}
+            Self::PlannerError(_) | Self::InternalServiceError(_) => "Unexpected error".to_string(),
+            _ => self.to_string(),
         }
-
-        self.to_string()
     }
 
     pub fn default_status_code(&self, prefer_ok: bool) -> StatusCode {
@@ -131,26 +134,11 @@ impl PipelineErrorVariant {
     }
 }
 
-impl From<PipelineError> for PipelineErrorVariant {
-    fn from(error: PipelineError) -> Self {
-        error.error
-    }
-}
-
-impl From<PipelineErrorVariant> for PipelineError {
-    fn from(error: PipelineErrorVariant) -> Self {
-        Self {
-            error,
-            accept_header: None,
-        }
-    }
-}
-
 impl IntoResponse for PipelineError {
     fn into_response(self) -> Response<Body> {
         let accept_ok = &self
             .accept_header
-            .is_some_and(|v| v.contains(APPLICATION_JSON.to_str().unwrap()));
+            .is_some_and(|v| v.contains(*APPLICATION_JSON_STR));
         let status = self.error.default_status_code(*accept_ok);
 
         if let PipelineErrorVariant::ValidationErrors(validation_errors) = self.error {

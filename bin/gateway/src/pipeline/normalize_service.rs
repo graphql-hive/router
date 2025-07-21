@@ -8,12 +8,11 @@ use query_plan_executor::projection::FieldProjectionPlan;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
 
-use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
+use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::gateway_layer::{
     GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer,
 };
 use crate::pipeline::graphql_request_params::ExecutionRequest;
-use crate::pipeline::http_request_params::HttpRequestParams;
 use crate::pipeline::parser_service::GraphQLParserPayload;
 use crate::shared_state::GatewaySharedState;
 use tracing::{error, trace};
@@ -51,21 +50,24 @@ impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
             .extensions()
             .get::<GraphQLParserPayload>()
             .ok_or_else(|| {
-                PipelineErrorVariant::InternalServiceError("GraphQLParserPayload is missing")
+                req.new_pipeline_error(PipelineErrorVariant::InternalServiceError(
+                    "GraphQLParserPayload is missing",
+                ))
             })?;
-        let http_payload = req.extensions().get::<HttpRequestParams>().ok_or_else(|| {
-            PipelineErrorVariant::InternalServiceError("HttpRequestParams is missing")
-        })?;
 
         let execution_params = req.extensions().get::<ExecutionRequest>().ok_or_else(|| {
-            PipelineErrorVariant::InternalServiceError("ExecutionRequest is missing")
+            req.new_pipeline_error(PipelineErrorVariant::InternalServiceError(
+                "ExecutionRequest is missing",
+            ))
         })?;
 
         let app_state = req
             .extensions()
             .get::<Arc<GatewaySharedState>>()
             .ok_or_else(|| {
-                PipelineErrorVariant::InternalServiceError("GatewaySharedState is missing")
+                req.new_pipeline_error(PipelineErrorVariant::InternalServiceError(
+                    "GatewaySharedState is missing",
+                ))
             })?;
 
         let cache_key = match &execution_params.operation_name {
@@ -130,10 +132,7 @@ impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
                     error!("Failed to normalize GraphQL operation: {}", err);
                     trace!("{:?}", err);
 
-                    Err(PipelineError::new_with_accept_header(
-                        PipelineErrorVariant::NormalizationError(err),
-                        http_payload.accept_header.clone(),
-                    ))
+                    Err(req.new_pipeline_error(PipelineErrorVariant::NormalizationError(err)))
                 }
             },
         }

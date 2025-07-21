@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
-use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
+use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::gateway_layer::{
     GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer,
 };
-use crate::pipeline::http_request_params::HttpRequestParams;
 use crate::pipeline::parser_service::GraphQLParserPayload;
 use crate::shared_state::GatewaySharedState;
 use axum::body::Body;
@@ -32,14 +31,18 @@ impl GatewayPipelineLayer for GraphQLValidationService {
             .extensions()
             .get::<GraphQLParserPayload>()
             .ok_or_else(|| {
-                PipelineErrorVariant::InternalServiceError("GraphQLParserPayload is missing")
+                req.new_pipeline_error(PipelineErrorVariant::InternalServiceError(
+                    "GraphQLParserPayload is missing",
+                ))
             })?;
 
         let app_state = req
             .extensions()
             .get::<Arc<GatewaySharedState>>()
             .ok_or_else(|| {
-                PipelineErrorVariant::InternalServiceError("GatewaySharedState is missing")
+                req.new_pipeline_error(PipelineErrorVariant::InternalServiceError(
+                    "GatewaySharedState is missing",
+                ))
             })?;
 
         let consumer_schema_ast = &app_state.planner.consumer_schema.document;
@@ -85,14 +88,9 @@ impl GatewayPipelineLayer for GraphQLValidationService {
             );
             trace!("Validation errors: {:?}", validation_result);
 
-            let http_payload = req.extensions().get::<HttpRequestParams>().ok_or_else(|| {
-                PipelineErrorVariant::InternalServiceError("HttpRequestParams is missing")
-            })?;
-
-            return Err(PipelineError::new_with_accept_header(
-                PipelineErrorVariant::ValidationErrors(validation_result),
-                http_payload.accept_header.clone(),
-            ));
+            return Err(
+                req.new_pipeline_error(PipelineErrorVariant::ValidationErrors(validation_result))
+            );
         }
 
         Ok(GatewayPipelineStepDecision::Continue)

@@ -8,12 +8,11 @@ use query_planner::state::supergraph_state::OperationKind;
 use serde_json::Value;
 use tracing::{error, trace, warn};
 
-use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
+use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::gateway_layer::{
     GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer,
 };
 use crate::pipeline::graphql_request_params::ExecutionRequest;
-use crate::pipeline::http_request_params::HttpRequestParams;
 use crate::pipeline::normalize_service::GraphQLNormalizationPayload;
 use crate::shared_state::GatewaySharedState;
 
@@ -42,31 +41,35 @@ impl GatewayPipelineLayer for CoerceVariablesService {
             .extensions()
             .get::<Arc<GraphQLNormalizationPayload>>()
             .ok_or_else(|| {
-                PipelineErrorVariant::InternalServiceError("GraphQLNormalizationPayload is missing")
+                req.new_pipeline_error(PipelineErrorVariant::InternalServiceError(
+                    "GraphQLNormalizationPayload is missing",
+                ))
             })?;
 
-        let http_payload = req.extensions().get::<HttpRequestParams>().ok_or_else(|| {
-            PipelineErrorVariant::InternalServiceError("HttpRequestParams is missing")
-        })?;
-
         let execution_params = req.extensions().get::<ExecutionRequest>().ok_or_else(|| {
-            PipelineErrorVariant::InternalServiceError("ExecutionRequest is missing")
+            req.new_pipeline_error(PipelineErrorVariant::InternalServiceError(
+                "ExecutionRequest is missing",
+            ))
         })?;
 
         let app_state = req
             .extensions()
             .get::<Arc<GatewaySharedState>>()
             .ok_or_else(|| {
-                PipelineErrorVariant::InternalServiceError("GatewaySharedState is missing")
+                req.new_pipeline_error(PipelineErrorVariant::InternalServiceError(
+                    "GatewaySharedState is missing",
+                ))
             })?;
 
-        if http_payload.http_method == Method::GET {
+        if req.method() == Method::GET {
             if let Some(OperationKind::Mutation) =
                 normalized_operation.operation_for_plan.operation_kind
             {
                 error!("Mutation is not allowed over GET, stopping");
 
-                return Err(PipelineErrorVariant::MutationNotAllowedOverHttpGet.into());
+                return Err(
+                    req.new_pipeline_error(PipelineErrorVariant::MutationNotAllowedOverHttpGet)
+                );
             }
         }
 
@@ -92,11 +95,9 @@ impl GatewayPipelineLayer for CoerceVariablesService {
                     "failed to collect variables from incoming request: {}",
                     err_msg
                 );
-
-                return Err(PipelineError::new_with_accept_header(
-                    PipelineErrorVariant::VariablesCoercionError(err_msg),
-                    http_payload.accept_header.clone(),
-                ));
+                return Err(
+                    req.new_pipeline_error(PipelineErrorVariant::VariablesCoercionError(err_msg))
+                );
             }
         }
     }

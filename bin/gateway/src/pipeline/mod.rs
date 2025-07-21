@@ -4,7 +4,7 @@ pub mod execution_service;
 pub mod gateway_layer;
 pub mod graphiql_service;
 pub mod graphql_request_params;
-pub mod http_request_params;
+pub mod header;
 pub mod normalize_service;
 pub mod parser_service;
 pub mod progressive_override_service;

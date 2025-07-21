@@ -29,7 +29,6 @@ use crate::pipeline::{
     coerce_variables_service::CoerceVariablesService, execution_service::ExecutionService,
     graphiql_service::GraphiQLResponderService,
     graphql_request_params::GraphQLRequestParamsExtractor,
-    http_request_params::HttpRequestParamsExtractor,
     normalize_service::GraphQLOperationNormalizationService, parser_service::GraphQLParserService,
     progressive_override_service::ProgressiveOverrideExtractor,
     query_plan_service::QueryPlanService, validation_service::GraphQLValidationService,
@@ -99,7 +98,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
             }),
         )
-        .layer(HttpRequestParamsExtractor::new_layer())
         .layer(GraphiQLResponderService::new_layer())
         .layer(GraphQLRequestParamsExtractor::new_layer())
         .layer(GraphQLParserService::new_layer())
