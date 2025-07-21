@@ -61,10 +61,8 @@ impl GatewayPipelineLayer for CoerceVariablesService {
             })?;
 
         if http_payload.http_method == Method::GET {
-            if let Some(OperationKind::Mutation) = normalized_operation
-                .normalized_document
-                .operation
-                .operation_kind
+            if let Some(OperationKind::Mutation) =
+                normalized_operation.operation_for_plan.operation_kind
             {
                 error!("Mutation is not allowed over GET, stopping");
 

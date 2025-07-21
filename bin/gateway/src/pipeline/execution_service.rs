@@ -84,7 +84,8 @@ impl Service<Request<Body>> for ExecutionService {
                 &app_state.subgraph_executor_map,
                 &variable_payload.variables_map,
                 &app_state.schema_metadata,
-                &normalized_payload.normalized_document.operation,
+                normalized_payload.root_type_name,
+                &normalized_payload.projection_plan,
                 normalized_payload.has_introspection,
                 expose_query_plan,
             )

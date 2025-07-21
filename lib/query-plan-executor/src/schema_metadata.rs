@@ -10,9 +10,9 @@ use serde_json::{json, Value};
 #[derive(Debug, Default)]
 pub struct SchemaMetadata {
     pub possible_types: PossibleTypes,
-    pub enum_values: HashMap<String, Vec<String>>,
+    pub enum_values: HashMap<String, HashSet<String>>,
     pub type_fields: HashMap<String, HashMap<String, String>>,
-    pub introspection_schema_root_json: Value,
+    pub introspection_query_json: Value,
 }
 
 #[derive(Debug, Default)]
@@ -30,6 +30,11 @@ impl PossibleTypes {
             false
         }
     }
+    pub fn get_possible_types(&self, type_name: &str) -> HashSet<String> {
+        let mut possible_types = self.map.get(type_name).cloned().unwrap_or_default();
+        possible_types.insert(type_name.to_string());
+        possible_types
+    }
 }
 
 pub trait SchemaWithMetadata {
@@ -40,15 +45,15 @@ impl SchemaWithMetadata for ConsumerSchema {
     fn schema_metadata(&self) -> SchemaMetadata {
         let mut first_possible_types: HashMap<String, Vec<String>> = HashMap::new();
         let mut type_fields: HashMap<String, HashMap<String, String>> = HashMap::new();
-        let mut enum_values: HashMap<String, Vec<String>> = HashMap::new();
+        let mut enum_values: HashMap<String, HashSet<String>> = HashMap::new();
 
         for definition in &self.document.definitions {
             match definition {
                 Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => {
                     let name = enum_type.name.to_string();
-                    let mut values = vec![];
+                    let mut values = HashSet::new();
                     for enum_value in &enum_type.values {
-                        values.push(enum_value.name.to_string());
+                        values.insert(enum_value.name.to_string());
                     }
                     enum_values.insert(name, values);
                 }
@@ -112,7 +117,7 @@ impl SchemaWithMetadata for ConsumerSchema {
 
         let introspection_query =
             crate::introspection::introspection_query_from_ast(&self.document);
-        let introspection_schema_root_json = json!(introspection_query.__schema);
+        let introspection_query_json = json!(introspection_query);
 
         SchemaMetadata {
             possible_types: PossibleTypes {
@@ -120,7 +125,7 @@ impl SchemaWithMetadata for ConsumerSchema {
             },
             enum_values,
             type_fields,
-            introspection_schema_root_json,
+            introspection_query_json,
         }
     }
 }

@@ -1709,6 +1709,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "indexmap 2.10.0",
  "insta",
  "query-planner",
  "serde",
