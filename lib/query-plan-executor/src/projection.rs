@@ -8,9 +8,9 @@ use query_planner::{
     },
     state::supergraph_state::OperationKind,
 };
-use serde_json::{Map, Value};
 use tracing::{instrument, warn};
 
+use crate::responses::Value;
 use crate::{
     json_writer::write_and_escape_string, schema_metadata::SchemaMetadata, GraphQLError,
     TYPENAME_FIELD,
@@ -49,7 +49,7 @@ impl FieldProjectionCondition {
         parent_type_name: &str,
         field_type_name: &str,
         field_value: &Option<&Value>,
-        variable_values: &Option<HashMap<String, Value>>,
+        variable_values: &Option<HashMap<String, serde_json::Value>>,
     ) -> Result<(), FieldProjectionConditionError> {
         match self {
             FieldProjectionCondition::And(condition_a, condition_b) => condition_a
@@ -112,8 +112,9 @@ impl FieldProjectionCondition {
             }
             FieldProjectionCondition::FieldTypeCondition(possible_types) => {
                 let field_type_name = field_value
-                    .and_then(|value| value.get(TYPENAME_FIELD))
-                    .and_then(|v| v.as_str())
+                    .and_then(|value| value.as_object())
+                    .and_then(|value| value.iter().find(|(k, _)| k == &TYPENAME_FIELD))
+                    .and_then(|(_, v)| v.as_str())
                     .unwrap_or(field_type_name);
                 if possible_types.contains(field_type_name) {
                     Ok(())
@@ -123,7 +124,7 @@ impl FieldProjectionCondition {
             }
             FieldProjectionCondition::EnumValuesCondition(enum_values) => {
                 if let Some(Value::String(string_value)) = field_value {
-                    if enum_values.contains(string_value) {
+                    if enum_values.contains(*string_value) {
                         Ok(())
                     } else {
                         Err(FieldProjectionConditionError::InvalidEnumValue)
@@ -371,12 +372,12 @@ impl FieldProjectionPlan {
 
 #[instrument(level = "trace", skip_all)]
 pub fn project_by_operation(
-    data: &mut Value,
+    data: &Value,
     errors: &mut Vec<GraphQLError>,
-    extensions: &HashMap<String, Value>,
+    extensions: &HashMap<String, serde_json::Value>,
     operation_type_name: &str,
     selections: &Vec<FieldProjectionPlan>,
-    variable_values: &Option<HashMap<String, Value>>,
+    variable_values: &Option<HashMap<String, serde_json::Value>>,
 ) -> String {
     // We may want to remove it, but let's see.
     let mut buffer = String::with_capacity(4096);
@@ -387,7 +388,7 @@ pub fn project_by_operation(
     buffer.push('"');
     buffer.push(':');
 
-    if let Some(data_map) = data.as_object_mut() {
+    if let Some(data_map) = data.as_object() {
         let mut first = true;
         project_selection_set_with_map(
             data_map,
@@ -427,25 +428,20 @@ pub fn project_by_operation(
     buffer
 }
 
-#[instrument(
-    level = "trace",
-    skip_all,
-    fields(
-        data = ?data
-    )
-)]
 fn project_selection_set(
     data: &Value,
     errors: &mut Vec<GraphQLError>,
     selection: &FieldProjectionPlan,
-    variable_values: &Option<HashMap<String, Value>>,
+    variable_values: &Option<HashMap<String, serde_json::Value>>,
     buffer: &mut String,
 ) {
     match data {
         Value::Null => buffer.push_str("null"),
         Value::Bool(true) => buffer.push_str("true"),
         Value::Bool(false) => buffer.push_str("false"),
-        Value::Number(num) => write!(buffer, "{}", num).unwrap(),
+        Value::U64(num) => write!(buffer, "{}", num).unwrap(),
+        Value::I64(num) => write!(buffer, "{}", num).unwrap(),
+        Value::F64(num) => write!(buffer, "{}", num).unwrap(),
         Value::String(value) => {
             write_and_escape_string(buffer, value);
         }
@@ -466,9 +462,10 @@ fn project_selection_set(
                 Some(selections) => {
                     let mut first = true;
                     let type_name = obj
-                        .get(TYPENAME_FIELD)
-                        .and_then(Value::as_str)
-                        .unwrap_or(&selection.field_type);
+                        .iter()
+                        .find(|(k, _)| k == &TYPENAME_FIELD)
+                        .and_then(|(_, val)| val.as_str())
+                        .unwrap_or(selection.field_type.as_str());
                     project_selection_set_with_map(
                         obj,
                         errors,
@@ -494,28 +491,36 @@ fn project_selection_set(
     }
 }
 
-#[instrument(
-    level = "trace",
-    skip_all,
-    fields(
-        obj = ?obj
-    )
-)]
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 fn project_selection_set_with_map(
-    obj: &Map<String, Value>,
+    obj: &Vec<(&str, Value)>,
     errors: &mut Vec<GraphQLError>,
     selections: &Vec<FieldProjectionPlan>,
-    variable_values: &Option<HashMap<String, Value>>,
+    variable_values: &Option<HashMap<String, serde_json::Value>>,
     parent_type_name: &str,
     buffer: &mut String,
     first: &mut bool,
 ) {
     for selection in selections {
         let field_val = obj
-            .get(&selection.field_name)
-            .or_else(|| obj.get(&selection.response_key));
+            .iter()
+            .find_map(|(key, val)| {
+                if key == &selection.field_name {
+                    Some(val)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                obj.iter().find_map(|(key, val)| {
+                    if key == &selection.response_key {
+                        Some(val)
+                    } else {
+                        None
+                    }
+                })
+            });
         match selection.conditions.check(
             parent_type_name,
             &selection.field_type,

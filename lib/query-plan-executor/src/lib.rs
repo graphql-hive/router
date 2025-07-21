@@ -14,10 +14,12 @@ use std::{collections::BTreeSet, fmt::Write};
 use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
+pub use crate::responses::Value as ResponseValue;
 use crate::{
     executors::map::SubgraphExecutorMap,
     json_writer::write_and_escape_string,
     projection::FieldProjectionPlan,
+    responses::ResponsesStorage,
     schema_metadata::{PossibleTypes, SchemaMetadata},
 };
 pub mod deep_merge;
@@ -25,6 +27,7 @@ pub mod executors;
 pub mod introspection;
 mod json_writer;
 pub mod projection;
+mod responses;
 pub mod schema_metadata;
 pub mod validation;
 mod value_from_ast;
@@ -34,42 +37,30 @@ const TYPENAME_FIELD: &str = "__typename";
 
 #[async_trait]
 trait ExecutablePlanNode {
-    async fn execute(
-        &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
-        data: &mut Value,
-    );
+    async fn execute(&self, execution_context: &mut QueryPlanExecutionContext<'_>);
 }
 
 #[async_trait]
 pub trait ExecutableQueryPlan {
-    async fn execute(
-        &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
-        data: &mut Value,
-    );
+    async fn execute(&self, execution_context: &mut QueryPlanExecutionContext<'_>);
 }
 
 #[async_trait]
 impl ExecutablePlanNode for PlanNode {
-    async fn execute(
-        &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
-        data: &mut Value,
-    ) {
+    async fn execute(&self, execution_context: &mut QueryPlanExecutionContext<'_>) {
         match self {
-            PlanNode::Fetch(node) => node.execute(execution_context, data).await,
-            PlanNode::Sequence(node) => node.execute(execution_context, data).await,
-            PlanNode::Parallel(node) => node.execute(execution_context, data).await,
-            PlanNode::Flatten(node) => node.execute(execution_context, data).await,
-            PlanNode::Condition(node) => node.execute(execution_context, data).await,
+            PlanNode::Fetch(node) => node.execute(execution_context).await,
+            PlanNode::Sequence(node) => node.execute(execution_context).await,
+            PlanNode::Parallel(node) => node.execute(execution_context).await,
+            PlanNode::Flatten(node) => node.execute(execution_context).await,
+            PlanNode::Condition(node) => node.execute(execution_context).await,
             PlanNode::Subscription(node) => {
                 // Subscriptions typically use a different protocol.
                 // Execute the primary node for now.
                 warn!(
             "Executing SubscriptionNode's primary as a normal node. Real subscription handling requires a different mechanism."
         );
-                node.primary.execute(execution_context, data).await
+                node.primary.execute(execution_context).await
             }
             PlanNode::Defer(_) => {
                 // Defer/Deferred execution is complex.
@@ -128,14 +119,10 @@ trait ExecutableFetchNode {
 #[async_trait]
 impl ExecutablePlanNode for FetchNode {
     #[instrument(level = "debug", skip_all, name = "FetchNode::execute")]
-    async fn execute(
-        &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
-        data: &mut Value,
-    ) {
+    async fn execute(&self, execution_context: &mut QueryPlanExecutionContext<'_>) {
         let fetch_result = self.execute_for_root(execution_context).await;
 
-        process_root_result(fetch_result, execution_context, data);
+        process_root_result(fetch_result, execution_context);
     }
 }
 
@@ -415,13 +402,9 @@ impl ExecutablePlanNode for SequenceNode {
     #[instrument(level = "trace", skip_all, name = "SequenceNode::execute", fields(
         nodes_count = %self.nodes.len()
     ))]
-    async fn execute(
-        &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
-        data: &mut Value,
-    ) {
+    async fn execute(&self, execution_context: &mut QueryPlanExecutionContext<'_>) {
         for node in &self.nodes {
-            node.execute(execution_context, data) // No representations passed to child nodes
+            node.execute(execution_context) // No representations passed to child nodes
                 .await;
         }
     }
@@ -434,16 +417,16 @@ impl ExecutablePlanNode for SequenceNode {
 fn process_root_result(
     fetch_result: ExecutionResult,
     execution_context: &mut QueryPlanExecutionContext<'_>,
-    data: &mut Value,
 ) {
-    // 4. Process the response
-    if let Some(new_data) = fetch_result.data {
-        if data.is_null() {
-            *data = new_data; // Initialize with new_data
-        } else {
-            deep_merge::deep_merge(data, new_data);
-        }
-    }
+    todo!("Implement process_root_result");
+    // // 4. Process the response
+    // if let Some(new_data) = fetch_result.data {
+    //     if data.is_null() {
+    //         *data = new_data; // Initialize with new_data
+    //     } else {
+    //         deep_merge::deep_merge(data, new_data);
+    //     }
+    // }
 
     process_errors_and_extensions(
         execution_context,
@@ -465,13 +448,9 @@ impl ExecutablePlanNode for ParallelNode {
     #[instrument(level = "trace", skip_all, name = "ParallelNode::execute", fields(
         nodes_count = %self.nodes.len()
     ))]
-    async fn execute(
-        &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
-        data: &mut Value,
-    ) {
+    async fn execute(&self, execution_context: &mut QueryPlanExecutionContext<'_>) {
         let mut all_errors = vec![];
-        let mut all_extensions = vec![];
+        // let mut all_extensions = vec![];
 
         {
             let mut jobs: FuturesUnordered<BoxFuture<ParallelJob>> = FuturesUnordered::new();
@@ -513,43 +492,44 @@ impl ExecutablePlanNode for ParallelNode {
                         let mut indexes = BTreeSet::new();
                         let normalized_path = flatten_node.path.as_slice();
                         filtered_representations.push('[');
-                        traverse_and_callback(
-                            data,
-                            normalized_path,
-                            execution_context.schema_metadata,
-                            &mut |entity| {
-                                let is_projected =
-                                    if let Some(input_rewrites) = &fetch_node.input_rewrites {
-                                        // We need to own the value and not modify the original entity
-                                        let mut entity_owned = entity.to_owned();
-                                        for input_rewrite in input_rewrites {
-                                            input_rewrite.apply(
-                                                &execution_context.schema_metadata.possible_types,
-                                                &mut entity_owned,
-                                            );
-                                        }
-                                        execution_context.project_requires(
-                                            &requires_nodes.items,
-                                            &entity_owned,
-                                            &mut filtered_representations,
-                                            indexes.is_empty(),
-                                            None,
-                                        )
-                                    } else {
-                                        execution_context.project_requires(
-                                            &requires_nodes.items,
-                                            entity,
-                                            &mut filtered_representations,
-                                            indexes.is_empty(),
-                                            None,
-                                        )
-                                    };
-                                if is_projected {
-                                    indexes.insert(index);
-                                }
-                                index += 1;
-                            },
-                        );
+                        todo!("Implement the logic to handle the flattened path");
+                        // traverse_and_callback(
+                        //     data,
+                        //     normalized_path,
+                        //     execution_context.schema_metadata,
+                        //     &mut |entity| {
+                        //         let is_projected =
+                        //             if let Some(input_rewrites) = &fetch_node.input_rewrites {
+                        //                 // We need to own the value and not modify the original entity
+                        //                 let mut entity_owned = entity.to_owned();
+                        //                 for input_rewrite in input_rewrites {
+                        //                     input_rewrite.apply(
+                        //                         &execution_context.schema_metadata.possible_types,
+                        //                         &mut entity_owned,
+                        //                     );
+                        //                 }
+                        //                 execution_context.project_requires(
+                        //                     &requires_nodes.items,
+                        //                     &entity_owned,
+                        //                     &mut filtered_representations,
+                        //                     indexes.is_empty(),
+                        //                     None,
+                        //                 )
+                        //             } else {
+                        //                 execution_context.project_requires(
+                        //                     &requires_nodes.items,
+                        //                     entity,
+                        //                     &mut filtered_representations,
+                        //                     indexes.is_empty(),
+                        //                     None,
+                        //                 )
+                        //             };
+                        //         if is_projected {
+                        //             indexes.insert(index);
+                        //         }
+                        //         index += 1;
+                        //     },
+                        // );
                         filtered_representations.push(']');
                         let job = fetch_node.execute_for_projected_representations(
                             execution_context,
@@ -567,53 +547,54 @@ impl ExecutablePlanNode for ParallelNode {
 
             let now = std::time::Instant::now();
             while let Some(result) = jobs.next().await {
-                match result {
-                    ParallelJob::Root(fetch_result) => {
-                        // Process root FetchNode results
-                        if let Some(new_data) = fetch_result.data {
-                            if data.is_null() {
-                                *data = new_data; // Initialize with new_data
-                            } else {
-                                deep_merge::deep_merge(data, new_data);
-                            }
-                        }
-                        // Process errors and extensions
-                        if let Some(errors) = fetch_result.errors {
-                            all_errors.extend(errors);
-                        }
-                        if let Some(extensions) = fetch_result.extensions {
-                            all_extensions.push(extensions);
-                        }
-                    }
-                    ParallelJob::Flatten(result, path) => {
-                        if let Some(mut entities) = result.entities {
-                            let mut index_of_traverse = 0;
-                            let mut index_of_entities = 0;
-                            traverse_and_callback(
-                                data,
-                                path,
-                                execution_context.schema_metadata,
-                                &mut |target| {
-                                    if result.indexes.contains(&index_of_traverse) {
-                                        let entity =
-                                            entities.get_mut(index_of_entities).unwrap().take();
-                                        // Merge the entity into the target
-                                        deep_merge::deep_merge(target, entity);
-                                        index_of_entities += 1;
-                                    }
-                                    index_of_traverse += 1;
-                                },
-                            );
-                        }
-                        // Process errors and extensions
-                        if let Some(errors) = result.errors {
-                            all_errors.extend(errors);
-                        }
-                        if let Some(extensions) = result.extensions {
-                            all_extensions.push(extensions);
-                        }
-                    }
-                }
+                todo!("Implement the logic to handle the flattened path");
+                // match result {
+                //     ParallelJob::Root(fetch_result) => {
+                //         // Process root FetchNode results
+                //         if let Some(new_data) = fetch_result.data {
+                //             if data.is_null() {
+                //                 *data = new_data; // Initialize with new_data
+                //             } else {
+                //                 deep_merge::deep_merge(data, new_data);
+                //             }
+                //         }
+                //         // Process errors and extensions
+                //         if let Some(errors) = fetch_result.errors {
+                //             all_errors.extend(errors);
+                //         }
+                //         if let Some(extensions) = fetch_result.extensions {
+                //             all_extensions.push(extensions);
+                //         }
+                //     }
+                //     ParallelJob::Flatten(result, path) => {
+                //         if let Some(mut entities) = result.entities {
+                //             let mut index_of_traverse = 0;
+                //             let mut index_of_entities = 0;
+                //             traverse_and_callback(
+                //                 data,
+                //                 path,
+                //                 execution_context.schema_metadata,
+                //                 &mut |target| {
+                //                     if result.indexes.contains(&index_of_traverse) {
+                //                         let entity =
+                //                             entities.get_mut(index_of_entities).unwrap().take();
+                //                         // Merge the entity into the target
+                //                         deep_merge::deep_merge(target, entity);
+                //                         index_of_entities += 1;
+                //                     }
+                //                     index_of_traverse += 1;
+                //                 },
+                //             );
+                //         }
+                //         // Process errors and extensions
+                //         if let Some(errors) = result.errors {
+                //             all_errors.extend(errors);
+                //         }
+                //         if let Some(extensions) = result.extensions {
+                //             all_extensions.push(extensions);
+                //         }
+                //     }
+                // }
             }
 
             trace!(
@@ -626,11 +607,11 @@ impl ExecutablePlanNode for ParallelNode {
         if !all_errors.is_empty() {
             execution_context.errors.extend(all_errors);
         }
-        if !all_extensions.is_empty() {
-            for extensions in all_extensions {
-                execution_context.extensions.extend(extensions);
-            }
-        }
+        // if !all_extensions.is_empty() {
+        //     for extensions in all_extensions {
+        //         execution_context.extensions.extend(extensions);
+        //     }
+        // }
     }
 }
 
@@ -639,11 +620,7 @@ impl ExecutablePlanNode for FlattenNode {
     #[instrument(level = "trace", skip_all, name = "FlattenNode::execute", fields(
         path = ?self.path
     ))]
-    async fn execute(
-        &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
-        data: &mut Value,
-    ) {
+    async fn execute(&self, execution_context: &mut QueryPlanExecutionContext<'_>) {
         // Execute the child node. `execution_context` can be borrowed mutably
         // because `collected_representations` borrows `data_for_flatten`, not `execution_context.data`.
         let now = std::time::Instant::now();
@@ -662,42 +639,43 @@ impl ExecutablePlanNode for FlattenNode {
         let requires_nodes = fetch_node.requires.as_ref().unwrap();
         filtered_representations.push('[');
         let mut first = true;
-        traverse_and_callback(
-            data,
-            self.path.as_slice(),
-            execution_context.schema_metadata,
-            &mut |entity| {
-                let is_projected = if let Some(input_rewrites) = &fetch_node.input_rewrites {
-                    // We need to own the value and not modify the original entity
-                    let mut entity_owned = entity.to_owned();
-                    for input_rewrite in input_rewrites {
-                        input_rewrite.apply(
-                            &execution_context.schema_metadata.possible_types,
-                            &mut entity_owned,
-                        );
-                    }
-                    execution_context.project_requires(
-                        &requires_nodes.items,
-                        &entity_owned,
-                        &mut filtered_representations,
-                        first,
-                        None,
-                    )
-                } else {
-                    execution_context.project_requires(
-                        &requires_nodes.items,
-                        entity,
-                        &mut filtered_representations,
-                        first,
-                        None,
-                    )
-                };
-                if is_projected {
-                    representations.push(entity);
-                    first = false;
-                }
-            },
-        );
+        todo!("Implement logic to traverse and callback");
+        // traverse_and_callback(
+        //     data,
+        //     self.path.as_slice(),
+        //     execution_context.schema_metadata,
+        //     &mut |entity| {
+        //         let is_projected = if let Some(input_rewrites) = &fetch_node.input_rewrites {
+        //             // We need to own the value and not modify the original entity
+        //             let mut entity_owned = entity.to_owned();
+        //             for input_rewrite in input_rewrites {
+        //                 input_rewrite.apply(
+        //                     &execution_context.schema_metadata.possible_types,
+        //                     &mut entity_owned,
+        //                 );
+        //             }
+        //             execution_context.project_requires(
+        //                 &requires_nodes.items,
+        //                 &entity_owned,
+        //                 &mut filtered_representations,
+        //                 first,
+        //                 None,
+        //             )
+        //         } else {
+        //             execution_context.project_requires(
+        //                 &requires_nodes.items,
+        //                 entity,
+        //                 &mut filtered_representations,
+        //                 first,
+        //                 None,
+        //             )
+        //         };
+        //         if is_projected {
+        //             representations.push(entity);
+        //             first = false;
+        //         }
+        //     },
+        // );
         filtered_representations.push(']');
         trace!(
             "traversed and collected representations: {:?} in {:#?}",
@@ -762,15 +740,11 @@ impl GetInnerNodeByVariables for ConditionNode {
 #[async_trait]
 impl ExecutablePlanNode for ConditionNode {
     #[instrument(level = "trace", skip_all, name = "ConditionNode::execute")]
-    async fn execute(
-        &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
-        data: &mut Value,
-    ) {
+    async fn execute(&self, execution_context: &mut QueryPlanExecutionContext<'_>) {
         let inner_node = self.inner_node_by_variables(execution_context.variable_values);
         if let Some(node) = inner_node {
             // Execute the inner node if it exists
-            node.execute(execution_context, data).await;
+            node.execute(execution_context).await;
         } else {
             // If no inner node, we do nothing
             trace!("ConditionNode condition not met, skipping execution.");
@@ -781,13 +755,9 @@ impl ExecutablePlanNode for ConditionNode {
 #[async_trait]
 impl ExecutableQueryPlan for QueryPlan {
     #[instrument(level = "trace", skip_all, name = "QueryPlan::execute")]
-    async fn execute(
-        &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
-        data: &mut Value,
-    ) {
+    async fn execute(&self, execution_context: &mut QueryPlanExecutionContext<'_>) {
         if let Some(root_node) = &self.node {
-            root_node.execute(execution_context, data).await
+            root_node.execute(execution_context).await
         }
     }
 }
@@ -866,6 +836,7 @@ pub struct QueryPlanExecutionContext<'a> {
     pub subgraph_executor_map: &'a SubgraphExecutorMap,
     pub errors: Vec<GraphQLError>,
     pub extensions: HashMap<String, Value>,
+    pub response_storage: ResponsesStorage<'a>,
 }
 
 impl QueryPlanExecutionContext<'_> {
@@ -1181,16 +1152,15 @@ pub async fn execute_query_plan(
         schema_metadata,
         errors: result_errors,
         extensions: result_extensions,
+        response_storage: ResponsesStorage::new(),
     };
     if expose_query_plan != ExposeQueryPlanMode::DryRun {
-        query_plan
-            .execute(&mut execution_context, &mut result_data)
-            .await;
+        query_plan.execute(&mut execution_context).await;
     }
     result_errors = execution_context.errors; // Get the final errors from the execution context
     result_extensions = execution_context.extensions; // Get the final extensions from the execution context
     projection::project_by_operation(
-        &mut result_data,
+        &execution_context.response_storage.final_response,
         &mut result_errors,
         &result_extensions,
         operation_type_name,
