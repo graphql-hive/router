@@ -6,12 +6,11 @@ use graphql_parser::query::Document;
 use http::Request;
 use query_planner::utils::parsing::safe_parse_operation;
 
-use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
+use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::gateway_layer::{
     GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer,
 };
 use crate::pipeline::graphql_request_params::ExecutionRequest;
-use crate::pipeline::http_request_params::HttpRequestParams;
 use crate::shared_state::GatewaySharedState;
 use tracing::{error, trace};
 
@@ -38,17 +37,18 @@ impl GatewayPipelineLayer for GraphQLParserService {
         req: &mut Request<Body>,
     ) -> Result<GatewayPipelineStepDecision, PipelineError> {
         let execution_params = req.extensions().get::<ExecutionRequest>().ok_or_else(|| {
-            PipelineErrorVariant::InternalServiceError("ExecutionRequest is missing")
-        })?;
-        let http_params = req.extensions().get::<HttpRequestParams>().ok_or_else(|| {
-            PipelineErrorVariant::InternalServiceError("HttpRequestParams is missing")
+            req.new_pipeline_error(PipelineErrorVariant::InternalServiceError(
+                "ExecutionRequest is missing",
+            ))
         })?;
 
         let app_state = req
             .extensions()
             .get::<Arc<GatewaySharedState>>()
             .ok_or_else(|| {
-                PipelineErrorVariant::InternalServiceError("GatewaySharedState is missing")
+                req.new_pipeline_error(PipelineErrorVariant::InternalServiceError(
+                    "GatewaySharedState is missing",
+                ))
             })?;
 
         let cache_key = {
@@ -63,10 +63,7 @@ impl GatewayPipelineLayer for GraphQLParserService {
         } else {
             let parsed = safe_parse_operation(&execution_params.query).map_err(|err| {
                 error!("Failed to parse GraphQL operation: {}", err);
-                PipelineError::new_with_accept_header(
-                    PipelineErrorVariant::FailedToParseOperation(err),
-                    http_params.accept_header.clone(),
-                )
+                req.new_pipeline_error(PipelineErrorVariant::FailedToParseOperation(err))
             })?;
             trace!("sucessfully parsed GraphQL operation");
             let parsed_arc = Arc::new(parsed);

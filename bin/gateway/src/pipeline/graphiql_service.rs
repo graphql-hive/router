@@ -2,11 +2,11 @@ use axum::body::Body;
 use axum::response::IntoResponse;
 use http::{Method, Request};
 
-use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::gateway_layer::{
     GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer,
 };
-use crate::pipeline::http_request_params::HttpRequestParams;
+use crate::pipeline::header::RequestAccepts;
 
 use axum::response::Html;
 
@@ -21,12 +21,7 @@ impl GatewayPipelineLayer for GraphiQLResponderService {
         &self,
         req: &mut Request<Body>,
     ) -> Result<GatewayPipelineStepDecision, PipelineError> {
-        let http_params = req.extensions().get::<HttpRequestParams>().ok_or_else(|| {
-            PipelineErrorVariant::InternalServiceError("HttpRequestParams is missing")
-        })?;
-
-        if http_params.http_method == Method::GET && http_params.accept_header.contains("text/html")
-        {
+        if req.method() == Method::GET && req.accepts_content_type("text/html") {
             return Ok(GatewayPipelineStepDecision::RespondWith(
                 Html(GRAPHIQL_HTML).into_response(),
             ));
