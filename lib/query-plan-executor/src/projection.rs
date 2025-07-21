@@ -467,7 +467,7 @@ fn project_selection_set(
                     let mut first = true;
                     let type_name = obj
                         .get(TYPENAME_FIELD)
-                        .and_then(|v| v.as_str())
+                        .and_then(Value::as_str)
                         .unwrap_or(&selection.field_type);
                     project_selection_set_with_map(
                         obj,
