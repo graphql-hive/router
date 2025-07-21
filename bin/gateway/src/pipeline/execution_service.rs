@@ -6,13 +6,13 @@ use std::task::{Context, Poll};
 
 use crate::pipeline::coerce_variables_service::CoerceVariablesPayload;
 use crate::pipeline::header::{
-    APPLICATION_GRAPHQL_RESPONSE_JSON, APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON,
+    RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON, APPLICATION_GRAPHQL_RESPONSE_JSON_STR,
+    APPLICATION_JSON,
 };
 use crate::pipeline::normalize_service::GraphQLNormalizationPayload;
 use crate::pipeline::query_plan_service::QueryPlanPayload;
 use crate::shared_state::GatewaySharedState;
 use axum::body::Body;
-use http::header::ACCEPT;
 use http::{HeaderName, HeaderValue, Request, Response};
 use query_plan_executor::{execute_query_plan, ExposeQueryPlanMode};
 use tower::Service;
@@ -91,13 +91,8 @@ impl Service<Request<Body>> for ExecutionService {
 
             let mut response = Response::new(Body::from(execution_result));
 
-            let accept_header = req
-                .headers()
-                .get(ACCEPT)
-                .map(|v| v.to_str().unwrap_or_default())
-                .unwrap_or_default();
             let response_content_type: &'static HeaderValue =
-                if accept_header.contains(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR) {
+                if req.accepts_content_type(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR) {
                     &APPLICATION_GRAPHQL_RESPONSE_JSON
                 } else {
                     &APPLICATION_JSON

@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use axum::{body::Body, extract::rejection::QueryRejection, response::IntoResponse};
 use graphql_tools::validation::utils::ValidationError;
-use http::{HeaderName, Method, Request, Response, StatusCode};
+use http::{header::ACCEPT, HeaderName, Method, Request, Response, StatusCode};
 use query_plan_executor::{ExecutionResult, GraphQLError};
 use query_planner::{ast::normalization::error::NormalizationError, planner::PlannerError};
 use serde_json::Value;
@@ -11,7 +11,7 @@ use crate::pipeline::header::{APPLICATION_JSON, APPLICATION_JSON_STR};
 
 #[derive(Debug)]
 pub struct PipelineError {
-    pub accept_header: Option<String>,
+    pub accept_ok: bool,
     pub error: PipelineErrorVariant,
 }
 
@@ -21,16 +21,13 @@ pub trait PipelineErrorFromAcceptHeader {
 
 impl PipelineErrorFromAcceptHeader for Request<Body> {
     fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError {
-        let accept_header = self.headers().get(http::header::ACCEPT);
-        let accept_header_value = accept_header
+        let accept_header = self.headers().get(ACCEPT);
+        let accept_ok = accept_header
             .unwrap_or(&APPLICATION_JSON)
             .to_str()
-            .unwrap_or_default()
-            .to_string();
-        PipelineError {
-            accept_header: Some(accept_header_value),
-            error,
-        }
+            .unwrap_or(&APPLICATION_JSON_STR)
+            .contains(*APPLICATION_JSON_STR);
+        PipelineError { accept_ok, error }
     }
 }
 
@@ -136,10 +133,7 @@ impl PipelineErrorVariant {
 
 impl IntoResponse for PipelineError {
     fn into_response(self) -> Response<Body> {
-        let accept_ok = &self
-            .accept_header
-            .is_some_and(|v| v.contains(*APPLICATION_JSON_STR));
-        let status = self.error.default_status_code(*accept_ok);
+        let status = self.error.default_status_code(self.accept_ok);
 
         if let PipelineErrorVariant::ValidationErrors(validation_errors) = self.error {
             let validation_error_result = ExecutionResult {

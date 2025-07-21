@@ -1,4 +1,7 @@
-use http::{header::CONTENT_TYPE, HeaderValue};
+use http::{
+    header::{ACCEPT, CONTENT_TYPE},
+    HeaderValue,
+};
 use lazy_static::lazy_static;
 use tracing::{trace, warn};
 
@@ -19,7 +22,7 @@ pub trait RequestAccepts {
 
 impl RequestAccepts for http::Request<axum::body::Body> {
     fn accepts_content_type(&self, content_type: &str) -> bool {
-        let accept_header = self.headers().get(http::header::ACCEPT);
+        let accept_header = self.headers().get(ACCEPT);
         if let Some(value) = accept_header {
             value
                 .to_str()
