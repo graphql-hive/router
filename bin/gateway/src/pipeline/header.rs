@@ -1,7 +1,4 @@
-use http::{
-    header::{ACCEPT, CONTENT_TYPE},
-    HeaderValue,
-};
+use http::{header::CONTENT_TYPE, HeaderValue};
 use lazy_static::lazy_static;
 use tracing::{trace, warn};
 
@@ -40,31 +37,26 @@ pub trait AssertRequestJson {
 
 impl AssertRequestJson for http::Request<axum::body::Body> {
     fn assert_json_content_type(&self) -> Result<(), PipelineError> {
-        let request_content_type: Option<&str> = match self.headers().get(CONTENT_TYPE) {
-            None => None,
-            Some(content_type) => {
-                let value = content_type.to_str().map_err(|_| {
-                    self.new_pipeline_error(PipelineErrorVariant::InvalidHeaderValue(ACCEPT))
+        match self.headers().get(CONTENT_TYPE) {
+            Some(value) => {
+                let content_type_str = value.to_str().map_err(|_| {
+                    self.new_pipeline_error(PipelineErrorVariant::InvalidHeaderValue(CONTENT_TYPE))
                 })?;
-
-                Some(value)
-            }
-        };
-        match request_content_type {
-            None => {
-                trace!("POST without content type detected");
-                return Err(self.new_pipeline_error(PipelineErrorVariant::MissingContentTypeHeader));
-            }
-            Some(content_type) => {
-                if !content_type.contains(*APPLICATION_JSON_STR) {
-                    warn!("Invalid content type on a POST request: {}", content_type);
-
+                if !content_type_str.contains(*APPLICATION_JSON_STR) {
+                    warn!(
+                        "Invalid content type on a POST request: {}",
+                        content_type_str
+                    );
                     return Err(
                         self.new_pipeline_error(PipelineErrorVariant::UnsupportedContentType)
                     );
                 }
+                Ok(())
+            }
+            None => {
+                trace!("POST without content type detected");
+                Err(self.new_pipeline_error(PipelineErrorVariant::MissingContentTypeHeader))
             }
         }
-        Ok(())
     }
 }
