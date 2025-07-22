@@ -252,7 +252,9 @@ fn project_data_by_operation(c: &mut Criterion) {
             let extensions = black_box(&extensions);
             let projection_selections = black_box(&projection_selections);
             let root_type_name = black_box(root_type_name);
+            let mut writer = black_box(Vec::with_capacity(4096));
             let result = query_plan_executor::projection::project_by_operation(
+                &mut writer,
                 data,
                 errors,
                 extensions,

@@ -373,23 +373,21 @@ impl FieldProjectionPlan {
 
 #[instrument(level = "trace", skip_all)]
 pub fn project_by_operation(
-    data: &mut Value,
+    writer: &mut impl Write,
+    data: &Value,
     errors: &mut Vec<GraphQLError>,
     extensions: &HashMap<String, Value>,
     operation_type_name: &str,
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, Value>>,
-) -> Result<Vec<u8>, std::io::Error> {
-    // Use a Vec<u8> as a buffer
-    let mut buffer = Vec::with_capacity(4096);
+) -> Result<(), std::io::Error> {
+    writer.write_all(b"{")?;
+    writer.write_all(b"\"")?;
+    writer.write_all(b"data")?;
+    writer.write_all(b"\"")?;
+    writer.write_all(b":")?;
 
-    buffer.write_all(b"{")?;
-    buffer.write_all(b"\"")?;
-    buffer.write_all(b"data")?;
-    buffer.write_all(b"\"")?;
-    buffer.write_all(b":")?;
-
-    if let Some(data_map) = data.as_object_mut() {
+    if let Some(data_map) = data.as_object() {
         let mut first = true;
         project_selection_set_with_map(
             data_map,
@@ -397,29 +395,29 @@ pub fn project_by_operation(
             selections,
             variable_values,
             operation_type_name,
-            &mut buffer,
+            writer,
             &mut first, // Start with first as true to add the opening brace
         )?;
         if !first {
-            buffer.write_all(b"}")?;
+            writer.write_all(b"}")?;
         } else {
             // If no selections were made, we should return an empty object
-            buffer.write_all(b"{}")?;
+            writer.write_all(b"{}")?;
         }
     }
 
     if !errors.is_empty() {
-        buffer.write_all(b",\"errors\":")?;
-        serde_json::to_writer(&mut buffer, &data)?;
+        writer.write_all(b",\"errors\":")?;
+        serde_json::to_writer(&mut *writer, &data)?;
     }
     if !extensions.is_empty() {
-        buffer.write_all(b",\"extensions\":")?;
-        serde_json::to_writer(&mut buffer, extensions)?;
+        writer.write_all(b",\"extensions\":")?;
+        serde_json::to_writer(&mut *writer, extensions)?;
     }
 
-    buffer.write_all(b"}")?;
+    writer.write_all(b"}")?;
 
-    Ok(buffer)
+    Ok(())
 }
 
 #[instrument(

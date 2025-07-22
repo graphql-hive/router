@@ -1204,14 +1204,18 @@ pub async fn execute_query_plan(
     }
     result_errors = execution_context.errors; // Get the final errors from the execution context
     result_extensions = execution_context.extensions; // Get the final extensions from the execution context
+    let mut writer = Vec::with_capacity(4096);
     projection::project_by_operation(
-        &mut result_data,
+        &mut writer,
+        &result_data,
         &mut result_errors,
         &result_extensions,
         operation_type_name,
         selections,
         variable_values,
-    )
+    )?;
+
+    Ok(writer)
 }
 
 #[cfg(test)]
