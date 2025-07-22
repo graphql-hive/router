@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt::Write;
+use std::io::Write as _;
 
 use indexmap::IndexMap;
 use query_planner::{
@@ -377,15 +377,15 @@ pub fn project_by_operation(
     operation_type_name: &str,
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, Value>>,
-) -> String {
-    // We may want to remove it, but let's see.
-    let mut buffer = String::with_capacity(4096);
+) -> Vec<u8> {
+    // Use a Vec<u8> as a buffer
+    let mut buffer: Vec<u8> = Vec::with_capacity(4096);
 
-    buffer.push('{');
-    buffer.push('"');
-    buffer.push_str("data");
-    buffer.push('"');
-    buffer.push(':');
+    buffer.push(b'{');
+    buffer.push(b'"');
+    buffer.extend_from_slice(b"data");
+    buffer.push(b'"');
+    buffer.push(b':');
 
     if let Some(data_map) = data.as_object_mut() {
         let mut first = true;
@@ -399,31 +399,31 @@ pub fn project_by_operation(
             &mut first, // Start with first as true to add the opening brace
         );
         if !first {
-            buffer.push('}');
+            buffer.push(b'}');
         } else {
             // If no selections were made, we should return an empty object
-            buffer.push_str("{}");
+            buffer.extend_from_slice(b"{}");
         }
     }
 
     if !errors.is_empty() {
-        write!(
-            buffer,
-            ",\"errors\":{}",
-            serde_json::to_string(&errors).unwrap()
-        )
-        .unwrap();
+        buffer.push(b',');
+        buffer.push(b'"');
+        buffer.extend_from_slice(b"errors");
+        buffer.push(b'"');
+        serde_json::to_writer(&mut buffer, &data).unwrap();
     }
     if !extensions.is_empty() {
-        write!(
-            buffer,
-            ",\"extensions\":{}",
-            serde_json::to_string(&extensions).unwrap()
-        )
-        .unwrap();
+        buffer.push(b',');
+        buffer.push(b'"');
+        buffer.extend_from_slice(b"extensions");
+        buffer.push(b'"');
+        buffer.push(b':');
+        serde_json::to_writer(&mut buffer, extensions).unwrap();
     }
 
-    buffer.push('}');
+    buffer.push(b'}');
+
     buffer
 }
 
@@ -439,27 +439,28 @@ fn project_selection_set(
     errors: &mut Vec<GraphQLError>,
     selection: &FieldProjectionPlan,
     variable_values: &Option<HashMap<String, Value>>,
-    buffer: &mut String,
+    buffer: &mut Vec<u8>,
 ) {
     match data {
-        Value::Null => buffer.push_str("null"),
-        Value::Bool(true) => buffer.push_str("true"),
-        Value::Bool(false) => buffer.push_str("false"),
-        Value::Number(num) => write!(buffer, "{}", num).unwrap(),
+        Value::Null => buffer.extend_from_slice(b"null"),
+        Value::Bool(true) => buffer.extend_from_slice(b"true"),
+        Value::Bool(false) => buffer.extend_from_slice(b"false"),
+        Value::Number(num) => buffer.write_fmt(format_args!("{}", num)).unwrap(),
         Value::String(value) => {
+            // Assuming write_and_escape_string is modified to take Vec<u8>
             write_and_escape_string(buffer, value);
         }
         Value::Array(arr) => {
-            buffer.push('[');
+            buffer.push(b'[');
             let mut first = true;
             for item in arr.iter() {
                 if !first {
-                    buffer.push(',');
+                    buffer.push(b',');
                 }
                 project_selection_set(item, errors, selection, variable_values, buffer);
                 first = false;
             }
-            buffer.push(']');
+            buffer.push(b']');
         }
         Value::Object(obj) => {
             match selection.selections.as_ref() {
@@ -479,15 +480,15 @@ fn project_selection_set(
                         &mut first,
                     );
                     if !first {
-                        buffer.push('}');
+                        buffer.push(b'}');
                     } else {
                         // If no selections were made, we should return an empty object
-                        buffer.push_str("{}");
+                        buffer.extend_from_slice(b"{}");
                     }
                 }
                 None => {
                     // If the selection set is not projected, we should return null
-                    buffer.push_str("null");
+                    buffer.extend_from_slice(b"null");
                 }
             }
         }
@@ -509,7 +510,7 @@ fn project_selection_set_with_map(
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, Value>>,
     parent_type_name: &str,
-    buffer: &mut String,
+    buffer: &mut Vec<u8>,
     first: &mut bool,
 ) {
     for selection in selections {
@@ -524,26 +525,26 @@ fn project_selection_set_with_map(
         ) {
             Ok(_) => {
                 if *first {
-                    buffer.push('{');
+                    buffer.push(b'{');
                 } else {
-                    buffer.push(',');
+                    buffer.push(b',');
                 }
                 *first = false;
 
-                buffer.push('"');
-                buffer.push_str(&selection.response_key);
-                buffer.push_str("\":");
+                buffer.push(b'"');
+                buffer.extend_from_slice(selection.response_key.as_bytes());
+                buffer.extend_from_slice(b"\":");
 
                 if let Some(field_val) = field_val {
                     project_selection_set(field_val, errors, selection, variable_values, buffer);
                 } else if selection.field_name == TYPENAME_FIELD {
                     // If the field is TYPENAME_FIELD, we should set it to the parent type name
-                    buffer.push('"');
-                    buffer.push_str(parent_type_name);
-                    buffer.push('"');
+                    buffer.push(b'"');
+                    buffer.extend_from_slice(parent_type_name.as_bytes());
+                    buffer.push(b'"');
                 } else {
                     // If the field is not found in the object, set it to Null
-                    buffer.push_str("null");
+                    buffer.extend_from_slice(b"null");
                 }
             }
             Err(FieldProjectionConditionError::Skip) => {
@@ -556,15 +557,15 @@ fn project_selection_set_with_map(
             }
             Err(FieldProjectionConditionError::InvalidEnumValue) => {
                 if *first {
-                    buffer.push('{');
+                    buffer.push(b'{');
                 } else {
-                    buffer.push(',');
+                    buffer.push(b',');
                 }
                 *first = false;
 
-                buffer.push('"');
-                buffer.push_str(&selection.response_key);
-                buffer.push_str("\":null");
+                buffer.push(b'"');
+                buffer.extend_from_slice(selection.response_key.as_bytes());
+                buffer.extend_from_slice(b"\":null");
                 errors.push(GraphQLError {
                     message: "Value is not a valid enum value".to_string(),
                     locations: None,
@@ -574,16 +575,16 @@ fn project_selection_set_with_map(
             }
             Err(FieldProjectionConditionError::InvalidFieldType) => {
                 if *first {
-                    buffer.push('{');
+                    buffer.push(b'{');
                 } else {
-                    buffer.push(',');
+                    buffer.push(b',');
                 }
                 *first = false;
 
                 // Skip this field as the field type does not match
-                buffer.push('"');
-                buffer.push_str(&selection.response_key);
-                buffer.push_str("\":null");
+                buffer.push(b'"');
+                buffer.extend_from_slice(selection.response_key.as_bytes());
+                buffer.extend_from_slice(b"\":null");
             }
         }
     }

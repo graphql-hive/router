@@ -30,8 +30,8 @@ static HEX: [u8; 16] = *b"0123456789ABCDEF";
 
 /// Escapes and append part of string
 #[inline(always)]
-pub fn write_and_escape_string(output_buffer: &mut String, input: &str) {
-    output_buffer.push('"');
+pub fn write_and_escape_string(output_buffer: &mut Vec<u8>, input: &str) {
+    output_buffer.push(b'"');
 
     // All of the relevant characters are in the ansi range (<128).
     // This means we can safely ignore any utf-8 characters and iterate over the bytes directly
@@ -43,11 +43,9 @@ pub fn write_and_escape_string(output_buffer: &mut String, input: &str) {
         let replacement = REPLACEMENTS[cur_byte as usize];
         if replacement != 0 {
             if num_bytes_written < index {
-                // Checks can be omitted here:
-                // We know that index is smaller than the output_buffer length.
-                // We also know that num_bytes_written is smaller than index
-                // We also know that the boundaries are not in the middle of an utf-8 multi byte sequence, because those characters are not escaped
-                output_buffer.push_str(unsafe { input.get_unchecked(num_bytes_written..index) });
+                output_buffer.extend_from_slice(unsafe {
+                    input.get_unchecked(num_bytes_written..index).as_bytes()
+                });
             }
             if replacement == b'u' {
                 let bytes: [u8; 6] = [
@@ -58,23 +56,22 @@ pub fn write_and_escape_string(output_buffer: &mut String, input: &str) {
                     HEX[((cur_byte / 16) & 0xF) as usize],
                     HEX[(cur_byte & 0xF) as usize],
                 ];
-                // Checks can be omitted here: We know bytes is a valid utf-8 string (see above)
-                output_buffer.push_str(unsafe { std::str::from_utf8_unchecked(&bytes) });
+                output_buffer.extend_from_slice(&bytes);
             } else {
                 let bytes: [u8; 2] = [b'\\', replacement];
-                // Checks can be omitted here: We know bytes is a valid utf-8 string, because the replacement table only contains characters smaller than 128
-                output_buffer.push_str(unsafe { std::str::from_utf8_unchecked(&bytes) });
+                output_buffer.extend_from_slice(&bytes);
             }
             num_bytes_written = index + 1;
         }
         index += 1;
     }
     if num_bytes_written < bytes.len() {
-        // Checks can be omitted here:
-        // We know that num_bytes_written is smaller than index
-        // We also know that num_bytes_written not in the middle of an utf-8 multi byte sequence, because those are not escaped
-        output_buffer.push_str(unsafe { input.get_unchecked(num_bytes_written..bytes.len()) });
+        output_buffer.extend_from_slice(unsafe {
+            input
+                .get_unchecked(num_bytes_written..bytes.len())
+                .as_bytes()
+        });
     }
 
-    output_buffer.push('"');
+    output_buffer.push(b'"');
 }

@@ -32,7 +32,7 @@ impl<'a> From<SubgraphExecutionRequest<'a>> for async_graphql::Request {
             req.variables.insert(
                 async_graphql::Name::new("representations"),
                 async_graphql::Value::from_json(
-                    serde_json::from_str(&representations).unwrap_or_default(),
+                    serde_json::from_slice(&representations).unwrap_or_default(),
                 )
                 .unwrap(),
             );

@@ -21,7 +21,7 @@ pub struct HTTPSubgraphExecutor {
     pub header_map: HeaderMap,
 }
 
-const FIRST_VARIABLE_STR: &str = ",\"variables\":{";
+const FIRST_VARIABLE_STR: &[u8; 14] = b",\"variables\":{";
 
 impl HTTPSubgraphExecutor {
     pub fn new(endpoint: &str, http_client: Arc<Client<HttpConnector, Full<Bytes>>>) -> Self {
@@ -47,42 +47,41 @@ impl HTTPSubgraphExecutor {
         trace!("Executing HTTP request to subgraph at {}", self.endpoint);
 
         // We may want to remove it, but let's see.
-        let mut body = String::with_capacity(4096);
-        body.push_str("{\"query\":");
+        let mut body = Vec::with_capacity(4096);
+        body.extend_from_slice(b"{\"query\":");
         write_and_escape_string(&mut body, execution_request.query);
         let mut first_variable = true;
         if let Some(variables) = &execution_request.variables {
             for (variable_name, variable_value) in variables {
                 if first_variable {
-                    body.push_str(FIRST_VARIABLE_STR);
+                    body.extend_from_slice(FIRST_VARIABLE_STR);
                     first_variable = false;
                 } else {
-                    body.push(',');
+                    body.push(b',');
                 }
-                body.push('"');
-                body.push_str(variable_name);
-                body.push_str("\":");
-                let value_str = serde_json::to_string(variable_value).map_err(|err| {
+                body.push(b'"');
+                body.extend_from_slice(variable_name.as_bytes());
+                body.extend_from_slice(b"\":");
+                serde_json::to_writer(&mut body, variable_value).map_err(|err| {
                     format!("Failed to serialize variable '{}': {}", variable_name, err)
                 })?;
-                body.push_str(&value_str);
             }
         }
         if let Some(representations) = &execution_request.representations {
             if first_variable {
-                body.push_str(FIRST_VARIABLE_STR);
+                body.extend_from_slice(FIRST_VARIABLE_STR);
                 first_variable = false;
             } else {
-                body.push(',');
+                body.push(b',');
             }
-            body.push_str("\"representations\":");
-            body.push_str(representations);
+            body.extend_from_slice(b"\"representations\":");
+            body.extend_from_slice(representations);
         }
         // "first_variable" should be still true if there are no variables
         if !first_variable {
-            body.push('}');
+            body.push(b'}');
         }
-        body.push('}');
+        body.push(b'}');
 
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)

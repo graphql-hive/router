@@ -457,7 +457,7 @@ fn project_requires(c: &mut Criterion) {
     c.bench_function("project_requires", |b| {
         b.iter(|| {
             let execution_context = black_box(&execution_context);
-            let mut buffer = String::with_capacity(1024);
+            let mut buffer = Vec::with_capacity(1024);
             let mut first = true;
             for representation in black_box(&representations) {
                 let requires = execution_context.project_requires(
