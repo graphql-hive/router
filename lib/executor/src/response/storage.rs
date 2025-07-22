@@ -1,3 +1,5 @@
+use simd_json::BorrowedValue;
+
 use crate::{
     response::{merge::deep_merge, value::Value},
     ParsedResponse,
@@ -17,11 +19,12 @@ impl<'req> ResponsesStorage<'req> {
         }
     }
 
-    pub fn add_response<'sub_req: 'req>(&'req mut self, response: ParsedResponse) {
+    pub fn add_response(&mut self, response: ParsedResponse) {
         let new_item_index = self.responses.len();
         self.responses.push(response);
         self.responses[new_item_index].with_json(|json| {
-            deep_merge(&mut self.final_response, &json);
+            let json_with_req_lifetime: &BorrowedValue<'req> = unsafe { std::mem::transmute(json) };
+            deep_merge(&mut self.final_response, &json_with_req_lifetime);
         });
     }
 }

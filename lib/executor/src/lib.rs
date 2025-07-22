@@ -67,7 +67,7 @@ impl<'a> Executor<'a> {
         }
     }
 
-    pub async fn execute(&'a mut self, plan: Option<&PlanNode>) {
+    pub async fn execute(&mut self, plan: Option<&PlanNode>) {
         match plan {
             Some(PlanNode::Fetch(node)) => self.execute_fetch_wave(node).await,
             Some(PlanNode::Parallel(node)) => self.execute_parallel_wave(node).await,
@@ -86,7 +86,7 @@ impl<'a> Executor<'a> {
         )
     }
 
-    async fn execute_fetch_wave(&'a mut self, node: &FetchNode) {
+    async fn execute_fetch_wave(&mut self, node: &FetchNode) {
         // no need to deep_merge,
         // we .into() and pass to final
         let result = self.get_result().await;
@@ -94,18 +94,18 @@ impl<'a> Executor<'a> {
         self.execution_context.response_storage.add_response(result);
     }
 
-    async fn execute_sequence_wave(&'a mut self, node: &SequenceNode) {
+    async fn execute_sequence_wave(&mut self, node: &SequenceNode) {
         // merge after every sequence
         // so the next step can read it.
         // It can hold a list of mix of Parallel blocks and Fetch and Flatten(Fetch)
     }
 
-    async fn execute_parallel_wave(&'a mut self, node: &ParallelNode) {
+    async fn execute_parallel_wave(&mut self, node: &ParallelNode) {
         // we merge after all fetches
         // it can hold a list of Fetch or Flatten(Fetch)
     }
 
-    async fn get_result(&'a self) -> ParsedResponse {
+    async fn get_result(&self) -> ParsedResponse {
         // 1. Fetch data from the network.
         let response_body = br#"{"data": {"product": "super-fast-widget"}}"#.to_vec();
         let parsed_response =
