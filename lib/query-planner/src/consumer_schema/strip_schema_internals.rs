@@ -36,7 +36,7 @@ static DEFINITIONS_TO_STRIP: [&str; 4] = [
 ];
 
 impl StripSchemaInternals {
-    pub fn strip_schema_internals(schema: &Document<'static, String>) -> Document<'static, String> {
+    pub fn strip_schema_internals<'a>(schema: &Document<'a, String>) -> Document<'a, String> {
         let mut transformer = StripSchemaInternals {};
         let result = transformer
             .transform_document(schema)

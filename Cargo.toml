@@ -3,6 +3,7 @@ members = [
   "lib/query-planner",
   "lib/wasm-lib",
   "lib/query-plan-executor",
+  "lib/executor",
   "bin/dev-cli",
   "bin/gateway",
   "bench/subgraphs",

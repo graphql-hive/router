@@ -1,0 +1,49 @@
+[package]
+name = "executor"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+
+[[bin]]
+name = "executor"
+path = "src/bin.rs"
+
+[dependencies]
+lasso2 = "0.8.2"
+async-trait = "0.1"
+serde = "1.0.219"
+serde_json = "1.0.140"
+simd-json = "0.15.1"
+bumpalo = { version = "3.19.0", features = ["collections"] }
+futures = "0.3"
+query-planner = { path = "../query-planner" }
+graphql-parser = "0.4.1"
+graphql-tools = "0.4.0"
+tracing = "0.1.41"
+# TODO: Move this to dev-dependencies but currently benchmarks need it
+async-graphql = { version = "7.0.17" }
+hyper = { version = "1.6.0", features = ["client"] }
+hyper-util = { version = "0.1.15", features = [
+  "client",
+  "client-legacy",
+  "http1",
+  "http2",
+  "tokio",
+] }
+http-body-util = "0.1.3"
+http = "1.3.1"
+sonic-rs = "0.3"
+indexmap = "2.10.0"
+
+[dev-dependencies]
+criterion = { version = "0.6", features = ["html_reports", "async_tokio"] }
+tokio = { version = "1.35", features = ["full"] }
+tokio-test = "0.4.4"
+subgraphs = { path = "../../bench/subgraphs" }
+insta = { version = "1.42.1" }
+pprof = { version = "0.15", features = ["flamegraph"] }
+
+[[bench]]
+name = "executor_benches"
+harness = false

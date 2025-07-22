@@ -13,7 +13,7 @@ use graphql_parser::schema::*;
 pub(crate) struct PruneInaccessible;
 
 impl PruneInaccessible {
-    pub fn prune(schema: &Document<'static, String>) -> Document<'static, String> {
+    pub fn prune<'a>(schema: &Document<'a, String>) -> Document<'a, String> {
         let mut transformer = PruneInaccessible {};
         let result = transformer
             .transform_document(schema)
