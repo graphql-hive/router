@@ -10,9 +10,10 @@ name = "executor"
 path = "src/bin.rs"
 
 [dependencies]
-bytes = "1.10.1"
 itoa = "1.0.15"
 ryu = "1.0.20"
+bytes = "1.10.1"
+ouroboros = "0.18.5"
 async-trait = "0.1"
 serde = "1.0.219"
 serde_json = "1.0.140"
