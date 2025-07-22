@@ -409,18 +409,11 @@ pub fn project_by_operation(
     }
 
     if !errors.is_empty() {
-        buffer.write_all(b",")?;
-        buffer.write_all(b"\"")?;
-        buffer.write_all(b"errors")?;
-        buffer.write_all(b"\"")?;
+        buffer.write_all(b",\"errors\":")?;
         serde_json::to_writer(&mut buffer, &data)?;
     }
     if !extensions.is_empty() {
-        buffer.write_all(b",")?;
-        buffer.write_all(b"\"")?;
-        buffer.write_all(b"extensions")?;
-        buffer.write_all(b"\"")?;
-        buffer.write_all(b":")?;
+        buffer.write_all(b",\"extensions\":")?;
         serde_json::to_writer(&mut buffer, extensions)?;
     }
 
