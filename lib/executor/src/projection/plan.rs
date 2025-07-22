@@ -150,8 +150,11 @@ impl<'a> FieldProjectionCondition<'a> {
             FieldProjectionCondition::FieldTypeCondition(possible_types) => {
                 let field_type_name = field_value
                     .and_then(|value| value.as_object())
-                    .and_then(|value| value.iter().find(|(k, _)| k == &TYPENAME_FIELD_NAME))
-                    .and_then(|(_, v)| v.as_str())
+                    .and_then(|obj| {
+                        obj.binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| *k)
+                            .ok()
+                            .and_then(|idx| obj[idx].1.as_str())
+                    })
                     .unwrap_or(field_type_name);
                 if possible_types.binary_search(&field_type_name).is_ok() {
                     Ok(())

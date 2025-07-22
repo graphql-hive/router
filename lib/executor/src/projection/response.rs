@@ -1,10 +1,13 @@
+use bytes::{BufMut, BytesMut};
 use std::collections::HashMap;
-use std::io::Write;
 
 use tracing::{instrument, warn};
 
-use crate::consts::TYPENAME_FIELD_NAME;
-use crate::json_writer::write_and_escape_string;
+use crate::consts::{
+    CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, EMPTY_OBJECT, FALSE, NULL, OPEN_BRACE, QUOTE, TRUE,
+    TYPENAME_FIELD_NAME,
+};
+use crate::json_writer::{write_and_escape_string, write_f64, write_i64, write_u64};
 use crate::projection::plan::{FieldProjectionConditionError, FieldProjectionPlan};
 use crate::response::value::Value;
 
@@ -16,11 +19,14 @@ pub fn project_by_operation(
     operation_type_name: &str,
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, serde_json::Value>>,
-) -> Vec<u8> {
+) -> BytesMut {
     // We may want to remove it, but let's see.
-    let mut buffer: Vec<u8> = Vec::with_capacity(4096);
+    let mut buffer = BytesMut::with_capacity(4096);
 
-    buffer.write_all(b"{\"data\":").unwrap();
+    buffer.put(OPEN_BRACE);
+    buffer.put(QUOTE);
+    buffer.put("data".as_bytes());
+    buffer.put(QUOTE);
 
     if let Some(data_map) = data.as_object() {
         let mut first = true;
@@ -34,10 +40,10 @@ pub fn project_by_operation(
             &mut first, // Start with first as true to add the opening brace
         );
         if !first {
-            buffer.push(b'}');
+            buffer.put(CLOSE_BRACE);
         } else {
             // If no selections were made, we should return an empty object
-            buffer.write_all(b"{}").unwrap();
+            buffer.put(EMPTY_OBJECT);
         }
     }
 
@@ -58,7 +64,7 @@ pub fn project_by_operation(
     //     .unwrap();
     // }
 
-    buffer.push(b'}');
+    buffer.put(CLOSE_BRACE);
     buffer
 }
 
@@ -67,37 +73,36 @@ fn project_selection_set(
     // errors: &mut Vec<GraphQLError>,
     selection: &FieldProjectionPlan,
     variable_values: &Option<HashMap<String, serde_json::Value>>,
-    buffer: &mut Vec<u8>,
+    buffer: &mut BytesMut,
 ) -> () {
     match data {
-        Value::Null => buffer.write(b"null").unwrap(),
-        Value::Bool(true) => buffer.write(b"true").unwrap(),
-        Value::Bool(false) => buffer.write(b"false").unwrap(),
-        Value::U64(num) => buffer.write(num.to_string().as_bytes()).unwrap(),
-        Value::I64(num) => buffer.write(num.to_string().as_bytes()).unwrap(),
-        Value::F64(num) => buffer.write(num.to_string().as_bytes()).unwrap(),
-        Value::String(value) => write_and_escape_string(buffer, value).unwrap(),
+        Value::Null => buffer.put(NULL),
+        Value::Bool(true) => buffer.put(TRUE),
+        Value::Bool(false) => buffer.put(FALSE),
+        Value::U64(num) => write_u64(buffer, **num),
+        Value::I64(num) => write_i64(buffer, **num),
+        Value::F64(num) => write_f64(buffer, **num),
+        Value::String(value) => write_and_escape_string(buffer, value),
         Value::Array(arr) => {
-            buffer.push(b'[');
+            buffer.put(COMMA);
             let mut first = true;
             for item in arr.iter() {
                 if !first {
-                    buffer.push(b',');
+                    buffer.put(COMMA);
                 }
                 project_selection_set(item, selection, variable_values, buffer);
                 first = false;
             }
-            buffer.push(b']');
-            0
+            buffer.put(CLOSE_BRACKET);
         }
         Value::Object(obj) => {
             match selection.selections.as_ref() {
                 Some(selections) => {
                     let mut first = true;
                     let type_name = obj
-                        .iter()
-                        .find(|(k, _)| k == &TYPENAME_FIELD_NAME)
-                        .and_then(|(_, val)| val.as_str())
+                        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| *k)
+                        .ok()
+                        .and_then(|idx| obj[idx].1.as_str())
                         .unwrap_or(selection.field_type);
                     project_selection_set_with_map(
                         obj,
@@ -108,17 +113,15 @@ fn project_selection_set(
                         &mut first,
                     );
                     if !first {
-                        buffer.push(b'}');
+                        buffer.put(CLOSE_BRACE);
                     } else {
                         // If no selections were made, we should return an empty object
-                        buffer.write(b"{}").unwrap();
+                        buffer.put(EMPTY_OBJECT);
                     }
-                    0
                 }
                 None => {
                     // If the selection set is not projected, we should return null
-                    buffer.write(b"null").unwrap();
-                    0
+                    buffer.put(NULL)
                 }
             }
         }
@@ -133,7 +136,7 @@ fn project_selection_set_with_map(
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, serde_json::Value>>,
     parent_type_name: &str,
-    buffer: &mut Vec<u8>,
+    buffer: &mut BytesMut,
     first: &mut bool,
 ) {
     for selection in selections {
@@ -163,26 +166,27 @@ fn project_selection_set_with_map(
         ) {
             Ok(_) => {
                 if *first {
-                    buffer.push(b'{');
+                    buffer.put(OPEN_BRACE);
                 } else {
-                    buffer.push(b',');
+                    buffer.put(COMMA);
                 }
                 *first = false;
 
-                buffer.push(b'"');
-                buffer.write(selection.response_key.as_bytes()).unwrap();
-                buffer.write(b"\":").unwrap();
+                buffer.put(QUOTE);
+                buffer.put(selection.response_key.as_bytes());
+                buffer.put(QUOTE);
+                buffer.put(COLON);
 
                 if let Some(field_val) = field_val {
                     project_selection_set(field_val, selection, variable_values, buffer);
                 } else if selection.field_name == TYPENAME_FIELD_NAME {
                     // If the field is TYPENAME_FIELD, we should set it to the parent type name
-                    buffer.push(b'"');
-                    buffer.write(parent_type_name.as_bytes()).unwrap();
-                    buffer.push(b'"');
+                    buffer.put(QUOTE);
+                    buffer.put(parent_type_name.as_bytes());
+                    buffer.put(QUOTE);
                 } else {
                     // If the field is not found in the object, set it to Null
-                    buffer.write(b"null").unwrap();
+                    buffer.put(NULL);
                 }
             }
             Err(FieldProjectionConditionError::Skip) => {
@@ -195,15 +199,17 @@ fn project_selection_set_with_map(
             }
             Err(FieldProjectionConditionError::InvalidEnumValue) => {
                 if *first {
-                    buffer.push(b'{');
+                    buffer.put(OPEN_BRACE);
                 } else {
-                    buffer.push(b',');
+                    buffer.put(COMMA);
                 }
                 *first = false;
 
-                buffer.push(b'"');
-                buffer.write(selection.response_key.as_bytes()).unwrap();
-                buffer.write(b"\":null").unwrap();
+                buffer.put(QUOTE);
+                buffer.put(selection.response_key.as_bytes());
+                buffer.put(QUOTE);
+                buffer.put(COLON);
+                buffer.put(NULL);
                 // errors.push(GraphQLError {
                 //     message: "Value is not a valid enum value".to_string(),
                 //     locations: None,
@@ -213,16 +219,18 @@ fn project_selection_set_with_map(
             }
             Err(FieldProjectionConditionError::InvalidFieldType) => {
                 if *first {
-                    buffer.push(b'{');
+                    buffer.put(OPEN_BRACE);
                 } else {
-                    buffer.push(b',');
+                    buffer.put(COLON);
                 }
                 *first = false;
 
                 // Skip this field as the field type does not match
-                buffer.push(b'"');
-                buffer.write(selection.response_key.as_bytes()).unwrap();
-                buffer.write(b"\":null").unwrap();
+                buffer.put(QUOTE);
+                buffer.put(selection.response_key.as_bytes());
+                buffer.put(QUOTE);
+                buffer.put(COLON);
+                buffer.put(NULL);
             }
         }
     }

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use bytes::BytesMut;
 use query_planner::planner::plan_nodes::QueryPlan;
 
 use crate::{
@@ -26,7 +27,7 @@ pub async fn execute_query_plan<'a>(
     // selections: &Vec<FieldProjectionPlan>,
     has_introspection: bool,
     // expose_query_plan: ExposeQueryPlanMode,
-) -> Vec<u8> {
+) -> BytesMut {
     let mut result_data = if has_introspection {
         // schema_metadata.introspection_query_json.clone()
         Value::Null

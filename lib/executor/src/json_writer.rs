@@ -1,5 +1,7 @@
 //! I took it from https://github.com/zotta/json-writer-rs/blob/f45e2f25cede0e06be76a94f6e45608780a835d4/src/lib.rs#L853
-use std::io::{self};
+use bytes::{BufMut, BytesMut};
+
+use crate::consts::NULL;
 
 const fn get_replacements() -> [u8; 256] {
     // NOTE: Only characters smaller than 128 are allowed here.
@@ -31,8 +33,8 @@ static HEX: [u8; 16] = *b"0123456789ABCDEF";
 
 /// Escapes and append part of string
 #[inline(always)]
-pub fn write_and_escape_string(writer: &mut impl io::Write, input: &str) -> io::Result<usize> {
-    writer.write_all(b"\"")?;
+pub fn write_and_escape_string(writer: &mut BytesMut, input: &str) {
+    writer.put_u8(b':');
 
     let bytes = input.as_bytes();
     let mut last_write = 0;
@@ -41,7 +43,7 @@ pub fn write_and_escape_string(writer: &mut impl io::Write, input: &str) -> io::
         let replacement = REPLACEMENTS[byte as usize];
         if replacement != 0 {
             if last_write < i {
-                writer.write_all(&bytes[last_write..i])?;
+                writer.put(&bytes[last_write..i]);
             }
 
             if replacement == b'u' {
@@ -53,20 +55,43 @@ pub fn write_and_escape_string(writer: &mut impl io::Write, input: &str) -> io::
                     HEX[((byte / 16) & 0xF) as usize],
                     HEX[(byte & 0xF) as usize],
                 ];
-                writer.write_all(&hex_bytes)?;
+                writer.put(&hex_bytes[..]);
             } else {
                 let escaped_bytes: [u8; 2] = [b'\\', replacement];
-                writer.write_all(&escaped_bytes)?;
+                writer.put(&escaped_bytes[..]);
             }
             last_write = i + 1;
         }
     }
 
     if last_write < bytes.len() {
-        writer.write_all(&bytes[last_write..])?;
+        writer.put(&bytes[last_write..]);
     }
 
-    writer.write_all(b"\"").unwrap();
+    writer.put_u8(b'"');
+}
 
-    Ok(0)
+pub fn write_f64(writer: &mut BytesMut, value: f64) {
+    if !value.is_finite() {
+        // JSON does not allow infinite or nan values. In browsers JSON.stringify(Number.NaN) = "null"
+        writer.put(NULL);
+        return;
+    }
+
+    let mut buf = ryu::Buffer::new();
+    let mut result = buf.format_finite(value);
+    if result.ends_with(".0") {
+        result = unsafe { result.get_unchecked(..result.len() - 2) };
+    }
+    write_and_escape_string(writer, result);
+}
+
+pub fn write_u64(writer: &mut BytesMut, value: u64) {
+    let mut buf = itoa::Buffer::new();
+    writer.put(buf.format(value).as_bytes());
+}
+
+pub fn write_i64(writer: &mut BytesMut, value: i64) {
+    let mut buf = itoa::Buffer::new();
+    writer.put(buf.format(value).as_bytes());
 }

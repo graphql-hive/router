@@ -1,8 +1,13 @@
+use bytes::{BufMut, BytesMut};
 use query_planner::ast::selection_item::SelectionItem;
-use std::io::Write;
 
 use crate::{
-    consts::TYPENAME_FIELD_NAME, json_writer::write_and_escape_string, response::value::Value,
+    consts::{
+        CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, EMPTY_OBJECT, FALSE, OPEN_BRACE, OPEN_BRACKET,
+        QUOTE, TRUE, TYPENAME, TYPENAME_FIELD_NAME,
+    },
+    json_writer::{write_and_escape_string, write_f64, write_i64, write_u64},
+    response::value::Value,
     schema::metadata::PossibleTypes,
 };
 
@@ -14,7 +19,7 @@ pub fn project_requires(
     ctx: &RequestProjectionContext,
     requires_selections: &Vec<SelectionItem>,
     entity: &Value,
-    buffer: &mut Vec<u8>,
+    buffer: &mut BytesMut,
     first: bool,
     response_key: Option<&str>,
 ) -> bool {
@@ -32,7 +37,7 @@ fn project_requires_internal(
     ctx: &RequestProjectionContext,
     requires_selections: &Vec<SelectionItem>,
     entity: &Value,
-    buffer: &mut Vec<u8>,
+    buffer: &mut BytesMut,
     first: bool,
     response_key: Option<&str>,
 ) -> bool {
@@ -42,80 +47,78 @@ fn project_requires_internal(
         }
         Value::Bool(b) => {
             if !first {
-                buffer.push(b',');
+                buffer.put(COMMA);
             }
             if let Some(response_key) = response_key {
-                buffer.push(b'"');
-                buffer.write(response_key.as_bytes()).unwrap();
-                buffer.push(b'"');
-                buffer.push(b':');
-                buffer
-                    .write(if b == &&true { b"true" } else { b"false" })
-                    .unwrap();
+                buffer.put(QUOTE);
+                buffer.put(response_key.as_bytes());
+                buffer.put(QUOTE);
+                buffer.put(COLON);
+                buffer.put(if b == &&true { TRUE } else { FALSE });
             } else {
-                buffer
-                    .write(if b == &&true { b"true" } else { b"false" })
-                    .unwrap();
+                buffer.put(if b == &&true { TRUE } else { FALSE });
             }
         }
         Value::F64(n) => {
             if !first {
-                buffer.push(b',');
+                buffer.put(COMMA);
             }
             if let Some(response_key) = response_key {
-                buffer.push(b'"');
-                buffer.write(response_key.as_bytes()).unwrap();
-                buffer.write(b"\":").unwrap();
+                buffer.put(QUOTE);
+                buffer.put(response_key.as_bytes());
+                buffer.put(QUOTE);
+                buffer.put(COLON);
             }
-
-            write!(buffer, "{}", n).unwrap()
+            write_f64(buffer, **n);
         }
         Value::I64(n) => {
             if !first {
-                buffer.push(b',');
+                buffer.put(COMMA);
             }
             if let Some(response_key) = response_key {
-                buffer.push(b'"');
-                buffer.write(response_key.as_bytes()).unwrap();
-                buffer.write(b"\":").unwrap();
+                buffer.put(QUOTE);
+                buffer.put(response_key.as_bytes());
+                buffer.put(QUOTE);
+                buffer.put(COLON);
             }
-
-            write!(buffer, "{}", n).unwrap()
+            write_i64(buffer, **n);
         }
         Value::U64(n) => {
             if !first {
-                buffer.push(b',');
+                buffer.put(COMMA);
             }
             if let Some(response_key) = response_key {
-                buffer.push(b'"');
-                buffer.write(response_key.as_bytes()).unwrap();
-                buffer.write(b"\":").unwrap();
+                buffer.put(QUOTE);
+                buffer.put(response_key.as_bytes());
+                buffer.put(QUOTE);
+                buffer.put(COLON);
             }
-
-            write!(buffer, "{}", n).unwrap()
+            write_u64(buffer, **n);
         }
         Value::String(s) => {
             if !first {
-                buffer.push(b',');
+                buffer.put(COMMA);
             }
             if let Some(response_key) = response_key {
-                buffer.push(b'"');
-                buffer.write(response_key.as_bytes()).unwrap();
-                buffer.write(b"\":").unwrap();
+                buffer.put(QUOTE);
+                buffer.put(response_key.as_bytes());
+                buffer.put(QUOTE);
+                buffer.put(COLON);
             }
-            write_and_escape_string(buffer, s).unwrap();
+            write_and_escape_string(buffer, s);
         }
         Value::Array(entity_array) => {
             if !first {
-                buffer.push(b',');
+                buffer.put(COMMA);
             }
             if let Some(response_key) = response_key {
-                buffer.push(b'"');
-                buffer.write(response_key.as_bytes()).unwrap();
-                buffer.write(b"\":[").unwrap();
-            } else {
-                buffer.push(b'[');
+                buffer.put(QUOTE);
+                buffer.put(response_key.as_bytes());
+                buffer.put(QUOTE);
+                buffer.put(COLON);
             }
+            buffer.put(OPEN_BRACKET);
+
             let mut first = true;
             for entity_item in entity_array {
                 let projected = project_requires_internal(
@@ -131,13 +134,13 @@ fn project_requires_internal(
                     first = false;
                 }
             }
-            buffer.push(b']');
+            buffer.put(CLOSE_BRACKET);
         }
         Value::Object(entity_obj) => {
             if requires_selections.is_empty() {
                 // It is probably a scalar with an object value, so we write it directly
                 // buffer.push_str(&serde_json::to_string(entity_obj).unwrap());
-                buffer.write(b"{}").unwrap();
+                buffer.put(EMPTY_OBJECT);
                 return true;
             }
             if entity_obj.is_empty() {
@@ -160,7 +163,7 @@ fn project_requires_internal(
                 // so we skip writing the closing brace
                 return false;
             } else {
-                buffer.push(b'}');
+                buffer.put(CLOSE_BRACE);
             }
         }
     };
@@ -171,7 +174,7 @@ fn project_requires_map_mut(
     ctx: &RequestProjectionContext,
     requires_selections: &Vec<SelectionItem>,
     entity_obj: &Vec<(&str, Value<'_>)>,
-    buffer: &mut Vec<u8>,
+    buffer: &mut BytesMut,
     first: &mut bool,
     parent_response_key: Option<&str>,
     parent_first: bool,
@@ -204,23 +207,27 @@ fn project_requires_map_mut(
 
                 if *first {
                     if !parent_first {
-                        buffer.push(b',');
+                        buffer.put(COMMA);
                     }
                     if let Some(parent_response_key) = parent_response_key {
-                        buffer.push(b'"');
-                        buffer.write(parent_response_key.as_bytes()).unwrap();
-                        buffer.write(b"\":").unwrap();
+                        buffer.put(QUOTE);
+                        buffer.put(parent_response_key.as_bytes());
+                        buffer.put(QUOTE);
+                        buffer.put(COLON);
                     }
-                    buffer.push(b'{');
+                    buffer.put(OPEN_BRACE);
                     // Write __typename only if the object has other fields
                     if let Some(type_name) = entity_obj
                         .iter()
                         .find(|(key, _)| key == &TYPENAME_FIELD_NAME)
                         .and_then(|(_, val)| val.as_str())
                     {
-                        buffer.write(b"\"__typename\":").unwrap();
-                        write_and_escape_string(buffer, type_name).unwrap();
-                        buffer.push(b',');
+                        buffer.put(QUOTE);
+                        buffer.put(TYPENAME);
+                        buffer.put(QUOTE);
+                        buffer.put(COLON);
+                        write_and_escape_string(buffer, type_name);
+                        buffer.put(COMMA);
                     }
                 }
 
