@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -40,6 +41,47 @@ impl HTTPSubgraphExecutor {
         }
     }
 
+    fn write_body(
+        execution_request: &SubgraphExecutionRequest,
+        writer: &mut impl Write,
+    ) -> Result<(), std::io::Error> {
+        writer.write_all(b"{\"query\":")?;
+        write_and_escape_string(writer, execution_request.query)?;
+
+        let mut first_variable = true;
+        if let Some(variables) = &execution_request.variables {
+            for (variable_name, variable_value) in variables {
+                if first_variable {
+                    writer.write_all(FIRST_VARIABLE_STR)?;
+                    first_variable = false;
+                } else {
+                    writer.write_all(b",")?;
+                }
+                writer.write_all(b"\"")?;
+                writer.write_all(variable_name.as_bytes())?;
+                writer.write_all(b"\":")?;
+                serde_json::to_writer(&mut *writer, variable_value)
+                    .map_err(std::io::Error::other)?;
+            }
+        }
+        if let Some(representations) = &execution_request.representations {
+            if first_variable {
+                writer.write_all(FIRST_VARIABLE_STR)?;
+                first_variable = false;
+            } else {
+                writer.write_all(b",")?;
+            }
+            writer.write_all(b"\"representations\":")?;
+            writer.write_all(representations)?;
+        }
+        // "first_variable" should be still true if there are no variables
+        if !first_variable {
+            writer.write_all(b"}")?;
+        }
+        writer.write_all(b"}")?;
+        Ok(())
+    }
+
     async fn _execute<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
@@ -48,40 +90,8 @@ impl HTTPSubgraphExecutor {
 
         // We may want to remove it, but let's see.
         let mut body = Vec::with_capacity(4096);
-        body.extend_from_slice(b"{\"query\":");
-        write_and_escape_string(&mut body, execution_request.query);
-        let mut first_variable = true;
-        if let Some(variables) = &execution_request.variables {
-            for (variable_name, variable_value) in variables {
-                if first_variable {
-                    body.extend_from_slice(FIRST_VARIABLE_STR);
-                    first_variable = false;
-                } else {
-                    body.push(b',');
-                }
-                body.push(b'"');
-                body.extend_from_slice(variable_name.as_bytes());
-                body.extend_from_slice(b"\":");
-                serde_json::to_writer(&mut body, variable_value).map_err(|err| {
-                    format!("Failed to serialize variable '{}': {}", variable_name, err)
-                })?;
-            }
-        }
-        if let Some(representations) = &execution_request.representations {
-            if first_variable {
-                body.extend_from_slice(FIRST_VARIABLE_STR);
-                first_variable = false;
-            } else {
-                body.push(b',');
-            }
-            body.extend_from_slice(b"\"representations\":");
-            body.extend_from_slice(representations);
-        }
-        // "first_variable" should be still true if there are no variables
-        if !first_variable {
-            body.push(b'}');
-        }
-        body.push(b'}');
+        Self::write_body(&execution_request, &mut body)
+            .map_err(|e| format!("Failed to write request body: {}", e))?;
 
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)

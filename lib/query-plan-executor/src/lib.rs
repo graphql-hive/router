@@ -528,21 +528,25 @@ impl ExecutablePlanNode for ParallelNode {
                                                 &mut entity_owned,
                                             );
                                         }
-                                        execution_context.project_requires(
-                                            &requires_nodes.items,
-                                            &entity_owned,
-                                            &mut filtered_representations,
-                                            indexes.is_empty(),
-                                            None,
-                                        )
+                                        execution_context
+                                            .project_requires(
+                                                &requires_nodes.items,
+                                                &entity_owned,
+                                                &mut filtered_representations,
+                                                indexes.is_empty(),
+                                                None,
+                                            )
+                                            .unwrap_or(false)
                                     } else {
-                                        execution_context.project_requires(
-                                            &requires_nodes.items,
-                                            entity,
-                                            &mut filtered_representations,
-                                            indexes.is_empty(),
-                                            None,
-                                        )
+                                        execution_context
+                                            .project_requires(
+                                                &requires_nodes.items,
+                                                entity,
+                                                &mut filtered_representations,
+                                                indexes.is_empty(),
+                                                None,
+                                            )
+                                            .unwrap_or(false)
                                     };
                                 if is_projected {
                                     indexes.insert(index);
@@ -676,21 +680,25 @@ impl ExecutablePlanNode for FlattenNode {
                             &mut entity_owned,
                         );
                     }
-                    execution_context.project_requires(
-                        &requires_nodes.items,
-                        &entity_owned,
-                        &mut filtered_representations,
-                        first,
-                        None,
-                    )
+                    execution_context
+                        .project_requires(
+                            &requires_nodes.items,
+                            &entity_owned,
+                            &mut filtered_representations,
+                            first,
+                            None,
+                        )
+                        .unwrap_or(false)
                 } else {
-                    execution_context.project_requires(
-                        &requires_nodes.items,
-                        entity,
-                        &mut filtered_representations,
-                        first,
-                        None,
-                    )
+                    execution_context
+                        .project_requires(
+                            &requires_nodes.items,
+                            entity,
+                            &mut filtered_representations,
+                            first,
+                            None,
+                        )
+                        .unwrap_or(false)
                 };
                 if is_projected {
                     representations.push(entity);
@@ -873,92 +881,92 @@ impl QueryPlanExecutionContext<'_> {
         &self,
         requires_selections: &Vec<SelectionItem>,
         entity: &Value,
-        buffer: &mut Vec<u8>,
+        writer: &mut impl std::io::Write,
         first: bool,
         response_key: Option<&str>,
-    ) -> bool {
+    ) -> Result<bool, std::io::Error> {
         match entity {
             Value::Null => {
-                return false;
+                return Ok(false);
             }
             Value::Bool(b) => {
                 if !first {
-                    buffer.push(b',');
+                    writer.write_all(b",")?;
                 }
                 if let Some(response_key) = response_key {
-                    buffer.push(b'"');
-                    buffer.extend_from_slice(response_key.as_bytes());
-                    buffer.push(b'"');
-                    buffer.push(b':');
+                    writer.write_all(b"\"")?;
+                    writer.write_all(response_key.as_bytes())?;
+                    writer.write_all(b"\"")?;
+                    writer.write_all(b":")?;
                     if *b {
-                        buffer.extend_from_slice(b"true");
+                        writer.write_all(b"true")?;
                     } else {
-                        buffer.extend_from_slice(b"false");
+                        writer.write_all(b"false")?;
                     }
                 } else if *b {
-                    buffer.extend_from_slice(b"true");
+                    writer.write_all(b"true")?;
                 } else {
-                    buffer.extend_from_slice(b"false");
+                    writer.write_all(b"false")?;
                 }
             }
             Value::Number(n) => {
                 if !first {
-                    buffer.push(b',');
+                    writer.write_all(b",")?;
                 }
                 if let Some(response_key) = response_key {
-                    buffer.push(b'"');
-                    buffer.extend_from_slice(response_key.as_bytes());
-                    buffer.extend_from_slice(b"\":");
+                    writer.write_all(b"\"")?;
+                    writer.write_all(response_key.as_bytes())?;
+                    writer.write_all(b"\":")?;
                 }
 
-                std::io::Write::write_fmt(buffer, format_args!("{}", n)).unwrap();
+                std::io::Write::write_fmt(writer, format_args!("{}", n))?;
             }
             Value::String(s) => {
                 if !first {
-                    buffer.push(b',');
+                    writer.write_all(b",")?;
                 }
                 if let Some(response_key) = response_key {
-                    buffer.push(b'"');
-                    buffer.extend_from_slice(response_key.as_bytes());
-                    buffer.extend_from_slice(b"\":");
+                    writer.write_all(b"\"")?;
+                    writer.write_all(response_key.as_bytes())?;
+                    writer.write_all(b"\":")?;
                 }
-                write_and_escape_string(buffer, s);
+                write_and_escape_string(writer, s)?;
             }
             Value::Array(entity_array) => {
                 if !first {
-                    buffer.push(b',');
+                    writer.write_all(b",")?;
                 }
                 if let Some(response_key) = response_key {
-                    buffer.push(b'"');
-                    buffer.extend_from_slice(response_key.as_bytes());
-                    buffer.extend_from_slice(b"\":[");
+                    writer.write_all(b"\"")?;
+                    writer.write_all(response_key.as_bytes())?;
+                    writer.write_all(b"\":[")?;
                 } else {
-                    buffer.push(b'[');
+                    writer.write_all(b"[")?;
                 }
                 let mut first = true;
                 for entity_item in entity_array {
                     let projected = self.project_requires(
                         requires_selections,
                         entity_item,
-                        buffer,
+                        writer,
                         first,
                         None,
-                    );
+                    )?;
                     if projected {
                         // Only update `first` if we actually write something
                         first = false;
                     }
                 }
-                buffer.push(b']');
+                writer.write_all(b"]")?;
             }
             Value::Object(entity_obj) => {
                 if requires_selections.is_empty() {
                     // It is probably a scalar with an object value, so we write it directly
-                    serde_json::to_writer(buffer, entity_obj).unwrap();
-                    return true;
+                    serde_json::to_writer(writer, entity_obj)?;
+                    return Ok(true);
                 }
                 if entity_obj.is_empty() {
-                    return false;
+                    return Ok(false);
                 }
 
                 let parent_first = first;
@@ -966,32 +974,32 @@ impl QueryPlanExecutionContext<'_> {
                 self.project_requires_map_mut(
                     requires_selections,
                     entity_obj,
-                    buffer,
+                    writer,
                     &mut first,
                     response_key,
                     parent_first,
-                );
+                )?;
                 if first {
                     // If no fields were projected, "first" is still true,
                     // so we skip writing the closing brace
-                    return false;
+                    return Ok(false);
                 } else {
-                    buffer.push(b'}');
+                    writer.write_all(b"}")?;
                 }
             }
         };
-        true
+        Ok(true)
     }
 
     fn project_requires_map_mut(
         &self,
         requires_selections: &Vec<SelectionItem>,
         entity_obj: &Map<String, Value>,
-        buffer: &mut Vec<u8>,
+        writer: &mut impl std::io::Write,
         first: &mut bool,
         parent_response_key: Option<&str>,
         parent_first: bool,
-    ) {
+    ) -> Result<(), std::io::Error> {
         for requires_selection in requires_selections {
             match &requires_selection {
                 SelectionItem::Field(requires_selection) => {
@@ -1012,19 +1020,19 @@ impl QueryPlanExecutionContext<'_> {
 
                     if *first {
                         if !parent_first {
-                            buffer.push(b',');
+                            writer.write_all(b",")?;
                         }
                         if let Some(parent_response_key) = parent_response_key {
-                            buffer.push(b'"');
-                            buffer.extend_from_slice(parent_response_key.as_bytes());
-                            buffer.extend_from_slice(b"\":");
+                            writer.write_all(b"\"")?;
+                            writer.write_all(parent_response_key.as_bytes())?;
+                            writer.write_all(b"\":")?;
                         }
-                        buffer.push(b'{');
+                        writer.write_all(b"{")?;
                         // Write __typename only if the object has other fields
                         if let Some(Value::String(type_name)) = entity_obj.get(TYPENAME_FIELD) {
-                            buffer.extend_from_slice(b"\"__typename\":");
-                            write_and_escape_string(buffer, type_name);
-                            buffer.push(b',');
+                            writer.write_all(b"\"__typename\":")?;
+                            write_and_escape_string(writer, type_name)?;
+                            writer.write_all(b",")?;
                         }
                     }
 
@@ -1032,10 +1040,10 @@ impl QueryPlanExecutionContext<'_> {
                     self.project_requires(
                         &requires_selection.selections.items,
                         original,
-                        buffer,
+                        writer,
                         *first,
                         Some(response_key),
-                    );
+                    )?;
                     *first = false;
                 }
                 SelectionItem::InlineFragment(requires_selection) => {
@@ -1058,11 +1066,11 @@ impl QueryPlanExecutionContext<'_> {
                         self.project_requires_map_mut(
                             &requires_selection.selections.items,
                             entity_obj,
-                            buffer,
+                            writer,
                             first,
                             parent_response_key,
                             parent_first,
-                        );
+                        )?;
                     }
                 }
                 SelectionItem::FragmentSpread(_name_ref) => {
@@ -1071,6 +1079,7 @@ impl QueryPlanExecutionContext<'_> {
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -1164,7 +1173,7 @@ pub async fn execute_query_plan(
     selections: &Vec<FieldProjectionPlan>,
     has_introspection: bool,
     expose_query_plan: ExposeQueryPlanMode,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, std::io::Error> {
     let mut result_data = if has_introspection {
         schema_metadata.introspection_query_json.clone()
     } else {

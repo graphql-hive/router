@@ -260,7 +260,7 @@ fn project_data_by_operation(c: &mut Criterion) {
                 projection_selections,
                 &None,
             );
-            black_box(result);
+            black_box(result.unwrap_or_default());
         });
     });
 }
@@ -460,13 +460,15 @@ fn project_requires(c: &mut Criterion) {
             let mut buffer = Vec::with_capacity(1024);
             let mut first = true;
             for representation in black_box(&representations) {
-                let requires = execution_context.project_requires(
-                    &requires_selections,
-                    representation,
-                    &mut buffer,
-                    first,
-                    None,
-                );
+                let requires = execution_context
+                    .project_requires(
+                        &requires_selections,
+                        representation,
+                        &mut buffer,
+                        first,
+                        None,
+                    )
+                    .unwrap_or(false);
                 if requires {
                     first = false;
                 }

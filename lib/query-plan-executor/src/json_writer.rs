@@ -30,48 +30,43 @@ static HEX: [u8; 16] = *b"0123456789ABCDEF";
 
 /// Escapes and append part of string
 #[inline(always)]
-pub fn write_and_escape_string(output_buffer: &mut Vec<u8>, input: &str) {
-    output_buffer.push(b'"');
+pub fn write_and_escape_string(
+    writer: &mut impl std::io::Write,
+    input: &str,
+) -> Result<(), std::io::Error> {
+    writer.write_all(b"\"")?;
 
-    // All of the relevant characters are in the ansi range (<128).
-    // This means we can safely ignore any utf-8 characters and iterate over the bytes directly
-    let mut num_bytes_written: usize = 0;
-    let mut index: usize = 0;
     let bytes = input.as_bytes();
-    while index < bytes.len() {
-        let cur_byte = bytes[index];
-        let replacement = REPLACEMENTS[cur_byte as usize];
+    let mut last_write = 0;
+
+    for (i, &byte) in bytes.iter().enumerate() {
+        let replacement = REPLACEMENTS[byte as usize];
         if replacement != 0 {
-            if num_bytes_written < index {
-                output_buffer.extend_from_slice(unsafe {
-                    input.get_unchecked(num_bytes_written..index).as_bytes()
-                });
+            if last_write < i {
+                writer.write_all(&bytes[last_write..i])?;
             }
+
             if replacement == b'u' {
-                let bytes: [u8; 6] = [
+                let hex_bytes: [u8; 6] = [
                     b'\\',
                     b'u',
                     b'0',
                     b'0',
-                    HEX[((cur_byte / 16) & 0xF) as usize],
-                    HEX[(cur_byte & 0xF) as usize],
+                    HEX[((byte / 16) & 0xF) as usize],
+                    HEX[(byte & 0xF) as usize],
                 ];
-                output_buffer.extend_from_slice(&bytes);
+                writer.write_all(&hex_bytes)?;
             } else {
-                let bytes: [u8; 2] = [b'\\', replacement];
-                output_buffer.extend_from_slice(&bytes);
+                let escaped_bytes: [u8; 2] = [b'\\', replacement];
+                writer.write_all(&escaped_bytes)?;
             }
-            num_bytes_written = index + 1;
+            last_write = i + 1;
         }
-        index += 1;
-    }
-    if num_bytes_written < bytes.len() {
-        output_buffer.extend_from_slice(unsafe {
-            input
-                .get_unchecked(num_bytes_written..bytes.len())
-                .as_bytes()
-        });
     }
 
-    output_buffer.push(b'"');
+    if last_write < bytes.len() {
+        writer.write_all(&bytes[last_write..])?;
+    }
+
+    writer.write_all(b"\"")
 }
