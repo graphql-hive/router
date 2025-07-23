@@ -470,7 +470,6 @@ impl ExecutablePlanNode for ParallelNode {
                         jobs.push(Box::pin(job.map(ParallelJob::Root)));
                     }
                     PlanNode::Flatten(flatten_node) => {
-                        let mut filtered_representations = Vec::with_capacity(1024);
                         let fetch_node = match flatten_node.node.as_ref() {
                             PlanNode::Fetch(fetch_node) => fetch_node,
                             _ => {
@@ -482,6 +481,7 @@ impl ExecutablePlanNode for ParallelNode {
                             }
                         };
                         let requires_nodes = fetch_node.requires.as_ref().unwrap();
+                        let mut filtered_representations = Vec::with_capacity(1024);
                         filtered_representations.push(b'[');
                         let mut number_of_indexes = 0;
                         let normalized_path = flatten_node.path.as_slice();
