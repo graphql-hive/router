@@ -29,7 +29,6 @@ impl ProgressiveOverrideExtractor {
 
 #[async_trait::async_trait]
 impl GatewayPipelineLayer for ProgressiveOverrideExtractor {
-    #[tracing::instrument(level = "trace", name = "ProgressiveOverrideExtractor", skip_all)]
     async fn process(
         &self,
         req: &mut Request<Body>,

@@ -4,7 +4,7 @@ use hyper_util::{
     client::legacy::Client,
     rt::{TokioExecutor, TokioTimer},
 };
-use tracing::{instrument, warn};
+use tracing::warn;
 
 use crate::executors::{
     common::{SubgraphExecutor, SubgraphExecutorBoxedArc},
@@ -28,7 +28,6 @@ impl SubgraphExecutorMap {
         }
     }
 
-    #[instrument(level = "trace", name = "subgraph_execute", skip_all, fields(subgraph_name = %subgraph_name, execution_request = ?execution_request))]
     pub async fn execute<'a>(
         &self,
         subgraph_name: &str,

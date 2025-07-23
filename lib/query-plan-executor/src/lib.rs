@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::VecDeque;
 use std::{collections::HashMap, vec};
-use tracing::{instrument, trace, warn}; // For reading file in main
+use tracing::{trace, warn}; // For reading file in main
 
 use crate::{
     executors::map::SubgraphExecutorMap,
@@ -80,11 +80,6 @@ impl ExecutablePlanNode for PlanNode {
     }
 }
 
-#[instrument(
-    level = "trace",
-    skip(execution_context),
-    name = "process_errors_and_extensions"
-)]
 fn process_errors_and_extensions(
     execution_context: &mut QueryPlanExecutionContext<'_>,
     errors: Option<Vec<GraphQLError>>,
@@ -129,7 +124,6 @@ trait ExecutableFetchNode {
 
 #[async_trait]
 impl ExecutablePlanNode for FetchNode {
-    #[instrument(level = "debug", skip_all, name = "FetchNode::execute")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -143,16 +137,6 @@ impl ExecutablePlanNode for FetchNode {
 
 #[async_trait]
 impl ExecutableFetchNode for FetchNode {
-    #[instrument(
-        level = "trace",
-        skip_all,
-        name="FetchNode::execute_for_root",
-        fields(
-            service_name = self.service_name,
-            operation_name = ?self.operation_name,
-            operation_str = %self.operation.document_str,
-        )
-    )]
     async fn execute_for_root(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
@@ -180,14 +164,6 @@ impl ExecutableFetchNode for FetchNode {
         fetch_result
     }
 
-    #[instrument(
-        level = "debug",
-        skip_all,
-        name = "execute_for_projected_representations",
-        fields(
-            representations_count = %filtered_representations.len(),
-        ),
-    )]
     async fn execute_for_projected_representations(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
@@ -243,11 +219,6 @@ impl ExecutableFetchNode for FetchNode {
         }
     }
 
-    #[instrument(
-        level = "debug",
-        skip(self, variable_values),
-        name = "prepare_variables_for_fetch_node"
-    )]
     fn prepare_variables_for_fetch_node<'a>(
         &'a self,
         variable_values: &'a Option<HashMap<String, Value>>,
@@ -413,9 +384,6 @@ impl ApplyFetchRewrite for ValueSetter {
 
 #[async_trait]
 impl ExecutablePlanNode for SequenceNode {
-    #[instrument(level = "trace", skip_all, name = "SequenceNode::execute", fields(
-        nodes_count = %self.nodes.len()
-    ))]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -428,10 +396,6 @@ impl ExecutablePlanNode for SequenceNode {
     }
 }
 
-#[instrument(level = "debug", skip_all, name = "process_root_result", fields(
-    fetch_result = ?fetch_result.data.as_ref().map(|d| d.to_string()),
-    errors_count = %fetch_result.errors.as_ref().map_or(0, |e| e.len()),
-))]
 fn process_root_result(
     fetch_result: ExecutionResult,
     execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -463,9 +427,6 @@ enum ParallelJob<'a> {
 
 #[async_trait]
 impl ExecutablePlanNode for ParallelNode {
-    #[instrument(level = "trace", skip_all, name = "ParallelNode::execute", fields(
-        nodes_count = %self.nodes.len()
-    ))]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -671,9 +632,6 @@ impl ExecutablePlanNode for ParallelNode {
 
 #[async_trait]
 impl ExecutablePlanNode for FlattenNode {
-    #[instrument(level = "trace", skip_all, name = "FlattenNode::execute", fields(
-        path = ?self.path
-    ))]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -815,7 +773,6 @@ impl GetInnerNodeByVariables for ConditionNode {
 
 #[async_trait]
 impl ExecutablePlanNode for ConditionNode {
-    #[instrument(level = "trace", skip_all, name = "ConditionNode::execute")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -834,7 +791,6 @@ impl ExecutablePlanNode for ConditionNode {
 
 #[async_trait]
 impl ExecutableQueryPlan for QueryPlan {
-    #[instrument(level = "trace", skip_all, name = "QueryPlan::execute")]
     async fn execute(
         &self,
         execution_context: &mut QueryPlanExecutionContext<'_>,
@@ -1232,14 +1188,6 @@ pub enum ExposeQueryPlanMode {
     DryRun,
 }
 
-#[instrument(
-    level = "trace",
-    skip_all,
-    fields(
-        query_plan = ?query_plan,
-        variable_values = ?variable_values,
-    )
-)]
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_query_plan(
     query_plan: &QueryPlan,

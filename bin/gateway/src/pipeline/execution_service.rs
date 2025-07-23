@@ -40,7 +40,6 @@ impl Service<Request<Body>> for ExecutionService {
         Poll::Ready(Ok(()))
     }
 
-    #[tracing::instrument(level = "trace", name = "ExecutionService", skip_all)]
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         let mut expose_query_plan: ExposeQueryPlanMode = match self.expose_query_plan {
             true => ExposeQueryPlanMode::Yes,

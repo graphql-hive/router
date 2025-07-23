@@ -31,7 +31,6 @@ impl GraphQLParserService {
 
 #[async_trait::async_trait]
 impl GatewayPipelineLayer for GraphQLParserService {
-    #[tracing::instrument(level = "trace", name = "GraphQLParserService", skip_all)]
     async fn process(
         &self,
         req: &mut Request<Body>,

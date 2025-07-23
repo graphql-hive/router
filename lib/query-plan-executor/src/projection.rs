@@ -11,7 +11,7 @@ use query_planner::{
     state::supergraph_state::OperationKind,
 };
 use serde_json::{Map, Value};
-use tracing::{instrument, warn};
+use tracing::warn;
 
 use crate::{
     json_writer::write_and_escape_string, schema_metadata::SchemaMetadata, GraphQLError,
@@ -371,7 +371,16 @@ impl FieldProjectionPlan {
     }
 }
 
-#[instrument(level = "trace", skip_all)]
+pub struct ProjectionContext<'writer, 'data> {
+    pub writer: &'writer mut dyn Write,
+    pub data: &'data Value,
+    pub errors: &'data mut Vec<GraphQLError>,
+    pub extensions: &'data HashMap<String, Value>,
+    pub operation_type_name: &'data str,
+    pub selections: &'data Vec<FieldProjectionPlan>,
+    pub variable_values: &'data Option<HashMap<String, Value>>,
+}
+
 pub fn project_by_operation(
     writer: &mut impl Write,
     data: &Value,
@@ -420,13 +429,6 @@ pub fn project_by_operation(
     Ok(())
 }
 
-#[instrument(
-    level = "trace",
-    skip_all,
-    fields(
-        data = ?data
-    )
-)]
 fn project_selection_set(
     data: &Value,
     errors: &mut Vec<GraphQLError>,
@@ -489,13 +491,6 @@ fn project_selection_set(
     Ok(())
 }
 
-#[instrument(
-    level = "trace",
-    skip_all,
-    fields(
-        obj = ?obj
-    )
-)]
 // TODO: simplfy args
 #[allow(clippy::too_many_arguments)]
 fn project_selection_set_with_map(
