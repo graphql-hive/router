@@ -884,7 +884,7 @@ impl QueryPlanExecutionContext<'_> {
         writer: &mut impl std::io::Write,
         first: bool,
         response_key: Option<&str>,
-    ) -> Result<bool, std::io::Error> {
+    ) -> std::io::Result<bool> {
         match entity {
             Value::Null => {
                 return Ok(false);
@@ -999,7 +999,7 @@ impl QueryPlanExecutionContext<'_> {
         first: &mut bool,
         parent_response_key: Option<&str>,
         parent_first: bool,
-    ) -> Result<(), std::io::Error> {
+    ) -> std::io::Result<()> {
         for requires_selection in requires_selections {
             match &requires_selection {
                 SelectionItem::Field(requires_selection) => {
@@ -1173,7 +1173,7 @@ pub async fn execute_query_plan(
     selections: &Vec<FieldProjectionPlan>,
     has_introspection: bool,
     expose_query_plan: ExposeQueryPlanMode,
-) -> Result<Vec<u8>, std::io::Error> {
+) -> std::io::Result<Vec<u8>> {
     let mut result_data = if has_introspection {
         schema_metadata.introspection_query_json.clone()
     } else {

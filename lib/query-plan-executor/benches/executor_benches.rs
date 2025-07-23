@@ -262,7 +262,8 @@ fn project_data_by_operation(c: &mut Criterion) {
                 projection_selections,
                 &None,
             );
-            black_box(result.unwrap_or_default());
+            result.unwrap_or_default();
+            black_box(());
         });
     });
 }

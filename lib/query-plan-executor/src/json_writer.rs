@@ -33,7 +33,7 @@ static HEX: [u8; 16] = *b"0123456789ABCDEF";
 pub fn write_and_escape_string(
     writer: &mut impl std::io::Write,
     input: &str,
-) -> Result<(), std::io::Error> {
+) -> std::io::Result<()> {
     writer.write_all(b"\"")?;
 
     let bytes = input.as_bytes();

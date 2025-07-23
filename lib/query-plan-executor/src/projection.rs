@@ -380,7 +380,7 @@ pub fn project_by_operation(
     operation_type_name: &str,
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, Value>>,
-) -> Result<(), std::io::Error> {
+) -> std::io::Result<()> {
     writer.write_all(b"{")?;
     writer.write_all(b"\"")?;
     writer.write_all(b"data")?;
@@ -408,7 +408,7 @@ pub fn project_by_operation(
 
     if !errors.is_empty() {
         writer.write_all(b",\"errors\":")?;
-        serde_json::to_writer(&mut *writer, &data)?;
+        serde_json::to_writer(&mut *writer, errors)?;
     }
     if !extensions.is_empty() {
         writer.write_all(b",\"extensions\":")?;
@@ -433,7 +433,7 @@ fn project_selection_set(
     selection: &FieldProjectionPlan,
     variable_values: &Option<HashMap<String, Value>>,
     writer: &mut impl std::io::Write,
-) -> Result<(), std::io::Error> {
+) -> std::io::Result<()> {
     match data {
         Value::Null => writer.write_all(b"null"),
         Value::Bool(true) => writer.write_all(b"true"),
@@ -506,7 +506,7 @@ fn project_selection_set_with_map(
     parent_type_name: &str,
     writer: &mut impl std::io::Write,
     first: &mut bool,
-) -> Result<(), std::io::Error> {
+) -> std::io::Result<()> {
     for selection in selections {
         let field_val = obj
             .get(&selection.field_name)
@@ -550,6 +550,7 @@ fn project_selection_set_with_map(
                 continue;
             }
             Err(FieldProjectionConditionError::InvalidEnumValue) => {
+                println!("Invalid enum value for field: {}", selection.field_name);
                 if *first {
                     writer.write_all(b"{")?;
                 } else {

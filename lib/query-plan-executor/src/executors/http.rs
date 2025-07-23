@@ -44,7 +44,7 @@ impl HTTPSubgraphExecutor {
     fn write_body(
         execution_request: &SubgraphExecutionRequest,
         writer: &mut impl Write,
-    ) -> Result<(), std::io::Error> {
+    ) -> std::io::Result<()> {
         writer.write_all(b"{\"query\":")?;
         write_and_escape_string(writer, execution_request.query)?;
 
@@ -60,8 +60,7 @@ impl HTTPSubgraphExecutor {
                 writer.write_all(b"\"")?;
                 writer.write_all(variable_name.as_bytes())?;
                 writer.write_all(b"\":")?;
-                serde_json::to_writer(&mut *writer, variable_value)
-                    .map_err(std::io::Error::other)?;
+                serde_json::to_writer(&mut *writer, variable_value)?;
             }
         }
         if let Some(representations) = &execution_request.representations {
