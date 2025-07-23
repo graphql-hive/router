@@ -7,7 +7,7 @@ use hyper_util::{
 use tracing::{instrument, warn};
 
 use crate::executors::{
-    common::{SubgraphExecutor, SubgraphExecutorBoxedArc},
+    common::{SubgraphExecutionResult, SubgraphExecutor, SubgraphExecutorBoxedArc},
     http::HTTPSubgraphExecutor,
 };
 
@@ -33,7 +33,7 @@ impl SubgraphExecutorMap {
         &self,
         subgraph_name: &str,
         execution_request: crate::SubgraphExecutionRequest<'a>,
-    ) -> crate::ExecutionResult {
+    ) -> SubgraphExecutionResult {
         match self.inner.get(subgraph_name) {
             Some(executor) => {
                 let mut result = executor.execute(execution_request).await;
@@ -80,7 +80,7 @@ impl SubgraphExecutorMap {
                     "Subgraph executor not found for subgraph: {}",
                     subgraph_name
                 );
-                crate::ExecutionResult::from_error_message(format!(
+                SubgraphExecutionResult::from_error_message(format!(
                     "Subgraph executor not found for subgraph: {}",
                     subgraph_name
                 ))

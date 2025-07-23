@@ -15,7 +15,10 @@ use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
 use crate::{
-    executors::map::SubgraphExecutorMap,
+    executors::{
+        common::{SubgraphExecutionResult, SubgraphExecutionResultData},
+        map::SubgraphExecutorMap,
+    },
     json_writer::write_and_escape_string,
     projection::FieldProjectionPlan,
     schema_metadata::{PossibleTypes, SchemaMetadata},
@@ -80,11 +83,6 @@ impl ExecutablePlanNode for PlanNode {
     }
 }
 
-#[instrument(
-    level = "trace",
-    skip(execution_context),
-    name = "process_errors_and_extensions"
-)]
 fn process_errors_and_extensions(
     execution_context: &mut QueryPlanExecutionContext<'_>,
     errors: Option<Vec<GraphQLError>>,
@@ -101,26 +99,13 @@ fn process_errors_and_extensions(
     }
 }
 
-struct ExecuteForRepresentationsResult {
-    entities: Option<Vec<Value>>,
-    indexes_in_paths: Vec<VecDeque<usize>>,
-    errors: Option<Vec<GraphQLError>>,
-    extensions: Option<HashMap<String, Value>>,
-}
-
 #[async_trait]
 trait ExecutableFetchNode {
-    async fn execute_for_root(
+    async fn execute_and_get_result(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
-    ) -> ExecutionResult;
-    async fn execute_for_projected_representations(
-        &self,
-        execution_context: &QueryPlanExecutionContext<'_>,
-        filtered_representations: Vec<u8>,
-        indexes_in_paths: Vec<VecDeque<usize>>,
-    ) -> ExecuteForRepresentationsResult;
-    fn apply_output_rewrites(&self, possible_types: &PossibleTypes, data: &mut Value);
+        filtered_representations: Option<Vec<u8>>,
+    ) -> SubgraphExecutionResult;
     fn prepare_variables_for_fetch_node<'a>(
         &'a self,
         variable_values: &'a Option<HashMap<String, Value>>,
@@ -135,112 +120,57 @@ impl ExecutablePlanNode for FetchNode {
         execution_context: &mut QueryPlanExecutionContext<'_>,
         data: &mut Value,
     ) {
-        let fetch_result = self.execute_for_root(execution_context).await;
+        let fetch_result = self.execute_and_get_result(execution_context, None).await;
 
-        process_root_result(fetch_result, execution_context, data);
+        // Process root FetchNode results
+        if let Some(fetch_result_data) = fetch_result.data {
+            fetch_result_data.merge_into(data);
+        }
+
+        process_errors_and_extensions(
+            execution_context,
+            fetch_result.errors,
+            fetch_result.extensions,
+        );
     }
 }
 
 #[async_trait]
 impl ExecutableFetchNode for FetchNode {
-    #[instrument(
-        level = "trace",
-        skip_all,
-        name="FetchNode::execute_for_root",
-        fields(
-            service_name = self.service_name,
-            operation_name = ?self.operation_name,
-            operation_str = %self.operation.document_str,
-        )
-    )]
-    async fn execute_for_root(
+    #[instrument(level = "debug", skip_all, name = "FetchNode::execute_and_get_result")]
+    async fn execute_and_get_result(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
-    ) -> ExecutionResult {
-        let variables = self.prepare_variables_for_fetch_node(execution_context.variable_values);
-
-        let execution_request = SubgraphExecutionRequest {
-            query: &self.operation.document_str,
-            operation_name: self.operation_name.as_deref(),
-            variables,
-            extensions: None,
-            representations: None,
-        };
-        let mut fetch_result = execution_context
-            .subgraph_executor_map
-            .execute(&self.service_name, execution_request)
-            .await;
-
-        // 5. Process the response
-
-        if let Some(new_data) = &mut fetch_result.data {
-            self.apply_output_rewrites(&execution_context.schema_metadata.possible_types, new_data);
-        }
-
-        fetch_result
-    }
-
-    #[instrument(
-        level = "debug",
-        skip_all,
-        name = "execute_for_projected_representations",
-        fields(
-            representations_count = %filtered_representations.len(),
-        ),
-    )]
-    async fn execute_for_projected_representations(
-        &self,
-        execution_context: &QueryPlanExecutionContext<'_>,
-        filtered_representations: Vec<u8>,
-        indexes_in_paths: Vec<VecDeque<usize>>,
-    ) -> ExecuteForRepresentationsResult {
+        filtered_representations: Option<Vec<u8>>,
+    ) -> SubgraphExecutionResult {
         // 2. Prepare variables for fetch
         let execution_request = SubgraphExecutionRequest {
             query: &self.operation.document_str,
             operation_name: self.operation_name.as_deref(),
             variables: self.prepare_variables_for_fetch_node(execution_context.variable_values),
             extensions: None,
-            representations: Some(filtered_representations),
+            representations: filtered_representations,
         };
 
         // 3. Execute the fetch operation
-        let fetch_result = execution_context
+        let mut fetch_result = execution_context
             .subgraph_executor_map
             .execute(&self.service_name, execution_request)
             .await;
-        // Process data
-        let entities = if let Some(mut data) = fetch_result.data {
-            self.apply_output_rewrites(
-                &execution_context.schema_metadata.possible_types,
-                &mut data,
-            );
-            match data {
-                Value::Object(mut obj) => {
-                    let entities = obj.get_mut("_entities").map(|v| v.take());
-                    match entities {
-                        Some(Value::Array(arr)) => Some(arr),
-                        _ => None,
-                    }
-                }
-                _ => None, // If data is not an object
-            }
-        } else {
-            None
-        };
-        ExecuteForRepresentationsResult {
-            entities,
-            indexes_in_paths,
-            errors: fetch_result.errors,
-            extensions: fetch_result.extensions,
-        }
-    }
 
-    fn apply_output_rewrites(&self, possible_types: &PossibleTypes, data: &mut Value) {
-        if let Some(output_rewrites) = &self.output_rewrites {
-            for rewrite in output_rewrites {
-                rewrite.apply(possible_types, data);
+        if let Some(data) = &mut fetch_result.data {
+            // 5. Apply output rewrites
+            if let Some(output_rewrites) = &self.output_rewrites {
+                for rewrite in output_rewrites {
+                    rewrite.apply(
+                        &execution_context.schema_metadata.possible_types,
+                        FetchRewriteInput::SubgraphExecutionResultData(data),
+                    );
+                }
             }
         }
+
+        fetch_result
     }
 
     #[instrument(
@@ -275,7 +205,7 @@ impl ExecutableFetchNode for FetchNode {
 }
 
 trait ApplyFetchRewrite {
-    fn apply(&self, possible_types: &PossibleTypes, value: &mut Value);
+    fn apply(&self, possible_types: &PossibleTypes, input: FetchRewriteInput);
     fn apply_path(
         &self,
         possible_types: &PossibleTypes,
@@ -285,10 +215,10 @@ trait ApplyFetchRewrite {
 }
 
 impl ApplyFetchRewrite for FetchRewrite {
-    fn apply(&self, possible_types: &PossibleTypes, value: &mut Value) {
+    fn apply(&self, possible_types: &PossibleTypes, input: FetchRewriteInput) {
         match self {
-            FetchRewrite::KeyRenamer(renamer) => renamer.apply(possible_types, value),
-            FetchRewrite::ValueSetter(setter) => setter.apply(possible_types, value),
+            FetchRewrite::KeyRenamer(renamer) => renamer.apply(possible_types, input),
+            FetchRewrite::ValueSetter(setter) => setter.apply(possible_types, input),
         }
     }
     fn apply_path(
@@ -304,9 +234,43 @@ impl ApplyFetchRewrite for FetchRewrite {
     }
 }
 
+enum FetchRewriteInput<'a> {
+    Value(&'a mut Value),
+    SubgraphExecutionResultData(&'a mut SubgraphExecutionResultData),
+}
+
 impl ApplyFetchRewrite for KeyRenamer {
-    fn apply(&self, possible_types: &PossibleTypes, value: &mut Value) {
-        self.apply_path(possible_types, value, &self.path)
+    fn apply(&self, possible_types: &PossibleTypes, input: FetchRewriteInput) {
+        match input {
+            FetchRewriteInput::Value(value) => {
+                self.apply_path(possible_types, value, &self.path);
+            }
+            FetchRewriteInput::SubgraphExecutionResultData(data) => {
+                let current_segment = &self.path[0];
+                let remaining_path = &self.path[1..];
+                match &current_segment {
+                    FetchNodePathSegment::Key(field) => {
+                        if field == "_entities" {
+                            if let Some(entities) = &mut data._entities {
+                                for entity in entities {
+                                    self.apply_path(possible_types, entity, remaining_path);
+                                }
+                            } else {
+                                let field_val = data.root_fields.get_mut(field);
+                                if let Some(field_val) = field_val {
+                                    self.apply_path(possible_types, field_val, remaining_path);
+                                }
+                            }
+                        }
+                    }
+                    FetchNodePathSegment::TypenameEquals(_) => {
+                        unreachable!(
+                            "KeyRenamer should not start with TypenameEquals, it should be handled separately"
+                        );
+                    }
+                }
+            }
+        }
     }
     // Applies key rename operation on a Value (mutably)
     fn apply_path(
@@ -355,8 +319,37 @@ impl ApplyFetchRewrite for KeyRenamer {
 }
 
 impl ApplyFetchRewrite for ValueSetter {
-    fn apply(&self, possible_types: &PossibleTypes, data: &mut Value) {
-        self.apply_path(possible_types, data, &self.path)
+    fn apply(&self, possible_types: &PossibleTypes, input: FetchRewriteInput<'_>) {
+        match input {
+            FetchRewriteInput::Value(value) => {
+                self.apply_path(possible_types, value, &self.path);
+            }
+            FetchRewriteInput::SubgraphExecutionResultData(data) => {
+                let current_segment = &self.path[0];
+                let remaining_path = &self.path[1..];
+                match &current_segment {
+                    FetchNodePathSegment::Key(field) => {
+                        if field == "_entities" {
+                            if let Some(entities) = &mut data._entities {
+                                for entity in entities {
+                                    self.apply_path(possible_types, entity, remaining_path);
+                                }
+                            } else {
+                                let field_val = data.root_fields.get_mut(field);
+                                if let Some(field_val) = field_val {
+                                    self.apply_path(possible_types, field_val, remaining_path);
+                                }
+                            }
+                        }
+                    }
+                    FetchNodePathSegment::TypenameEquals(_) => {
+                        unreachable!(
+                            "KeyRenamer should not start with TypenameEquals, it should be handled separately"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     // Applies value setting on a Value (returns a new Value)
@@ -411,6 +404,24 @@ impl ApplyFetchRewrite for ValueSetter {
     }
 }
 
+impl SubgraphExecutionResultData {
+    pub fn merge_into(self, data: &mut Value) {
+        // Process root FetchNode results
+        if data.is_null() {
+            *data = Value::Object(self.root_fields); // Initialize with result_data
+        } else {
+            for (key, value) in self.root_fields {
+                // Merge the root fields into the target data
+                if let Some(target_value) = data.get_mut(&key) {
+                    deep_merge::deep_merge(target_value, value);
+                } else {
+                    data[key] = value;
+                }
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl ExecutablePlanNode for SequenceNode {
     #[instrument(level = "trace", skip_all, name = "SequenceNode::execute", fields(
@@ -428,36 +439,12 @@ impl ExecutablePlanNode for SequenceNode {
     }
 }
 
-#[instrument(level = "debug", skip_all, name = "process_root_result", fields(
-    fetch_result = ?fetch_result.data.as_ref().map(|d| d.to_string()),
-    errors_count = %fetch_result.errors.as_ref().map_or(0, |e| e.len()),
-))]
-fn process_root_result(
-    fetch_result: ExecutionResult,
-    execution_context: &mut QueryPlanExecutionContext<'_>,
-    data: &mut Value,
-) {
-    // 4. Process the response
-    if let Some(new_data) = fetch_result.data {
-        if data.is_null() {
-            *data = new_data; // Initialize with new_data
-        } else {
-            deep_merge::deep_merge(data, new_data);
-        }
-    }
-
-    process_errors_and_extensions(
-        execution_context,
-        fetch_result.errors,
-        fetch_result.extensions,
-    );
-}
-
 enum ParallelJob<'a> {
-    Root(ExecutionResult),
+    Root(SubgraphExecutionResult),
     Flatten(
-        ExecuteForRepresentationsResult,
+        SubgraphExecutionResult,
         &'a [FlattenNodePathSegment],
+        Vec<VecDeque<usize>>,
     ),
 }
 
@@ -494,7 +481,7 @@ impl ExecutablePlanNode for ParallelNode {
                 };
                 match node {
                     PlanNode::Fetch(fetch_node) => {
-                        let job = fetch_node.execute_for_root(execution_context);
+                        let job = fetch_node.execute_and_get_result(execution_context, None);
                         jobs.push(Box::pin(job.map(ParallelJob::Root)));
                     }
                     PlanNode::Flatten(flatten_node) => {
@@ -532,7 +519,7 @@ impl ExecutablePlanNode for ParallelNode {
                                         for input_rewrite in input_rewrites {
                                             input_rewrite.apply(
                                                 &execution_context.schema_metadata.possible_types,
-                                                &mut entity_owned,
+                                                FetchRewriteInput::Value(&mut entity_owned),
                                             );
                                         }
                                         execution_context.project_requires(
@@ -558,14 +545,13 @@ impl ExecutablePlanNode for ParallelNode {
                             },
                         );
                         filtered_representations.push(b']');
-                        let job = fetch_node.execute_for_projected_representations(
+                        let job = fetch_node.execute_and_get_result(
                             execution_context,
-                            filtered_representations,
-                            indexes_in_paths,
+                            Some(filtered_representations),
                         );
-                        jobs.push(Box::pin(
-                            job.map(|r| ParallelJob::Flatten(r, normalized_path)),
-                        ));
+                        jobs.push(Box::pin(job.map(|r| {
+                            ParallelJob::Flatten(r, normalized_path, indexes_in_paths)
+                        })));
                     }
                     _ => {}
                 }
@@ -577,12 +563,8 @@ impl ExecutablePlanNode for ParallelNode {
                 match result {
                     ParallelJob::Root(fetch_result) => {
                         // Process root FetchNode results
-                        if let Some(new_data) = fetch_result.data {
-                            if data.is_null() {
-                                *data = new_data; // Initialize with new_data
-                            } else {
-                                deep_merge::deep_merge(data, new_data);
-                            }
+                        if let Some(fetch_result_data) = fetch_result.data {
+                            fetch_result_data.merge_into(data);
                         }
                         // Process errors and extensions
                         if let Some(errors) = fetch_result.errors {
@@ -592,53 +574,55 @@ impl ExecutablePlanNode for ParallelNode {
                             all_extensions.push(extensions);
                         }
                     }
-                    ParallelJob::Flatten(mut result, path) => {
-                        if let Some(entities) = result.entities {
-                            'entity_loop: for (entity, indexes_in_path) in
-                                entities.into_iter().zip(result.indexes_in_paths.iter_mut())
-                            {
-                                let mut target = &mut *data;
-                                for path_segment in path.iter() {
-                                    match path_segment {
-                                        FlattenNodePathSegment::List => {
-                                            let index = indexes_in_path.pop_front().unwrap();
-                                            target = &mut target[index];
-                                        }
-                                        FlattenNodePathSegment::Field(field_name) => {
-                                            target = &mut target[field_name];
-                                        }
-                                        FlattenNodePathSegment::Cast(type_condition) => {
-                                            let type_name = match target.get(TYPENAME_FIELD) {
-                                                Some(Value::String(type_name)) => type_name,
-                                                _ => type_condition, // Default to type_condition if not found
-                                            };
-                                            if !execution_context
-                                                .schema_metadata
-                                                .possible_types
-                                                .entity_satisfies_type_condition(
-                                                    type_name,
-                                                    type_condition,
-                                                )
-                                            {
-                                                continue 'entity_loop; // Skip if type condition is not satisfied
+                    ParallelJob::Flatten(result, path, mut indexes_in_paths) => {
+                        if let Some(result_data) = result.data {
+                            if let Some(entities) = result_data._entities {
+                                'entity_loop: for (entity, indexes_in_path) in
+                                    entities.into_iter().zip(indexes_in_paths.iter_mut())
+                                {
+                                    let mut target = &mut *data;
+                                    for path_segment in path.iter() {
+                                        match path_segment {
+                                            FlattenNodePathSegment::List => {
+                                                let index = indexes_in_path.pop_front().unwrap();
+                                                target = &mut target[index];
+                                            }
+                                            FlattenNodePathSegment::Field(field_name) => {
+                                                target = &mut target[field_name];
+                                            }
+                                            FlattenNodePathSegment::Cast(type_condition) => {
+                                                let type_name = match target.get(TYPENAME_FIELD) {
+                                                    Some(Value::String(type_name)) => type_name,
+                                                    _ => type_condition, // Default to type_condition if not found
+                                                };
+                                                if !execution_context
+                                                    .schema_metadata
+                                                    .possible_types
+                                                    .entity_satisfies_type_condition(
+                                                        type_name,
+                                                        type_condition,
+                                                    )
+                                                {
+                                                    continue 'entity_loop; // Skip if type condition is not satisfied
+                                                }
                                             }
                                         }
                                     }
-                                }
-                                if !indexes_in_path.is_empty() {
-                                    // If there are still indexes left, we need to traverse them
-                                    while let Some(index) = indexes_in_path.pop_front() {
-                                        target = &mut target[index];
+                                    if !indexes_in_path.is_empty() {
+                                        // If there are still indexes left, we need to traverse them
+                                        while let Some(index) = indexes_in_path.pop_front() {
+                                            target = &mut target[index];
+                                        }
                                     }
+                                    deep_merge::deep_merge(target, entity);
                                 }
-                                deep_merge::deep_merge(target, entity);
                             }
                         }
                         // Process errors and extensions
                         if let Some(errors) = result.errors {
                             let normalized_errors =
                                 error_normalization::normalize_errors_for_representations(
-                                    &mut result.indexes_in_paths,
+                                    &mut indexes_in_paths,
                                     path,
                                     errors,
                                 );
@@ -658,14 +642,19 @@ impl ExecutablePlanNode for ParallelNode {
             );
         }
         // 6. Process errors and extensions
-        if !all_errors.is_empty() {
-            execution_context.errors.extend(all_errors);
-        }
-        if !all_extensions.is_empty() {
-            for extensions in all_extensions {
-                execution_context.extensions.extend(extensions);
-            }
-        }
+        process_errors_and_extensions(
+            execution_context,
+            if all_errors.is_empty() {
+                None
+            } else {
+                Some(all_errors)
+            },
+            if all_extensions.is_empty() {
+                None
+            } else {
+                Some(all_extensions.into_iter().flatten().collect())
+            },
+        );
     }
 }
 
@@ -716,7 +705,7 @@ impl ExecutablePlanNode for FlattenNode {
                     for input_rewrite in input_rewrites {
                         input_rewrite.apply(
                             &execution_context.schema_metadata.possible_types,
-                            &mut entity_owned,
+                            FetchRewriteInput::Value(&mut entity_owned),
                         );
                     }
                     execution_context
@@ -755,23 +744,26 @@ impl ExecutablePlanNode for FlattenNode {
             // No representations collected, so we skip the fetch execution
             return;
         }
-        let mut result = fetch_node
-            .execute_for_projected_representations(
-                execution_context,
-                filtered_representations,
-                vec![],
-            )
+        let result = fetch_node
+            .execute_and_get_result(execution_context, Some(filtered_representations))
             .await;
-        if let Some(entities) = result.entities {
-            for (entity, (target, _path)) in entities.into_iter().zip(representations.iter_mut()) {
-                // Merge the entity into the representation
-                deep_merge::deep_merge(target, entity);
+
+        if let Some(data) = result.data {
+            if let Some(entities) = data._entities {
+                for (entity, (target, _paths)) in entities.into_iter().zip(representations.iter_mut()) {
+                    // Merge the entity into the representation
+                    deep_merge::deep_merge(target, entity);
+                }
             }
         }
 
         let normalized_errors = result.errors.map(|errors| {
+            let mut indexes_of_paths = representations
+                .iter_mut()
+                .map(|(_, paths)| paths.clone())
+                .collect::<Vec<VecDeque<usize>>>();
             error_normalization::normalize_errors_for_representations(
-                &mut result.indexes_in_paths,
+                &mut indexes_of_paths,
                 normalized_path,
                 errors,
             )
