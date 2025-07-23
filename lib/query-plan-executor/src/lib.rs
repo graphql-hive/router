@@ -206,30 +206,40 @@ impl ExecutableFetchNode for FetchNode {
 
 trait ApplyFetchRewrite {
     fn apply(&self, possible_types: &PossibleTypes, input: FetchRewriteInput);
-    fn apply_path(
-        &self,
-        possible_types: &PossibleTypes,
-        value: &mut Value,
-        path: &[FetchNodePathSegment],
-    );
 }
 
 impl ApplyFetchRewrite for FetchRewrite {
     fn apply(&self, possible_types: &PossibleTypes, input: FetchRewriteInput) {
-        match self {
-            FetchRewrite::KeyRenamer(renamer) => renamer.apply(possible_types, input),
-            FetchRewrite::ValueSetter(setter) => setter.apply(possible_types, input),
-        }
-    }
-    fn apply_path(
-        &self,
-        possible_types: &PossibleTypes,
-        value: &mut Value,
-        path: &[FetchNodePathSegment],
-    ) {
-        match self {
-            FetchRewrite::KeyRenamer(renamer) => renamer.apply_path(possible_types, value, path),
-            FetchRewrite::ValueSetter(setter) => setter.apply_path(possible_types, value, path),
+        let path = self.path();
+        match input {
+            FetchRewriteInput::Value(value) => {
+                self.apply_path(possible_types, value, path);
+            }
+            FetchRewriteInput::SubgraphExecutionResultData(data) => {
+                let current_segment = &path[0];
+                let remaining_path = &path[1..];
+                match &current_segment {
+                    FetchNodePathSegment::Key(field) => {
+                        if field == "_entities" {
+                            if let Some(entities) = &mut data._entities {
+                                for entity in entities {
+                                    self.apply_path(possible_types, entity, remaining_path);
+                                }
+                            }
+                        } else {
+                            let field_val = data.root_fields.get_mut(field);
+                            if let Some(field_val) = field_val {
+                                self.apply_path(possible_types, field_val, remaining_path);
+                            }
+                        }
+                    }
+                    FetchNodePathSegment::TypenameEquals(_) => {
+                        unreachable!(
+                            "FetchRewrite should not start with TypenameEquals, it should be handled separately"
+                        );
+                    }
+                }
+            }
         }
     }
 }
@@ -239,38 +249,43 @@ enum FetchRewriteInput<'a> {
     SubgraphExecutionResultData(&'a mut SubgraphExecutionResultData),
 }
 
-impl ApplyFetchRewrite for KeyRenamer {
-    fn apply(&self, possible_types: &PossibleTypes, input: FetchRewriteInput) {
-        match input {
-            FetchRewriteInput::Value(value) => {
-                self.apply_path(possible_types, value, &self.path);
+trait ApplyFetchRewriteImpl {
+    fn path(&self) -> &[FetchNodePathSegment];
+    fn apply_path(
+        &self,
+        possible_types: &PossibleTypes,
+        value: &mut Value,
+        path: &[FetchNodePathSegment],
+    );
+}
+
+impl ApplyFetchRewriteImpl for FetchRewrite {
+    fn path(&self) -> &[FetchNodePathSegment] {
+        match self {
+            FetchRewrite::KeyRenamer(renamer) => renamer.path(),
+            FetchRewrite::ValueSetter(setter) => setter.path(),
+        }
+    }
+    fn apply_path(
+        &self,
+        possible_types: &PossibleTypes,
+        value: &mut Value,
+        path: &[FetchNodePathSegment],
+    ) {
+        match self {
+            FetchRewrite::KeyRenamer(renamer) => {
+                renamer.apply_path(possible_types, value, path);
             }
-            FetchRewriteInput::SubgraphExecutionResultData(data) => {
-                let current_segment = &self.path[0];
-                let remaining_path = &self.path[1..];
-                match &current_segment {
-                    FetchNodePathSegment::Key(field) => {
-                        if field == "_entities" {
-                            if let Some(entities) = &mut data._entities {
-                                for entity in entities {
-                                    self.apply_path(possible_types, entity, remaining_path);
-                                }
-                            } else {
-                                let field_val = data.root_fields.get_mut(field);
-                                if let Some(field_val) = field_val {
-                                    self.apply_path(possible_types, field_val, remaining_path);
-                                }
-                            }
-                        }
-                    }
-                    FetchNodePathSegment::TypenameEquals(_) => {
-                        unreachable!(
-                            "KeyRenamer should not start with TypenameEquals, it should be handled separately"
-                        );
-                    }
-                }
+            FetchRewrite::ValueSetter(setter) => {
+                setter.apply_path(possible_types, value, path);
             }
         }
+    }
+}
+
+impl ApplyFetchRewriteImpl for KeyRenamer {
+    fn path(&self) -> &[FetchNodePathSegment] {
+        &self.path
     }
     // Applies key rename operation on a Value (mutably)
     fn apply_path(
@@ -318,40 +333,10 @@ impl ApplyFetchRewrite for KeyRenamer {
     }
 }
 
-impl ApplyFetchRewrite for ValueSetter {
-    fn apply(&self, possible_types: &PossibleTypes, input: FetchRewriteInput<'_>) {
-        match input {
-            FetchRewriteInput::Value(value) => {
-                self.apply_path(possible_types, value, &self.path);
-            }
-            FetchRewriteInput::SubgraphExecutionResultData(data) => {
-                let current_segment = &self.path[0];
-                let remaining_path = &self.path[1..];
-                match &current_segment {
-                    FetchNodePathSegment::Key(field) => {
-                        if field == "_entities" {
-                            if let Some(entities) = &mut data._entities {
-                                for entity in entities {
-                                    self.apply_path(possible_types, entity, remaining_path);
-                                }
-                            } else {
-                                let field_val = data.root_fields.get_mut(field);
-                                if let Some(field_val) = field_val {
-                                    self.apply_path(possible_types, field_val, remaining_path);
-                                }
-                            }
-                        }
-                    }
-                    FetchNodePathSegment::TypenameEquals(_) => {
-                        unreachable!(
-                            "KeyRenamer should not start with TypenameEquals, it should be handled separately"
-                        );
-                    }
-                }
-            }
-        }
+impl ApplyFetchRewriteImpl for ValueSetter {
+    fn path(&self) -> &[FetchNodePathSegment] {
+        &self.path
     }
-
     // Applies value setting on a Value (returns a new Value)
     fn apply_path(
         &self,
@@ -848,22 +833,7 @@ pub struct ExecutionResult {
     pub extensions: Option<HashMap<String, Value>>,
 }
 
-impl ExecutionResult {
-    pub fn from_error_message(message: String) -> ExecutionResult {
-        ExecutionResult {
-            data: None,
-            errors: Some(vec![GraphQLError {
-                message,
-                locations: None,
-                path: None,
-                extensions: None,
-            }]),
-            extensions: None,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Default, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GraphQLError {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -887,22 +857,6 @@ pub struct SubgraphExecutionRequest<'a> {
     pub variables: Option<HashMap<&'a str, &'a Value>>,
     pub extensions: Option<HashMap<String, Value>>,
     pub representations: Option<Vec<u8>>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecutionResultExtensions {
-    code: Option<String>,
-    http: Option<HTTPErrorExtensions>,
-    service_name: Option<String>,
-    #[serde(flatten)]
-    extensions: Option<HashMap<String, Value>>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct HTTPErrorExtensions {
-    status: Option<u16>,
-    headers: Option<HashMap<String, String>>,
 }
 
 pub struct QueryPlanExecutionContext<'a> {
@@ -1252,10 +1206,7 @@ pub async fn execute_query_plan(
     let mut result_extensions = if expose_query_plan == ExposeQueryPlanMode::Yes
         || expose_query_plan == ExposeQueryPlanMode::DryRun
     {
-        HashMap::from_iter([(
-            "queryPlan".to_string(),
-            serde_json::to_value(query_plan).unwrap(),
-        )])
+        HashMap::from_iter([("queryPlan".to_string(), serde_json::to_value(query_plan)?)])
     } else {
         HashMap::new()
     };

@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::{GraphQLError, SubgraphExecutionRequest};
@@ -24,14 +24,14 @@ pub type SubgraphExecutorType = dyn crate::executors::common::SubgraphExecutor +
 
 pub type SubgraphExecutorBoxedArc = Arc<Box<SubgraphExecutorType>>;
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Deserialize, Debug, Clone, Default)]
 pub struct SubgraphExecutionResultData {
     pub _entities: Option<Vec<Value>>,
     #[serde(flatten)]
     pub root_fields: Map<String, Value>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Deserialize, Debug, Clone, Default)]
 pub struct SubgraphExecutionResult {
     pub data: Option<SubgraphExecutionResultData>,
     pub errors: Option<Vec<GraphQLError>>,
