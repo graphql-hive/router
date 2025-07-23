@@ -1,5 +1,7 @@
-use std::collections::{HashMap, HashSet};
-use std::fmt::Write;
+use std::{
+    collections::{HashMap, HashSet},
+    io::Write,
+};
 
 use indexmap::IndexMap;
 use query_planner::{
@@ -371,23 +373,21 @@ impl FieldProjectionPlan {
 
 #[instrument(level = "trace", skip_all)]
 pub fn project_by_operation(
-    data: &mut Value,
+    writer: &mut impl Write,
+    data: &Value,
     errors: &mut Vec<GraphQLError>,
     extensions: &HashMap<String, Value>,
     operation_type_name: &str,
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, Value>>,
-) -> String {
-    // We may want to remove it, but let's see.
-    let mut buffer = String::with_capacity(4096);
+) -> std::io::Result<()> {
+    writer.write_all(b"{")?;
+    writer.write_all(b"\"")?;
+    writer.write_all(b"data")?;
+    writer.write_all(b"\"")?;
+    writer.write_all(b":")?;
 
-    buffer.push('{');
-    buffer.push('"');
-    buffer.push_str("data");
-    buffer.push('"');
-    buffer.push(':');
-
-    if let Some(data_map) = data.as_object_mut() {
+    if let Some(data_map) = data.as_object() {
         let mut first = true;
         project_selection_set_with_map(
             data_map,
@@ -395,36 +395,29 @@ pub fn project_by_operation(
             selections,
             variable_values,
             operation_type_name,
-            &mut buffer,
+            writer,
             &mut first, // Start with first as true to add the opening brace
-        );
+        )?;
         if !first {
-            buffer.push('}');
+            writer.write_all(b"}")?;
         } else {
             // If no selections were made, we should return an empty object
-            buffer.push_str("{}");
+            writer.write_all(b"{}")?;
         }
     }
 
     if !errors.is_empty() {
-        write!(
-            buffer,
-            ",\"errors\":{}",
-            serde_json::to_string(&errors).unwrap()
-        )
-        .unwrap();
+        writer.write_all(b",\"errors\":")?;
+        serde_json::to_writer(&mut *writer, errors)?;
     }
     if !extensions.is_empty() {
-        write!(
-            buffer,
-            ",\"extensions\":{}",
-            serde_json::to_string(&extensions).unwrap()
-        )
-        .unwrap();
+        writer.write_all(b",\"extensions\":")?;
+        serde_json::to_writer(&mut *writer, extensions)?;
     }
 
-    buffer.push('}');
-    buffer
+    writer.write_all(b"}")?;
+
+    Ok(())
 }
 
 #[instrument(
@@ -439,27 +432,28 @@ fn project_selection_set(
     errors: &mut Vec<GraphQLError>,
     selection: &FieldProjectionPlan,
     variable_values: &Option<HashMap<String, Value>>,
-    buffer: &mut String,
-) {
+    writer: &mut impl std::io::Write,
+) -> std::io::Result<()> {
     match data {
-        Value::Null => buffer.push_str("null"),
-        Value::Bool(true) => buffer.push_str("true"),
-        Value::Bool(false) => buffer.push_str("false"),
-        Value::Number(num) => write!(buffer, "{}", num).unwrap(),
+        Value::Null => writer.write_all(b"null"),
+        Value::Bool(true) => writer.write_all(b"true"),
+        Value::Bool(false) => writer.write_all(b"false"),
+        Value::Number(num) => writer.write_all(num.to_string().as_bytes()),
         Value::String(value) => {
-            write_and_escape_string(buffer, value);
+            // Assuming write_and_escape_string is modified to take Vec<u8>
+            write_and_escape_string(writer, value)
         }
         Value::Array(arr) => {
-            buffer.push('[');
+            writer.write_all(b"[")?;
             let mut first = true;
             for item in arr.iter() {
                 if !first {
-                    buffer.push(',');
+                    writer.write_all(b",")?;
                 }
-                project_selection_set(item, errors, selection, variable_values, buffer);
+                project_selection_set(item, errors, selection, variable_values, writer)?;
                 first = false;
             }
-            buffer.push(']');
+            writer.write_all(b"]")
         }
         Value::Object(obj) => {
             match selection.selections.as_ref() {
@@ -475,23 +469,24 @@ fn project_selection_set(
                         selections,
                         variable_values,
                         type_name,
-                        buffer,
+                        writer,
                         &mut first,
-                    );
+                    )?;
                     if !first {
-                        buffer.push('}');
+                        writer.write_all(b"}")
                     } else {
                         // If no selections were made, we should return an empty object
-                        buffer.push_str("{}");
+                        writer.write_all(b"{}")
                     }
                 }
                 None => {
                     // If the selection set is not projected, we should return null
-                    buffer.push_str("null");
+                    writer.write_all(b"null")
                 }
             }
         }
-    }
+    }?;
+    Ok(())
 }
 
 #[instrument(
@@ -509,9 +504,9 @@ fn project_selection_set_with_map(
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, Value>>,
     parent_type_name: &str,
-    buffer: &mut String,
+    writer: &mut impl std::io::Write,
     first: &mut bool,
-) {
+) -> std::io::Result<()> {
     for selection in selections {
         let field_val = obj
             .get(&selection.field_name)
@@ -524,26 +519,26 @@ fn project_selection_set_with_map(
         ) {
             Ok(_) => {
                 if *first {
-                    buffer.push('{');
+                    writer.write_all(b"{")?;
                 } else {
-                    buffer.push(',');
+                    writer.write_all(b",")?;
                 }
                 *first = false;
 
-                buffer.push('"');
-                buffer.push_str(&selection.response_key);
-                buffer.push_str("\":");
+                writer.write_all(b"\"")?;
+                writer.write_all(selection.response_key.as_bytes())?;
+                writer.write_all(b"\":")?;
 
                 if let Some(field_val) = field_val {
-                    project_selection_set(field_val, errors, selection, variable_values, buffer);
+                    project_selection_set(field_val, errors, selection, variable_values, writer)?;
                 } else if selection.field_name == TYPENAME_FIELD {
                     // If the field is TYPENAME_FIELD, we should set it to the parent type name
-                    buffer.push('"');
-                    buffer.push_str(parent_type_name);
-                    buffer.push('"');
+                    writer.write_all(b"\"")?;
+                    writer.write_all(parent_type_name.as_bytes())?;
+                    writer.write_all(b"\"")?;
                 } else {
                     // If the field is not found in the object, set it to Null
-                    buffer.push_str("null");
+                    writer.write_all(b"null")?;
                 }
             }
             Err(FieldProjectionConditionError::Skip) => {
@@ -555,16 +550,17 @@ fn project_selection_set_with_map(
                 continue;
             }
             Err(FieldProjectionConditionError::InvalidEnumValue) => {
+                println!("Invalid enum value for field: {}", selection.field_name);
                 if *first {
-                    buffer.push('{');
+                    writer.write_all(b"{")?;
                 } else {
-                    buffer.push(',');
+                    writer.write_all(b",")?;
                 }
                 *first = false;
 
-                buffer.push('"');
-                buffer.push_str(&selection.response_key);
-                buffer.push_str("\":null");
+                writer.write_all(b"\"")?;
+                writer.write_all(selection.response_key.as_bytes())?;
+                writer.write_all(b"\":null")?;
                 errors.push(GraphQLError {
                     message: "Value is not a valid enum value".to_string(),
                     locations: None,
@@ -574,17 +570,18 @@ fn project_selection_set_with_map(
             }
             Err(FieldProjectionConditionError::InvalidFieldType) => {
                 if *first {
-                    buffer.push('{');
+                    writer.write_all(b"{")?;
                 } else {
-                    buffer.push(',');
+                    writer.write_all(b",")?;
                 }
                 *first = false;
 
                 // Skip this field as the field type does not match
-                buffer.push('"');
-                buffer.push_str(&selection.response_key);
-                buffer.push_str("\":null");
+                writer.write_all(b"\"")?;
+                writer.write_all(selection.response_key.as_bytes())?;
+                writer.write_all(b"\":null")?;
             }
         }
     }
+    Ok(())
 }

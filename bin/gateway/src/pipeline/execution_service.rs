@@ -87,7 +87,19 @@ impl Service<Request<Body>> for ExecutionService {
                 normalized_payload.has_introspection,
                 expose_query_plan,
             )
-            .await;
+            .await
+            .unwrap_or_else(|err| {
+                tracing::error!("Failed to execute query plan: {}", err);
+                serde_json::to_vec(&serde_json::json!({
+                    "errors": [{
+                        "message": "Internal server error",
+                        "extensions": {
+                            "code": "INTERNAL_SERVER_ERROR"
+                        }
+                    }]
+                }))
+                .unwrap_or_default()
+            });
 
             let mut response = Response::new(Body::from(execution_result));
 

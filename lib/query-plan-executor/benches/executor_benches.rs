@@ -252,7 +252,9 @@ fn project_data_by_operation(c: &mut Criterion) {
             let extensions = black_box(&extensions);
             let projection_selections = black_box(&projection_selections);
             let root_type_name = black_box(root_type_name);
+            let mut writer = black_box(Vec::with_capacity(4096));
             let result = query_plan_executor::projection::project_by_operation(
+                &mut writer,
                 data,
                 errors,
                 extensions,
@@ -260,7 +262,8 @@ fn project_data_by_operation(c: &mut Criterion) {
                 projection_selections,
                 &None,
             );
-            black_box(result);
+            result.unwrap_or_default();
+            black_box(());
         });
     });
 }
@@ -457,16 +460,18 @@ fn project_requires(c: &mut Criterion) {
     c.bench_function("project_requires", |b| {
         b.iter(|| {
             let execution_context = black_box(&execution_context);
-            let mut buffer = String::with_capacity(1024);
+            let mut buffer = Vec::with_capacity(1024);
             let mut first = true;
             for representation in black_box(&representations) {
-                let requires = execution_context.project_requires(
-                    &requires_selections,
-                    representation,
-                    &mut buffer,
-                    first,
-                    None,
-                );
+                let requires = execution_context
+                    .project_requires(
+                        &requires_selections,
+                        representation,
+                        &mut buffer,
+                        first,
+                        None,
+                    )
+                    .unwrap_or(false);
                 if requires {
                     first = false;
                 }
