@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use graphql_parser::{
     query::Type,
@@ -7,12 +7,34 @@ use graphql_parser::{
 use query_planner::consumer_schema::ConsumerSchema;
 use serde_json::{json, Value};
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SchemaMetadata {
-    pub possible_types: HashMap<String, Vec<String>>,
-    pub enum_values: HashMap<String, Vec<String>>,
+    pub possible_types: PossibleTypes,
+    pub enum_values: HashMap<String, HashSet<String>>,
     pub type_fields: HashMap<String, HashMap<String, String>>,
-    pub introspection_schema_root_json: Value,
+    pub introspection_query_json: Value,
+}
+
+#[derive(Debug, Default)]
+pub struct PossibleTypes {
+    map: HashMap<String, HashSet<String>>,
+}
+
+impl PossibleTypes {
+    pub fn entity_satisfies_type_condition(&self, type_name: &str, type_condition: &str) -> bool {
+        if type_name == type_condition {
+            true
+        } else if let Some(possible_types_of_type) = self.map.get(type_condition) {
+            possible_types_of_type.contains(type_name)
+        } else {
+            false
+        }
+    }
+    pub fn get_possible_types(&self, type_name: &str) -> HashSet<String> {
+        let mut possible_types = self.map.get(type_name).cloned().unwrap_or_default();
+        possible_types.insert(type_name.to_string());
+        possible_types
+    }
 }
 
 pub trait SchemaWithMetadata {
@@ -23,15 +45,15 @@ impl SchemaWithMetadata for ConsumerSchema {
     fn schema_metadata(&self) -> SchemaMetadata {
         let mut first_possible_types: HashMap<String, Vec<String>> = HashMap::new();
         let mut type_fields: HashMap<String, HashMap<String, String>> = HashMap::new();
-        let mut enum_values: HashMap<String, Vec<String>> = HashMap::new();
+        let mut enum_values: HashMap<String, HashSet<String>> = HashMap::new();
 
         for definition in &self.document.definitions {
             match definition {
                 Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => {
                     let name = enum_type.name.to_string();
-                    let mut values = vec![];
+                    let mut values = HashSet::new();
                     for enum_value in &enum_type.values {
-                        values.push(enum_value.name.to_string());
+                        values.insert(enum_value.name.to_string());
                     }
                     enum_values.insert(name, values);
                 }
@@ -77,16 +99,16 @@ impl SchemaWithMetadata for ConsumerSchema {
             }
         }
 
-        let mut final_possible_types: HashMap<String, Vec<String>> = HashMap::new();
+        let mut final_possible_types: HashMap<String, HashSet<String>> = HashMap::new();
         // Re-iterate over the possible_types
         for (definition_name_of_x, first_possible_types_of_x) in &first_possible_types {
-            let mut possible_types_of_x: Vec<String> = Vec::new();
+            let mut possible_types_of_x: HashSet<String> = HashSet::new();
             for definition_name_of_y in first_possible_types_of_x {
-                possible_types_of_x.push(definition_name_of_y.to_string());
+                possible_types_of_x.insert(definition_name_of_y.to_string());
                 let possible_types_of_y = first_possible_types.get(definition_name_of_y);
                 if let Some(possible_types_of_y) = possible_types_of_y {
                     for definition_name_of_z in possible_types_of_y {
-                        possible_types_of_x.push(definition_name_of_z.to_string());
+                        possible_types_of_x.insert(definition_name_of_z.to_string());
                     }
                 }
             }
@@ -95,13 +117,15 @@ impl SchemaWithMetadata for ConsumerSchema {
 
         let introspection_query =
             crate::introspection::introspection_query_from_ast(&self.document);
-        let introspection_schema_root_json = json!(introspection_query.__schema);
+        let introspection_query_json = json!(introspection_query);
 
         SchemaMetadata {
-            possible_types: final_possible_types,
+            possible_types: PossibleTypes {
+                map: final_possible_types,
+            },
             enum_values,
             type_fields,
-            introspection_schema_root_json,
+            introspection_query_json,
         }
     }
 }

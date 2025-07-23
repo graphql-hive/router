@@ -1,16 +1,18 @@
-use axum::body::{to_bytes, Body};
+use std::collections::HashMap;
+
+use axum::body::Body;
 use axum::extract::Query;
 use http::{Method, Request};
-use query_plan_executor::ExecutionRequest;
+use http_body_util::BodyExt;
+use serde::Deserialize;
+use serde_json::Value;
 use tracing::{trace, warn};
 
-use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
+use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::gateway_layer::{
     GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer,
 };
-use crate::pipeline::http_request_params::{HttpRequestParams, APPLICATION_JSON};
-
-static MAX_BODY_SIZE: usize = 2 * 1024 * 1024; // 2 MB in bytes, like Axum's default
+use crate::pipeline::header::AssertRequestJson;
 
 #[derive(Clone, Debug, Default)]
 pub struct GraphQLRequestParamsExtractor;
@@ -24,6 +26,17 @@ struct GETQueryParams {
     pub extensions: Option<String>,
 }
 
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionRequest {
+    pub query: String,
+    pub operation_name: Option<String>,
+    pub variables: Option<HashMap<String, Value>>,
+    // TODO: We don't use extensions yet, but we definitely will in the future.
+    #[allow(dead_code)]
+    pub extensions: Option<HashMap<String, Value>>,
+}
+
 impl TryInto<ExecutionRequest> for GETQueryParams {
     type Error = PipelineErrorVariant;
 
@@ -34,7 +47,7 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
         };
 
         let variables = match self.variables.as_deref() {
-            Some(v_str) if !v_str.is_empty() => match serde_json::from_str(v_str) {
+            Some(v_str) if !v_str.is_empty() => match sonic_rs::from_str(v_str) {
                 Ok(vars) => Some(vars),
                 Err(e) => {
                     return Err(PipelineErrorVariant::FailedToParseVariables(e));
@@ -44,7 +57,7 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
         };
 
         let extensions = match self.extensions.as_deref() {
-            Some(e_str) if !e_str.is_empty() => match serde_json::from_str(e_str) {
+            Some(e_str) if !e_str.is_empty() => match sonic_rs::from_str(e_str) {
                 Ok(exts) => Some(exts),
                 Err(e) => {
                     return Err(PipelineErrorVariant::FailedToParseExtensions(e));
@@ -69,92 +82,64 @@ impl GatewayPipelineLayer for GraphQLRequestParamsExtractor {
     #[tracing::instrument(level = "trace", name = "GraphQLRequestParamsExtractor", skip_all)]
     async fn process(
         &self,
-        mut req: Request<Body>,
-    ) -> Result<(Request<Body>, GatewayPipelineStepDecision), PipelineError> {
-        let http_params = req.extensions().get::<HttpRequestParams>().ok_or_else(|| {
-            PipelineErrorVariant::InternalServiceError("HttpRequestParams is missing")
-        })?;
+        req: &mut Request<Body>,
+    ) -> Result<GatewayPipelineStepDecision, PipelineError> {
+        let http_method = req.method();
+        let execution_request: ExecutionRequest =
+            match *http_method {
+                Method::GET => {
+                    trace!("processing GET GraphQL operation");
 
-        let accept_header = http_params.accept_header.clone();
-        let execution_request: ExecutionRequest = match http_params.http_method {
-            Method::GET => {
-                trace!("processing GET GraphQL operation");
+                    let query_params = Query::<GETQueryParams>::try_from_uri(req.uri())
+                        .map_err(|qe| {
+                            req.new_pipeline_error(PipelineErrorVariant::GetInvalidQueryParams(qe))
+                        })?
+                        .0;
 
-                let query_params = Query::<GETQueryParams>::try_from_uri(req.uri())
-                    .map_err(|qe| {
-                        PipelineError::new_with_accept_header(
-                            PipelineErrorVariant::GetInvalidQueryParams(qe),
-                            accept_header.clone(),
-                        )
-                    })?
-                    .0;
+                    trace!("parsed GET query params: {:?}", query_params);
 
-                trace!("parsed GET query params: {:?}", query_params);
-
-                query_params.try_into()?
-            }
-            Method::POST => {
-                trace!("Processing POST GraphQL request");
-
-                match &http_params.request_content_type {
-                    None => {
-                        trace!("POST without content type detected");
-
-                        return Err(PipelineError::new_with_accept_header(
-                            PipelineErrorVariant::MissingContentTypeHeader,
-                            accept_header.clone(),
-                        ));
-                    }
-                    Some(content_type) => {
-                        if !content_type.contains(APPLICATION_JSON.to_str().unwrap()) {
-                            warn!("Invalid content type on a POST request: {}", content_type);
-
-                            return Err(PipelineError::new_with_accept_header(
-                                PipelineErrorVariant::UnsupportedContentType,
-                                accept_header.clone(),
-                            ));
-                        }
-                    }
+                    query_params
+                        .try_into()
+                        .map_err(|err| req.new_pipeline_error(err))?
                 }
+                Method::POST => {
+                    trace!("Processing POST GraphQL request");
 
-                let (parts, body) = req.into_parts();
-                let body_bytes = to_bytes(body, MAX_BODY_SIZE).await.map_err(|err| {
-                    warn!("Failed to read body bytes: {}", err);
+                    req.assert_json_content_type()?;
 
-                    PipelineError::new_with_accept_header(
-                        PipelineErrorVariant::FailedToReadBodyBytes(err),
-                        accept_header.clone(),
-                    )
-                })?;
+                    let body_bytes = req
+                        .body_mut()
+                        .collect()
+                        .await
+                        .map_err(|err| {
+                            warn!("Failed to read body bytes: {}", err);
+                            req.new_pipeline_error(PipelineErrorVariant::FailedToReadBodyBytes(err))
+                        })?
+                        .to_bytes();
 
-                let execution_request = serde_json::from_slice::<ExecutionRequest>(&body_bytes)
-                    .map_err(|e| {
-                        warn!("Failed to parse body: {}", e);
+                    let execution_request = unsafe {
+                        sonic_rs::from_slice_unchecked::<ExecutionRequest>(&body_bytes).map_err(
+                            |e| {
+                                warn!("Failed to parse body: {}", e);
+                                req.new_pipeline_error(PipelineErrorVariant::FailedToParseBody(e))
+                            },
+                        )?
+                    };
 
-                        PipelineError::new_with_accept_header(
-                            PipelineErrorVariant::FailedToParseBody(e),
-                            accept_header,
-                        )
-                    })?;
+                    execution_request
+                }
+                _ => {
+                    warn!("unsupported HTTP method: {}", http_method);
 
-                trace!("Body is parsed, will proceed");
-                req = Request::from_parts(parts, Body::from(body_bytes));
-
-                execution_request
-            }
-            _ => {
-                warn!("unsupported HTTP method: {}", http_params.http_method);
-
-                return Err(PipelineErrorVariant::UnsupportedHttpMethod(
-                    http_params.http_method.to_string(),
-                )
-                .into());
-            }
-        };
+                    return Err(req.new_pipeline_error(
+                        PipelineErrorVariant::UnsupportedHttpMethod(http_method.to_owned()),
+                    ));
+                }
+            };
 
         req.extensions_mut().insert(execution_request);
 
-        Ok((req, GatewayPipelineStepDecision::Continue))
+        Ok(GatewayPipelineStepDecision::Continue)
     }
 }
 

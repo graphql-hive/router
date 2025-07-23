@@ -5,11 +5,11 @@ import { githubComment } from "https://raw.githubusercontent.com/dotansimha/k6-g
 
 const endpoint = __ENV.GATEWAY_ENDPOINT || "http://0.0.0.0:4000/graphql";
 const vus = __ENV.BENCH_VUS ? parseInt(__ENV.BENCH_VUS) : 50;
-const time = __ENV.BENCH_OVER_TIME || "30s";
+const duration = __ENV.BENCH_OVER_TIME || "30s";
 
 export const options = {
-  vus: vus,
-  duration: time,
+  vus,
+  duration,
 };
 
 export function setup() {
@@ -57,7 +57,7 @@ export function handleSummary(data) {
       },
     });
   }
-  return handleBenchmarkSummary(data, { vus, time });
+  return handleBenchmarkSummary(data, { vus, duration });
 }
 
 let printIdentifiersMap = {};

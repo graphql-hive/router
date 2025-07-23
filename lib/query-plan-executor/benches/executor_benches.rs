@@ -11,9 +11,9 @@ use query_planner::graph::PlannerOverrideContext;
 use query_planner::planner::plan_nodes::FlattenNodePathSegment;
 use std::hint::black_box;
 
-use query_plan_executor::execute_query_plan;
-use query_plan_executor::schema_metadata::SchemaWithMetadata;
+use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
 use query_plan_executor::ExecutableQueryPlan;
+use query_plan_executor::{execute_query_plan, ExposeQueryPlanMode};
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::utils::parsing::parse_operation;
 use query_planner::utils::parsing::parse_schema;
@@ -43,20 +43,28 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
     let subgraph_endpoint_map = planner.supergraph.subgraph_endpoint_map;
     let schema_metadata = planner.consumer_schema.schema_metadata();
     let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(subgraph_endpoint_map);
+    let (root_type_name, projection_selections) =
+        query_plan_executor::projection::FieldProjectionPlan::from_operation(
+            normalized_operation,
+            &schema_metadata,
+        );
     c.bench_function("query_plan_executor_pipeline_via_http", |b| {
         b.to_async(&rt).iter(|| async {
             let query_plan = black_box(&query_plan);
             let schema_metadata = black_box(&schema_metadata);
-            let operation = black_box(&normalized_operation);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
+            let projection_selections = black_box(&projection_selections);
+            let root_type_name = black_box(root_type_name);
             let has_introspection = false;
             let result = execute_query_plan(
                 query_plan,
                 subgraph_executor_map,
                 &None,
                 schema_metadata,
-                operation,
+                root_type_name,
+                projection_selections,
                 has_introspection,
+                ExposeQueryPlanMode::No,
             )
             .await;
             black_box(result)
@@ -134,20 +142,29 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
     subgraph_executor_map.insert_boxed_arc("products".to_string(), products.to_boxed_arc());
     subgraph_executor_map.insert_boxed_arc("reviews".to_string(), reviews.to_boxed_arc());
 
+    let (root_type_name, projection_selections) =
+        query_plan_executor::projection::FieldProjectionPlan::from_operation(
+            normalized_operation,
+            &schema_metadata,
+        );
+
     c.bench_function("query_plan_executor_pipeline_locally", |b| {
         b.to_async(&rt).iter(|| async {
             let query_plan = black_box(&query_plan);
             let schema_metadata = black_box(&schema_metadata);
-            let operation = black_box(&normalized_operation);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
+            let projection_selections = black_box(&projection_selections);
+            let root_type_name = black_box(root_type_name);
             let has_introspection = false;
             let result = execute_query_plan(
                 query_plan,
                 subgraph_executor_map,
                 &None,
                 schema_metadata,
-                operation,
+                root_type_name,
+                projection_selections,
                 has_introspection,
+                ExposeQueryPlanMode::No,
             )
             .await;
             black_box(result)
@@ -220,22 +237,32 @@ fn project_data_by_operation(c: &mut Criterion) {
         .expect("Failed to normalize operation");
     let normalized_operation = normalized_document.executable_operation();
     let schema_metadata = planner.consumer_schema.schema_metadata();
-    let operation = black_box(&normalized_operation);
+    let (root_type_name, projection_selections) =
+        query_plan_executor::projection::FieldProjectionPlan::from_operation(
+            normalized_operation,
+            &schema_metadata,
+        );
     c.bench_function("project_data_by_operation", |b| {
         b.iter(|| {
             let mut data = non_projected_result::get_result();
             let data = black_box(&mut data);
             let mut errors = vec![];
             let errors = black_box(&mut errors);
-            let operation = black_box(&operation);
-            let schema_metadata = black_box(&schema_metadata);
-            query_plan_executor::project_data_by_operation(
+            let extensions = HashMap::new();
+            let extensions = black_box(&extensions);
+            let projection_selections = black_box(&projection_selections);
+            let root_type_name = black_box(root_type_name);
+            let mut writer = black_box(Vec::with_capacity(4096));
+            let result = query_plan_executor::projection::project_by_operation(
+                &mut writer,
                 data,
                 errors,
-                operation,
-                schema_metadata,
+                extensions,
+                root_type_name,
+                projection_selections,
                 &None,
             );
+            result.unwrap_or_default();
             black_box(());
         });
     });
@@ -256,13 +283,19 @@ fn traverse_and_collect(c: &mut Criterion) {
         FlattenNodePathSegment::Field("product".into()),
     ];
     let mut result: Value = non_projected_result::get_result();
+    let schema_metadata = SchemaMetadata::default();
     c.bench_function("traverse_and_collect", |b| {
         b.iter(|| {
             let result = black_box(&mut result);
+            let schema_metadata = black_box(&schema_metadata);
             let data = result.get_mut("data").unwrap();
             let path = black_box(&path);
-            let result = query_plan_executor::traverse_and_collect(data, path);
-            black_box(result);
+            let mut results = vec![];
+            query_plan_executor::traverse_and_callback(data, path, schema_metadata, &mut |data| {
+                results.push(data);
+            });
+            black_box(());
+            black_box(results);
         });
     });
 }
@@ -354,13 +387,16 @@ fn project_requires(c: &mut Criterion) {
     ];
     let mut result: Value = non_projected_result::get_result();
     let data = result.get_mut("data").unwrap();
-    let representations = query_plan_executor::traverse_and_collect(data, &path);
     let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
         .expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
     let planner = query_planner::planner::Planner::new_from_supergraph(&parsed_schema)
         .expect("Failed to create planner from supergraph");
     let schema_metadata = &planner.consumer_schema.schema_metadata();
+    let mut representations = vec![];
+    query_plan_executor::traverse_and_callback(data, &path, schema_metadata, &mut |data| {
+        representations.push(data);
+    });
     let subgraph_executor_map =
         SubgraphExecutorMap::from_http_endpoint_map(planner.supergraph.subgraph_endpoint_map);
     let execution_context = query_plan_executor::QueryPlanExecutionContext {
@@ -424,11 +460,24 @@ fn project_requires(c: &mut Criterion) {
     c.bench_function("project_requires", |b| {
         b.iter(|| {
             let execution_context = black_box(&execution_context);
+            let mut buffer = Vec::with_capacity(1024);
+            let mut first = true;
             for representation in black_box(&representations) {
-                let requires =
-                    execution_context.project_requires(&requires_selections, representation);
+                let requires = execution_context
+                    .project_requires(
+                        &requires_selections,
+                        representation,
+                        &mut buffer,
+                        first,
+                        None,
+                    )
+                    .unwrap_or(false);
+                if requires {
+                    first = false;
+                }
                 black_box(requires);
             }
+            black_box(buffer)
         });
     });
 }
@@ -470,16 +519,17 @@ fn deep_merge_with_simple(c: &mut Criterion) {
 }
 
 fn all_benchmarks(c: &mut Criterion) {
-    deep_merge_with_simple(c);
-    deep_merge_with_complex(c);
-    project_requires(c);
-    traverse_and_collect(c);
-    project_data_by_operation(c);
     query_plan_executor_without_projection_locally(c);
     query_plan_executor_pipeline_locally(c);
 
     query_plan_execution_without_projection_via_http(c);
     query_plan_executor_pipeline_via_http(c);
+
+    deep_merge_with_simple(c);
+    deep_merge_with_complex(c);
+    project_requires(c);
+    traverse_and_collect(c);
+    project_data_by_operation(c);
 }
 
 criterion_group!(benches, all_benchmarks);

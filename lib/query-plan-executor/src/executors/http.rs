@@ -1,49 +1,151 @@
+use std::io::Write;
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use http::HeaderMap;
+use http::HeaderValue;
+use http_body_util::BodyExt;
+use http_body_util::Full;
+use hyper::{body::Bytes, Version};
+use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tracing::{error, instrument, trace};
 
-use crate::{executors::common::SubgraphExecutor, ExecutionRequest, ExecutionResult};
+use crate::{
+    executors::common::SubgraphExecutor, json_writer::write_and_escape_string, ExecutionResult,
+    SubgraphExecutionRequest,
+};
 
 #[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
-    pub endpoint: String,
-    pub http_client: reqwest::Client,
+    pub endpoint: http::Uri,
+    pub http_client: Arc<Client<HttpConnector, Full<Bytes>>>,
+    pub header_map: HeaderMap,
 }
 
+const FIRST_VARIABLE_STR: &[u8; 14] = b",\"variables\":{";
+
 impl HTTPSubgraphExecutor {
-    pub fn new(endpoint: String, http_client: reqwest::Client) -> Self {
+    pub fn new(endpoint: &str, http_client: Arc<Client<HttpConnector, Full<Bytes>>>) -> Self {
+        let endpoint = endpoint
+            .parse::<http::Uri>()
+            .expect("Failed to parse endpoint as URI");
+        let mut header_map = HeaderMap::new();
+        header_map.insert(
+            "Content-Type",
+            HeaderValue::from_static("application/json; charset=utf-8"),
+        );
         HTTPSubgraphExecutor {
             endpoint,
             http_client,
+            header_map,
         }
     }
 
-    async fn _execute(
+    fn write_body(
+        execution_request: &SubgraphExecutionRequest,
+        writer: &mut impl Write,
+    ) -> std::io::Result<()> {
+        writer.write_all(b"{\"query\":")?;
+        write_and_escape_string(writer, execution_request.query)?;
+
+        let mut first_variable = true;
+        if let Some(variables) = &execution_request.variables {
+            for (variable_name, variable_value) in variables {
+                if first_variable {
+                    writer.write_all(FIRST_VARIABLE_STR)?;
+                    first_variable = false;
+                } else {
+                    writer.write_all(b",")?;
+                }
+                writer.write_all(b"\"")?;
+                writer.write_all(variable_name.as_bytes())?;
+                writer.write_all(b"\":")?;
+                serde_json::to_writer(&mut *writer, variable_value)?;
+            }
+        }
+        if let Some(representations) = &execution_request.representations {
+            if first_variable {
+                writer.write_all(FIRST_VARIABLE_STR)?;
+                first_variable = false;
+            } else {
+                writer.write_all(b",")?;
+            }
+            writer.write_all(b"\"representations\":")?;
+            writer.write_all(representations)?;
+        }
+        // "first_variable" should be still true if there are no variables
+        if !first_variable {
+            writer.write_all(b"}")?;
+        }
+        writer.write_all(b"}")?;
+        Ok(())
+    }
+
+    async fn _execute<'a>(
         &self,
-        execution_request: ExecutionRequest,
-    ) -> Result<ExecutionResult, reqwest::Error> {
+        execution_request: SubgraphExecutionRequest<'a>,
+    ) -> Result<ExecutionResult, String> {
         trace!("Executing HTTP request to subgraph at {}", self.endpoint);
-        self.http_client
-            .post(&self.endpoint)
-            .json(&execution_request)
-            .send()
-            .await?
-            .json::<ExecutionResult>()
+
+        // We may want to remove it, but let's see.
+        let mut body = Vec::with_capacity(4096);
+        Self::write_body(&execution_request, &mut body)
+            .map_err(|e| format!("Failed to write request body: {}", e))?;
+
+        let mut req = hyper::Request::builder()
+            .method(http::Method::POST)
+            .uri(&self.endpoint)
+            .version(Version::HTTP_11)
+            .body(body.into())
+            .map_err(|e| {
+                format!(
+                    "Failed to build request to subgraph {}: {}",
+                    self.endpoint, e
+                )
+            })?;
+
+        *req.headers_mut() = self.header_map.clone();
+
+        let res = self.http_client.request(req).await.map_err(|e| {
+            format!(
+                "Failed to send request to subgraph {}: {}",
+                self.endpoint, e
+            )
+        })?;
+
+        let bytes = res
+            .into_body()
+            .collect()
             .await
+            .map_err(|e| {
+                format!(
+                    "Failed to parse response from subgraph {}: {}",
+                    self.endpoint, e
+                )
+            })?
+            .to_bytes();
+
+        unsafe {
+            sonic_rs::from_slice_unchecked(&bytes).map_err(|e| {
+                format!(
+                    "Failed to parse response from subgraph {}: {}",
+                    self.endpoint, e
+                )
+            })
+        }
     }
 }
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
     #[instrument(level = "trace", skip(self), name = "http_subgraph_execute", fields(endpoint = %self.endpoint))]
-    async fn execute(&self, execution_request: ExecutionRequest) -> ExecutionResult {
+    async fn execute<'a>(
+        &self,
+        execution_request: SubgraphExecutionRequest<'a>,
+    ) -> ExecutionResult {
         self._execute(execution_request).await.unwrap_or_else(|e| {
-            error!("Failed to execute request to subgraph: {}", e);
-            trace!("network error: {:?}", e);
-
-            ExecutionResult::from_error_message(format!(
-                "Error executing subgraph {}: {}",
-                self.endpoint, e
-            ))
+            error!(e);
+            ExecutionResult::from_error_message(e)
         })
     }
 }

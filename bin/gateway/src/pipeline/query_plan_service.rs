@@ -3,7 +3,7 @@ use std::hash::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::pipeline::error::{PipelineError, PipelineErrorVariant};
+use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::gateway_layer::{
     GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer,
 };
@@ -68,26 +68,32 @@ impl GatewayPipelineLayer for QueryPlanService {
     #[tracing::instrument(level = "trace", name = "QueryPlanService", skip_all)]
     async fn process(
         &self,
-        mut req: Request<Body>,
-    ) -> Result<(Request<Body>, GatewayPipelineStepDecision), PipelineError> {
+        req: &mut Request<Body>,
+    ) -> Result<GatewayPipelineStepDecision, PipelineError> {
         let normalized_operation = req
             .extensions()
-            .get::<GraphQLNormalizationPayload>()
+            .get::<Arc<GraphQLNormalizationPayload>>()
             .ok_or_else(|| {
-                PipelineErrorVariant::InternalServiceError("GraphQLNormalizationPayload is missing")
+                req.new_pipeline_error(PipelineErrorVariant::InternalServiceError(
+                    "GraphQLNormalizationPayload is missing",
+                ))
             })?;
 
         let app_state = req
             .extensions()
             .get::<Arc<GatewaySharedState>>()
             .ok_or_else(|| {
-                PipelineErrorVariant::InternalServiceError("GatewaySharedState is missing")
+                req.new_pipeline_error(PipelineErrorVariant::InternalServiceError(
+                    "GatewaySharedState is missing",
+                ))
             })?;
         let request_override_context = req
             .extensions()
             .get::<RequestOverrideContext>()
             .ok_or_else(|| {
-                PipelineErrorVariant::InternalServiceError("ProgressiveOverride is missing")
+                req.new_pipeline_error(PipelineErrorVariant::InternalServiceError(
+                    "ProgressiveOverride is missing",
+                ))
             })?;
 
         let stable_override_context =
@@ -124,7 +130,11 @@ impl GatewayPipelineLayer for QueryPlanService {
                         request_override_context.into(),
                     ) {
                         Ok(p) => p,
-                        Err(err) => return Err(PipelineErrorVariant::PlannerError(err).into()),
+                        Err(err) => {
+                            return Err(
+                                req.new_pipeline_error(PipelineErrorVariant::PlannerError(err))
+                            )
+                        }
                     }
                 };
 
@@ -150,7 +160,7 @@ impl GatewayPipelineLayer for QueryPlanService {
             query_plan: query_plan_arc,
         });
 
-        Ok((req, GatewayPipelineStepDecision::Continue))
+        Ok(GatewayPipelineStepDecision::Continue)
     }
 }
 

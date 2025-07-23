@@ -18,6 +18,7 @@ use axum::{
     Router,
 };
 use http::Request;
+use mimalloc::MiMalloc;
 use tokio::signal;
 
 use axum::Extension;
@@ -28,7 +29,6 @@ use crate::pipeline::{
     coerce_variables_service::CoerceVariablesService, execution_service::ExecutionService,
     graphiql_service::GraphiQLResponderService,
     graphql_request_params::GraphQLRequestParamsExtractor,
-    http_request_params::HttpRequestParamsExtractor,
     normalize_service::GraphQLOperationNormalizationService, parser_service::GraphQLParserService,
     progressive_override_service::ProgressiveOverrideExtractor,
     query_plan_service::QueryPlanService, validation_service::GraphQLValidationService,
@@ -42,6 +42,9 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing::info;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -95,14 +98,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
             }),
         )
-        .layer(HttpRequestParamsExtractor::new_layer())
         .layer(GraphiQLResponderService::new_layer())
         .layer(GraphQLRequestParamsExtractor::new_layer())
         .layer(GraphQLParserService::new_layer())
+        .layer(GraphQLValidationService::new_layer())
         .layer(ProgressiveOverrideExtractor::new_layer())
         .layer(GraphQLOperationNormalizationService::new_layer())
         .layer(CoerceVariablesService::new_layer())
-        .layer(GraphQLValidationService::new_layer())
         .layer(QueryPlanService::new_layer())
         .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER_NAME.clone()))
         .service(ExecutionService::new(expose_query_plan));

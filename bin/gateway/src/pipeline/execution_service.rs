@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
@@ -6,18 +5,18 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use crate::pipeline::coerce_variables_service::CoerceVariablesPayload;
-use crate::pipeline::http_request_params::HttpRequestParams;
+use crate::pipeline::header::{
+    RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON, APPLICATION_GRAPHQL_RESPONSE_JSON_STR,
+    APPLICATION_JSON,
+};
 use crate::pipeline::normalize_service::GraphQLNormalizationPayload;
 use crate::pipeline::query_plan_service::QueryPlanPayload;
 use crate::shared_state::GatewaySharedState;
 use axum::body::Body;
-use axum::response::IntoResponse;
-use axum::Json;
-use http::header::CONTENT_TYPE;
-use http::{HeaderName, Request, Response};
-use query_plan_executor::{execute_query_plan, ExecutionResult};
-use serde_json::{json, to_value};
+use http::{HeaderName, HeaderValue, Request, Response};
+use query_plan_executor::{execute_query_plan, ExposeQueryPlanMode};
 use tower::Service;
+use tracing::trace;
 
 #[derive(Clone, Debug, Default)]
 pub struct ExecutionService {
@@ -25,13 +24,6 @@ pub struct ExecutionService {
 }
 
 static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ExposeQueryPlanMode {
-    Yes,
-    No,
-    DryRun,
-}
 
 impl ExecutionService {
     pub fn new(expose_query_plan: bool) -> Self {
@@ -69,7 +61,7 @@ impl Service<Request<Body>> for ExecutionService {
         Box::pin(async move {
             let normalized_payload = req
                 .extensions()
-                .get::<GraphQLNormalizationPayload>()
+                .get::<Arc<GraphQLNormalizationPayload>>()
                 .expect("GraphQLNormalizationPayload missing");
             let query_plan_payload = req
                 .extensions()
@@ -85,46 +77,47 @@ impl Service<Request<Body>> for ExecutionService {
                 .get::<CoerceVariablesPayload>()
                 .expect("CoerceVariablesPayload missing");
 
-            let http_request_params = req
-                .extensions()
-                .get::<HttpRequestParams>()
-                .expect("HttpRequestParams missing");
+            let execution_result = execute_query_plan(
+                &query_plan_payload.query_plan,
+                &app_state.subgraph_executor_map,
+                &variable_payload.variables_map,
+                &app_state.schema_metadata,
+                normalized_payload.root_type_name,
+                &normalized_payload.projection_plan,
+                normalized_payload.has_introspection,
+                expose_query_plan,
+            )
+            .await
+            .unwrap_or_else(|err| {
+                tracing::error!("Failed to execute query plan: {}", err);
+                serde_json::to_vec(&serde_json::json!({
+                    "errors": [{
+                        "message": "Internal server error",
+                        "extensions": {
+                            "code": "INTERNAL_SERVER_ERROR"
+                        }
+                    }]
+                }))
+                .unwrap_or_default()
+            });
 
-            let mut execution_result = match expose_query_plan {
-                ExposeQueryPlanMode::DryRun => ExecutionResult {
-                    data: Some(json!({})),
-                    errors: None,
-                    extensions: Some(HashMap::new()),
-                },
-                _ => {
-                    execute_query_plan(
-                        &query_plan_payload.query_plan,
-                        &app_state.subgraph_executor_map,
-                        &variable_payload.variables_map,
-                        &app_state.schema_metadata,
-                        &normalized_payload.normalized_document.operation,
-                        normalized_payload.has_introspection,
-                    )
-                    .await
-                }
-            };
+            let mut response = Response::new(Body::from(execution_result));
 
-            if expose_query_plan == ExposeQueryPlanMode::Yes
-                || expose_query_plan == ExposeQueryPlanMode::DryRun
-            {
-                let plan_value = to_value(query_plan_payload.query_plan.as_ref()).unwrap();
+            let response_content_type: &'static HeaderValue =
+                if req.accepts_content_type(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR) {
+                    &APPLICATION_GRAPHQL_RESPONSE_JSON
+                } else {
+                    &APPLICATION_JSON
+                };
 
-                execution_result
-                    .extensions
-                    .get_or_insert_with(HashMap::new)
-                    .insert("queryPlan".to_string(), plan_value);
-            }
-
-            let mut response = Json(execution_result).into_response();
-            response.headers_mut().insert(
-                CONTENT_TYPE,
-                http_request_params.response_content_type.clone(),
+            trace!(
+                "Will use the following Content-Type header for response: {:?}",
+                response_content_type
             );
+
+            response
+                .headers_mut()
+                .insert(http::header::CONTENT_TYPE, response_content_type.clone());
 
             Ok(response)
         })

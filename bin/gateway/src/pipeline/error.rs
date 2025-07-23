@@ -2,28 +2,27 @@ use std::{collections::HashMap, sync::Arc};
 
 use axum::{body::Body, extract::rejection::QueryRejection, response::IntoResponse};
 use graphql_tools::validation::utils::ValidationError;
-use http::{Response, StatusCode};
+use http::{HeaderName, Method, Request, Response, StatusCode};
 use query_plan_executor::{ExecutionResult, GraphQLError};
 use query_planner::{ast::normalization::error::NormalizationError, planner::PlannerError};
 use serde_json::Value;
 
-use crate::pipeline::http_request_params::APPLICATION_JSON;
+use crate::pipeline::header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR};
 
 #[derive(Debug)]
 pub struct PipelineError {
-    pub accept_header: Option<String>,
+    pub accept_ok: bool,
     pub error: PipelineErrorVariant,
 }
 
-impl PipelineError {
-    pub fn new_with_accept_header(
-        error: PipelineErrorVariant,
-        accept_header_value: String,
-    ) -> Self {
-        Self {
-            accept_header: Some(accept_header_value),
-            error,
-        }
+pub trait PipelineErrorFromAcceptHeader {
+    fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError;
+}
+
+impl PipelineErrorFromAcceptHeader for Request<Body> {
+    fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError {
+        let accept_ok = !self.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
+        PipelineError { accept_ok, error }
     }
 }
 
@@ -35,9 +34,9 @@ pub enum PipelineErrorVariant {
 
     // HTTP-related errors
     #[error("Unsupported HTTP method: {0}")]
-    UnsupportedHttpMethod(String),
+    UnsupportedHttpMethod(Method),
     #[error("Header '{0}' has invalid value")]
-    InvalidHeaderValue(String),
+    InvalidHeaderValue(HeaderName),
     #[error("Failed to read body: {0}")]
     FailedToReadBodyBytes(axum::Error),
     #[error("Content-Type header is missing")]
@@ -55,11 +54,11 @@ pub enum PipelineErrorVariant {
 
     // GraphQL-specific errors
     #[error("Failed to parse GraphQL request payload")]
-    FailedToParseBody(serde_json::Error),
+    FailedToParseBody(sonic_rs::Error),
     #[error("Failed to parse GraphQL variables JSON")]
-    FailedToParseVariables(serde_json::Error),
+    FailedToParseVariables(sonic_rs::Error),
     #[error("Failed to parse GraphQL extensions JSON")]
-    FailedToParseExtensions(serde_json::Error),
+    FailedToParseExtensions(sonic_rs::Error),
     #[error("Failed to parse GraphQL operation")]
     FailedToParseOperation(graphql_parser::query::ParseError),
     #[error("Failed to normalize GraphQL operation")]
@@ -78,19 +77,27 @@ impl PipelineErrorVariant {
             Self::UnsupportedHttpMethod(_) => "METHOD_NOT_ALLOWED",
             Self::PlannerError(_) => "QUERY_PLAN_BUILD_FAILED",
             Self::InternalServiceError(_) => "INTERNAL_SERVER_ERROR",
+            Self::FailedToParseOperation(_) => "GRAPHQL_PARSE_FAILED",
+            Self::ValidationErrors(_) => "GRAPHQL_VALIDATION_FAILED",
+            Self::VariablesCoercionError(_) => "BAD_USER_INPUT",
+            Self::NormalizationError(NormalizationError::OperationNotFound) => {
+                "OPERATION_RESOLUTION_FAILURE"
+            }
+            Self::NormalizationError(NormalizationError::SpecifiedOperationNotFound {
+                operation_name: _,
+            }) => "OPERATION_RESOLUTION_FAILURE",
+            Self::NormalizationError(NormalizationError::MultipleMatchingOperationsFound) => {
+                "OPERATION_RESOLUTION_FAILURE"
+            }
             _ => "BAD_REQUEST",
         }
     }
 
     pub fn graphql_error_message(&self) -> String {
         match self {
-            Self::PlannerError(_) | Self::InternalServiceError(_) => {
-                return "Unexpected error".to_string()
-            }
-            _ => {}
+            Self::PlannerError(_) | Self::InternalServiceError(_) => "Unexpected error".to_string(),
+            _ => self.to_string(),
         }
-
-        self.to_string()
     }
 
     pub fn default_status_code(&self, prefer_ok: bool) -> StatusCode {
@@ -111,34 +118,17 @@ impl PipelineErrorVariant {
             (Self::VariablesCoercionError(_), false) => StatusCode::BAD_REQUEST,
             (Self::VariablesCoercionError(_), true) => StatusCode::OK,
             (Self::MutationNotAllowedOverHttpGet, _) => StatusCode::METHOD_NOT_ALLOWED,
-            (Self::ValidationErrors(_), _) => StatusCode::BAD_REQUEST,
-            (Self::MissingContentTypeHeader, _) => StatusCode::BAD_REQUEST,
-            (Self::UnsupportedContentType, _) => StatusCode::BAD_REQUEST,
-        }
-    }
-}
-
-impl From<PipelineError> for PipelineErrorVariant {
-    fn from(error: PipelineError) -> Self {
-        error.error
-    }
-}
-
-impl From<PipelineErrorVariant> for PipelineError {
-    fn from(error: PipelineErrorVariant) -> Self {
-        Self {
-            error,
-            accept_header: None,
+            (Self::ValidationErrors(_), true) => StatusCode::OK,
+            (Self::ValidationErrors(_), false) => StatusCode::BAD_REQUEST,
+            (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
+            (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
         }
     }
 }
 
 impl IntoResponse for PipelineError {
     fn into_response(self) -> Response<Body> {
-        let accept_ok = self
-            .accept_header
-            .is_some_and(|v| v.contains(APPLICATION_JSON.to_str().unwrap()));
-        let status = self.error.default_status_code(accept_ok);
+        let status = self.error.default_status_code(self.accept_ok);
 
         if let PipelineErrorVariant::ValidationErrors(validation_errors) = self.error {
             let validation_error_result = ExecutionResult {
@@ -148,7 +138,7 @@ impl IntoResponse for PipelineError {
             };
 
             return (
-                StatusCode::OK,
+                status,
                 serde_json::to_string(&validation_error_result).unwrap(),
             )
                 .into_response();
