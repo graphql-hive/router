@@ -90,7 +90,7 @@ impl Service<Request<Body>> for ExecutionService {
             .await
             .unwrap_or_else(|err| {
                 tracing::error!("Failed to execute query plan: {}", err);
-                serde_json::to_vec(&serde_json::json!({
+                sonic_rs::to_vec(&sonic_rs::json!({
                     "errors": [{
                         "message": "Internal server error",
                         "extensions": {

@@ -10,8 +10,9 @@ use hyper::{body::Bytes, Version};
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tracing::{error, instrument, trace};
 
+use crate::executors::common::SubgraphExecutionResult;
 use crate::{
-    executors::common::SubgraphExecutor, json_writer::write_and_escape_string, ExecutionResult,
+    executors::common::SubgraphExecutor, json_writer::write_and_escape_string,
     SubgraphExecutionRequest,
 };
 
@@ -84,7 +85,7 @@ impl HTTPSubgraphExecutor {
     async fn _execute<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
-    ) -> Result<ExecutionResult, String> {
+    ) -> Result<SubgraphExecutionResult, String> {
         trace!("Executing HTTP request to subgraph at {}", self.endpoint);
 
         // We may want to remove it, but let's see.
@@ -142,10 +143,10 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
     async fn execute<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
-    ) -> ExecutionResult {
+    ) -> SubgraphExecutionResult {
         self._execute(execution_request).await.unwrap_or_else(|e| {
             error!(e);
-            ExecutionResult::from_error_message(e)
+            SubgraphExecutionResult::from_error_message(e)
         })
     }
 }

@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::{
-    executors::common::SubgraphExecutor, ExecutionResult, GraphQLError, GraphQLErrorLocation,
-    SubgraphExecutionRequest,
+    executors::common::{SubgraphExecutionResult, SubgraphExecutionResultData, SubgraphExecutor},
+    GraphQLError, GraphQLErrorLocation, SubgraphExecutionRequest,
 };
 
 #[async_trait]
@@ -16,7 +17,7 @@ where
     async fn execute<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
-    ) -> ExecutionResult {
+    ) -> SubgraphExecutionResult {
         let response: async_graphql::Response = self.execute(execution_request.into()).await;
         response.into()
     }
@@ -32,7 +33,7 @@ impl<'a> From<SubgraphExecutionRequest<'a>> for async_graphql::Request {
             req.variables.insert(
                 async_graphql::Name::new("representations"),
                 async_graphql::Value::from_json(
-                    serde_json::from_slice(&representations).unwrap_or_default(),
+                    sonic_rs::from_slice(&representations).unwrap_or_default(),
                 )
                 .unwrap(),
             );
@@ -93,10 +94,12 @@ impl From<&async_graphql::ServerError> for GraphQLError {
     }
 }
 
-impl From<async_graphql::Response> for ExecutionResult {
+impl From<async_graphql::Response> for SubgraphExecutionResult {
     fn from(response: async_graphql::Response) -> Self {
-        ExecutionResult {
-            data: Some(response.data.into_json().unwrap()),
+        SubgraphExecutionResult {
+            data: SubgraphExecutionResultData::deserialize(response.data.into_json().unwrap())
+                .map(Some)
+                .unwrap_or(None),
             errors: Some(
                 response
                     .errors

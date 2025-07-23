@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use graphql_parser::Pos;
 use graphql_tools::validation::utils::ValidationError;
 
@@ -9,7 +11,10 @@ impl From<&ValidationError> for GraphQLError {
             message: val.message.to_string(),
             locations: Some(val.locations.iter().map(|pos| pos.into()).collect()),
             path: None,
-            extensions: None,
+            extensions: Some(HashMap::from([(
+                "code".to_string(),
+                serde_json::Value::String(val.error_code.to_string()),
+            )])),
         }
     }
 }

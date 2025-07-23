@@ -1,11 +1,11 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use axum::{body::Body, extract::rejection::QueryRejection, response::IntoResponse};
 use graphql_tools::validation::utils::ValidationError;
 use http::{HeaderName, Method, Request, Response, StatusCode};
-use query_plan_executor::{ExecutionResult, GraphQLError};
+use query_plan_executor::GraphQLError;
 use query_planner::{ast::normalization::error::NormalizationError, planner::PlannerError};
-use serde_json::Value;
+use sonic_rs::json;
 
 use crate::pipeline::header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR};
 
@@ -131,38 +131,29 @@ impl IntoResponse for PipelineError {
         let status = self.error.default_status_code(self.accept_ok);
 
         if let PipelineErrorVariant::ValidationErrors(validation_errors) = self.error {
-            let validation_error_result = ExecutionResult {
-                data: None,
-                errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
-                extensions: None,
-            };
+            let validation_errors: Vec<GraphQLError> =
+                validation_errors.iter().map(|e| e.into()).collect();
+            let error_response = json!({
+                "errors": validation_errors,
+            });
 
-            return (
-                status,
-                serde_json::to_string(&validation_error_result).unwrap(),
-            )
-                .into_response();
+            return (status, sonic_rs::to_string(&error_response).unwrap()).into_response();
         }
 
         let code = self.error.graphql_error_code();
         let message = self.error.graphql_error_message();
 
-        let graphql_error = GraphQLError {
-            extensions: Some(HashMap::from([(
-                "code".to_string(),
-                Value::String(code.to_string()),
-            )])),
-            message,
-            path: None,
-            locations: None,
-        };
+        let error_response = json!({
+            "errors": [
+                {
+                    "message": message,
+                    "extensions": {
+                        "code": code,
+                    }
+                }
+            ]
+        });
 
-        let result = ExecutionResult {
-            data: None,
-            errors: Some(vec![graphql_error]),
-            extensions: None,
-        };
-
-        (status, serde_json::to_string(&result).unwrap()).into_response()
+        (status, sonic_rs::to_string(&error_response).unwrap()).into_response()
     }
 }

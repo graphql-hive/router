@@ -12,8 +12,8 @@ use query_planner::planner::plan_nodes::FlattenNodePathSegment;
 use std::hint::black_box;
 
 use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
-use query_plan_executor::ExecutableQueryPlan;
 use query_plan_executor::{execute_query_plan, ExposeQueryPlanMode};
+use query_plan_executor::{ErrorsAndExtensions, ExecutableQueryPlan};
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::utils::parsing::parse_operation;
 use query_planner::utils::parsing::parse_schema;
@@ -97,16 +97,17 @@ fn query_plan_execution_without_projection_via_http(c: &mut Criterion) {
         b.to_async(&rt).iter(|| async {
             let schema_metadata = black_box(&schema_metadata);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
-            let mut execution_context = query_plan_executor::QueryPlanExecutionContext {
+            let execution_context = query_plan_executor::QueryPlanExecutionContext {
                 variable_values: &None,
                 schema_metadata,
                 subgraph_executor_map,
-                errors: Vec::new(),
-                extensions: HashMap::new(),
             };
+            let mut errors_and_extensions = ErrorsAndExtensions::default();
             let query_plan = black_box(&query_plan);
             let mut data = Value::Null;
-            let result = query_plan.execute(&mut execution_context, &mut data).await;
+            let result = query_plan
+                .execute(&execution_context, &mut data, &mut errors_and_extensions)
+                .await;
             black_box(result);
             black_box(data);
         });
@@ -207,16 +208,17 @@ fn query_plan_executor_without_projection_locally(c: &mut Criterion) {
             let schema_metadata = black_box(&schema_metadata);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
 
-            let mut execution_context = query_plan_executor::QueryPlanExecutionContext {
+            let execution_context = query_plan_executor::QueryPlanExecutionContext {
                 variable_values: &None,
                 schema_metadata,
                 subgraph_executor_map,
-                errors: Vec::new(),
-                extensions: HashMap::new(),
             };
+            let mut errors_and_extensions = ErrorsAndExtensions::default();
             let query_plan = black_box(&query_plan);
             let mut data = Value::Null;
-            let result = query_plan.execute(&mut execution_context, &mut data).await;
+            let result = query_plan
+                .execute(&execution_context, &mut data, &mut errors_and_extensions)
+                .await;
             black_box(result);
             black_box(data);
         });
@@ -415,8 +417,6 @@ fn project_requires(c: &mut Criterion) {
         variable_values: &None,
         subgraph_executor_map: &subgraph_executor_map,
         schema_metadata,
-        errors: Vec::new(),
-        extensions: HashMap::new(),
     };
     let requires_selections: Vec<SelectionItem> =
         [SelectionItem::InlineFragment(InlineFragmentSelection {

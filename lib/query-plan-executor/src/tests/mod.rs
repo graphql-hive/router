@@ -1,11 +1,10 @@
 use query_planner::graph::PlannerOverrideContext;
-use std::collections::HashMap;
 
 use subgraphs::accounts;
 
 use crate::{
     executors::{common::SubgraphExecutor, map::SubgraphExecutorMap},
-    projection, ExecutableQueryPlan, QueryPlanExecutionContext,
+    projection, ErrorsAndExtensions, ExecutableQueryPlan, QueryPlanExecutionContext,
 };
 
 mod traverse_and_callback;
@@ -96,21 +95,22 @@ fn error_propagation() {
         .insert_boxed_arc("directors".to_string(), directors_subgraph.to_boxed_arc());
     tokio_test::block_on(async {
         let mut result_data = serde_json::json!({});
-        let result_errors = vec![];
-        let result_extensions = HashMap::new();
-        let mut execution_context = QueryPlanExecutionContext {
+        let execution_context = QueryPlanExecutionContext {
             variable_values: &None,
             subgraph_executor_map: &subgraph_executor_map,
             schema_metadata: &schema_metadata,
-            errors: result_errors,
-            extensions: result_extensions,
         };
+        let mut errors_and_extensions = ErrorsAndExtensions::default();
         query_plan
-            .execute(&mut execution_context, &mut result_data)
+            .execute(
+                &execution_context,
+                &mut result_data,
+                &mut errors_and_extensions,
+            )
             .await;
         insta::assert_snapshot!(result_data);
-        assert_eq!(execution_context.errors.len(), 1);
-        let error = &execution_context.errors[0];
+        assert_eq!(errors_and_extensions.errors.len(), 1);
+        let error = &errors_and_extensions.errors[0];
         assert_eq!(error.message, "Director not found for movie with id 2");
         assert_eq!(
             error.extensions.as_ref().unwrap().get("code"),
