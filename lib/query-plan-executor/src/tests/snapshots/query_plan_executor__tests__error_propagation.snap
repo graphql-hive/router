@@ -1,0 +1,5 @@
+---
+source: lib/query-plan-executor/src/tests/mod.rs
+expression: result_data
+---
+{"movie1":{"__typename":"Movie","director":{"id":"1","name":"Christopher Nolan"},"id":"1","name":"Inception"},"movie2":{"__typename":"Movie","id":"2","name":"Interstellar"}}

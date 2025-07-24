@@ -35,7 +35,46 @@ impl SubgraphExecutorMap {
         execution_request: crate::SubgraphExecutionRequest<'a>,
     ) -> crate::ExecutionResult {
         match self.inner.get(subgraph_name) {
-            Some(executor) => executor.execute(execution_request).await,
+            Some(executor) => {
+                let mut result = executor.execute(execution_request).await;
+                if let Some(errors) = &mut result.errors {
+                    for error in errors {
+                        match error.extensions {
+                            Some(ref mut extensions) => {
+                                if extensions.get("code").is_none() {
+                                    extensions.insert(
+                                        "code".to_string(),
+                                        serde_json::Value::String(
+                                            "DOWNSTREAM_SERVICE_ERROR".to_string(),
+                                        ),
+                                    );
+                                }
+                                if extensions.get("serviceName").is_none() {
+                                    extensions.insert(
+                                        "serviceName".to_string(),
+                                        serde_json::Value::String(subgraph_name.to_string()),
+                                    );
+                                }
+                            }
+                            None => {
+                                error.extensions = Some(HashMap::from([
+                                    (
+                                        "code".to_string(),
+                                        serde_json::Value::String(
+                                            "DOWNSTREAM_SERVICE_ERROR".to_string(),
+                                        ),
+                                    ),
+                                    (
+                                        "serviceName".to_string(),
+                                        serde_json::Value::String(subgraph_name.to_string()),
+                                    ),
+                                ]));
+                            }
+                        }
+                    }
+                }
+                result
+            }
             None => {
                 warn!(
                     "Subgraph executor not found for subgraph: {}",
