@@ -97,10 +97,9 @@ impl From<&async_graphql::ServerError> for GraphQLError {
 impl From<async_graphql::Response> for SubgraphExecutionResult {
     fn from(response: async_graphql::Response) -> Self {
         SubgraphExecutionResult {
-            data: Some(
-                SubgraphExecutionResultData::deserialize(response.data.into_json().unwrap())
-                    .unwrap(),
-            ),
+            data: SubgraphExecutionResultData::deserialize(response.data.into_json().unwrap())
+                .map(Some)
+                .unwrap_or(None),
             errors: Some(
                 response
                     .errors

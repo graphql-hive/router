@@ -40,8 +40,9 @@ const TYPENAME_FIELD: &str = "__typename";
 trait ExecutablePlanNode {
     async fn execute(
         &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
+        execution_context: &QueryPlanExecutionContext<'_>,
         data: &mut Value,
+        errors_and_extensions: &mut ErrorsAndExtensions,
     );
 }
 
@@ -49,8 +50,9 @@ trait ExecutablePlanNode {
 pub trait ExecutableQueryPlan {
     async fn execute(
         &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
+        execution_context: &QueryPlanExecutionContext<'_>,
         data: &mut Value,
+        errors_and_extensions: &mut ErrorsAndExtensions,
     );
 }
 
@@ -58,44 +60,46 @@ pub trait ExecutableQueryPlan {
 impl ExecutablePlanNode for PlanNode {
     async fn execute(
         &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
+        execution_context: &QueryPlanExecutionContext<'_>,
         data: &mut Value,
+        errors_and_extensions: &mut ErrorsAndExtensions,
     ) {
         match self {
-            PlanNode::Fetch(node) => node.execute(execution_context, data).await,
-            PlanNode::Sequence(node) => node.execute(execution_context, data).await,
-            PlanNode::Parallel(node) => node.execute(execution_context, data).await,
-            PlanNode::Flatten(node) => node.execute(execution_context, data).await,
-            PlanNode::Condition(node) => node.execute(execution_context, data).await,
+            PlanNode::Fetch(node) => {
+                node.execute(execution_context, data, errors_and_extensions)
+                    .await
+            }
+            PlanNode::Sequence(node) => {
+                node.execute(execution_context, data, errors_and_extensions)
+                    .await
+            }
+            PlanNode::Parallel(node) => {
+                node.execute(execution_context, data, errors_and_extensions)
+                    .await
+            }
+            PlanNode::Flatten(node) => {
+                node.execute(execution_context, data, errors_and_extensions)
+                    .await
+            }
+            PlanNode::Condition(node) => {
+                node.execute(execution_context, data, errors_and_extensions)
+                    .await
+            }
             PlanNode::Subscription(node) => {
                 // Subscriptions typically use a different protocol.
                 // Execute the primary node for now.
                 warn!(
             "Executing SubscriptionNode's primary as a normal node. Real subscription handling requires a different mechanism."
         );
-                node.primary.execute(execution_context, data).await
+                node.primary
+                    .execute(execution_context, data, errors_and_extensions)
+                    .await
             }
             PlanNode::Defer(_) => {
                 // Defer/Deferred execution is complex.
                 warn!("DeferNode execution is not fully implemented.");
             }
         }
-    }
-}
-
-fn process_errors_and_extensions(
-    execution_context: &mut QueryPlanExecutionContext<'_>,
-    errors: Option<Vec<GraphQLError>>,
-    extensions: Option<HashMap<String, Value>>,
-) {
-    if let Some(errors) = errors {
-        trace!("Processing errors: {:?}", errors);
-        execution_context.errors.extend(errors);
-    }
-    // 7. Handle extensions
-    if let Some(extensions) = extensions {
-        trace!("Processing extensions: {:?}", extensions);
-        execution_context.extensions.extend(extensions);
     }
 }
 
@@ -117,8 +121,9 @@ impl ExecutablePlanNode for FetchNode {
     #[instrument(level = "debug", skip_all, name = "FetchNode::execute")]
     async fn execute(
         &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
+        execution_context: &QueryPlanExecutionContext<'_>,
         data: &mut Value,
+        errors_and_extensions: &mut ErrorsAndExtensions,
     ) {
         let fetch_result = self.execute_and_get_result(execution_context, None).await;
 
@@ -127,11 +132,7 @@ impl ExecutablePlanNode for FetchNode {
             fetch_result_data.merge_into(data);
         }
 
-        process_errors_and_extensions(
-            execution_context,
-            fetch_result.errors,
-            fetch_result.extensions,
-        );
+        errors_and_extensions.extend_from(fetch_result.errors, fetch_result.extensions);
     }
 }
 
@@ -414,11 +415,12 @@ impl ExecutablePlanNode for SequenceNode {
     ))]
     async fn execute(
         &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
+        execution_context: &QueryPlanExecutionContext<'_>,
         data: &mut Value,
+        errors_and_extensions: &mut ErrorsAndExtensions,
     ) {
         for node in &self.nodes {
-            node.execute(execution_context, data) // No representations passed to child nodes
+            node.execute(execution_context, data, errors_and_extensions) // No representations passed to child nodes
                 .await;
         }
     }
@@ -440,180 +442,153 @@ impl ExecutablePlanNode for ParallelNode {
     ))]
     async fn execute(
         &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
+        execution_context: &QueryPlanExecutionContext<'_>,
         data: &mut Value,
+        errors_and_extensions: &mut ErrorsAndExtensions,
     ) {
-        let mut all_errors = vec![];
-        let mut all_extensions = vec![];
+        let mut jobs: FuturesUnordered<BoxFuture<ParallelJob>> = FuturesUnordered::new();
 
-        {
-            let mut jobs: FuturesUnordered<BoxFuture<ParallelJob>> = FuturesUnordered::new();
-
-            // Collect Fetch node results and flatten nodes for parallel execution
-            let now = std::time::Instant::now();
-            for node in &self.nodes {
-                let node = if let PlanNode::Condition(condition_node) = node {
-                    // If the node is a ConditionNode, we need to check the condition
-                    if let Some(inner_node) =
-                        condition_node.inner_node_by_variables(execution_context.variable_values)
-                    {
-                        inner_node
-                    } else {
-                        continue; // Skip this node if the condition is not met
-                    }
+        // Collect Fetch node results and flatten nodes for parallel execution
+        let now = std::time::Instant::now();
+        for node in &self.nodes {
+            let node = if let PlanNode::Condition(condition_node) = node {
+                // If the node is a ConditionNode, we need to check the condition
+                if let Some(inner_node) =
+                    condition_node.inner_node_by_variables(execution_context.variable_values)
+                {
+                    inner_node
                 } else {
-                    node
-                };
-                match node {
-                    PlanNode::Fetch(fetch_node) => {
-                        let job = fetch_node.execute_and_get_result(execution_context, None);
-                        jobs.push(Box::pin(job.map(ParallelJob::Root)));
-                    }
-                    PlanNode::Flatten(flatten_node) => {
-                        let fetch_node = match flatten_node.node.as_ref() {
-                            PlanNode::Fetch(fetch_node) => fetch_node,
-                            _ => {
-                                warn!(
+                    continue; // Skip this node if the condition is not met
+                }
+            } else {
+                node
+            };
+            match node {
+                PlanNode::Fetch(fetch_node) => {
+                    let job = fetch_node.execute_and_get_result(execution_context, None);
+                    jobs.push(Box::pin(job.map(ParallelJob::Root)));
+                }
+                PlanNode::Flatten(flatten_node) => {
+                    let fetch_node = match flatten_node.node.as_ref() {
+                        PlanNode::Fetch(fetch_node) => fetch_node,
+                        _ => {
+                            warn!(
                                 "FlattenNode can only execute FetchNode as child node, found: {:?}",
                                 flatten_node.node
                             );
-                                continue; // Skip if the child node is not a FetchNode
+                            continue; // Skip if the child node is not a FetchNode
+                        }
+                    };
+                    let mut filtered_representations = Vec::with_capacity(1024);
+                    filtered_representations.push(b'[');
+
+                    let (normalized_path, number_of_indexes) =
+                        flatten_node.normalized_path_and_number_of_indexes();
+
+                    let mut indexes_in_paths: Vec<VecDeque<usize>> = vec![];
+                    traverse_and_callback(
+                        data,
+                        normalized_path,
+                        execution_context.schema_metadata,
+                        VecDeque::with_capacity(number_of_indexes),
+                        &mut |entity: &mut Value, indexes_in_path| {
+                            let is_projected = fetch_node.project_and_rewrite(
+                                entity,
+                                execution_context,
+                                &mut filtered_representations,
+                                indexes_in_paths.is_empty(),
+                            );
+                            if is_projected {
+                                indexes_in_paths.push(indexes_in_path);
                             }
-                        };
-                        let mut filtered_representations = Vec::with_capacity(1024);
-                        filtered_representations.push(b'[');
-
-                        let (normalized_path, number_of_indexes) =
-                            flatten_node.normalized_path_and_number_of_indexes();
-                            
-                        let mut indexes_in_paths: Vec<VecDeque<usize>> = vec![];
-                        traverse_and_callback(
-                            data,
-                            normalized_path,
-                            execution_context.schema_metadata,
-                            VecDeque::with_capacity(number_of_indexes),
-                            &mut |entity: &mut Value, indexes_in_path| {
-                                let is_projected = fetch_node.project_and_rewrite(
-                                    entity,
-                                    execution_context,
-                                    &mut filtered_representations,
-                                    indexes_in_paths.is_empty(),
-                                );
-                                if is_projected {
-                                    indexes_in_paths.push(indexes_in_path);
-                                }
-                            },
-                        );
-                        filtered_representations.push(b']');
-                        let job = fetch_node.execute_and_get_result(
-                            execution_context,
-                            Some(filtered_representations),
-                        );
-                        jobs.push(Box::pin(job.map(|r| {
-                            ParallelJob::Flatten(r, normalized_path, indexes_in_paths)
-                        })));
-                    }
-                    _ => {}
+                        },
+                    );
+                    filtered_representations.push(b']');
+                    let job = fetch_node
+                        .execute_and_get_result(execution_context, Some(filtered_representations));
+                    jobs.push(Box::pin(job.map(|r| {
+                        ParallelJob::Flatten(r, normalized_path, indexes_in_paths)
+                    })));
                 }
+                _ => {}
             }
-            trace!("Prepared {} jobs in {:?}", jobs.len(), now.elapsed());
+        }
+        trace!("Prepared {} jobs in {:?}", jobs.len(), now.elapsed());
 
-            let now = std::time::Instant::now();
-            while let Some(result) = jobs.next().await {
-                match result {
-                    ParallelJob::Root(fetch_result) => {
-                        // Process root FetchNode results
-                        if let Some(fetch_result_data) = fetch_result.data {
-                            fetch_result_data.merge_into(data);
-                        }
-                        // Process errors and extensions
-                        if let Some(errors) = fetch_result.errors {
-                            all_errors.extend(errors);
-                        }
-                        if let Some(extensions) = fetch_result.extensions {
-                            all_extensions.push(extensions);
-                        }
+        let now = std::time::Instant::now();
+        while let Some(result) = jobs.next().await {
+            match result {
+                ParallelJob::Root(fetch_result) => {
+                    // Process root FetchNode results
+                    if let Some(fetch_result_data) = fetch_result.data {
+                        fetch_result_data.merge_into(data);
                     }
-                    ParallelJob::Flatten(result, path, mut indexes_in_paths) => {
-                        if let Some(result_data) = result.data {
-                            if let Some(entities) = result_data._entities {
-                                'entity_loop: for (entity, indexes_in_path) in
-                                    entities.into_iter().zip(indexes_in_paths.iter_mut())
-                                {
-                                    let mut target = &mut *data;
-                                    for path_segment in path.iter() {
-                                        match path_segment {
-                                            FlattenNodePathSegment::List => {
-                                                let index = indexes_in_path.pop_front().unwrap();
-                                                target = &mut target[index];
-                                            }
-                                            FlattenNodePathSegment::Field(field_name) => {
-                                                target = &mut target[field_name];
-                                            }
-                                            FlattenNodePathSegment::Cast(type_condition) => {
-                                                let type_name = match target.get(TYPENAME_FIELD) {
-                                                    Some(Value::String(type_name)) => type_name,
-                                                    _ => type_condition, // Default to type_condition if not found
-                                                };
-                                                if !execution_context
-                                                    .schema_metadata
-                                                    .possible_types
-                                                    .entity_satisfies_type_condition(
-                                                        type_name,
-                                                        type_condition,
-                                                    )
-                                                {
-                                                    continue 'entity_loop; // Skip if type condition is not satisfied
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if !indexes_in_path.is_empty() {
-                                        // If there are still indexes left, we need to traverse them
-                                        while let Some(index) = indexes_in_path.pop_front() {
+                    errors_and_extensions.extend_from(fetch_result.errors, fetch_result.extensions);
+                }
+                ParallelJob::Flatten(result, path, mut indexes_in_paths) => {
+                    if let Some(result_data) = result.data {
+                        if let Some(entities) = result_data._entities {
+                            'entity_loop: for (entity, indexes_in_path) in
+                                entities.into_iter().zip(indexes_in_paths.iter_mut())
+                            {
+                                let mut target = &mut *data;
+                                for path_segment in path.iter() {
+                                    match path_segment {
+                                        FlattenNodePathSegment::List => {
+                                            let index = indexes_in_path.pop_front().unwrap();
                                             target = &mut target[index];
                                         }
+                                        FlattenNodePathSegment::Field(field_name) => {
+                                            target = &mut target[field_name];
+                                        }
+                                        FlattenNodePathSegment::Cast(type_condition) => {
+                                            let type_name = match target.get(TYPENAME_FIELD) {
+                                                Some(Value::String(type_name)) => type_name,
+                                                _ => type_condition, // Default to type_condition if not found
+                                            };
+                                            if !execution_context
+                                                .schema_metadata
+                                                .possible_types
+                                                .entity_satisfies_type_condition(
+                                                    type_name,
+                                                    type_condition,
+                                                )
+                                            {
+                                                continue 'entity_loop; // Skip if type condition is not satisfied
+                                            }
+                                        }
                                     }
-                                    deep_merge::deep_merge(target, entity);
                                 }
+                                if !indexes_in_path.is_empty() {
+                                    // If there are still indexes left, we need to traverse them
+                                    while let Some(index) = indexes_in_path.pop_front() {
+                                        target = &mut target[index];
+                                    }
+                                }
+                                deep_merge::deep_merge(target, entity);
                             }
                         }
-                        // Process errors and extensions
-                        if let Some(errors) = result.errors {
-                            let normalized_errors =
-                                error_normalization::normalize_errors_for_representations(
-                                    &mut indexes_in_paths,
-                                    path,
-                                    errors,
-                                );
-                            all_errors.extend(normalized_errors);
-                        }
-                        if let Some(extensions) = result.extensions {
-                            all_extensions.push(extensions);
-                        }
                     }
+                    // Process errors and extensions
+
+                    errors_and_extensions.extend_from(
+                        result.errors.map(|errors| {
+                            error_normalization::normalize_errors_for_representations(
+                                &mut indexes_in_paths,
+                                path,
+                                errors,
+                            )
+                        }),
+                        result.extensions,
+                    );
                 }
             }
-
-            trace!(
-                "Processed {} parallel jobs in {:?}",
-                jobs.len(),
-                now.elapsed()
-            );
         }
-        // 6. Process errors and extensions
-        process_errors_and_extensions(
-            execution_context,
-            if all_errors.is_empty() {
-                None
-            } else {
-                Some(all_errors)
-            },
-            if all_extensions.is_empty() {
-                None
-            } else {
-                Some(all_extensions.into_iter().flatten().collect())
-            },
+
+        trace!(
+            "Processed {} parallel jobs in {:?}",
+            jobs.len(),
+            now.elapsed()
         );
     }
 }
@@ -693,8 +668,9 @@ impl ExecutablePlanNode for FlattenNode {
     ))]
     async fn execute(
         &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
+        execution_context: &QueryPlanExecutionContext<'_>,
         data: &mut Value,
+        errors_and_extensions: &mut ErrorsAndExtensions,
     ) {
         // Execute the child node. `execution_context` can be borrowed mutably
         // because `collected_representations` borrows `data_for_flatten`, not `execution_context.data`.
@@ -712,8 +688,7 @@ impl ExecutablePlanNode for FlattenNode {
             }
         };
         filtered_representations.push(b'[');
-        let (normalized_path, number_of_indexes) =
-            self.normalized_path_and_number_of_indexes();
+        let (normalized_path, number_of_indexes) = self.normalized_path_and_number_of_indexes();
         traverse_and_callback(
             data,
             normalized_path,
@@ -767,7 +742,8 @@ impl ExecutablePlanNode for FlattenNode {
                 errors,
             )
         });
-        process_errors_and_extensions(execution_context, normalized_errors, result.extensions);
+
+        errors_and_extensions.extend_from(normalized_errors, result.extensions);
     }
 }
 
@@ -809,13 +785,15 @@ impl ExecutablePlanNode for ConditionNode {
     #[instrument(level = "trace", skip_all, name = "ConditionNode::execute")]
     async fn execute(
         &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
+        execution_context: &QueryPlanExecutionContext<'_>,
         data: &mut Value,
+        errors_and_extensions: &mut ErrorsAndExtensions,
     ) {
         let inner_node = self.inner_node_by_variables(execution_context.variable_values);
         if let Some(node) = inner_node {
             // Execute the inner node if it exists
-            node.execute(execution_context, data).await;
+            node.execute(execution_context, data, errors_and_extensions)
+                .await;
         } else {
             // If no inner node, we do nothing
             trace!("ConditionNode condition not met, skipping execution.");
@@ -828,11 +806,14 @@ impl ExecutableQueryPlan for QueryPlan {
     #[instrument(level = "trace", skip_all, name = "QueryPlan::execute")]
     async fn execute(
         &self,
-        execution_context: &mut QueryPlanExecutionContext<'_>,
+        execution_context: &QueryPlanExecutionContext<'_>,
         data: &mut Value,
+        errors_and_extensions: &mut ErrorsAndExtensions,
     ) {
         if let Some(root_node) = &self.node {
-            root_node.execute(execution_context, data).await
+            root_node
+                .execute(execution_context, data, errors_and_extensions)
+                .await
         }
     }
 }
@@ -878,8 +859,27 @@ pub struct QueryPlanExecutionContext<'a> {
     pub variable_values: &'a Option<HashMap<String, Value>>,
     pub schema_metadata: &'a SchemaMetadata,
     pub subgraph_executor_map: &'a SubgraphExecutorMap,
+}
+
+#[derive(Default)]
+pub struct ErrorsAndExtensions {
     pub errors: Vec<GraphQLError>,
     pub extensions: HashMap<String, Value>,
+}
+
+impl ErrorsAndExtensions {
+    pub fn extend_from(
+        &mut self,
+        errors: Option<Vec<GraphQLError>>,
+        extensions: Option<HashMap<String, Value>>,
+    ) {
+        if let Some(errors) = errors {
+            self.errors.extend(errors);
+        }
+        if let Some(extensions) = extensions {
+            self.extensions.extend(extensions);
+        }
+    }
 }
 
 impl QueryPlanExecutionContext<'_> {
@@ -1216,34 +1216,36 @@ pub async fn execute_query_plan(
     } else {
         Value::Null
     };
-    let mut result_errors = vec![]; // Initial errors are empty
-    let mut result_extensions = if expose_query_plan == ExposeQueryPlanMode::Yes
-        || expose_query_plan == ExposeQueryPlanMode::DryRun
-    {
-        HashMap::from_iter([("queryPlan".to_string(), serde_json::to_value(query_plan)?)])
-    } else {
-        HashMap::new()
-    };
-    let mut execution_context = QueryPlanExecutionContext {
+    let execution_context = QueryPlanExecutionContext {
         variable_values,
         subgraph_executor_map,
         schema_metadata,
-        errors: result_errors,
-        extensions: result_extensions,
+    };
+    let mut errors_and_extensions = ErrorsAndExtensions {
+        errors: vec![],
+        extensions: if expose_query_plan == ExposeQueryPlanMode::Yes
+            || expose_query_plan == ExposeQueryPlanMode::DryRun
+        {
+            HashMap::from_iter([("queryPlan".to_string(), serde_json::to_value(query_plan)?)])
+        } else {
+            HashMap::new()
+        },
     };
     if expose_query_plan != ExposeQueryPlanMode::DryRun {
         query_plan
-            .execute(&mut execution_context, &mut result_data)
+            .execute(
+                &execution_context,
+                &mut result_data,
+                &mut errors_and_extensions,
+            )
             .await;
     }
-    result_errors = execution_context.errors; // Get the final errors from the execution context
-    result_extensions = execution_context.extensions; // Get the final extensions from the execution context
     let mut writer = Vec::with_capacity(4096);
     projection::project_by_operation(
         &mut writer,
         &result_data,
-        &mut result_errors,
-        &result_extensions,
+        &mut errors_and_extensions.errors,
+        &errors_and_extensions.extensions,
         operation_type_name,
         selections,
         variable_values,
