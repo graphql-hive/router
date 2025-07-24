@@ -8,6 +8,7 @@ use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::{body::Bytes, Version};
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use smallvec::SmallVec;
 use tracing::{error, instrument, trace};
 
 use crate::executors::common::SubgraphExecutionResult;
@@ -89,21 +90,26 @@ impl HTTPSubgraphExecutor {
         trace!("Executing HTTP request to subgraph at {}", self.endpoint);
 
         // We may want to remove it, but let's see.
-        let mut body = Vec::with_capacity(4096);
-        Self::write_body(&execution_request, &mut body)
-            .map_err(|e| format!("Failed to write request body: {}", e))?;
+        let body = {
+            let mut body: SmallVec<[u8; 4096]> = SmallVec::with_capacity(4096);
+            Self::write_body(&execution_request, &mut body)
+                .map_err(|e| format!("Failed to write request body: {}", e))?;
+            Full::new(Bytes::from(body.into_boxed_slice()))
+        };
 
-        let mut req = hyper::Request::builder()
+        let mut req = {
+            hyper::Request::builder()
             .method(http::Method::POST)
             .uri(&self.endpoint)
             .version(Version::HTTP_11)
-            .body(body.into())
+            .body(body)
             .map_err(|e| {
                 format!(
                     "Failed to build request to subgraph {}: {}",
                     self.endpoint, e
                 )
-            })?;
+            })?
+        };
 
         *req.headers_mut() = self.header_map.clone();
 

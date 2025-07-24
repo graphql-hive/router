@@ -12,7 +12,7 @@ use crate::pipeline::header::{
 use crate::pipeline::normalize_service::GraphQLNormalizationPayload;
 use crate::pipeline::query_plan_service::QueryPlanPayload;
 use crate::shared_state::GatewaySharedState;
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use http::{HeaderName, HeaderValue, Request, Response};
 use query_plan_executor::{execute_query_plan, ExposeQueryPlanMode};
 use tower::Service;
@@ -98,10 +98,10 @@ impl Service<Request<Body>> for ExecutionService {
                         }
                     }]
                 }))
-                .unwrap_or_default()
+                .unwrap_or_default().into()
             });
 
-            let mut response = Response::new(Body::from(execution_result));
+            let mut response = Response::new(Body::from(Bytes::from(execution_result.into_boxed_slice())));
 
             let response_content_type: &'static HeaderValue =
                 if req.accepts_content_type(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR) {

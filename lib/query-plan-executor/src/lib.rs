@@ -10,6 +10,7 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use smallvec::SmallVec;
 use std::collections::VecDeque;
 use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
@@ -35,6 +36,7 @@ mod value_from_ast;
 pub mod variables;
 
 const TYPENAME_FIELD: &str = "__typename";
+const FILTERED_REPRESENTATIONS_SIZE: usize = 1024;
 
 #[async_trait]
 trait ExecutablePlanNode {
@@ -108,7 +110,7 @@ trait ExecutableFetchNode {
     async fn execute_and_get_result(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
-        filtered_representations: Option<Vec<u8>>,
+        filtered_representations: Option<SmallVec<[u8; FILTERED_REPRESENTATIONS_SIZE]>>,
     ) -> SubgraphExecutionResult;
     fn prepare_variables_for_fetch_node<'a>(
         &'a self,
@@ -142,7 +144,7 @@ impl ExecutableFetchNode for FetchNode {
     async fn execute_and_get_result(
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
-        filtered_representations: Option<Vec<u8>>,
+        filtered_representations: Option<SmallVec<[u8; FILTERED_REPRESENTATIONS_SIZE]>>,
     ) -> SubgraphExecutionResult {
         // 2. Prepare variables for fetch
         let execution_request = SubgraphExecutionRequest {
@@ -479,7 +481,7 @@ impl ExecutablePlanNode for ParallelNode {
                             continue; // Skip if the child node is not a FetchNode
                         }
                     };
-                    let mut filtered_representations = Vec::with_capacity(1024);
+                    let mut filtered_representations = SmallVec::with_capacity(FILTERED_REPRESENTATIONS_SIZE);
                     filtered_representations.push(b'[');
 
                     let (normalized_path, number_of_indexes) =
@@ -676,7 +678,7 @@ impl ExecutablePlanNode for FlattenNode {
         // because `collected_representations` borrows `data_for_flatten`, not `execution_context.data`.
         let now = std::time::Instant::now();
         let mut representations = vec![];
-        let mut filtered_representations = Vec::with_capacity(1024);
+        let mut filtered_representations = SmallVec::with_capacity(FILTERED_REPRESENTATIONS_SIZE);
         let fetch_node = match self.node.as_ref() {
             PlanNode::Fetch(fetch_node) => fetch_node,
             _ => {
@@ -851,7 +853,7 @@ pub struct SubgraphExecutionRequest<'a> {
     pub operation_name: Option<&'a str>,
     pub variables: Option<HashMap<&'a str, &'a Value>>,
     pub extensions: Option<HashMap<String, Value>>,
-    pub representations: Option<Vec<u8>>,
+    pub representations: Option<SmallVec<[u8; FILTERED_REPRESENTATIONS_SIZE]>>,
 }
 
 pub struct QueryPlanExecutionContext<'a> {
@@ -1192,6 +1194,8 @@ pub enum ExposeQueryPlanMode {
     DryRun,
 }
 
+const EXECUTION_RESULT_SIZE: usize = 4096;
+
 #[instrument(
     level = "trace",
     skip_all,
@@ -1210,7 +1214,7 @@ pub async fn execute_query_plan(
     selections: &Vec<FieldProjectionPlan>,
     has_introspection: bool,
     expose_query_plan: ExposeQueryPlanMode,
-) -> std::io::Result<Vec<u8>> {
+) -> std::io::Result<SmallVec<[u8; EXECUTION_RESULT_SIZE]>> {
     let mut result_data = if has_introspection {
         schema_metadata.introspection_query_json.clone()
     } else {
@@ -1240,7 +1244,7 @@ pub async fn execute_query_plan(
             )
             .await;
     }
-    let mut writer = Vec::with_capacity(4096);
+    let mut writer = SmallVec::with_capacity(EXECUTION_RESULT_SIZE);
     projection::project_by_operation(
         &mut writer,
         &result_data,

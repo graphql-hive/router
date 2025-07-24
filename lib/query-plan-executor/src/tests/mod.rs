@@ -56,7 +56,7 @@ fn query_executor_pipeline_locally() {
             crate::ExposeQueryPlanMode::No,
         )
         .await;
-        insta::assert_snapshot!(String::from_utf8(result.unwrap()).unwrap(),);
+        insta::assert_snapshot!(String::from_utf8(result.unwrap().to_vec()).unwrap(),);
     });
 }
 
