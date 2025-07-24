@@ -214,6 +214,7 @@ jobs:
           annotate_only: true
           job_summary: true
           verbose_summary: false
+          skip_success_summary: true
           include_empty_in_summary: false
           include_time_in_summary: true
           simplified_summary: true
