@@ -480,16 +480,12 @@ impl ExecutablePlanNode for ParallelNode {
                                 continue; // Skip if the child node is not a FetchNode
                             }
                         };
-                        let requires_nodes = fetch_node.requires.as_ref().unwrap();
                         let mut filtered_representations = Vec::with_capacity(1024);
                         filtered_representations.push(b'[');
-                        let mut number_of_indexes = 0;
-                        let normalized_path = flatten_node.path.as_slice();
-                        for segment in normalized_path.iter() {
-                            if *segment == FlattenNodePathSegment::List {
-                                number_of_indexes += 1;
-                            }
-                        }
+
+                        let (normalized_path, number_of_indexes) =
+                            flatten_node.normalized_path_and_number_of_indexes();
+                            
                         let mut indexes_in_paths: Vec<VecDeque<usize>> = vec![];
                         traverse_and_callback(
                             data,
@@ -497,33 +493,12 @@ impl ExecutablePlanNode for ParallelNode {
                             execution_context.schema_metadata,
                             VecDeque::with_capacity(number_of_indexes),
                             &mut |entity: &mut Value, indexes_in_path| {
-                                let is_projected =
-                                    if let Some(input_rewrites) = &fetch_node.input_rewrites {
-                                        // We need to own the value and not modify the original entity
-                                        let mut entity_owned = entity.to_owned();
-                                        for input_rewrite in input_rewrites {
-                                            input_rewrite.apply(
-                                                &execution_context.schema_metadata.possible_types,
-                                                FetchRewriteInput::Value(&mut entity_owned),
-                                            );
-                                        }
-                                        execution_context.project_requires(
-                                            &requires_nodes.items,
-                                            &entity_owned,
-                                            &mut filtered_representations,
-                                            indexes_in_paths.is_empty(),
-                                            None,
-                                        )
-                                    } else {
-                                        execution_context.project_requires(
-                                            &requires_nodes.items,
-                                            entity,
-                                            &mut filtered_representations,
-                                            indexes_in_paths.is_empty(),
-                                            None,
-                                        )
-                                    }
-                                    .unwrap_or(false);
+                                let is_projected = fetch_node.project_and_rewrite(
+                                    entity,
+                                    execution_context,
+                                    &mut filtered_representations,
+                                    indexes_in_paths.is_empty(),
+                                );
                                 if is_projected {
                                     indexes_in_paths.push(indexes_in_path);
                                 }
@@ -643,6 +618,74 @@ impl ExecutablePlanNode for ParallelNode {
     }
 }
 
+trait ProjectAndRewrite {
+    fn project_and_rewrite(
+        &self,
+        entity: &mut Value,
+        execution_context: &QueryPlanExecutionContext<'_>,
+        filtered_representations: &mut impl std::io::Write,
+        is_first: bool,
+    ) -> bool;
+}
+
+impl ProjectAndRewrite for FetchNode {
+    fn project_and_rewrite(
+        &self,
+        entity: &mut Value,
+        execution_context: &QueryPlanExecutionContext<'_>,
+        filtered_representations: &mut impl std::io::Write,
+        is_first: bool,
+    ) -> bool {
+        let requires_nodes = self.requires.as_ref().unwrap();
+        if let Some(input_rewrites) = &self.input_rewrites {
+            // We need to own the value and not modify the original entity
+            let mut entity_owned = entity.to_owned();
+            for input_rewrite in input_rewrites {
+                input_rewrite.apply(
+                    &execution_context.schema_metadata.possible_types,
+                    FetchRewriteInput::Value(&mut entity_owned),
+                );
+            }
+            execution_context
+                .project_requires(
+                    &requires_nodes.items,
+                    &entity_owned,
+                    filtered_representations,
+                    is_first,
+                    None,
+                )
+                .unwrap_or(false)
+        } else {
+            execution_context
+                .project_requires(
+                    &requires_nodes.items,
+                    entity,
+                    filtered_representations,
+                    is_first,
+                    None,
+                )
+                .unwrap_or(false)
+        }
+    }
+}
+
+trait NormalizedPathAndNumOfIndexes {
+    fn normalized_path_and_number_of_indexes(&self) -> (&[FlattenNodePathSegment], usize);
+}
+
+impl NormalizedPathAndNumOfIndexes for FlattenNode {
+    fn normalized_path_and_number_of_indexes(&self) -> (&[FlattenNodePathSegment], usize) {
+        let normalized_path = self.path.as_slice();
+        let mut number_of_indexes = 0;
+        for segment in normalized_path.iter() {
+            if *segment == FlattenNodePathSegment::List {
+                number_of_indexes += 1;
+            }
+        }
+        (normalized_path, number_of_indexes)
+    }
+}
+
 #[async_trait]
 impl ExecutablePlanNode for FlattenNode {
     #[instrument(level = "trace", skip_all, name = "FlattenNode::execute", fields(
@@ -668,54 +711,23 @@ impl ExecutablePlanNode for FlattenNode {
                 return; // Skip if the child node is not a FetchNode
             }
         };
-        let requires_nodes = fetch_node.requires.as_ref().unwrap();
         filtered_representations.push(b'[');
-        let mut first = true;
-        let normalized_path = self.path.as_slice();
-        let mut number_of_indexes = 0;
-        for segment in normalized_path.iter() {
-            if *segment == FlattenNodePathSegment::List {
-                number_of_indexes += 1;
-            }
-        }
+        let (normalized_path, number_of_indexes) =
+            self.normalized_path_and_number_of_indexes();
         traverse_and_callback(
             data,
             normalized_path,
             execution_context.schema_metadata,
             VecDeque::with_capacity(number_of_indexes),
             &mut |entity: &mut Value, indexes_in_paths| {
-                let is_projected = if let Some(input_rewrites) = &fetch_node.input_rewrites {
-                    // We need to own the value and not modify the original entity
-                    let mut entity_owned = entity.to_owned();
-                    for input_rewrite in input_rewrites {
-                        input_rewrite.apply(
-                            &execution_context.schema_metadata.possible_types,
-                            FetchRewriteInput::Value(&mut entity_owned),
-                        );
-                    }
-                    execution_context
-                        .project_requires(
-                            &requires_nodes.items,
-                            &entity_owned,
-                            &mut filtered_representations,
-                            first,
-                            None,
-                        )
-                        .unwrap_or(false)
-                } else {
-                    execution_context
-                        .project_requires(
-                            &requires_nodes.items,
-                            entity,
-                            &mut filtered_representations,
-                            first,
-                            None,
-                        )
-                        .unwrap_or(false)
-                };
+                let is_projected = fetch_node.project_and_rewrite(
+                    entity,
+                    execution_context,
+                    &mut filtered_representations,
+                    representations.is_empty(),
+                );
                 if is_projected {
                     representations.push((entity, indexes_in_paths));
-                    first = false;
                 }
             },
         );
@@ -725,7 +737,7 @@ impl ExecutablePlanNode for FlattenNode {
             representations.len(),
             now.elapsed()
         );
-        if first {
+        if representations.is_empty() {
             // No representations collected, so we skip the fetch execution
             return;
         }
@@ -735,7 +747,9 @@ impl ExecutablePlanNode for FlattenNode {
 
         if let Some(data) = result.data {
             if let Some(entities) = data._entities {
-                for (entity, (target, _paths)) in entities.into_iter().zip(representations.iter_mut()) {
+                for (entity, (target, _paths)) in
+                    entities.into_iter().zip(representations.iter_mut())
+                {
                     // Merge the entity into the representation
                     deep_merge::deep_merge(target, entity);
                 }
