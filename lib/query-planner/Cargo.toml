@@ -26,7 +26,7 @@ rustc-hash = "2.1.1"
 # Testing
 insta = { version = "1.42.1" }
 # Benchmarking
-criterion = { version = "0.6", features = ["html_reports"] }
+criterion = { version = "0.7", features = ["html_reports"] }
 # Tracing
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing-tree = "0.4.0"
