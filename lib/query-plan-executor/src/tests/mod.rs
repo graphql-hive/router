@@ -1,11 +1,9 @@
 use query_planner::graph::PlannerOverrideContext;
-use std::collections::HashMap;
-
 use subgraphs::accounts;
 
 use crate::{
     executors::{common::SubgraphExecutor, map::SubgraphExecutorMap},
-    projection, ExecutableQueryPlan, QueryPlanExecutionContext,
+    projection,
 };
 
 mod traverse_and_callback;
@@ -58,73 +56,5 @@ fn query_executor_pipeline_locally() {
         )
         .await;
         insta::assert_snapshot!(String::from_utf8(result.unwrap()).unwrap(),);
-    });
-}
-
-mod fixtures;
-
-#[test]
-fn error_propagation() {
-    let supergraph_sdl =
-        std::fs::read_to_string("./src/tests/fixtures/error_propagation/supergraph.graphql")
-            .expect("Unable to read input file");
-    let parsed_schema = query_planner::utils::parsing::parse_schema(&supergraph_sdl);
-    let planner = query_planner::planner::Planner::new_from_supergraph(&parsed_schema)
-        .expect("Failed to create planner from supergraph");
-    let parsed_document = query_planner::utils::parsing::parse_operation(
-        &std::fs::read_to_string("./src/tests/fixtures/error_propagation/operation.graphql")
-            .expect("Unable to read input file"),
-    );
-    let normalized_document = query_planner::ast::normalization::normalize_operation(
-        &planner.supergraph,
-        &parsed_document,
-        None,
-    )
-    .expect("Failed to normalize operation");
-    let normalized_operation = normalized_document.executable_operation();
-    let query_plan = planner
-        .plan_from_normalized_operation(normalized_operation, PlannerOverrideContext::default())
-        .expect("Failed to create query plan");
-
-    let schema_metadata =
-        crate::schema_metadata::SchemaWithMetadata::schema_metadata(&planner.consumer_schema);
-    let movies_subgraph = fixtures::error_propagation::movies::get_subgraph();
-    let directors_subgraph = fixtures::error_propagation::directors::get_subgraph();
-    let mut subgraph_executor_map = SubgraphExecutorMap::new();
-    subgraph_executor_map.insert_boxed_arc("movies".to_string(), movies_subgraph.to_boxed_arc());
-    subgraph_executor_map
-        .insert_boxed_arc("directors".to_string(), directors_subgraph.to_boxed_arc());
-    tokio_test::block_on(async {
-        let mut result_data = serde_json::json!({});
-        let result_errors = vec![];
-        let result_extensions = HashMap::new();
-        let mut execution_context = QueryPlanExecutionContext {
-            variable_values: &None,
-            subgraph_executor_map: &subgraph_executor_map,
-            schema_metadata: &schema_metadata,
-            errors: result_errors,
-            extensions: result_extensions,
-        };
-        query_plan
-            .execute(&mut execution_context, &mut result_data)
-            .await;
-        insta::assert_snapshot!(result_data);
-        assert_eq!(execution_context.errors.len(), 1);
-        let error = &execution_context.errors[0];
-        assert_eq!(error.message, "Director not found for movie with id 2");
-        assert_eq!(
-            error.extensions.as_ref().unwrap().get("code"),
-            Some(&serde_json::Value::String(
-                "DOWNSTREAM_SERVICE_ERROR".to_string()
-            ))
-        );
-        assert_eq!(
-            error.extensions.as_ref().unwrap().get("serviceName"),
-            Some(&serde_json::Value::String("directors".to_string()))
-        );
-        assert_eq!(
-            error.path,
-            Some(vec![serde_json::Value::String("movie2".to_string())])
-        );
     });
 }
