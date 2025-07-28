@@ -1,5 +1,5 @@
 #![recursion_limit = "256"]
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 use criterion::Criterion;
 use criterion::{criterion_group, criterion_main};
@@ -291,15 +291,9 @@ fn traverse_and_collect(c: &mut Criterion) {
             let data = result.get_mut("data").unwrap();
             let path = black_box(&path);
             let mut results = vec![];
-            query_plan_executor::traverse_and_callback(
-                data,
-                path,
-                schema_metadata,
-                VecDeque::new(),
-                &mut |data, _path| {
-                    results.push(data);
-                },
-            );
+            query_plan_executor::traverse_and_callback(data, path, schema_metadata, &mut |data| {
+                results.push(data);
+            });
             black_box(());
             black_box(results);
         });
@@ -400,15 +394,9 @@ fn project_requires(c: &mut Criterion) {
         .expect("Failed to create planner from supergraph");
     let schema_metadata = &planner.consumer_schema.schema_metadata();
     let mut representations = vec![];
-    query_plan_executor::traverse_and_callback(
-        data,
-        &path,
-        schema_metadata,
-        VecDeque::new(),
-        &mut |data, _path| {
-            representations.push(data);
-        },
-    );
+    query_plan_executor::traverse_and_callback(data, &path, schema_metadata, &mut |data| {
+        representations.push(data);
+    });
     let subgraph_executor_map =
         SubgraphExecutorMap::from_http_endpoint_map(planner.supergraph.subgraph_endpoint_map);
     let execution_context = query_plan_executor::QueryPlanExecutionContext {
