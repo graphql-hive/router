@@ -10,7 +10,7 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::BTreeSet;
+use std::collections::VecDeque;
 use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
@@ -21,6 +21,7 @@ use crate::{
     schema_metadata::{PossibleTypes, SchemaMetadata},
 };
 pub mod deep_merge;
+mod error_normalization;
 pub mod executors;
 pub mod introspection;
 mod json_writer;
@@ -99,9 +100,10 @@ fn process_errors_and_extensions(
         execution_context.extensions.extend(extensions);
     }
 }
+
 struct ExecuteForRepresentationsResult {
     entities: Option<Vec<Value>>,
-    indexes: BTreeSet<usize>,
+    indexes_in_paths: Vec<VecDeque<usize>>,
     errors: Option<Vec<GraphQLError>>,
     extensions: Option<HashMap<String, Value>>,
 }
@@ -116,7 +118,7 @@ trait ExecutableFetchNode {
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
         filtered_representations: Vec<u8>,
-        indexes: BTreeSet<usize>,
+        indexes_in_paths: Vec<VecDeque<usize>>,
     ) -> ExecuteForRepresentationsResult;
     fn apply_output_rewrites(&self, possible_types: &PossibleTypes, data: &mut Value);
     fn prepare_variables_for_fetch_node<'a>(
@@ -190,7 +192,7 @@ impl ExecutableFetchNode for FetchNode {
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
         filtered_representations: Vec<u8>,
-        indexes: BTreeSet<usize>,
+        indexes_in_paths: Vec<VecDeque<usize>>,
     ) -> ExecuteForRepresentationsResult {
         // 2. Prepare variables for fetch
         let execution_request = SubgraphExecutionRequest {
@@ -206,7 +208,6 @@ impl ExecutableFetchNode for FetchNode {
             .subgraph_executor_map
             .execute(&self.service_name, execution_request)
             .await;
-
         // Process data
         let entities = if let Some(mut data) = fetch_result.data {
             self.apply_output_rewrites(
@@ -228,7 +229,7 @@ impl ExecutableFetchNode for FetchNode {
         };
         ExecuteForRepresentationsResult {
             entities,
-            indexes,
+            indexes_in_paths,
             errors: fetch_result.errors,
             extensions: fetch_result.extensions,
         }
@@ -509,15 +510,28 @@ impl ExecutablePlanNode for ParallelNode {
                             }
                         };
                         let requires_nodes = fetch_node.requires.as_ref().unwrap();
-                        let mut index = 0;
-                        let mut indexes = BTreeSet::new();
-                        let normalized_path = flatten_node.path.as_slice();
                         filtered_representations.push(b'[');
+                        let mut number_of_indexes = 0;
+                        let normalized_path = flatten_node.path.as_slice();
+                        for segment in normalized_path.iter() {
+                            if *segment == FlattenNodePathSegment::List {
+                                number_of_indexes += 1;
+                            }
+                        }
+                        // We collect indexes in paths (replacing "@") to mutate the final result later
+                        // It might look similar to `FlattenNode.execute` which is called within `SequenceNode`
+                        // But it is not because in `SequenceNode`, we collect mutable references and mutate them during sequence execution.
+                        // While here, we collect the indexes in paths to get the mutable reference after the execution.
+                        // Collecting mutable references during traversal is possible in sequential execution which is more optimal than the following,
+                        // but in parallel execution, we need to collect indexes in paths to mutate the final result later.
+                        // We don't apply the following logic to the sequential execution, because the one there is more optimal.
+                        let mut indexes_in_paths: Vec<VecDeque<usize>> = vec![];
                         traverse_and_callback(
                             data,
                             normalized_path,
                             execution_context.schema_metadata,
-                            &mut |entity| {
+                            VecDeque::with_capacity(number_of_indexes),
+                            &mut |entity: &mut Value, indexes_in_path| {
                                 let is_projected =
                                     if let Some(input_rewrites) = &fetch_node.input_rewrites {
                                         // We need to own the value and not modify the original entity
@@ -528,37 +542,36 @@ impl ExecutablePlanNode for ParallelNode {
                                                 &mut entity_owned,
                                             );
                                         }
-                                        execution_context
-                                            .project_requires(
-                                                &requires_nodes.items,
-                                                &entity_owned,
-                                                &mut filtered_representations,
-                                                indexes.is_empty(),
-                                                None,
-                                            )
-                                            .unwrap_or(false)
+                                        execution_context.project_requires(
+                                            &requires_nodes.items,
+                                            &entity_owned,
+                                            &mut filtered_representations,
+                                            indexes_in_paths.is_empty(),
+                                            None,
+                                        )
                                     } else {
-                                        execution_context
-                                            .project_requires(
-                                                &requires_nodes.items,
-                                                entity,
-                                                &mut filtered_representations,
-                                                indexes.is_empty(),
-                                                None,
-                                            )
-                                            .unwrap_or(false)
-                                    };
+                                        execution_context.project_requires(
+                                            &requires_nodes.items,
+                                            entity,
+                                            &mut filtered_representations,
+                                            indexes_in_paths.is_empty(),
+                                            None,
+                                        )
+                                    }
+                                    .unwrap_or_else(|e| {
+                                        warn!("Error while projecting representations for FetchNode: {:?} {}", fetch_node, e);
+                                        false
+                                    });
                                 if is_projected {
-                                    indexes.insert(index);
+                                    indexes_in_paths.push(indexes_in_path);
                                 }
-                                index += 1;
                             },
                         );
                         filtered_representations.push(b']');
                         let job = fetch_node.execute_for_projected_representations(
                             execution_context,
                             filtered_representations,
-                            indexes,
+                            indexes_in_paths,
                         );
                         jobs.push(Box::pin(
                             job.map(|r| ParallelJob::Flatten(r, normalized_path)),
@@ -589,29 +602,61 @@ impl ExecutablePlanNode for ParallelNode {
                             all_extensions.push(extensions);
                         }
                     }
-                    ParallelJob::Flatten(result, path) => {
-                        if let Some(mut entities) = result.entities {
-                            let mut index_of_traverse = 0;
-                            let mut index_of_entities = 0;
-                            traverse_and_callback(
-                                data,
-                                path,
-                                execution_context.schema_metadata,
-                                &mut |target| {
-                                    if result.indexes.contains(&index_of_traverse) {
-                                        let entity =
-                                            entities.get_mut(index_of_entities).unwrap().take();
-                                        // Merge the entity into the target
-                                        deep_merge::deep_merge(target, entity);
-                                        index_of_entities += 1;
+                    ParallelJob::Flatten(mut result, path) => {
+                        /*
+                         * We iterate over the returned entities,
+                         * and merge them into the final response based on the path segments collected
+                         **/
+                        if let Some(entities) = result.entities {
+                            'entity_loop: for (entity, indexes_in_path) in
+                                entities.into_iter().zip(result.indexes_in_paths.iter_mut())
+                            {
+                                let mut target = &mut *data;
+                                for path_segment in path.iter() {
+                                    match path_segment {
+                                        FlattenNodePathSegment::List => {
+                                            let index = indexes_in_path.pop_front().unwrap();
+                                            target = &mut target[index];
+                                        }
+                                        FlattenNodePathSegment::Field(field_name) => {
+                                            target = &mut target[field_name];
+                                        }
+                                        FlattenNodePathSegment::Cast(type_condition) => {
+                                            let type_name = match target.get(TYPENAME_FIELD) {
+                                                Some(Value::String(type_name)) => type_name,
+                                                _ => type_condition, // Default to type_condition if not found
+                                            };
+                                            if !execution_context
+                                                .schema_metadata
+                                                .possible_types
+                                                .entity_satisfies_type_condition(
+                                                    type_name,
+                                                    type_condition,
+                                                )
+                                            {
+                                                continue 'entity_loop; // Skip if type condition is not satisfied
+                                            }
+                                        }
                                     }
-                                    index_of_traverse += 1;
-                                },
-                            );
+                                }
+                                if !indexes_in_path.is_empty() {
+                                    // If there are still indexes left, we need to traverse them
+                                    while let Some(index) = indexes_in_path.pop_front() {
+                                        target = &mut target[index];
+                                    }
+                                }
+                                deep_merge::deep_merge(target, entity);
+                            }
                         }
                         // Process errors and extensions
                         if let Some(errors) = result.errors {
-                            all_errors.extend(errors);
+                            let normalized_errors =
+                                error_normalization::normalize_errors_for_representations(
+                                    &mut result.indexes_in_paths,
+                                    path,
+                                    errors,
+                                );
+                            all_errors.extend(normalized_errors);
                         }
                         if let Some(extensions) = result.extensions {
                             all_extensions.push(extensions);
@@ -666,11 +711,19 @@ impl ExecutablePlanNode for FlattenNode {
         let requires_nodes = fetch_node.requires.as_ref().unwrap();
         filtered_representations.push(b'[');
         let mut first = true;
+        let normalized_path = self.path.as_slice();
+        let mut number_of_indexes = 0;
+        for segment in normalized_path.iter() {
+            if *segment == FlattenNodePathSegment::List {
+                number_of_indexes += 1;
+            }
+        }
         traverse_and_callback(
             data,
-            self.path.as_slice(),
+            normalized_path,
             execution_context.schema_metadata,
-            &mut |entity| {
+            VecDeque::with_capacity(number_of_indexes),
+            &mut |entity: &mut Value, indexes_in_paths| {
                 let is_projected = if let Some(input_rewrites) = &fetch_node.input_rewrites {
                     // We need to own the value and not modify the original entity
                     let mut entity_owned = entity.to_owned();
@@ -701,7 +754,7 @@ impl ExecutablePlanNode for FlattenNode {
                         .unwrap_or(false)
                 };
                 if is_projected {
-                    representations.push(entity);
+                    representations.push((entity, indexes_in_paths));
                     first = false;
                 }
             },
@@ -716,21 +769,28 @@ impl ExecutablePlanNode for FlattenNode {
             // No representations collected, so we skip the fetch execution
             return;
         }
-        let result = fetch_node
+        let mut result = fetch_node
             .execute_for_projected_representations(
                 execution_context,
                 filtered_representations,
-                BTreeSet::new(),
+                vec![],
             )
             .await;
         if let Some(entities) = result.entities {
-            for (entity, target) in entities.into_iter().zip(representations.iter_mut()) {
+            for (entity, (target, _path)) in entities.into_iter().zip(representations.iter_mut()) {
                 // Merge the entity into the representation
                 deep_merge::deep_merge(target, entity);
             }
         }
 
-        process_errors_and_extensions(execution_context, result.errors, result.extensions);
+        let normalized_errors = result.errors.map(|errors| {
+            error_normalization::normalize_errors_for_representations(
+                &mut result.indexes_in_paths,
+                normalized_path,
+                errors,
+            )
+        });
+        process_errors_and_extensions(execution_context, normalized_errors, result.extensions);
     }
 }
 
@@ -825,7 +885,7 @@ impl ExecutionResult {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct GraphQLError {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1087,20 +1147,23 @@ pub fn traverse_and_callback<'a, Callback>(
     current_data: &'a mut Value,
     remaining_path: &[FlattenNodePathSegment],
     schema_metadata: &SchemaMetadata,
+    current_indexes: VecDeque<usize>,
     callback: &mut Callback,
 ) where
-    Callback: FnMut(&'a mut Value),
+    Callback: FnMut(&'a mut Value, VecDeque<usize>),
 {
     if remaining_path.is_empty() {
         if let Value::Array(arr) = current_data {
             // If the path is empty, we call the callback on each item in the array
             // We iterate because we want the entity objects directly
-            for item in arr.iter_mut() {
-                callback(item);
+            for (index, item) in arr.iter_mut().enumerate() {
+                let mut new_indexes = current_indexes.clone();
+                new_indexes.push_back(index);
+                callback(item, new_indexes);
             }
         } else {
             // If the path is empty and current_data is not an array, just call the callback
-            callback(current_data);
+            callback(current_data, current_indexes);
         }
         return;
     }
@@ -1110,8 +1173,16 @@ pub fn traverse_and_callback<'a, Callback>(
             // If the key is List, we expect current_data to be an array
             if let Value::Array(arr) = current_data {
                 let rest_of_path = &remaining_path[1..];
-                for item in arr.iter_mut() {
-                    traverse_and_callback(item, rest_of_path, schema_metadata, callback);
+                for (index, item) in arr.iter_mut().enumerate() {
+                    let mut new_indexes = current_indexes.clone();
+                    new_indexes.push_back(index);
+                    traverse_and_callback(
+                        item,
+                        rest_of_path,
+                        schema_metadata,
+                        new_indexes,
+                        callback,
+                    );
                 }
             }
         }
@@ -1120,7 +1191,13 @@ pub fn traverse_and_callback<'a, Callback>(
             if let Value::Object(map) = current_data {
                 if let Some(next_data) = map.get_mut(field_name) {
                     let rest_of_path = &remaining_path[1..];
-                    traverse_and_callback(next_data, rest_of_path, schema_metadata, callback);
+                    traverse_and_callback(
+                        next_data,
+                        rest_of_path,
+                        schema_metadata,
+                        current_indexes,
+                        callback,
+                    );
                 }
             }
         }
@@ -1136,12 +1213,26 @@ pub fn traverse_and_callback<'a, Callback>(
                     .entity_satisfies_type_condition(type_name, type_condition)
                 {
                     let rest_of_path = &remaining_path[1..];
-                    traverse_and_callback(current_data, rest_of_path, schema_metadata, callback);
+                    traverse_and_callback(
+                        current_data,
+                        rest_of_path,
+                        schema_metadata,
+                        current_indexes,
+                        callback,
+                    );
                 }
             } else if let Value::Array(arr) = current_data {
                 // If the current data is an array, we need to check each item
-                for item in arr.iter_mut() {
-                    traverse_and_callback(item, remaining_path, schema_metadata, callback);
+                for (index, item) in arr.iter_mut().enumerate() {
+                    let mut new_indexes = current_indexes.clone();
+                    new_indexes.push_back(index);
+                    traverse_and_callback(
+                        item,
+                        remaining_path,
+                        schema_metadata,
+                        new_indexes,
+                        callback,
+                    );
                 }
             }
         }
