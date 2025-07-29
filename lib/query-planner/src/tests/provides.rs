@@ -227,7 +227,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
       Sequence {
         Fetch(service: "b") {
@@ -245,7 +245,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Flatten(path: "media|[Movie]") {
+        Flatten(path: "media") {
           Fetch(service: "c") {
             {
               ... on Movie {
@@ -262,8 +262,8 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         },
       },
     },
-    "#);
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    "###);
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
     {
       "kind": "QueryPlan",
       "node": {
@@ -280,9 +280,6 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
             "path": [
               {
                 "Field": "media"
-              },
-              {
-                "Cast": "Movie"
               }
             ],
             "node": {
@@ -311,7 +308,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
         ]
       }
     }
-    "#);
+    "###);
 
     Ok(())
 }
@@ -390,7 +387,7 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
       Sequence {
         Fetch(service: "b") {
@@ -415,7 +412,7 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Flatten(path: "media|[Book].animals.@|[Cat]") {
+        Flatten(path: "media.animals.@") {
           Fetch(service: "c") {
             {
               ... on Cat {
@@ -432,7 +429,7 @@ fn provides_on_interface_2_test() -> Result<(), Box<dyn Error>> {
         },
       },
     },
-    "#);
+    "###);
 
     Ok(())
 }

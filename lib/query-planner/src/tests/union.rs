@@ -141,7 +141,7 @@ fn union_member_entity_call() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
@@ -157,7 +157,7 @@ fn union_member_entity_call() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Flatten(path: "aMedia|[Book]") {
+        Flatten(path: "aMedia") {
           Fetch(service: "b") {
             {
               ... on Book {
@@ -174,7 +174,7 @@ fn union_member_entity_call() -> Result<(), Box<dyn Error>> {
         },
       },
     },
-    "#);
+    "###);
 
     Ok(())
 }
@@ -212,7 +212,7 @@ fn union_member_entity_call_many_local() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
@@ -234,7 +234,7 @@ fn union_member_entity_call_many_local() -> Result<(), Box<dyn Error>> {
             }
           }
         },
-        Flatten(path: "viewer.song|[Book]") {
+        Flatten(path: "viewer.song") {
           Fetch(service: "b") {
             {
               ... on Book {
@@ -251,7 +251,7 @@ fn union_member_entity_call_many_local() -> Result<(), Box<dyn Error>> {
         },
       },
     },
-    "#);
+    "###);
 
     Ok(())
 }
@@ -321,7 +321,7 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
       Sequence {
         Parallel {
@@ -372,7 +372,7 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
             }
           },
         },
-        Flatten(path: "viewer.song|[Book]") {
+        Flatten(path: "viewer.song") {
           Fetch(service: "b") {
             {
               ... on Book {
@@ -389,7 +389,7 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
         },
       },
     },
-    "#);
+    "###);
 
     Ok(())
 }
@@ -422,7 +422,7 @@ fn union_overfetching_test() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
@@ -445,7 +445,7 @@ fn union_overfetching_test() -> Result<(), Box<dyn Error>> {
           }
         },
         Parallel {
-          Flatten(path: "review|[UserReview].product") {
+          Flatten(path: "review.product") {
             Fetch(service: "d") {
               {
                 ... on Product {
@@ -460,7 +460,7 @@ fn union_overfetching_test() -> Result<(), Box<dyn Error>> {
               }
             },
           },
-          Flatten(path: "review|[UserReview].product") {
+          Flatten(path: "review.product") {
             Fetch(service: "c") {
               {
                 ... on Product {
@@ -475,7 +475,7 @@ fn union_overfetching_test() -> Result<(), Box<dyn Error>> {
               }
             },
           },
-          Flatten(path: "review|[AnonymousReview].product") {
+          Flatten(path: "review.product") {
             Fetch(service: "b") {
               {
                 ... on Product {
@@ -493,7 +493,7 @@ fn union_overfetching_test() -> Result<(), Box<dyn Error>> {
         },
       },
     },
-    "#);
+    "###);
 
     Ok(())
 }

@@ -706,7 +706,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
@@ -724,7 +724,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
             }
           }
         },
-        Flatten(path: "users.@|[User]") {
+        Flatten(path: "users.@") {
           Fetch(service: "b") {
             {
               ... on NodeWithName {
@@ -742,9 +742,9 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
         },
       },
     },
-    "#);
+    "###);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
     {
       "kind": "QueryPlan",
       "node": {
@@ -777,10 +777,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
               {
                 "Field": "users"
               },
-              "@",
-              {
-                "Cast": "User"
-              }
+              "@"
             ],
             "node": {
               "kind": "Fetch",
@@ -827,7 +824,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
         ]
       }
     }
-    "#);
+    "###);
 
     Ok(())
 }

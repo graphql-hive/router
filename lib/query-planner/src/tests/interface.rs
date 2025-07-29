@@ -4,6 +4,137 @@ use crate::{
 };
 use std::error::Error;
 
+#[test]
+fn audit_test_case_5() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        {
+          products {
+            id
+            reviews {
+              product {
+                sku
+                ... on Magazine {
+                  title
+                }
+                ... on Book {
+                  reviewsCount
+                }
+              }
+            }
+          }
+        }
+      "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/audit-abstract-types.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
+    QueryPlan {
+      Sequence {
+        Fetch(service: "products") {
+          {
+            products {
+              id
+              __typename
+              ... on Book {
+                __typename
+                id
+              }
+              ... on Magazine {
+                __typename
+                id
+              }
+            }
+          }
+        },
+        Flatten(path: "products.@") {
+          Fetch(service: "reviews") {
+            {
+              ... on Book {
+                __typename
+                id
+              }
+              ... on Magazine {
+                __typename
+                id
+              }
+            } =>
+            {
+              ... on Book {
+                reviews {
+    ...a            }
+              }
+              ... on Magazine {
+                reviews {
+    ...a            }
+              }
+            }
+            fragment a on Review {
+              product {
+                __typename
+                ... on Book {
+                  __typename
+                  id
+                  reviewsCount
+                }
+                ... on Magazine {
+                  __typename
+                  id
+                }
+              }
+            }
+          },
+        },
+        Parallel {
+          Flatten(path: "products.@.reviews.@.product") {
+            Fetch(service: "products") {
+              {
+                ... on Book {
+                  __typename
+                  id
+                }
+                ... on Magazine {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Book {
+                  sku
+                }
+                ... on Magazine {
+                  sku
+                }
+              }
+            },
+          },
+          Flatten(path: "products.@.reviews.@.product") {
+            Fetch(service: "magazines") {
+              {
+                ... on Magazine {
+                  __typename
+                  id
+                }
+              } =>
+              {
+                ... on Magazine {
+                  title
+                }
+              }
+            },
+          },
+        },
+      },
+    },
+    "###);
+
+    Ok(())
+}
+
 /// Tests querying the `node` interface field using two different aliases (`account` and `chat`).
 /// Verifies that aliases work correctly when querying the same interface field with different IDs.
 #[test]
@@ -793,7 +924,7 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
         },
         Parallel {
           Include(if: $title) {
-            Flatten(path: "products.@|[Book].reviews.@.product|[Book]") {
+            Flatten(path: "products.@.reviews.@.product") {
               Fetch(service: "books") {
                 {
                   ... on Book {
@@ -809,7 +940,7 @@ fn nested_interface_field_with_inline_fragments() -> Result<(), Box<dyn Error>> 
               },
             },
           },
-          Flatten(path: "products.@|[Book].reviews.@.product|[Magazine]") {
+          Flatten(path: "products.@.reviews.@.product") {
             Fetch(service: "products") {
               {
                 ... on Magazine {
@@ -920,7 +1051,7 @@ fn nested_interface_field_with_redundant_inline_fragments() -> Result<(), Box<dy
         },
         Parallel {
           Include(if: $title) {
-            Flatten(path: "products.@|[Book].reviews.@.product|[Book]") {
+            Flatten(path: "products.@.reviews.@.product") {
               Fetch(service: "books") {
                 {
                   ... on Book {

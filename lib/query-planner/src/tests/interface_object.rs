@@ -536,7 +536,7 @@ fn interface_field_with_inline_fragment_resolving_remote_interface_object_field(
     // That's why we can resolve the `User` part within the `Query.users` selection set.
     // The `NodeWithName.name` and `NodeWithName.id` can also be resolved locally.
     // To resolve the `User.username` we need to call the interfaceObject in another subgraph.
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
@@ -554,7 +554,7 @@ fn interface_field_with_inline_fragment_resolving_remote_interface_object_field(
             }
           }
         },
-        Flatten(path: "users.@|[User]") {
+        Flatten(path: "users.@") {
           Fetch(service: "b") {
             {
               ... on User {
@@ -571,7 +571,7 @@ fn interface_field_with_inline_fragment_resolving_remote_interface_object_field(
         },
       },
     },
-    "#);
+    "###);
 
     Ok(())
 }

@@ -59,7 +59,7 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
             id
           }
         },
-        Flatten(path: "viewer.review|[UserReview].product") {
+        Flatten(path: "viewer.review.product") {
           Fetch(service: "b") {
             {
               ... on Product {
@@ -75,7 +75,7 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
             }
           },
         },
-        Flatten(path: "viewer.review|[UserReview].product") {
+        Flatten(path: "viewer.review.product") {
           Fetch(service: "c") {
             {
               ... on Product {
@@ -91,7 +91,7 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
             }
           },
         },
-        Flatten(path: "viewer.review|[UserReview].product") {
+        Flatten(path: "viewer.review.product") {
           Fetch(service: "d") {
             {
               ... on Product {

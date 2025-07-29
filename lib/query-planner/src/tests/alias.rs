@@ -45,7 +45,7 @@ fn circular_reference_interface() -> Result<(), Box<dyn Error>> {
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
@@ -76,7 +76,7 @@ fn circular_reference_interface() -> Result<(), Box<dyn Error>> {
             id
           }
         },
-        Flatten(path: "product|[Book]") {
+        Flatten(path: "product") {
           Fetch(service: "b") {
             {
               ... on Book {
@@ -93,7 +93,7 @@ fn circular_reference_interface() -> Result<(), Box<dyn Error>> {
         },
       },
     },
-    "#);
+    "###);
 
     Ok(())
 }

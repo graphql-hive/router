@@ -378,11 +378,7 @@ impl PlanNode {
         } else {
             PlanNode::Flatten(FlattenNode {
                 // it's cheaper to clone response_path (Arc etc), rather then cloning the step
-                path: if step.is_fetching_multiple_types() {
-                    step.response_path.without_type_castings().into()
-                } else {
-                    step.response_path.clone().into()
-                },
+                path: step.response_path.without_type_castings().into(),
                 node: Box::new(PlanNode::Fetch(FetchNode::from_fetch_step(
                     step, supergraph,
                 ))),
