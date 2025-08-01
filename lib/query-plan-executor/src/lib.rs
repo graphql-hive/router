@@ -765,7 +765,8 @@ impl ExecutablePlanNode for FlattenNode {
                     } else {
                         trace!(
                             "Entity with hash {} not found in results at index {}",
-                            hash, index_on_results
+                            hash,
+                            index_on_results
                         );
                     }
                 }
