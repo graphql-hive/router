@@ -629,7 +629,7 @@ impl ExecutablePlanNode for ParallelNode {
                                             );
                                         }
                                     } else {
-                                        warn!("Hash {} not found in entity_hash_index_map", hash);
+                                        trace!("Hash {} not found in entity_hash_index_map, not a projected entity", hash);
                                     }
                                 },
                             );
@@ -703,7 +703,7 @@ impl ExecutablePlanNode for FlattenNode {
 
                 if entity_hashes.contains_key(&hash) {
                     entities_on_data.push((hash, entity));
-                    println!("Duplicate entity found with hash: {}", hash);
+                    trace!("Duplicate entity found with hash: {}", hash);
                     return;
                 }
                 let is_projected = if let Some(input_rewrites) = &fetch_node.input_rewrites {
