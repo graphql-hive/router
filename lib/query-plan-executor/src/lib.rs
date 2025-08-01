@@ -623,7 +623,7 @@ impl ExecutablePlanNode for ParallelNode {
                                             // Merge the entity into the target
                                             deep_merge::deep_merge(target, entity.clone());
                                         } else {
-                                            warn!(
+                                            trace!(
                                                 "Entity with hash {} not found in results at index {}",
                                                 hash, index
                                             );
@@ -763,7 +763,7 @@ impl ExecutablePlanNode for FlattenNode {
                         // Merge the entity into the target
                         deep_merge::deep_merge(entity_on_data, entity.clone());
                     } else {
-                        warn!(
+                        trace!(
                             "Entity with hash {} not found in results at index {}",
                             hash, index_on_results
                         );
