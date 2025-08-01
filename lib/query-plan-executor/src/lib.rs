@@ -676,8 +676,6 @@ impl ExecutablePlanNode for FlattenNode {
         // Execute the child node. `execution_context` can be borrowed mutably
         // because `collected_representations` borrows `data_for_flatten`, not `execution_context.data`.
         let now = std::time::Instant::now();
-        let mut entities_on_data: Vec<(u64, &mut Value)> = vec![];
-        let mut entity_hashes: HashMap<u64, usize> = HashMap::new();
         let mut filtered_representations = Vec::with_capacity(1024);
         let fetch_node = match self.node.as_ref() {
             PlanNode::Fetch(fetch_node) => fetch_node,
@@ -691,7 +689,8 @@ impl ExecutablePlanNode for FlattenNode {
         };
         let requires_nodes = fetch_node.requires.as_ref().unwrap();
         filtered_representations.push(b'[');
-        let mut first = true;
+        let mut entities_on_data: Vec<(u64, &mut Value)> = vec![];
+        let mut entity_hashes: HashMap<u64, usize> = HashMap::new();
         let mut hash_index = 0;
         traverse_and_callback(
             data,
@@ -720,7 +719,7 @@ impl ExecutablePlanNode for FlattenNode {
                             &requires_nodes.items,
                             &entity_owned,
                             &mut filtered_representations,
-                            first,
+                            entity_hashes.is_empty(),
                             None,
                         )
                         .unwrap_or(false)
@@ -730,7 +729,7 @@ impl ExecutablePlanNode for FlattenNode {
                             &requires_nodes.items,
                             entity,
                             &mut filtered_representations,
-                            first,
+                            entity_hashes.is_empty(),
                             None,
                         )
                         .unwrap_or(false)
@@ -738,7 +737,6 @@ impl ExecutablePlanNode for FlattenNode {
                 if is_projected {
                     entity_hashes.insert(hash, hash_index);
                     hash_index += 1;
-                    first = false;
                 }
             },
         );
@@ -748,7 +746,7 @@ impl ExecutablePlanNode for FlattenNode {
             entities_on_data.len(),
             now.elapsed()
         );
-        if first {
+        if entity_hashes.is_empty() {
             // No representations collected, so we skip the fetch execution
             return;
         }
