@@ -700,9 +700,10 @@ impl ExecutablePlanNode for FlattenNode {
                 let mut hasher = DefaultHasher::new();
                 entity.hash(&mut hasher);
                 let hash = hasher.finish();
+
                 if entity_hashes.contains_key(&hash) {
-                    println!("Duplicate entity found with hash: {}", hash);
                     entities_on_data.push((hash, entity));
+                    println!("Duplicate entity found with hash: {}", hash);
                     return;
                 }
                 let is_projected = if let Some(input_rewrites) = &fetch_node.input_rewrites {
@@ -735,6 +736,7 @@ impl ExecutablePlanNode for FlattenNode {
                         .unwrap_or(false)
                 };
                 if is_projected {
+                    entities_on_data.push((hash, entity));
                     entity_hashes.insert(hash, hash_index);
                     hash_index += 1;
                 }
