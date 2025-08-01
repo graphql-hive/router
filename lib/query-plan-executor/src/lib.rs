@@ -10,7 +10,7 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::BTreeSet;
+use std::{hash::{DefaultHasher, Hash, Hasher}};
 use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
@@ -101,7 +101,6 @@ fn process_errors_and_extensions(
 }
 struct ExecuteForRepresentationsResult {
     entities: Option<Vec<Value>>,
-    indexes: BTreeSet<usize>,
     errors: Option<Vec<GraphQLError>>,
     extensions: Option<HashMap<String, Value>>,
 }
@@ -116,7 +115,6 @@ trait ExecutableFetchNode {
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
         filtered_representations: Vec<u8>,
-        indexes: BTreeSet<usize>,
     ) -> ExecuteForRepresentationsResult;
     fn apply_output_rewrites(&self, possible_types: &PossibleTypes, data: &mut Value);
     fn prepare_variables_for_fetch_node<'a>(
@@ -190,7 +188,6 @@ impl ExecutableFetchNode for FetchNode {
         &self,
         execution_context: &QueryPlanExecutionContext<'_>,
         filtered_representations: Vec<u8>,
-        indexes: BTreeSet<usize>,
     ) -> ExecuteForRepresentationsResult {
         // 2. Prepare variables for fetch
         let execution_request = SubgraphExecutionRequest {
@@ -228,7 +225,6 @@ impl ExecutableFetchNode for FetchNode {
         };
         ExecuteForRepresentationsResult {
             entities,
-            indexes,
             errors: fetch_result.errors,
             extensions: fetch_result.extensions,
         }
@@ -457,6 +453,8 @@ enum ParallelJob<'a> {
     Flatten(
         ExecuteForRepresentationsResult,
         &'a [FlattenNodePathSegment],
+        HashMap<u64, usize>, // Maps entity hash to index in the flattened data
+        Vec<u64>, // Hashes of entities on the data for this FlattenNode
     ),
 }
 
@@ -509,8 +507,9 @@ impl ExecutablePlanNode for ParallelNode {
                             }
                         };
                         let requires_nodes = fetch_node.requires.as_ref().unwrap();
-                        let mut index = 0;
-                        let mut indexes = BTreeSet::new();
+                        let mut entity_hash_index = 0;
+                        let mut entity_hash_index_map: HashMap<u64, usize> = HashMap::new();
+                        let mut entity_on_data_hashes: Vec<u64> = vec![];
                         let normalized_path = flatten_node.path.as_slice();
                         filtered_representations.push(b'[');
                         traverse_and_callback(
@@ -518,6 +517,12 @@ impl ExecutablePlanNode for ParallelNode {
                             normalized_path,
                             execution_context.schema_metadata,
                             &mut |entity| {
+                                let mut hasher = DefaultHasher::new();
+                                entity.hash(&mut hasher);
+                                let hash = hasher.finish();
+                                
+                                entity_on_data_hashes.push(hash);
+
                                 let is_projected =
                                     if let Some(input_rewrites) = &fetch_node.input_rewrites {
                                         // We need to own the value and not modify the original entity
@@ -533,7 +538,7 @@ impl ExecutablePlanNode for ParallelNode {
                                                 &requires_nodes.items,
                                                 &entity_owned,
                                                 &mut filtered_representations,
-                                                indexes.is_empty(),
+                                                entity_hash_index_map.is_empty(),
                                                 None,
                                             )
                                             .unwrap_or(false)
@@ -543,25 +548,24 @@ impl ExecutablePlanNode for ParallelNode {
                                                 &requires_nodes.items,
                                                 entity,
                                                 &mut filtered_representations,
-                                                indexes.is_empty(),
+                                                entity_hash_index_map.is_empty(),
                                                 None,
                                             )
                                             .unwrap_or(false)
                                     };
                                 if is_projected {
-                                    indexes.insert(index);
+                                    entity_hash_index_map.insert(hash, entity_hash_index);
+                                    entity_hash_index += 1;
                                 }
-                                index += 1;
                             },
                         );
                         filtered_representations.push(b']');
                         let job = fetch_node.execute_for_projected_representations(
                             execution_context,
                             filtered_representations,
-                            indexes,
                         );
                         jobs.push(Box::pin(
-                            job.map(|r| ParallelJob::Flatten(r, normalized_path)),
+                            job.map(|r| ParallelJob::Flatten(r, normalized_path, entity_hash_index_map, entity_on_data_hashes)),
                         ));
                     }
                     _ => {}
@@ -589,23 +593,29 @@ impl ExecutablePlanNode for ParallelNode {
                             all_extensions.push(extensions);
                         }
                     }
-                    ParallelJob::Flatten(result, path) => {
-                        if let Some(mut entities) = result.entities {
+                    ParallelJob::Flatten(result, path, entity_hash_index_map, entity_on_data_hashes) => {
+                        if let Some(entities) = result.entities {
                             let mut index_of_traverse = 0;
-                            let mut index_of_entities = 0;
                             traverse_and_callback(
                                 data,
                                 path,
                                 execution_context.schema_metadata,
                                 &mut |target| {
-                                    if result.indexes.contains(&index_of_traverse) {
-                                        let entity =
-                                            entities.get_mut(index_of_entities).unwrap().take();
-                                        // Merge the entity into the target
-                                        deep_merge::deep_merge(target, entity);
-                                        index_of_entities += 1;
-                                    }
+                                    let hash = entity_on_data_hashes[index_of_traverse];
                                     index_of_traverse += 1;
+                                    if let Some(&index) = entity_hash_index_map.get(&hash) {
+                                        if let Some(entity) = entities.get(index) {
+                                            // Merge the entity into the target
+                                            deep_merge::deep_merge(target, entity.clone());
+                                        } else {
+                                            warn!(
+                                                "Entity with hash {} not found in results at index {}",
+                                                hash, index
+                                            );
+                                        }
+                                    } else {
+                                        warn!("Hash {} not found in entity_hash_index_map", hash);
+                                    }
                                 },
                             );
                         }
@@ -651,7 +661,8 @@ impl ExecutablePlanNode for FlattenNode {
         // Execute the child node. `execution_context` can be borrowed mutably
         // because `collected_representations` borrows `data_for_flatten`, not `execution_context.data`.
         let now = std::time::Instant::now();
-        let mut representations = vec![];
+        let mut entities_on_data: Vec<(u64, &mut Value)> = vec![];
+        let mut entity_hashes: HashMap<u64, usize> = HashMap::new();
         let mut filtered_representations = Vec::with_capacity(1024);
         let fetch_node = match self.node.as_ref() {
             PlanNode::Fetch(fetch_node) => fetch_node,
@@ -666,11 +677,20 @@ impl ExecutablePlanNode for FlattenNode {
         let requires_nodes = fetch_node.requires.as_ref().unwrap();
         filtered_representations.push(b'[');
         let mut first = true;
+        let mut hash_index = 0;
         traverse_and_callback(
             data,
             self.path.as_slice(),
             execution_context.schema_metadata,
             &mut |entity| {
+                let mut hasher = DefaultHasher::new();
+                entity.hash(&mut hasher);
+                let hash = hasher.finish();
+                if entity_hashes.contains_key(&hash) {
+                    println!("Duplicate entity found with hash: {}", hash);
+                    entities_on_data.push((hash, entity));
+                    return;
+                }
                 let is_projected = if let Some(input_rewrites) = &fetch_node.input_rewrites {
                     // We need to own the value and not modify the original entity
                     let mut entity_owned = entity.to_owned();
@@ -701,7 +721,8 @@ impl ExecutablePlanNode for FlattenNode {
                         .unwrap_or(false)
                 };
                 if is_projected {
-                    representations.push(entity);
+                    entity_hashes.insert(hash, hash_index);
+                    hash_index += 1;
                     first = false;
                 }
             },
@@ -709,7 +730,7 @@ impl ExecutablePlanNode for FlattenNode {
         filtered_representations.push(b']');
         trace!(
             "traversed and collected representations: {:?} in {:#?}",
-            representations.len(),
+            entities_on_data.len(),
             now.elapsed()
         );
         if first {
@@ -720,13 +741,22 @@ impl ExecutablePlanNode for FlattenNode {
             .execute_for_projected_representations(
                 execution_context,
                 filtered_representations,
-                BTreeSet::new(),
             )
             .await;
         if let Some(entities) = result.entities {
-            for (entity, target) in entities.into_iter().zip(representations.iter_mut()) {
-                // Merge the entity into the representation
-                deep_merge::deep_merge(target, entity);
+            for (hash, entity_on_data) in entities_on_data {
+                let index = entity_hashes.get(&hash);
+                if let Some(&index_on_results) = index {
+                    if let Some(entity) = entities.get(index_on_results) {
+                        // Merge the entity into the target
+                        deep_merge::deep_merge(entity_on_data, entity.clone());
+                    } else {
+                        warn!(
+                            "Entity with hash {} not found in results at index {}",
+                            hash, index_on_results
+                        );
+                    }
+                }
             }
         }
 
@@ -1091,6 +1121,10 @@ pub fn traverse_and_callback<'a, Callback>(
 ) where
     Callback: FnMut(&'a mut Value),
 {
+    if current_data.is_null() {
+        // If current_data is null, we do nothing
+        return;
+    }
     if remaining_path.is_empty() {
         if let Value::Array(arr) = current_data {
             // If the path is empty, we call the callback on each item in the array
