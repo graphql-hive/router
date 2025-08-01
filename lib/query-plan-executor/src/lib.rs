@@ -523,6 +523,11 @@ impl ExecutablePlanNode for ParallelNode {
 
                                 entity_on_data_hashes.push(hash);
 
+                                if entity_hash_index_map.contains_key(&hash) {
+                                    // Duplicate entity, skip it
+                                    return;
+                                }
+
                                 let is_projected =
                                     if let Some(input_rewrites) = &fetch_node.input_rewrites {
                                         // We need to own the value and not modify the original entity
