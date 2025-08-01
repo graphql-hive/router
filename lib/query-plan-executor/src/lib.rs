@@ -10,7 +10,7 @@ use query_planner::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::{hash::{DefaultHasher, Hash, Hasher}};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::{collections::HashMap, vec};
 use tracing::{instrument, trace, warn}; // For reading file in main
 
@@ -454,7 +454,7 @@ enum ParallelJob<'a> {
         ExecuteForRepresentationsResult,
         &'a [FlattenNodePathSegment],
         HashMap<u64, usize>, // Maps entity hash to index in the flattened data
-        Vec<u64>, // Hashes of entities on the data for this FlattenNode
+        Vec<u64>,            // Hashes of entities on the data for this FlattenNode
     ),
 }
 
@@ -520,7 +520,7 @@ impl ExecutablePlanNode for ParallelNode {
                                 let mut hasher = DefaultHasher::new();
                                 entity.hash(&mut hasher);
                                 let hash = hasher.finish();
-                                
+
                                 entity_on_data_hashes.push(hash);
 
                                 let is_projected =
@@ -564,9 +564,14 @@ impl ExecutablePlanNode for ParallelNode {
                             execution_context,
                             filtered_representations,
                         );
-                        jobs.push(Box::pin(
-                            job.map(|r| ParallelJob::Flatten(r, normalized_path, entity_hash_index_map, entity_on_data_hashes)),
-                        ));
+                        jobs.push(Box::pin(job.map(|r| {
+                            ParallelJob::Flatten(
+                                r,
+                                normalized_path,
+                                entity_hash_index_map,
+                                entity_on_data_hashes,
+                            )
+                        })));
                     }
                     _ => {}
                 }
@@ -593,7 +598,12 @@ impl ExecutablePlanNode for ParallelNode {
                             all_extensions.push(extensions);
                         }
                     }
-                    ParallelJob::Flatten(result, path, entity_hash_index_map, entity_on_data_hashes) => {
+                    ParallelJob::Flatten(
+                        result,
+                        path,
+                        entity_hash_index_map,
+                        entity_on_data_hashes,
+                    ) => {
                         if let Some(entities) = result.entities {
                             let mut index_of_traverse = 0;
                             traverse_and_callback(
@@ -738,10 +748,7 @@ impl ExecutablePlanNode for FlattenNode {
             return;
         }
         let result = fetch_node
-            .execute_for_projected_representations(
-                execution_context,
-                filtered_representations,
-            )
+            .execute_for_projected_representations(execution_context, filtered_representations)
             .await;
         if let Some(entities) = result.entities {
             for (hash, entity_on_data) in entities_on_data {
