@@ -2,6 +2,7 @@ use axum::body::Body;
 use axum::response::IntoResponse;
 use http::{Method, Request};
 
+use crate::http_utils::landing_page::PRODUCT_LOGO_SVG;
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::gateway_layer::{
     GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer,
@@ -23,7 +24,7 @@ impl GatewayPipelineLayer for GraphiQLResponderService {
     ) -> Result<GatewayPipelineStepDecision, PipelineError> {
         if req.method() == Method::GET && req.accepts_content_type("text/html") {
             return Ok(GatewayPipelineStepDecision::RespondWith(
-                Html(GRAPHIQL_HTML).into_response(),
+                Html(GRAPHIQL_HTML.replace("__PRODUCT_LOGO__", PRODUCT_LOGO_SVG)).into_response(),
             ));
         }
 

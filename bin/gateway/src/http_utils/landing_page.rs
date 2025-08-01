@@ -1,7 +1,7 @@
 use axum::{http::Uri, response::Html};
 
 static LANDING_PAGE_HTML: &str = include_str!("../../static/landing-page.html");
-static PRODUCT_LOGO_SVG: &str = include_str!("../../static/product_logo.svg");
+pub static PRODUCT_LOGO_SVG: &str = include_str!("../../static/product_logo.svg");
 
 pub async fn landing_page_handler(uri: Uri) -> Html<String> {
     let rendered_html = LANDING_PAGE_HTML
