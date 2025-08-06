@@ -4,9 +4,7 @@ pub mod executors;
 pub mod json_writer;
 pub mod projection;
 pub mod response;
-pub mod schema;
 pub mod utils;
 
 pub use execution::plan::execute_query_plan;
 pub use executors::map::SubgraphExecutorMap;
-pub use schema::metadata::SchemaMetadata;
