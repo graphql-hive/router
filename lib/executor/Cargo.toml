@@ -6,14 +6,13 @@ edition = "2021"
 [lib]
 
 [dependencies]
-dhat = "0.3.3"
 itoa = "1.0.15"
 ryu = "1.0.20"
 bytes = "1.10.1"
 async-trait = "0.1"
 serde = "1.0.219"
-serde_json = "1.0.140"
-futures = "0.3"
+serde_json = "1.0.142"
+futures = "0.3.31"
 query-planner = { path = "../query-planner" }
 query-plan-executor = { path = "../query-plan-executor" }
 graphql-parser = "0.4.1"
@@ -21,7 +20,7 @@ graphql-tools = "0.4.0"
 tracing = "0.1.41"
 # TODO: Move this to dev-dependencies but currently benchmarks need it
 hyper = { version = "1.6.0", features = ["client"] }
-hyper-util = { version = "0.1.15", features = [
+hyper-util = { version = "0.1.16", features = [
   "client",
   "client-legacy",
   "http1",
@@ -34,7 +33,7 @@ sonic-rs = "0.5.3"
 
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports", "async_tokio"] }
-tokio = { version = "1.35", features = ["full"] }
+tokio = { version = "1.47.1", features = ["full"] }
 subgraphs = { path = "../../bench/subgraphs" }
 
 [[bench]]

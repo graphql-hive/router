@@ -15,7 +15,7 @@ executor = { path = "../../lib/executor" }
 mimalloc = { version = "0.1.47", features = ["override"] }
 
 # Tokio runtime
-tokio = { version = "1.38.0", features = ["full"] }
+tokio = { version = "1.47.1", features = ["full"] }
 futures = "0.3.31"
 
 # GraphQL
@@ -23,12 +23,12 @@ graphql-parser = "0.4.1" # Using version from original file
 graphql-tools = "0.4.0"  # Using version from original file
 
 # Serialization
-serde = { version = "1.0.203", features = ["derive"] }
-serde_json = "1.0.140"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.142"
 sonic-rs = "0.5.3"
 
 # HTTP client and caching
-moka = { version = "0.12.8", features = ["future"] }
+moka = { version = "0.12.10", features = ["future"] }
 
 # Tracing
 tracing = "0.1.41"
@@ -46,7 +46,7 @@ axum = "0.8.4"
 axum-extra = "0.10.1"
 axum-macros = "0.5.0"
 http = "1.3.1"
-hyper = { version = "1.4.1", features = ["server", "http1"] }
+hyper = { version = "1.6.0", features = ["server", "http1"] }
 tower-http = { version = "0.6.6", features = [
   "fs",
   "trace",
@@ -60,4 +60,4 @@ thiserror = "2.0.12"
 lazy_static = "1.5.0"
 tower = "0.5.2"
 async-trait = "0.1.88"
-rand = "0.9.1"
+rand = "0.9.2"
