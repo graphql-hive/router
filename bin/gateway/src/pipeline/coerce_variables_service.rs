@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use executor::variables::collect_variables;
 use http::Method;
 use ntex::web::HttpRequest;
-use query_plan_executor::variables::collect_variables;
 use query_planner::state::supergraph_state::OperationKind;
-use serde_json::Value;
+use sonic_rs::Value;
 use tracing::{error, trace, warn};
 
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
@@ -21,7 +21,7 @@ pub struct CoerceVariablesPayload {
 #[inline]
 pub fn coerce_vars(
     req: &HttpRequest,
-    execution_params: &ExecutionRequest,
+    execution_params: ExecutionRequest,
     app_state: &GatewaySharedState,
     normalized_operation: &Arc<GraphQLNormalizationPayload>,
 ) -> Result<CoerceVariablesPayload, PipelineError> {
@@ -37,7 +37,7 @@ pub fn coerce_vars(
 
     match collect_variables(
         &normalized_operation.operation_for_plan,
-        &execution_params.variables,
+        execution_params.variables,
         &app_state.schema_metadata,
     ) {
         Ok(values) => {

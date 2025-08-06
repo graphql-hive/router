@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
+use executor::{
+    introspection::schema::{SchemaMetadata, SchemaWithMetadata},
+    SubgraphExecutorMap,
+};
 use graphql_parser::schema::Document;
 use graphql_tools::validation::{utils::ValidationError, validate::ValidationPlan};
 use moka::future::Cache;
-use query_plan_executor::executors::map::SubgraphExecutorMap;
-use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
 use query_planner::{
     planner::{plan_nodes::QueryPlan, Planner},
     state::supergraph_state::SupergraphState,
@@ -31,7 +33,8 @@ impl GatewaySharedState {
         let schema_metadata = planner.consumer_schema.schema_metadata();
 
         let subgraph_executor_map =
-            SubgraphExecutorMap::from_http_endpoint_map(supergraph_state.subgraph_endpoint_map);
+            SubgraphExecutorMap::from_http_endpoint_map(supergraph_state.subgraph_endpoint_map)
+                .expect("Failed to create subgraph executor map");
 
         Arc::new(Self {
             schema_metadata,

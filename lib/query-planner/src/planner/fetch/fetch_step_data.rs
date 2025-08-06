@@ -30,6 +30,7 @@ bitflags! {
 
 #[derive(Debug, Clone)]
 pub struct FetchStepData {
+    pub id: i64,
     pub service_name: SubgraphName,
     pub response_path: MergePath,
     pub input: TypeAwareSelection,

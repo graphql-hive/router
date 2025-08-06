@@ -11,11 +11,11 @@ graphql-tools = "0.4.0"
 graphql-parser = "0.4.1"
 # Serialization
 serde = "1.0.219"
-serde_json = "1.0.140"
+sonic-rs = "0.5.3"
 # Tracing
 tracing = { version = "0.1.41" }
 # Data Structures
-petgraph = "0.8.0"
+petgraph = "0.8.2"
 bitflags = "2.9.1"
 # Utils
 lazy-init = "0.5.1"

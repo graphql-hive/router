@@ -1,9 +1,10 @@
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use graphql_parser::query::Document;
 use ntex::web::HttpRequest;
 use query_planner::utils::parsing::safe_parse_operation;
+use xxhash_rust::xxh3::Xxh3;
 
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::graphql_request_params::ExecutionRequest;
@@ -23,7 +24,7 @@ pub async fn parse_operation(
     state: &GatewaySharedState,
 ) -> Result<GraphQLParserPayload, PipelineError> {
     let cache_key = {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = Xxh3::new();
         execution_params.query.hash(&mut hasher);
         hasher.finish()
     };

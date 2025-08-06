@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
+use executor::{
+    execute_query_plan, execution::plan::QueryPlanExecutionContext,
+    introspection::resolve::IntrospectionContext,
+};
 use http::{HeaderValue, Method};
 use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
 };
-use query_plan_executor::execute_query_plan;
 
 use crate::{
     pipeline::{
@@ -71,29 +74,34 @@ pub async fn execute_pipeline(
     req: &HttpRequest,
     body_bytes: &Bytes,
     state: &web::types::State<Arc<GatewaySharedState>>,
-) -> Result<Vec<u8>, PipelineError> {
+) -> Result<Bytes, PipelineError> {
     let execution_request = get_execution_request(req, body_bytes)?;
     let parser_payload = parse_operation(req, &execution_request, state).await?;
     validate_operation(req, state, &parser_payload).await?;
 
     let progressive_override_ctx = progressive_override_extractor()?;
-    let normalize_payload = normalize_op(req, &execution_request, &parser_payload, state).await?;
-    let variable_payload = coerce_vars(req, &execution_request, state, &normalize_payload)?;
+    let normalized_payload = normalize_op(req, &execution_request, &parser_payload, state).await?;
+    let variable_payload = coerce_vars(req, execution_request, state, &normalized_payload)?;
     let query_plan_payload =
-        plan_query(req, state, &progressive_override_ctx, &normalize_payload).await?;
+        plan_query(req, state, &progressive_override_ctx, &normalized_payload).await?;
 
-    let execution_result = execute_query_plan(
-        &query_plan_payload.query_plan,
-        &state.subgraph_executor_map,
-        &variable_payload.variables_map,
-        &state.schema_metadata,
-        normalize_payload.root_type_name,
-        &normalize_payload.projection_plan,
-        normalize_payload.has_introspection,
-        query_plan_executor::ExposeQueryPlanMode::No,
-    )
+    let introspection_context = IntrospectionContext {
+        query: normalized_payload.operation_for_introspection.as_ref(),
+        schema: &state.planner.consumer_schema.document,
+        metadata: &state.schema_metadata,
+    };
+
+    let execution_result = execute_query_plan(QueryPlanExecutionContext {
+        query_plan: &query_plan_payload.query_plan,
+        projection_plan: &normalized_payload.projection_plan,
+        variable_values: &variable_payload.variables_map,
+        extensions: None,
+        introspection_context: &introspection_context,
+        operation_type_name: normalized_payload.root_type_name,
+        executors: &state.subgraph_executor_map,
+    })
     .await
-    .map_err(|err| req.new_pipeline_error(PipelineErrorVariant::ResponseWriteError(err)))?;
+    .map_err(|err| req.new_pipeline_error(PipelineErrorVariant::PlanExecutionError(err)))?;
 
     Ok(execution_result)
 }

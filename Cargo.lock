@@ -795,6 +795,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tinytemplate",
+ "tokio",
  "walkdir",
 ]
 
@@ -1072,6 +1073,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "executor"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "bumpalo",
+ "bytes",
+ "compio",
+ "criterion",
+ "cyper",
+ "futures",
+ "graphql-parser",
+ "graphql-tools",
+ "http",
+ "indexmap 2.10.0",
+ "itoa",
+ "ntex-bytes",
+ "query-planner",
+ "ryu",
+ "serde",
+ "sonic-rs",
+ "subgraphs",
+ "thiserror 2.0.14",
+ "tracing",
+ "url",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "fast_chemail"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1262,6 +1291,7 @@ version = "0.0.1"
 dependencies = [
  "async-trait",
  "compio",
+ "executor",
  "graphql-parser",
  "graphql-tools",
  "http",
@@ -1269,17 +1299,16 @@ dependencies = [
  "mimalloc",
  "moka",
  "ntex",
- "query-plan-executor",
  "query-planner",
  "rand",
  "serde",
- "serde_json",
  "sonic-rs",
  "thiserror 2.0.14",
  "tracing",
  "tracing-subscriber",
  "tracing-tree",
  "ulid",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -2590,31 +2619,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "query-plan-executor"
-version = "0.0.1"
-dependencies = [
- "async-graphql",
- "async-trait",
- "compio",
- "criterion",
- "cyper",
- "futures",
- "graphql-parser",
- "graphql-tools",
- "http",
- "http-body-util",
- "indexmap 2.10.0",
- "insta",
- "query-planner",
- "serde",
- "serde_json",
- "sonic-rs",
- "subgraphs",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "query-planner"
 version = "0.0.1"
 dependencies = [
@@ -2628,7 +2632,7 @@ dependencies = [
  "petgraph",
  "rustc-hash",
  "serde",
- "serde_json",
+ "sonic-rs",
  "thiserror 2.0.14",
  "tracing",
  "tracing-subscriber",
@@ -4293,6 +4297,12 @@ name = "writeable"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea2f10b9bb0928dfb1b42b65e1f9e36f7f54dbdf08457afefb38afcdec4fa2bb"
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
 name = "yoke"

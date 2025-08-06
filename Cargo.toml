@@ -2,7 +2,7 @@
 members = [
   "lib/query-planner",
   "lib/wasm-lib",
-  "lib/query-plan-executor",
+  "lib/executor",
   "bin/dev-cli",
   "bin/gateway",
   "bench/subgraphs",
@@ -17,3 +17,8 @@ debug = 2
 [profile.profiling]
 inherits = "release"
 debug = true
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

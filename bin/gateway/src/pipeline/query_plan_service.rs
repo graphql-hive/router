@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::hash::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -10,7 +9,7 @@ use crate::shared_state::GatewaySharedState;
 use ntex::web::HttpRequest;
 use query_planner::planner::plan_nodes::QueryPlan;
 use query_planner::state::supergraph_state::SupergraphState;
-use tracing::{debug, trace};
+use xxhash_rust::xxh3::Xxh3;
 
 /// Deterministic context representing the outcome of progressive override rules.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -51,7 +50,7 @@ pub struct QueryPlanPayload {
 }
 
 fn calculate_cache_key(operation_hash: u64, context: &StableOverrideContext) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = Xxh3::new();
     operation_hash.hash(&mut hasher);
     context.hash(&mut hasher);
     hasher.finish()
@@ -67,36 +66,27 @@ pub async fn plan_query(
     let stable_override_context =
         StableOverrideContext::new(&app_state.planner.supergraph, request_override_context);
 
-    let filtered_operation_for_plan = &normalized_operation.operation_for_plan;
-    let plan_cache_key =
-        calculate_cache_key(filtered_operation_for_plan.hash(), &stable_override_context);
+    let plan_cache_key = calculate_cache_key(
+        normalized_operation.operation_for_plan.hash(),
+        &stable_override_context,
+    );
 
     let query_plan_arc = match app_state.plan_cache.get(&plan_cache_key).await {
-        Some(plan) => {
-            trace!("Plan with hash key {} was found in cache", plan_cache_key);
-
-            plan
-        }
+        Some(plan) => plan,
         None => {
-            trace!(
-                "Plan with hash key {} was not found in cache, planning...",
-                plan_cache_key
-            );
-
-            let plan = if filtered_operation_for_plan.selection_set.is_empty()
-                && normalized_operation.has_introspection
+            let plan = if normalized_operation
+                .operation_for_plan
+                .selection_set
+                .is_empty()
+                && normalized_operation.operation_for_introspection.is_some()
             {
-                debug!(
-                    "No need for a plan, as the incoming query only involves introspection fields"
-                );
-
                 QueryPlan {
                     kind: "QueryPlan".to_string(),
                     node: None,
                 }
             } else {
                 match app_state.planner.plan_from_normalized_operation(
-                    filtered_operation_for_plan,
+                    &normalized_operation.operation_for_plan,
                     request_override_context.into(),
                 ) {
                     Ok(p) => p,
@@ -105,14 +95,6 @@ pub async fn plan_query(
                     }
                 }
             };
-
-            trace!(
-                "Plan with hash key {} built and stored in cache:\n{}",
-                plan_cache_key,
-                plan
-            );
-
-            trace!("complete plan object:\n{:?}", plan);
 
             let arc_plan = Arc::new(plan);
             app_state

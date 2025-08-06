@@ -5,14 +5,11 @@ use ntex::util::Bytes;
 use ntex::web::types::Query;
 use ntex::web::HttpRequest;
 use serde::Deserialize;
-use serde_json::Value;
+use sonic_rs::Value;
 use tracing::{trace, warn};
 
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::header::AssertRequestJson;
-
-#[derive(Clone, Debug, Default)]
-pub struct GraphQLRequestParamsExtractor;
 
 #[derive(serde::Deserialize, Debug)]
 pub struct GETQueryParams {

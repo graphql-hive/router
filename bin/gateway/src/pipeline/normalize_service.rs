@@ -1,11 +1,12 @@
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use executor::introspection::partition::partition_operation;
+use executor::projection::plan::FieldProjectionPlan;
 use ntex::web::HttpRequest;
-use query_plan_executor::introspection::filter_introspection_fields_in_operation;
-use query_plan_executor::projection::FieldProjectionPlan;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
+use xxhash_rust::xxh3::Xxh3;
 
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::graphql_request_params::ExecutionRequest;
@@ -15,11 +16,10 @@ use tracing::{error, trace};
 
 #[derive(Debug)]
 pub struct GraphQLNormalizationPayload {
-    /// The operation to execute, without introspection fields.
     pub operation_for_plan: OperationDefinition,
+    pub operation_for_introspection: Option<OperationDefinition>,
     pub root_type_name: &'static str,
     pub projection_plan: Vec<FieldProjectionPlan>,
-    pub has_introspection: bool,
 }
 
 #[inline]
@@ -31,7 +31,7 @@ pub async fn normalize_op(
 ) -> Result<Arc<GraphQLNormalizationPayload>, PipelineError> {
     let cache_key = match &execution_params.operation_name {
         Some(operation_name) => {
-            let mut hasher = DefaultHasher::new();
+            let mut hasher = Xxh3::new();
             execution_params.query.hash(&mut hasher);
             operation_name.hash(&mut hasher);
             hasher.finish()
@@ -40,44 +40,23 @@ pub async fn normalize_op(
     };
 
     match app_state.normalize_cache.get(&cache_key).await {
-        Some(payload) => {
-            trace!(
-                "Found normalized GraphQL operation in cache (operation name={:?}): {}",
-                payload.operation_for_plan.name,
-                payload.operation_for_plan
-            );
-
-            Ok(payload)
-        }
+        Some(payload) => Ok(payload),
         None => match normalize_operation(
             &app_state.planner.supergraph,
             &parser_payload.parsed_operation,
             execution_params.operation_name.as_deref(),
         ) {
             Ok(doc) => {
-                trace!(
-                    "Successfully normalized GraphQL operation (operation name={:?}): {}",
-                    doc.operation_name,
-                    doc.operation
-                );
-
-                let operation = &doc.operation;
-                let (has_introspection, filtered_operation_for_plan) =
-                    filter_introspection_fields_in_operation(operation);
-
-                trace!(
-                    "Operation after removing introspection fields (introspection found={}): {}",
-                    has_introspection,
-                    filtered_operation_for_plan
-                );
-
+                let operation = doc.operation;
                 let (root_type_name, projection_plan) =
-                    FieldProjectionPlan::from_operation(operation, &app_state.schema_metadata);
+                    FieldProjectionPlan::from_operation(&operation, &app_state.schema_metadata);
+
+                let partitioned_operation = partition_operation(operation);
                 let payload = GraphQLNormalizationPayload {
                     root_type_name,
                     projection_plan,
-                    operation_for_plan: filtered_operation_for_plan,
-                    has_introspection,
+                    operation_for_plan: partitioned_operation.downstream_operation,
+                    operation_for_introspection: partitioned_operation.introspection_operation,
                 };
                 let payload_arc = Arc::new(payload);
                 app_state

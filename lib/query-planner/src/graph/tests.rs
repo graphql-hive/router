@@ -66,7 +66,7 @@ mod graph_tests {
             self
         }
 
-        pub fn edge_field(&self, key: &str) -> Option<&(EdgeReference, NodeIndex)> {
+        pub fn edge_field<'a>(&'a self, key: &str) -> Option<&'a (EdgeReference<'a>, NodeIndex)> {
             let mut r = self
                 .edges
                 .iter()
@@ -83,7 +83,7 @@ mod graph_tests {
             r.nth(0)
         }
 
-        pub fn edges_field(&self, key: &str) -> Vec<&(EdgeReference, NodeIndex)> {
+        pub fn edges_field<'a>(&'a self, key: &str) -> Vec<&'a (EdgeReference<'a>, NodeIndex)> {
             self.edges
                 .iter()
                 .filter(|(edge_ref, _to)| match edge_ref.weight() {
@@ -93,7 +93,11 @@ mod graph_tests {
                 .collect()
         }
 
-        pub fn edge(&self, key: &str, other_side: &str) -> Option<&(EdgeReference, NodeIndex)> {
+        pub fn edge<'a>(
+            &'a self,
+            key: &str,
+            other_side: &str,
+        ) -> Option<&'a (EdgeReference<'a>, NodeIndex)> {
             self.edges.iter().find(|(edge_ref, node_id)| {
                 let edge = edge_ref.weight();
                 let node = self.graph.node(*node_id).unwrap();

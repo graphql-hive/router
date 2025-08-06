@@ -1,14 +1,15 @@
-use std::{collections::HashMap, io, sync::Arc};
+use std::sync::Arc;
 
+use executor::{execution::error::PlanExecutionError, response::graphql_error::GraphQLError};
 use graphql_tools::validation::utils::ValidationError;
 use http::{HeaderName, Method, StatusCode};
 use ntex::{
     http::ResponseBuilder,
     web::{self, error::QueryPayloadError, HttpRequest},
 };
-use query_plan_executor::{ExecutionResult, GraphQLError};
 use query_planner::{ast::normalization::error::NormalizationError, planner::PlannerError};
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use sonic_rs::{object, Value};
 
 use crate::pipeline::header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR};
 
@@ -67,10 +68,10 @@ pub enum PipelineErrorVariant {
     VariablesCoercionError(String),
     #[error("Validation errors")]
     ValidationErrors(Arc<Vec<ValidationError>>),
+    #[error("Failed to execute a plan: {0}")]
+    PlanExecutionError(PlanExecutionError),
     #[error("Failed to produce a plan: {0}")]
     PlannerError(PlannerError),
-    #[error("Failed to write response: {0}")]
-    ResponseWriteError(io::Error),
 }
 
 impl PipelineErrorVariant {
@@ -78,7 +79,7 @@ impl PipelineErrorVariant {
         match self {
             Self::UnsupportedHttpMethod(_) => "METHOD_NOT_ALLOWED",
             Self::PlannerError(_) => "QUERY_PLAN_BUILD_FAILED",
-            Self::ResponseWriteError(_) => "INTERNAL_SERVER_ERROR",
+            Self::PlanExecutionError(_) => "QUERY_PLAN_EXECUTION_FAILED",
             Self::FailedToParseOperation(_) => "GRAPHQL_PARSE_FAILED",
             Self::ValidationErrors(_) => "GRAPHQL_VALIDATION_FAILED",
             Self::VariablesCoercionError(_) => "BAD_USER_INPUT",
@@ -97,7 +98,7 @@ impl PipelineErrorVariant {
 
     pub fn graphql_error_message(&self) -> String {
         match self {
-            Self::PlannerError(_) | Self::ResponseWriteError(_) => "Unexpected error".to_string(),
+            Self::PlannerError(_) | Self::PlanExecutionError(_) => "Unexpected error".to_string(),
             _ => self.to_string(),
         }
     }
@@ -105,7 +106,7 @@ impl PipelineErrorVariant {
     pub fn default_status_code(&self, prefer_ok: bool) -> StatusCode {
         match (self, prefer_ok) {
             (Self::PlannerError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
-            (Self::ResponseWriteError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::PlanExecutionError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::UnsupportedHttpMethod(_), _) => StatusCode::METHOD_NOT_ALLOWED,
             (Self::InvalidHeaderValue(_), _) => StatusCode::BAD_REQUEST,
             (Self::GetInvalidQueryParams, _) => StatusCode::BAD_REQUEST,
@@ -128,15 +129,18 @@ impl PipelineErrorVariant {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct FailedExecutionResult {
+    pub errors: Vec<GraphQLError>,
+}
+
 impl PipelineError {
     pub fn into_response(self) -> web::HttpResponse {
         let status = self.error.default_status_code(self.accept_ok);
 
         if let PipelineErrorVariant::ValidationErrors(validation_errors) = self.error {
-            let validation_error_result = ExecutionResult {
-                data: None,
-                errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
-                extensions: None,
+            let validation_error_result = FailedExecutionResult {
+                errors: validation_errors.iter().map(|error| error.into()).collect(),
             };
 
             return ResponseBuilder::new(status).json(&validation_error_result);
@@ -146,19 +150,14 @@ impl PipelineError {
         let message = self.error.graphql_error_message();
 
         let graphql_error = GraphQLError {
-            extensions: Some(HashMap::from([(
-                "code".to_string(),
-                Value::String(code.to_string()),
-            )])),
+            extensions: Some(Value::from_iter(&object! {"code": code.to_string()})),
             message,
             path: None,
             locations: None,
         };
 
-        let result = ExecutionResult {
-            data: None,
-            errors: Some(vec![graphql_error]),
-            extensions: None,
+        let result = FailedExecutionResult {
+            errors: vec![graphql_error],
         };
 
         ResponseBuilder::new(status).json(&result)
