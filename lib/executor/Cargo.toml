@@ -5,10 +5,6 @@ edition = "2021"
 
 [lib]
 
-[[bin]]
-name = "executor"
-path = "src/bin.rs"
-
 [dependencies]
 dhat = "0.3.3"
 itoa = "1.0.15"

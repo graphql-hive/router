@@ -164,7 +164,7 @@ impl<'a> FieldProjectionCondition<'a> {
             }
             FieldProjectionCondition::EnumValuesCondition(enum_values) => {
                 if let Some(Value::String(string_value)) = field_value {
-                    if enum_values.binary_search(&string_value).is_ok() {
+                    if enum_values.binary_search(string_value).is_ok() {
                         Ok(())
                     } else {
                         Err(FieldProjectionConditionError::InvalidEnumValue)
@@ -189,11 +189,7 @@ impl<'a> FieldProjectionPlan<'a> {
             match selection_item {
                 SelectionItem::Field(field) => {
                     let field_name = field.name.as_str();
-                    let response_key = field
-                        .alias
-                        .as_ref()
-                        .map(|s| s.as_str())
-                        .unwrap_or(field_name);
+                    let response_key = field.alias.as_deref().unwrap_or(field_name);
                     let field_type = if field_name == TYPENAME_FIELD_NAME {
                         "String"
                     } else {
@@ -290,9 +286,9 @@ impl<'a> FieldProjectionPlan<'a> {
                         }
                     } else {
                         let new_plan = FieldProjectionPlan {
-                            field_name: field_name,
-                            field_type: field_type,
-                            response_key: response_key,
+                            field_name,
+                            field_type,
+                            response_key,
                             conditions: condition_for_field,
                             selections: FieldProjectionPlan::from_selection_set(
                                 &field.selections,

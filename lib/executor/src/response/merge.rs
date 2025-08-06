@@ -47,7 +47,7 @@ fn deep_merge_objects<'a>(
         return;
     }
 
-    let old_target = std::mem::replace(target_vec, Vec::new());
+    let old_target = std::mem::take(target_vec);
     let mut merged = Vec::with_capacity(old_target.len() + source_obj.len());
 
     let mut target_iter = old_target.into_iter().peekable();

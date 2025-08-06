@@ -1,4 +1,4 @@
-pub const TYPENAME_FIELD_NAME: &'static str = "__typename";
+pub const TYPENAME_FIELD_NAME: &str = "__typename";
 pub const TYPENAME: &[u8] = b"__typename";
 pub const NULL: &[u8] = b"null";
 pub const TRUE: &[u8] = b"true";

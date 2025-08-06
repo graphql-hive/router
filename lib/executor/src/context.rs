@@ -5,6 +5,12 @@ pub struct ExecutionContext<'a> {
     pub final_response: Value<'a>,
 }
 
+impl<'a> Default for ExecutionContext<'a> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'a> ExecutionContext<'a> {
     pub fn new() -> Self {
         ExecutionContext {

@@ -34,14 +34,14 @@ pub async fn execute_query_plan(
     executors: &SubgraphExecutorMap,
 ) -> BytesMut {
     let mut ctx = ExecutionContext::new();
-    let executor = Executor::new(&variable_values, &executors, schema_metadata);
+    let executor = Executor::new(variable_values, executors, schema_metadata);
     execute_query_plan_internal(query_plan, executor, &mut ctx).await;
     let final_response = &ctx.final_response;
     project_by_operation(
         final_response,
         operation_type_name,
-        &projection_plan,
-        &variable_values,
+        projection_plan,
+        variable_values,
     )
 }
 
@@ -215,7 +215,7 @@ impl<'a> Executor<'a> {
         for child in &node.nodes {
             match child {
                 PlanNode::Fetch(fetch_node) => {
-                    jobs.push(Box::pin(self.execute_fetch_node(&fetch_node, None)));
+                    jobs.push(Box::pin(self.execute_fetch_node(fetch_node, None)));
                 }
                 PlanNode::Flatten(flatten_node) => {
                     let fetch_node = match flatten_node.node.as_ref() {
@@ -362,7 +362,7 @@ impl<'a> Executor<'a> {
                     &node.service_name,
                     HttpExecutionRequest {
                         query: node.operation.document_str.as_str(),
-                        operation_name: node.operation_name.as_ref().map(|s| s.as_str()),
+                        operation_name: node.operation_name.as_deref(),
                         variables: None,
                         representations,
                     },

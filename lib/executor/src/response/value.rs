@@ -152,7 +152,7 @@ pub trait ValueRefExt {
 impl ValueRefExt for ValueRef<'_> {
     fn to_data<'a>(&'a self) -> Option<ValueRef<'a>> {
         match self {
-            ValueRef::Object(obj) => obj.get(&"data").and_then(|v| Some(v.as_ref())),
+            ValueRef::Object(obj) => obj.get(&"data").map(|v| v.as_ref()),
             _ => None,
         }
     }

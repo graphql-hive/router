@@ -14,8 +14,8 @@ use crate::utils::consts::{
 };
 
 #[instrument(level = "trace", skip_all)]
-pub fn project_by_operation<'a>(
-    data: &'a Value,
+pub fn project_by_operation(
+    data: &Value,
     // errors: &mut Vec<GraphQLError>,
     // extensions: &HashMap<String, serde_json::Value>,
     operation_type_name: &str,
@@ -75,7 +75,7 @@ fn project_selection_set(
     selection: &FieldProjectionPlan,
     variable_values: &Option<HashMap<String, serde_json::Value>>,
     buffer: &mut BytesMut,
-) -> () {
+) {
     match data {
         Value::Null => buffer.put(NULL),
         Value::Bool(true) => buffer.put(TRUE),

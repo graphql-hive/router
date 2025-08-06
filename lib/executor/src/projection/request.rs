@@ -204,7 +204,7 @@ fn project_requires_map_mut(
                             .iter()
                             .find(|(k, _)| k == &response_key)
                             .map(|(_, val)| val)
-                            .unwrap_or(&&Value::Null),
+                            .unwrap_or(&Value::Null),
                     );
 
                 if original.is_null() {

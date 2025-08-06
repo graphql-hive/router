@@ -6,6 +6,12 @@ pub struct ResponsesStorage {
     responses: Vec<Arc<Bytes>>,
 }
 
+impl Default for ResponsesStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResponsesStorage {
     pub fn new() -> Self {
         Self {
@@ -20,7 +26,7 @@ impl ResponsesStorage {
     }
 
     // This helper is what we need
-    pub fn get_bytes<'a>(&'a self, index: usize) -> &'a [u8] {
+    pub fn get_bytes(&self, index: usize) -> &[u8] {
         &self.responses[index]
     }
 
