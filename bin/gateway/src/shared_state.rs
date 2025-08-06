@@ -1,9 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
+use executor::SubgraphExecutorMap;
 use graphql_parser::schema::Document;
 use graphql_tools::validation::{utils::ValidationError, validate::ValidationPlan};
 use moka::future::Cache;
-use query_plan_executor::executors::map::SubgraphExecutorMap;
 use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
 use query_planner::{
     planner::{plan_nodes::QueryPlan, Planner},

@@ -2,6 +2,7 @@
 members = [
   "lib/query-planner",
   "lib/wasm-lib",
+  "lib/executor",
   "lib/query-plan-executor",
   "bin/dev-cli",
   "bin/gateway",

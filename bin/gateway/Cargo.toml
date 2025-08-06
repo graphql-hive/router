@@ -10,11 +10,13 @@ path = "src/main.rs"
 [dependencies]
 query-planner = { path = "../../lib/query-planner" }
 query-plan-executor = { path = "../../lib/query-plan-executor" }
+executor = { path = "../../lib/executor" }
 
 mimalloc = { version = "0.1.47", features = ["override"] }
 
 # Tokio runtime
 tokio = { version = "1.38.0", features = ["full"] }
+futures = "0.3.31"
 
 # GraphQL
 graphql-parser = "0.4.1" # Using version from original file

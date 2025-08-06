@@ -20,11 +20,11 @@ use crate::{
 
 #[derive(Debug)]
 pub struct FieldProjectionPlan {
-    field_name: String,
-    field_type: String,
-    response_key: String,
-    conditions: FieldProjectionCondition,
-    selections: Option<Vec<FieldProjectionPlan>>,
+    pub field_name: String,
+    pub field_type: String,
+    pub response_key: String,
+    pub conditions: FieldProjectionCondition,
+    pub selections: Option<Vec<FieldProjectionPlan>>,
 }
 
 #[derive(Debug, Clone)]
