@@ -83,7 +83,7 @@ pub fn write_f64(writer: &mut BytesMut, value: f64) {
     if result.ends_with(".0") {
         result = unsafe { result.get_unchecked(..result.len() - 2) };
     }
-    write_and_escape_string(writer, result);
+    writer.put_slice(result.as_bytes());
 }
 
 pub fn write_u64(writer: &mut BytesMut, value: u64) {
