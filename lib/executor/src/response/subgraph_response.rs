@@ -66,7 +66,7 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
                 }
 
                 // Data field is required in a successful response, but might be null in case of errors
-                let data = data.unwrap_or_else(|| Value::Null);
+                let data = data.unwrap_or(Value::Null);
 
                 Ok(SubgraphResponse {
                     data,

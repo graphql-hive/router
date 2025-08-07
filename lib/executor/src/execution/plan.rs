@@ -146,78 +146,7 @@ impl<'a> Executor<'a> {
 
     async fn execute_sequence_wave(&self, ctx: &mut ExecutionContext<'a>, node: &SequenceNode) {
         for child in &node.nodes {
-            match child {
-                PlanNode::Fetch(fetch_node) => {
-                    let job = self.execute_fetch_node(fetch_node, None).await;
-                    self.process_job_result(ctx, job);
-                }
-                PlanNode::Parallel(parallel_node) => {
-                    self.execute_parallel_wave(ctx, parallel_node).await;
-                }
-                PlanNode::Flatten(flatten_node) => {
-                    let result = self.prepare_flatten_data(&ctx.final_response, flatten_node);
-
-                    if result.is_none() {
-                        continue;
-                    }
-
-                    let (representations, representation_hashes, filtered_hashes) = result.unwrap();
-
-                    let job = self
-                        .execute_flatten_fetch_node(
-                            flatten_node,
-                            Some(representations),
-                            Some(representation_hashes),
-                            Some(filtered_hashes),
-                        )
-                        .await;
-
-                    self.process_job_result(ctx, job);
-                }
-                PlanNode::Condition(node) => {
-                    match condition_node_by_variables(node, self.variable_values).as_ref() {
-                        Some(PlanNode::Fetch(node)) => {
-                            let job = self.execute_fetch_node(node, None).await;
-                            self.process_job_result(ctx, job);
-                        }
-                        Some(PlanNode::Flatten(node)) => {
-                            let result = self.prepare_flatten_data(&ctx.final_response, node);
-
-                            if result.is_none() {
-                                continue;
-                            }
-
-                            let (representations, representation_hashes, filtered_hashes) =
-                                result.unwrap();
-
-                            let job = self
-                                .execute_flatten_fetch_node(
-                                    node,
-                                    Some(representations),
-                                    Some(representation_hashes),
-                                    Some(filtered_hashes),
-                                )
-                                .await;
-
-                            self.process_job_result(ctx, job);
-                        }
-                        Some(PlanNode::Parallel(node)) => {
-                            self.execute_parallel_wave(ctx, node).await;
-                        }
-                        Some(PlanNode::Sequence(node)) => {
-                            Box::pin(self.execute_sequence_wave(ctx, node)).await;
-                        }
-                        None => {
-                            continue;
-                        }
-                        Some(_) => {
-                            panic!("Unsupported plan node type in ConditionNode");
-                        }
-                    }
-                }
-                // Our Query Planner does not produce any other plan node types in SequenceNode
-                _ => panic!("Unsupported plan node type in SequenceNode"),
-            }
+            Box::pin(self.execute_plan_node(ctx, child)).await;
         }
     }
 
@@ -233,6 +162,46 @@ impl<'a> Executor<'a> {
 
         for result in results {
             self.process_job_result(ctx, result);
+        }
+    }
+
+    async fn execute_plan_node(&self, ctx: &mut ExecutionContext<'a>, node: &PlanNode) {
+        match node {
+            PlanNode::Fetch(fetch_node) => {
+                let job = self.execute_fetch_node(fetch_node, None).await;
+                self.process_job_result(ctx, job);
+            }
+            PlanNode::Parallel(parallel_node) => {
+                self.execute_parallel_wave(ctx, parallel_node).await;
+            }
+            PlanNode::Flatten(flatten_node) => {
+                if let Some((representations, representation_hashes, filtered_hashes)) =
+                    self.prepare_flatten_data(&ctx.final_response, flatten_node)
+                {
+                    let job = self
+                        .execute_flatten_fetch_node(
+                            flatten_node,
+                            Some(representations),
+                            Some(representation_hashes),
+                            Some(filtered_hashes),
+                        )
+                        .await;
+                    self.process_job_result(ctx, job);
+                }
+            }
+            PlanNode::Sequence(sequence_node) => {
+                self.execute_sequence_wave(ctx, sequence_node).await;
+            }
+            PlanNode::Condition(condition_node) => {
+                if let Some(node) =
+                    condition_node_by_variables(condition_node, self.variable_values)
+                {
+                    Box::pin(self.execute_plan_node(ctx, node)).await;
+                }
+            }
+            _ => {
+                panic!("Unexpected node in plan execution");
+            }
         }
     }
 
@@ -261,7 +230,7 @@ impl<'a> Executor<'a> {
             }
             PlanNode::Condition(node) => {
                 match condition_node_by_variables(node, self.variable_values) {
-                    Some(node) => Box::pin(self.prepare_job_future(node, final_response)),
+                    Some(node) => Box::pin(self.prepare_job_future(node, final_response)), // This is already clean.
                     None => Box::pin(async { ExecutionJob::None }),
                 }
             }

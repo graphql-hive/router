@@ -1,4 +1,4 @@
 pub mod merge;
-pub mod response;
 pub mod storage;
+pub mod subgraph_response;
 pub mod value;
