@@ -101,7 +101,6 @@ impl RewriteApplier for ValueSetter {
         match data {
             Value::Array(arr) => {
                 for data in arr {
-                    // Apply the path to each item in the array
                     self.apply_path(possible_types, data, path);
                 }
             }

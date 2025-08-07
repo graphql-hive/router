@@ -31,21 +31,21 @@ impl QueryPlan {
         match self.node.as_ref() {
             Some(node) => {
                 let mut list = vec![];
-                self.fetch_nodes_from_node(node, &mut list);
+                Self::fetch_nodes_from_node(node, &mut list);
                 list
             }
             None => vec![],
         }
     }
 
-    fn fetch_nodes_from_node<'a>(&self, node: &'a PlanNode, list: &mut Vec<&'a FetchNode>) {
+    fn fetch_nodes_from_node<'a>(node: &'a PlanNode, list: &mut Vec<&'a FetchNode>) {
         match node {
             PlanNode::Condition(node) => {
                 if let Some(node) = node.else_clause.as_ref() {
-                    self.fetch_nodes_from_node(node.as_ref(), list);
+                    Self::fetch_nodes_from_node(node.as_ref(), list);
                 }
                 if let Some(node) = node.if_clause.as_ref() {
-                    self.fetch_nodes_from_node(node.as_ref(), list);
+                    Self::fetch_nodes_from_node(node.as_ref(), list);
                 }
             }
             PlanNode::Fetch(node) => {
@@ -53,19 +53,19 @@ impl QueryPlan {
             }
             PlanNode::Sequence(node) => {
                 for child in &node.nodes {
-                    self.fetch_nodes_from_node(child, list);
+                    Self::fetch_nodes_from_node(child, list);
                 }
             }
             PlanNode::Parallel(node) => {
                 for child in &node.nodes {
-                    self.fetch_nodes_from_node(child, list);
+                    Self::fetch_nodes_from_node(child, list);
                 }
             }
             PlanNode::Flatten(node) => {
-                self.fetch_nodes_from_node(&node.node, list);
+                Self::fetch_nodes_from_node(&node.node, list);
             }
             PlanNode::Subscription(node) => {
-                self.fetch_nodes_from_node(node.primary.as_ref(), list);
+                Self::fetch_nodes_from_node(node.primary.as_ref(), list);
             }
             PlanNode::Defer(_) => {
                 unreachable!("DeferNode is not supported yet");
@@ -390,7 +390,7 @@ impl FetchNode {
     pub fn from_fetch_step(step: &FetchStepData, supergraph: &SupergraphState) -> Self {
         match step.is_entity_call() {
             true => FetchNode {
-                id: step.id.clone(),
+                id: step.id,
                 service_name: step.service_name.0.clone(),
                 variable_usages: step.variable_usages.clone(),
                 operation_kind: Some(OperationKind::Query),
@@ -412,7 +412,7 @@ impl FetchNode {
                 let document_str = document.to_string();
 
                 FetchNode {
-                    id: step.id.clone(),
+                    id: step.id,
                     service_name: step.service_name.0.clone(),
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(step.into()),

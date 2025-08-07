@@ -82,23 +82,29 @@ impl<'exec, T> ConcurrencyScope<'exec, T> {
     }
 }
 
-type FetchNodeId = i64;
+struct FetchJob {
+    fetch_node_id: i64,
+    response: Bytes,
+}
+
+struct FlattenFetchJob {
+    flatten_node_path: FlattenNodePath,
+    response: Bytes,
+    fetch_node_id: i64,
+    representation_hashes: Vec<u64>,
+    representation_hash_to_index: HashMap<u64, usize>,
+}
+
 enum ExecutionJob {
-    Fetch(Bytes, FetchNodeId),
-    FlattenFetch(
-        FlattenNodePath,
-        Bytes,
-        FetchNodeId,
-        Vec<u64>,
-        HashMap<u64, usize>,
-    ),
+    Fetch(FetchJob),
+    FlattenFetch(FlattenFetchJob),
 }
 
 impl From<ExecutionJob> for Bytes {
     fn from(value: ExecutionJob) -> Self {
         match value {
-            ExecutionJob::Fetch(p, _) => p,
-            ExecutionJob::FlattenFetch(_, p, _, _, _) => p,
+            ExecutionJob::Fetch(j) => j.response,
+            ExecutionJob::FlattenFetch(j) => j.response,
         }
     }
 }
@@ -203,12 +209,12 @@ impl<'a> Executor<'a> {
 
     fn process_job_result(&self, ctx: &mut ExecutionContext<'a>, job: ExecutionJob) {
         match job {
-            ExecutionJob::Fetch(res, fetch_node_id) => {
-                let idx = ctx.response_storage.add_response(res);
+            ExecutionJob::Fetch(job) => {
+                let idx = ctx.response_storage.add_response(job.response);
                 let bytes: &'a [u8] =
                     unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
                 let output_rewrites: Option<&'a Vec<FetchRewrite>> =
-                    unsafe { std::mem::transmute(ctx.output_rewrites.get(fetch_node_id)) };
+                    unsafe { std::mem::transmute(ctx.output_rewrites.get(job.fetch_node_id)) };
                 let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
                 let mut value = Value::deserialize(&mut deserializer).unwrap();
                 let mut data_ref: Value<'a> =
@@ -223,17 +229,18 @@ impl<'a> Executor<'a> {
                 deep_merge(&mut ctx.final_response, data_ref);
             }
             ExecutionJob::FlattenFetch(
-                path,
-                res,
-                fetch_node_id,
-                representation_hashes,
-                filtered_representations_to_index_map,
+                job,
+                // path,
+                // res,
+                // fetch_node_id,
+                // representation_hashes,
+                // filtered_representations_to_index_map,
             ) => {
-                let idx = ctx.response_storage.add_response(res);
+                let idx = ctx.response_storage.add_response(job.response);
                 let bytes: &'a [u8] =
                     unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
                 let output_rewrites: Option<&'a Vec<FetchRewrite>> =
-                    unsafe { std::mem::transmute(ctx.output_rewrites.get(fetch_node_id)) };
+                    unsafe { std::mem::transmute(ctx.output_rewrites.get(job.fetch_node_id)) };
                 let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
                 let mut value = Value::deserialize(&mut deserializer).unwrap();
                 let mut entities: Vec<Value<'a>> =
@@ -248,15 +255,14 @@ impl<'a> Executor<'a> {
                 }
 
                 let mut index = 0;
-                let normalized_path = path.as_slice();
+                let normalized_path = job.flatten_node_path.as_slice();
                 traverse_and_callback_mut(
                     &mut ctx.final_response,
                     normalized_path,
                     self.schema_metadata,
                     &mut |target| {
-                        let hash = representation_hashes[index];
-                        if let Some(entity_index) = filtered_representations_to_index_map.get(&hash)
-                        {
+                        let hash = job.representation_hashes[index];
+                        if let Some(entity_index) = job.representation_hash_to_index.get(&hash) {
                             if let Some(entity) = entities.get(*entity_index) {
                                 let new_val: Value<'_> =
                                     unsafe { std::mem::transmute(entity.clone()) };
@@ -349,15 +355,16 @@ impl<'a> Executor<'a> {
         filtered_representations_hashes: Option<HashMap<u64, usize>>,
     ) -> ExecutionJob {
         match node.node.as_ref() {
-            PlanNode::Fetch(fetch_node) => ExecutionJob::FlattenFetch(
-                node.path.clone(),
-                self.execute_fetch_node(fetch_node, representations)
+            PlanNode::Fetch(fetch_node) => ExecutionJob::FlattenFetch(FlattenFetchJob {
+                flatten_node_path: node.path.clone(),
+                response: self
+                    .execute_fetch_node(fetch_node, representations)
                     .await
                     .into(),
-                fetch_node.id,
-                representation_hashes.unwrap_or_default(),
-                filtered_representations_hashes.unwrap_or_default(),
-            ),
+                fetch_node_id: fetch_node.id,
+                representation_hashes: representation_hashes.unwrap_or_default(),
+                representation_hash_to_index: filtered_representations_hashes.unwrap_or_default(),
+            }),
             _ => panic!("FlattenNode can only have FetchNode as child"),
         }
     }
@@ -367,8 +374,10 @@ impl<'a> Executor<'a> {
         node: &FetchNode,
         representations: Option<BytesMut>,
     ) -> ExecutionJob {
-        ExecutionJob::Fetch(
-            self.executors
+        ExecutionJob::Fetch(FetchJob {
+            fetch_node_id: node.id,
+            response: self
+                .executors
                 .execute(
                     &node.service_name,
                     HttpExecutionRequest {
@@ -379,7 +388,6 @@ impl<'a> Executor<'a> {
                     },
                 )
                 .await,
-            node.id,
-        )
+        })
     }
 }
