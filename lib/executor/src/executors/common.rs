@@ -22,6 +22,6 @@ pub struct HttpExecutionRequest<'a> {
     pub query: &'a str,
     pub operation_name: Option<&'a str>,
     // TODO: variables could be stringified before even executing the request
-    pub variables: Option<HashMap<&'a str, &'a serde_json::Value>>,
+    pub variables: Option<HashMap<&'a str, &'a sonic_rs::Value>>,
     pub representations: Option<BytesMut>,
 }

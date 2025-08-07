@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::body::Body;
+use executor::variables::collect_variables;
 use http::{Method, Request};
-use query_plan_executor::variables::collect_variables;
 use query_planner::state::supergraph_state::OperationKind;
-use serde_json::Value;
+use sonic_rs::Value;
 use tracing::{error, trace, warn};
 
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};

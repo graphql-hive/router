@@ -7,6 +7,7 @@ use std::{
 
 use graphql_parser::query::{Text as ParserText, Value as ParserValue};
 use serde::{Deserialize, Serialize};
+use sonic_rs::Value as SonicValue;
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum Value {
@@ -144,6 +145,76 @@ impl From<&mut Value> for serde_json::Value {
             ),
             Value::String(s) => serde_json::Value::String(mem::take(s)),
             Value::Variable(_var_name) => serde_json::Value::Null,
+        }
+    }
+}
+
+impl From<&Value> for SonicValue {
+    fn from(value: &Value) -> Self {
+        match value {
+            Value::Null => SonicValue::new_null(),
+            Value::Int(n) => (*n).into(),
+            Value::Boolean(b) => (*b).into(),
+            Value::Enum(s) => s.into(),
+            Value::Float(n) => match SonicValue::new_f64(*n) {
+                Some(num) => num,
+                None => SonicValue::new_null(),
+            },
+            Value::List(l) => {
+                let mut array_value = SonicValue::new_array_with(l.len());
+
+                for val in l.iter() {
+                    array_value.append_value(val.into());
+                }
+
+                array_value
+            }
+            Value::Object(o) => {
+                let mut object_value = SonicValue::new_object_with(o.len());
+
+                for (k, v) in o.iter() {
+                    object_value.insert(k, v.into());
+                }
+
+                object_value
+            }
+            Value::String(s) => s.into(),
+            Value::Variable(_var_name) => SonicValue::new_null(),
+        }
+    }
+}
+
+impl From<&mut Value> for SonicValue {
+    fn from(value: &mut Value) -> Self {
+        match value {
+            Value::Null => SonicValue::new_null(),
+            Value::Int(n) => (mem::take(n)).into(),
+            Value::Boolean(b) => mem::take(b).into(),
+            Value::Enum(s) => (&mem::take(s)).into(),
+            Value::Float(n) => match SonicValue::new_f64(mem::take(n)) {
+                Some(num) => num,
+                None => SonicValue::new_null(),
+            },
+            Value::List(l) => {
+                let mut array_value = SonicValue::new_array_with(l.len());
+
+                for val in l.iter_mut() {
+                    array_value.append_value(val.into());
+                }
+
+                array_value
+            }
+            Value::Object(o) => {
+                let mut object_value = SonicValue::new_object_with(o.len());
+
+                for (k, v) in o.iter_mut() {
+                    object_value.insert(k, v.into());
+                }
+
+                object_value
+            }
+            Value::String(s) => (&mem::take(s)).into(),
+            Value::Variable(_var_name) => SonicValue::new_null(),
         }
     }
 }

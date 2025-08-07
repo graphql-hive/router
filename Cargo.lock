@@ -1768,6 +1768,7 @@ dependencies = [
  "rustc-hash",
  "serde",
  "serde_json",
+ "sonic-rs",
  "thiserror 2.0.12",
  "tracing",
  "tracing-subscriber",

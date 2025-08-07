@@ -3,6 +3,7 @@ use bytes::{BufMut, BytesMut};
 use query_plan_executor::projection::{
     FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan,
 };
+use sonic_rs::JsonValueTrait;
 use std::collections::HashMap;
 
 use tracing::{instrument, warn};
@@ -20,7 +21,7 @@ pub fn project_by_operation(
     // extensions: &HashMap<String, serde_json::Value>,
     operation_type_name: &str,
     selections: &Vec<FieldProjectionPlan>,
-    variable_values: &Option<HashMap<String, serde_json::Value>>,
+    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
 ) -> BytesMut {
     let mut buffer = BytesMut::with_capacity(4096);
     buffer.put(OPEN_BRACE);
@@ -73,7 +74,7 @@ fn project_selection_set(
     data: &Value,
     // errors: &mut Vec<GraphQLError>,
     selection: &FieldProjectionPlan,
-    variable_values: &Option<HashMap<String, serde_json::Value>>,
+    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     buffer: &mut BytesMut,
 ) {
     match data {
@@ -135,7 +136,7 @@ fn project_selection_set_with_map(
     obj: &Vec<(&str, Value)>,
     // errors: &mut Vec<GraphQLError>,
     selections: &Vec<FieldProjectionPlan>,
-    variable_values: &Option<HashMap<String, serde_json::Value>>,
+    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     parent_type_name: &str,
     buffer: &mut BytesMut,
     first: &mut bool,
@@ -229,7 +230,7 @@ fn check(
     parent_type_name: &str,
     field_type_name: &str,
     field_value: Option<&Value>,
-    variable_values: &Option<HashMap<String, serde_json::Value>>,
+    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
 ) -> Result<(), FieldProjectionConditionError> {
     match cond {
         FieldProjectionCondition::And(condition_a, condition_b) => check(

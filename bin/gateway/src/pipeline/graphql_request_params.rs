@@ -5,7 +5,7 @@ use axum::extract::Query;
 use http::{Method, Request};
 use http_body_util::BodyExt;
 use serde::Deserialize;
-use serde_json::Value;
+use sonic_rs::Value;
 use tracing::{trace, warn};
 
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};

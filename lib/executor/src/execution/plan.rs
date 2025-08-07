@@ -25,7 +25,7 @@ use crate::{
 pub async fn execute_query_plan(
     query_plan: &QueryPlan,
     projection_plan: &Vec<FieldProjectionPlan>,
-    variable_values: &Option<HashMap<String, serde_json::Value>>,
+    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     schema_metadata: &SchemaMetadata,
     operation_type_name: &str,
     executors: &SubgraphExecutorMap,
@@ -96,7 +96,7 @@ impl From<ExecutionJob> for Bytes {
 
 impl<'a> Executor<'a> {
     pub fn new(
-        _variable_values: &'a Option<HashMap<String, serde_json::Value>>,
+        _variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
         executors: &'a SubgraphExecutorMap,
         schema_metadata: &'a SchemaMetadata,
     ) -> Self {
