@@ -211,7 +211,7 @@ fn project_selection_set_with_map(
                 if *first {
                     buffer.put(OPEN_BRACE);
                 } else {
-                    buffer.put(COLON);
+                    buffer.put(COMMA);
                 }
                 *first = false;
 
