@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeSet, HashMap},
-    hash::{DefaultHasher, Hash, Hasher},
-};
+use std::collections::{BTreeSet, HashMap};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
@@ -21,7 +18,7 @@ use crate::{
     response::{merge::deep_merge, value::Value},
     utils::{
         consts::{CLOSE_BRACKET, OPEN_BRACKET},
-        traverse::traverse_and_callback,
+        traverse::{traverse_and_callback, traverse_and_callback_mut},
     },
 };
 
@@ -59,6 +56,30 @@ pub struct Executor<'a> {
     executors: &'a SubgraphExecutorMap,
 }
 
+struct ConcurrencyScope<'exec, T> {
+    jobs: FuturesUnordered<BoxFuture<'exec, T>>,
+}
+
+impl<'exec, T> ConcurrencyScope<'exec, T> {
+    fn new() -> Self {
+        Self {
+            jobs: FuturesUnordered::new(),
+        }
+    }
+
+    fn spawn(&mut self, future: BoxFuture<'exec, T>) {
+        self.jobs.push(future);
+    }
+
+    async fn join_all(mut self) -> Vec<T> {
+        let mut results = Vec::with_capacity(self.jobs.len());
+        while let Some(result) = self.jobs.next().await {
+            results.push(result);
+        }
+        results
+    }
+}
+
 enum ExecutionJob {
     Fetch(Bytes),
     FlattenFetch(FlattenNodePath, Bytes, Vec<u64>, HashMap<u64, usize>),
@@ -91,6 +112,7 @@ impl<'a> Executor<'a> {
             Some(PlanNode::Fetch(node)) => self.execute_fetch_wave(ctx, node).await,
             Some(PlanNode::Parallel(node)) => self.execute_parallel_wave(ctx, node).await,
             Some(PlanNode::Sequence(node)) => self.execute_sequence_wave(ctx, node).await,
+            // Plans produced by our Query Planner can only start with: Fetch, Sequence or Parallel.
             Some(_) => panic!("Unsupported plan node type"),
             None => panic!("Empty plan"),
         }
@@ -110,225 +132,175 @@ impl<'a> Executor<'a> {
         for child in &node.nodes {
             match child {
                 PlanNode::Fetch(fetch_node) => {
-                    let result = self.execute_fetch_node(fetch_node, None).await;
-                    let idx = ctx.response_storage.add_response(result.into());
-                    let bytes: &'a [u8] =
-                        unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
-                    let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
-                    let mut value = Value::deserialize(&mut deserializer).unwrap();
-                    let data_ref: Value<'a> =
-                        unsafe { std::mem::transmute(value.to_data().unwrap()) };
-                    deep_merge(&mut ctx.final_response, data_ref);
+                    let job = self.execute_fetch_node(fetch_node, None).await;
+                    self.process_job_result(ctx, job);
                 }
                 PlanNode::Parallel(parallel_node) => {
                     self.execute_parallel_wave(ctx, parallel_node).await;
                 }
                 PlanNode::Flatten(flatten_node) => {
-                    let fetch_node = match flatten_node.node.as_ref() {
-                        PlanNode::Fetch(fetch_node) => fetch_node,
-                        _ => panic!("Unsupported plan node type"),
-                    };
-                    let requires_nodes = fetch_node.requires.as_ref().unwrap();
-                    let mut index = 0;
-                    let mut indexes = BTreeSet::new();
-                    let normalized_path = flatten_node.path.as_slice();
-                    let mut filtered_representations = BytesMut::new();
-                    filtered_representations.put(OPEN_BRACKET);
-                    let proj_ctx =
-                        RequestProjectionContext::new(&self.schema_metadata.possible_types);
-                    let mut representation_hashes: Vec<u64> = Vec::new();
-                    let mut filtered_representations_hashes: HashMap<u64, usize> = HashMap::new();
+                    let (representations, representation_hashes, filtered_hashes) =
+                        self.prepare_flatten_data(&ctx.final_response, flatten_node);
 
-                    traverse_and_callback(
-                        &mut ctx.final_response,
-                        normalized_path,
-                        self.schema_metadata,
-                        &mut |entity| {
-                            let mut hasher = DefaultHasher::new();
-                            entity.hash(&mut hasher);
-                            let hash = hasher.finish();
-
-                            if !entity.is_null() {
-                                representation_hashes.push(hash);
-                            }
-
-                            if filtered_representations_hashes.contains_key(&hash) {
-                                // deduplicate
-                                return;
-                            }
-                            let is_projected = project_requires(
-                                &proj_ctx,
-                                &requires_nodes.items,
-                                entity,
-                                &mut filtered_representations,
-                                indexes.is_empty(),
-                                None,
-                            );
-                            if is_projected {
-                                indexes.insert(index);
-                                filtered_representations_hashes.insert(hash, index);
-                            }
-                            index += 1;
-                        },
-                    );
-                    filtered_representations.put(CLOSE_BRACKET);
-                    let result = self
+                    let job = self
                         .execute_flatten_fetch_node(
                             flatten_node,
-                            Some(filtered_representations),
-                            None,
-                            None,
+                            Some(representations),
+                            Some(representation_hashes),
+                            Some(filtered_hashes),
                         )
                         .await;
-                    let idx = ctx.response_storage.add_response(result.into());
-                    let bytes: &'a [u8] =
-                        unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
-                    let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
-                    let mut value = Value::deserialize(&mut deserializer).unwrap();
-                    let entities: Vec<Value<'a>> =
-                        unsafe { std::mem::transmute(value.to_entities().unwrap()) };
 
-                    let mut index = 0;
-                    traverse_and_callback(
-                        &mut ctx.final_response,
-                        normalized_path,
-                        self.schema_metadata,
-                        &mut |target| {
-                            let hash = representation_hashes[index];
-                            let entity_index = filtered_representations_hashes.get(&hash).unwrap();
-                            let entity = entities.get(*entity_index).unwrap();
-                            let new_val: Value<'_> = unsafe { std::mem::transmute(entity.clone()) };
-                            deep_merge(target, new_val);
-                            index += 1;
-                        },
-                    );
+                    self.process_job_result(ctx, job);
                 }
-                _ => panic!("Unsupported plan node type"),
+                // Our Query Planner does not produce any other plan node types in SequenceNode
+                _ => panic!("Unsupported plan node type in SequenceNode"),
             }
         }
     }
 
     async fn execute_parallel_wave(&self, ctx: &mut ExecutionContext<'a>, node: &ParallelNode) {
-        let mut jobs: FuturesUnordered<BoxFuture<'_, ExecutionJob>> = FuturesUnordered::new();
-        // let mut pointers_per_job = Vec::new();
+        let mut scope = ConcurrencyScope::new();
 
         for child in &node.nodes {
-            match child {
-                PlanNode::Fetch(fetch_node) => {
-                    jobs.push(Box::pin(self.execute_fetch_node(fetch_node, None)));
-                }
-                PlanNode::Flatten(flatten_node) => {
-                    let fetch_node = match flatten_node.node.as_ref() {
-                        PlanNode::Fetch(fetch_node) => fetch_node,
-                        _ => panic!("Unsupported plan node type"),
-                    };
-                    let requires_nodes = fetch_node.requires.as_ref().unwrap();
-                    let mut index = 0;
-                    let mut indexes = BTreeSet::new();
-                    let normalized_path = flatten_node.path.as_slice();
-                    let mut filtered_representations = BytesMut::new();
-                    filtered_representations.put(OPEN_BRACKET);
-                    let proj_ctx =
-                        RequestProjectionContext::new(&self.schema_metadata.possible_types);
-
-                    let mut representation_hashes: Vec<u64> = Vec::new();
-                    let mut filtered_representations_hashes: HashMap<u64, usize> = HashMap::new();
-
-                    traverse_and_callback(
-                        &mut ctx.final_response,
-                        normalized_path,
-                        self.schema_metadata,
-                        &mut |entity| {
-                            let mut hasher = DefaultHasher::new();
-                            entity.hash(&mut hasher);
-                            let hash = hasher.finish();
-
-                            if !entity.is_null() {
-                                representation_hashes.push(hash);
-                            }
-
-                            if filtered_representations_hashes.contains_key(&hash) {
-                                // deduplicate
-                                return;
-                            }
-
-                            let is_projected = project_requires(
-                                &proj_ctx,
-                                &requires_nodes.items,
-                                entity,
-                                &mut filtered_representations,
-                                indexes.is_empty(),
-                                None,
-                            );
-                            if is_projected {
-                                indexes.insert(index);
-                                filtered_representations_hashes.insert(hash, index);
-                            }
-                            index += 1;
-                        },
-                    );
-                    filtered_representations.put(CLOSE_BRACKET);
-                    jobs.push(Box::pin(self.execute_flatten_fetch_node(
-                        flatten_node,
-                        Some(filtered_representations),
-                        Some(representation_hashes),
-                        Some(filtered_representations_hashes),
-                    )));
-                }
-                _ => panic!("unexpected node type"),
-            }
+            let job_future = self.prepare_job_future(child, &ctx.final_response);
+            scope.spawn(job_future);
         }
 
-        let mut results = Vec::with_capacity(jobs.len());
-        while let Some(result) = jobs.next().await {
-            results.push(result);
-        }
+        let results = scope.join_all().await;
 
         for result in results {
-            match result {
-                ExecutionJob::Fetch(res) => {
-                    let idx = ctx.response_storage.add_response(res);
-                    let bytes: &'a [u8] =
-                        unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
-                    let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
-                    let mut value = Value::deserialize(&mut deserializer).unwrap();
-                    let data_ref: Value<'a> =
-                        unsafe { std::mem::transmute(value.to_data().unwrap()) };
-                    deep_merge(&mut ctx.final_response, data_ref);
-                }
-                ExecutionJob::FlattenFetch(
-                    path,
-                    res,
-                    representation_hashes,
-                    filtered_representations_to_index_map,
-                ) => {
-                    let idx = ctx.response_storage.add_response(res);
-                    let bytes: &'a [u8] =
-                        unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
-                    let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
-                    let mut value = Value::deserialize(&mut deserializer).unwrap();
-                    let entities: Vec<Value<'a>> =
-                        unsafe { std::mem::transmute(value.to_entities().unwrap()) };
+            self.process_job_result(ctx, result);
+        }
+    }
 
-                    let mut index = 0;
-                    let normalized_path = path.as_slice();
-                    traverse_and_callback(
-                        &mut ctx.final_response,
-                        normalized_path,
-                        self.schema_metadata,
-                        &mut |target| {
-                            let hash = representation_hashes[index];
-                            let entity_index =
-                                filtered_representations_to_index_map.get(&hash).unwrap();
-                            let entity = entities.get(*entity_index).unwrap();
-                            let new_val: Value<'_> = unsafe { std::mem::transmute(entity.clone()) };
-                            deep_merge(target, new_val);
-                            index += 1;
-                        },
-                    );
-                }
+    fn prepare_job_future<'s>(
+        &'s self,
+        node: &'s PlanNode,
+        final_response: &Value<'a>,
+    ) -> BoxFuture<'s, ExecutionJob> {
+        match node {
+            PlanNode::Fetch(fetch_node) => Box::pin(self.execute_fetch_node(fetch_node, None)),
+            PlanNode::Flatten(flatten_node) => {
+                let (representations, representation_hashes, filtered_hashes) =
+                    self.prepare_flatten_data(final_response, flatten_node);
+
+                Box::pin(self.execute_flatten_fetch_node(
+                    flatten_node,
+                    Some(representations),
+                    Some(representation_hashes),
+                    Some(filtered_hashes),
+                ))
+            }
+            // Our Query Planner does not produce any other plan node types in ParallelNode
+            _ => panic!("unexpected node type in parallel wave"),
+        }
+    }
+
+    fn process_job_result(&self, ctx: &mut ExecutionContext<'a>, job: ExecutionJob) {
+        match job {
+            ExecutionJob::Fetch(res) => {
+                let idx = ctx.response_storage.add_response(res);
+                let bytes: &'a [u8] =
+                    unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
+                let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
+                let mut value = Value::deserialize(&mut deserializer).unwrap();
+                let data_ref: Value<'a> = unsafe { std::mem::transmute(value.to_data().unwrap()) };
+                deep_merge(&mut ctx.final_response, data_ref);
+            }
+            ExecutionJob::FlattenFetch(
+                path,
+                res,
+                representation_hashes,
+                filtered_representations_to_index_map,
+            ) => {
+                let idx = ctx.response_storage.add_response(res);
+                let bytes: &'a [u8] =
+                    unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
+                let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
+                let mut value = Value::deserialize(&mut deserializer).unwrap();
+                let entities: Vec<Value<'a>> =
+                    unsafe { std::mem::transmute(value.to_entities().unwrap()) };
+
+                let mut index = 0;
+                let normalized_path = path.as_slice();
+                traverse_and_callback_mut(
+                    &mut ctx.final_response,
+                    normalized_path,
+                    self.schema_metadata,
+                    &mut |target| {
+                        let hash = representation_hashes[index];
+                        if let Some(entity_index) = filtered_representations_to_index_map.get(&hash)
+                        {
+                            if let Some(entity) = entities.get(*entity_index) {
+                                let new_val: Value<'_> =
+                                    unsafe { std::mem::transmute(entity.clone()) };
+                                deep_merge(target, new_val);
+                            }
+                        }
+                        index += 1;
+                    },
+                );
             }
         }
+    }
+
+    fn prepare_flatten_data(
+        &self,
+        final_response: &Value<'a>,
+        flatten_node: &FlattenNode,
+    ) -> (BytesMut, Vec<u64>, HashMap<u64, usize>) {
+        let fetch_node = match flatten_node.node.as_ref() {
+            PlanNode::Fetch(fetch_node) => fetch_node,
+            _ => panic!("FlattenNode can only have FetchNode as child"),
+        };
+        let requires_nodes = fetch_node.requires.as_ref().unwrap();
+        let mut index = 0;
+        let mut indexes = BTreeSet::new();
+        let normalized_path = flatten_node.path.as_slice();
+        let mut filtered_representations = BytesMut::new();
+        filtered_representations.put(OPEN_BRACKET);
+        let proj_ctx = RequestProjectionContext::new(&self.schema_metadata.possible_types);
+        let mut representation_hashes: Vec<u64> = Vec::new();
+        let mut filtered_representations_hashes: HashMap<u64, usize> = HashMap::new();
+
+        traverse_and_callback(
+            final_response,
+            normalized_path,
+            self.schema_metadata,
+            &mut |entity| {
+                let hash = entity.to_hash();
+
+                if !entity.is_null() {
+                    representation_hashes.push(hash);
+                }
+
+                if filtered_representations_hashes.contains_key(&hash) {
+                    return;
+                }
+
+                let is_projected = project_requires(
+                    &proj_ctx,
+                    &requires_nodes.items,
+                    entity,
+                    &mut filtered_representations,
+                    indexes.is_empty(),
+                    None,
+                );
+
+                if is_projected {
+                    indexes.insert(index);
+                    filtered_representations_hashes.insert(hash, index);
+                }
+                index += 1;
+            },
+        );
+        filtered_representations.put(CLOSE_BRACKET);
+        (
+            filtered_representations,
+            representation_hashes,
+            filtered_representations_hashes,
+        )
     }
 
     async fn execute_flatten_fetch_node(
@@ -347,7 +319,7 @@ impl<'a> Executor<'a> {
                 representation_hashes.unwrap_or_default(),
                 filtered_representations_hashes.unwrap_or_default(),
             ),
-            _ => panic!("unexpected node type"),
+            _ => panic!("FlattenNode can only have FetchNode as child"),
         }
     }
 

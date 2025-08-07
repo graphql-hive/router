@@ -3,7 +3,7 @@ use query_planner::planner::plan_nodes::FlattenNodePathSegment;
 
 use crate::{response::value::Value, utils::consts::TYPENAME_FIELD_NAME};
 
-pub fn traverse_and_callback<'a, Callback>(
+pub fn traverse_and_callback_mut<'a, Callback>(
     current_data: &mut Value<'a>,
     remaining_path: &[FlattenNodePathSegment],
     schema_metadata: &SchemaMetadata,
@@ -31,7 +31,7 @@ pub fn traverse_and_callback<'a, Callback>(
             if let Value::Array(arr) = current_data {
                 let rest_of_path = &remaining_path[1..];
                 for item in arr.iter_mut() {
-                    traverse_and_callback(item, rest_of_path, schema_metadata, callback);
+                    traverse_and_callback_mut(item, rest_of_path, schema_metadata, callback);
                 }
             }
         }
@@ -40,7 +40,7 @@ pub fn traverse_and_callback<'a, Callback>(
             if let Value::Object(map) = current_data {
                 if let Some((_, next_data)) = map.iter_mut().find(|(key, _)| key == field_name) {
                     let rest_of_path = &remaining_path[1..];
-                    traverse_and_callback(next_data, rest_of_path, schema_metadata, callback);
+                    traverse_and_callback_mut(next_data, rest_of_path, schema_metadata, callback);
                 }
             }
         }
@@ -57,62 +57,56 @@ pub fn traverse_and_callback<'a, Callback>(
                     .entity_satisfies_type_condition(type_name, type_condition)
                 {
                     let rest_of_path = &remaining_path[1..];
-                    traverse_and_callback(current_data, rest_of_path, schema_metadata, callback);
+                    traverse_and_callback_mut(
+                        current_data,
+                        rest_of_path,
+                        schema_metadata,
+                        callback,
+                    );
                 }
             } else if let Value::Array(arr) = current_data {
                 // If the current data is an array, we need to check each item
                 for item in arr.iter_mut() {
-                    traverse_and_callback(item, remaining_path, schema_metadata, callback);
+                    traverse_and_callback_mut(item, remaining_path, schema_metadata, callback);
                 }
             }
         }
     }
 }
 
-pub fn traverse_and_collect<'a>(
-    current_data: &'a mut Value<'a>,
-    remaining_path: &[FlattenNodePathSegment],
-    schema_metadata: &SchemaMetadata,
-) -> Vec<&'a mut Value<'a>> {
-    let mut results = Vec::new();
-    traverse_and_collect_recursive(current_data, remaining_path, schema_metadata, &mut results);
-    results
-}
-
-fn traverse_and_collect_recursive<'a>(
-    current_data: &'a mut Value<'a>,
-    remaining_path: &[FlattenNodePathSegment],
-    schema_metadata: &SchemaMetadata,
-    results: &mut Vec<&'a mut Value<'a>>,
-) {
+pub fn traverse_and_callback<'a, 'p, Callback>(
+    current_data: &'a Value<'a>,
+    remaining_path: &'p [FlattenNodePathSegment],
+    schema_metadata: &'a SchemaMetadata,
+    callback: &mut Callback,
+) where
+    Callback: FnMut(&'a Value<'a>),
+{
     if remaining_path.is_empty() {
         if let Value::Array(arr) = current_data {
-            results.extend(arr.iter_mut());
+            for item in arr.iter() {
+                callback(item);
+            }
         } else {
-            results.push(current_data);
+            callback(current_data);
         }
         return;
     }
 
-    let rest_of_path = &remaining_path[1..];
-
     match &remaining_path[0] {
         FlattenNodePathSegment::List => {
             if let Value::Array(arr) = current_data {
-                for item in arr.iter_mut() {
-                    traverse_and_collect_recursive(item, rest_of_path, schema_metadata, results);
+                let rest_of_path = &remaining_path[1..];
+                for item in arr.iter() {
+                    traverse_and_callback(item, rest_of_path, schema_metadata, callback);
                 }
             }
         }
         FlattenNodePathSegment::Field(field_name) => {
             if let Value::Object(map) = current_data {
-                if let Some((_, next_data)) = map.iter_mut().find(|(key, _)| key == field_name) {
-                    traverse_and_collect_recursive(
-                        next_data,
-                        rest_of_path,
-                        schema_metadata,
-                        results,
-                    );
+                if let Some((_, next_data)) = map.iter().find(|(key, _)| key == field_name) {
+                    let rest_of_path = &remaining_path[1..];
+                    traverse_and_callback(next_data, rest_of_path, schema_metadata, callback);
                 }
             }
         }
@@ -127,16 +121,12 @@ fn traverse_and_collect_recursive<'a>(
                     .possible_types
                     .entity_satisfies_type_condition(type_name, type_condition)
                 {
-                    traverse_and_collect_recursive(
-                        current_data,
-                        rest_of_path,
-                        schema_metadata,
-                        results,
-                    );
+                    let rest_of_path = &remaining_path[1..];
+                    traverse_and_callback(current_data, rest_of_path, schema_metadata, callback);
                 }
             } else if let Value::Array(arr) = current_data {
-                for item in arr.iter_mut() {
-                    traverse_and_collect_recursive(item, remaining_path, schema_metadata, results);
+                for item in arr.iter() {
+                    traverse_and_callback(item, remaining_path, schema_metadata, callback);
                 }
             }
         }

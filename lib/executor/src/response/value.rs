@@ -6,7 +6,7 @@ use serde::{
 use sonic_rs::{JsonNumberTrait, ValueRef};
 use std::{
     fmt::Display,
-    hash::{Hash, Hasher},
+    hash::{DefaultHasher, Hash, Hasher},
 };
 
 #[derive(Clone)]
@@ -46,6 +46,7 @@ impl<'a> Value<'a> {
             _ => None,
         }
     }
+
     pub fn to_entities<'b: 'a>(&'a mut self) -> Option<Vec<Value<'a>>> {
         match self {
             Value::Object(obj) => {
@@ -66,6 +67,12 @@ impl<'a> Value<'a> {
             }
             _ => None,
         }
+    }
+
+    pub fn to_hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
     }
 
     // fn to_data<'a>(&'a self) -> Option<ValueRef<'a>> {
