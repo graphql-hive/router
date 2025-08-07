@@ -10,6 +10,7 @@ use serde::Deserialize;
 
 use crate::{
     context::ExecutionContext,
+    execution::rewrites::FetchRewriteExt,
     executors::{common::HttpExecutionRequest, map::SubgraphExecutorMap},
     projection::{
         request::{project_requires, RequestProjectionContext},
@@ -255,6 +256,7 @@ impl<'a> Executor<'a> {
             _ => panic!("FlattenNode can only have FetchNode as child"),
         };
         let requires_nodes = fetch_node.requires.as_ref().unwrap();
+
         let mut index = 0;
         let mut indexes = BTreeSet::new();
         let normalized_path = flatten_node.path.as_slice();
@@ -278,6 +280,22 @@ impl<'a> Executor<'a> {
                 if filtered_representations_hashes.contains_key(&hash) {
                     return;
                 }
+
+                let arena = bumpalo::Bump::new();
+
+                let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
+                    let mut new_entity = arena.alloc(entity.clone());
+                    for input_rewrite in input_rewrites {
+                        input_rewrite.rewrite(
+                            &arena,
+                            &self.schema_metadata.possible_types,
+                            &mut new_entity,
+                        );
+                    }
+                    new_entity
+                } else {
+                    entity
+                };
 
                 let is_projected = project_requires(
                     &proj_ctx,

@@ -366,7 +366,7 @@ impl ApplyFetchRewrite for ValueSetter {
         path: &[FetchNodePathSegment],
     ) {
         if path.is_empty() {
-            *data = self.set_value_to.to_owned();
+            *data = Value::String(self.set_value_to.clone());
             return;
         }
 

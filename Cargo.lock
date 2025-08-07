@@ -732,6 +732,7 @@ name = "executor"
 version = "0.0.1"
 dependencies = [
  "async-trait",
+ "bumpalo",
  "bytes",
  "criterion",
  "futures",

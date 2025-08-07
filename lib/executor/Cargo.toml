@@ -6,6 +6,7 @@ edition = "2021"
 [lib]
 
 [dependencies]
+bumpalo = "3.19.0"
 itoa = "1.0.15"
 ryu = "1.0.20"
 bytes = "1.10.1"

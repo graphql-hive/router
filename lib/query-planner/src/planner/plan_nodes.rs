@@ -202,8 +202,7 @@ impl From<MergePath> for FlattenNodePath {
 #[serde(rename_all = "camelCase")]
 pub struct ValueSetter {
     pub path: Vec<FetchNodePathSegment>,
-    // Use serde_json::Value for the 'any' type
-    pub set_value_to: serde_json::Value,
+    pub set_value_to: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

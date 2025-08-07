@@ -736,7 +736,7 @@ fn process_entity_move_edge(
                 FetchNodePathSegment::TypenameEquals(output_type_name.to_string()),
                 FetchNodePathSegment::Key("__typename".to_string()),
             ],
-            set_value_to: output_type_name.clone().into(),
+            set_value_to: output_type_name.clone(),
         }));
 
         fetch_step
@@ -879,7 +879,7 @@ fn process_interface_object_type_move_edge(
             FetchNodePathSegment::TypenameEquals(interface_type_name.to_string()),
             FetchNodePathSegment::Key("__typename".to_string()),
         ],
-        set_value_to: interface_type_name.clone().into(),
+        set_value_to: interface_type_name.clone(),
     }));
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
@@ -1288,7 +1288,7 @@ fn process_requires_field_edge(
                 FetchNodePathSegment::TypenameEquals(head_type_name.to_string()),
                 FetchNodePathSegment::Key("__typename".to_string()),
             ],
-            set_value_to: head_type_name.clone().into(),
+            set_value_to: head_type_name.clone(),
         }));
     }
 
