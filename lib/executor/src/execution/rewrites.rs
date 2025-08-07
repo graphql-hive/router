@@ -72,7 +72,12 @@ impl RewriteApplier for KeyRenamer {
                     }
                 }
             },
-            _ => (),
+            _ => {
+                panic!(
+                    "Trying to apply KeyRenamer path {:?} to non-object/array type",
+                    path
+                );
+            }
         }
     }
 }
