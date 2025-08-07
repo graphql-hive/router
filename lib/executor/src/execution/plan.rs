@@ -18,7 +18,7 @@ use crate::{
         request::{project_requires, RequestProjectionContext},
         response::project_by_operation,
     },
-    response::{merge::deep_merge, response::SubgraphResponse, value::Value},
+    response::{merge::deep_merge, subgraph_response::SubgraphResponse, value::Value},
     utils::{
         consts::{CLOSE_BRACKET, OPEN_BRACKET},
         traverse::{traverse_and_callback, traverse_and_callback_mut},
