@@ -4,7 +4,8 @@ use bytes::{BufMut, Bytes, BytesMut};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use query_plan_executor::{projection::FieldProjectionPlan, schema_metadata::SchemaMetadata};
 use query_planner::planner::plan_nodes::{
-    FetchNode, FlattenNode, FlattenNodePath, ParallelNode, PlanNode, QueryPlan, SequenceNode,
+    FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode, QueryPlan,
+    SequenceNode,
 };
 use serde::Deserialize;
 
@@ -31,7 +32,7 @@ pub async fn execute_query_plan(
     operation_type_name: &str,
     executors: &SubgraphExecutorMap,
 ) -> BytesMut {
-    let mut ctx = ExecutionContext::new();
+    let mut ctx = ExecutionContext::new(query_plan);
     let executor = Executor::new(variable_values, executors, schema_metadata);
     execute_query_plan_internal(query_plan, executor, &mut ctx).await;
     let final_response = &ctx.final_response;
@@ -81,16 +82,23 @@ impl<'exec, T> ConcurrencyScope<'exec, T> {
     }
 }
 
+type FetchNodeId = i64;
 enum ExecutionJob {
-    Fetch(Bytes),
-    FlattenFetch(FlattenNodePath, Bytes, Vec<u64>, HashMap<u64, usize>),
+    Fetch(Bytes, FetchNodeId),
+    FlattenFetch(
+        FlattenNodePath,
+        Bytes,
+        FetchNodeId,
+        Vec<u64>,
+        HashMap<u64, usize>,
+    ),
 }
 
 impl From<ExecutionJob> for Bytes {
     fn from(value: ExecutionJob) -> Self {
         match value {
-            ExecutionJob::Fetch(p) => p,
-            ExecutionJob::FlattenFetch(_, p, _, _) => p,
+            ExecutionJob::Fetch(p, _) => p,
+            ExecutionJob::FlattenFetch(_, p, _, _, _) => p,
         }
     }
 }
@@ -121,12 +129,7 @@ impl<'a> Executor<'a> {
 
     async fn execute_fetch_wave(&self, ctx: &mut ExecutionContext<'a>, node: &FetchNode) {
         let result = self.execute_fetch_node(node, None).await;
-        let idx = ctx.response_storage.add_response(result.into());
-        let bytes: &'a [u8] = unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
-        let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
-        let mut value = Value::deserialize(&mut deserializer).unwrap();
-        let data_ref: Value<'a> = unsafe { std::mem::transmute(value.to_data().unwrap()) };
-        ctx.final_response = data_ref;
+        self.process_job_result(ctx, result);
     }
 
     async fn execute_sequence_wave(&self, ctx: &mut ExecutionContext<'a>, node: &SequenceNode) {
@@ -200,28 +203,49 @@ impl<'a> Executor<'a> {
 
     fn process_job_result(&self, ctx: &mut ExecutionContext<'a>, job: ExecutionJob) {
         match job {
-            ExecutionJob::Fetch(res) => {
+            ExecutionJob::Fetch(res, fetch_node_id) => {
                 let idx = ctx.response_storage.add_response(res);
                 let bytes: &'a [u8] =
                     unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
+                let output_rewrites: Option<&'a Vec<FetchRewrite>> =
+                    unsafe { std::mem::transmute(ctx.output_rewrites.get(fetch_node_id)) };
                 let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
                 let mut value = Value::deserialize(&mut deserializer).unwrap();
-                let data_ref: Value<'a> = unsafe { std::mem::transmute(value.to_data().unwrap()) };
+                let mut data_ref: Value<'a> =
+                    unsafe { std::mem::transmute(value.to_data().unwrap()) };
+
+                if let Some(output_rewrites) = output_rewrites {
+                    for output_rewrite in output_rewrites {
+                        output_rewrite.rewrite(&self.schema_metadata.possible_types, &mut data_ref);
+                    }
+                }
+
                 deep_merge(&mut ctx.final_response, data_ref);
             }
             ExecutionJob::FlattenFetch(
                 path,
                 res,
+                fetch_node_id,
                 representation_hashes,
                 filtered_representations_to_index_map,
             ) => {
                 let idx = ctx.response_storage.add_response(res);
                 let bytes: &'a [u8] =
                     unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
+                let output_rewrites: Option<&'a Vec<FetchRewrite>> =
+                    unsafe { std::mem::transmute(ctx.output_rewrites.get(fetch_node_id)) };
                 let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
                 let mut value = Value::deserialize(&mut deserializer).unwrap();
-                let entities: Vec<Value<'a>> =
+                let mut entities: Vec<Value<'a>> =
                     unsafe { std::mem::transmute(value.to_entities().unwrap()) };
+
+                if let Some(output_rewrites) = output_rewrites {
+                    for output_rewrite in output_rewrites {
+                        for entity in &mut entities {
+                            output_rewrite.rewrite(&self.schema_metadata.possible_types, entity);
+                        }
+                    }
+                }
 
                 let mut index = 0;
                 let normalized_path = path.as_slice();
@@ -286,11 +310,7 @@ impl<'a> Executor<'a> {
                 let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
                     let new_entity = arena.alloc(entity.clone());
                     for input_rewrite in input_rewrites {
-                        input_rewrite.rewrite(
-                            &arena,
-                            &self.schema_metadata.possible_types,
-                            new_entity,
-                        );
+                        input_rewrite.rewrite(&self.schema_metadata.possible_types, new_entity);
                     }
                     new_entity
                 } else {
@@ -334,6 +354,7 @@ impl<'a> Executor<'a> {
                 self.execute_fetch_node(fetch_node, representations)
                     .await
                     .into(),
+                fetch_node.id,
                 representation_hashes.unwrap_or_default(),
                 filtered_representations_hashes.unwrap_or_default(),
             ),
@@ -358,6 +379,7 @@ impl<'a> Executor<'a> {
                     },
                 )
                 .await,
+            node.id,
         )
     }
 }

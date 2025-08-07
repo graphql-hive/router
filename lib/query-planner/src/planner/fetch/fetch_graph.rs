@@ -48,6 +48,10 @@ impl FetchGraph {
     pub fn all_nodes(&self) -> NodeReferences<'_, FetchStepData> {
         self.graph.node_references()
     }
+
+    pub fn create_fetch_id(&self) -> i64 {
+        (self.graph.node_count() + 1) as i64
+    }
 }
 
 impl FetchGraph {
@@ -247,6 +251,7 @@ fn create_noop_fetch_step(fetch_graph: &mut FetchGraph, created_from_requires: b
         FetchStepFlags::empty()
     };
     fetch_graph.add_step(FetchStepData {
+        id: fetch_graph.create_fetch_id(),
         service_name: SubgraphName::any(),
         response_path: MergePath::default(),
         input: TypeAwareSelection {
@@ -284,6 +289,7 @@ fn create_fetch_step_for_entity_call(
         FetchStepFlags::empty()
     };
     fetch_graph.add_step(FetchStepData {
+        id: fetch_graph.create_fetch_id(),
         service_name: subgraph_name.clone(),
         response_path: response_path.clone(),
         input: TypeAwareSelection {
@@ -316,6 +322,7 @@ fn create_fetch_step_for_root_move(
     mutation_field_position: MutationFieldPosition,
 ) -> NodeIndex {
     let idx = fetch_graph.add_step(FetchStepData {
+        id: fetch_graph.create_fetch_id(),
         service_name: subgraph_name.clone(),
         response_path: MergePath::default(),
         input: TypeAwareSelection {
