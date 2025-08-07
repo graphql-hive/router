@@ -284,12 +284,12 @@ impl<'a> Executor<'a> {
                 let arena = bumpalo::Bump::new();
 
                 let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
-                    let mut new_entity = arena.alloc(entity.clone());
+                    let new_entity = arena.alloc(entity.clone());
                     for input_rewrite in input_rewrites {
                         input_rewrite.rewrite(
                             &arena,
                             &self.schema_metadata.possible_types,
-                            &mut new_entity,
+                            new_entity,
                         );
                     }
                     new_entity

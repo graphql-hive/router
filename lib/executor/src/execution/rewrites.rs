@@ -12,7 +12,7 @@ pub trait FetchRewriteExt {
         arena: &'a Bump,
         possible_types: &PossibleTypes,
         value: &mut Value<'a>,
-    ) -> ();
+    );
 }
 
 impl FetchRewriteExt for FetchRewrite {
@@ -21,7 +21,7 @@ impl FetchRewriteExt for FetchRewrite {
         arena: &'a Bump,
         possible_types: &PossibleTypes,
         value: &mut Value<'a>,
-    ) -> () {
+    ) {
         match self {
             FetchRewrite::KeyRenamer(key_renamer) => {
                 key_renamer.apply(arena, possible_types, value)
@@ -109,7 +109,7 @@ impl RewriteApplier for ValueSetter {
     ) {
         if path.is_empty() {
             let set_value_to = arena.alloc(self.set_value_to.as_str());
-            *data = Value::String(&set_value_to);
+            *data = Value::String(set_value_to);
             return;
         }
 
