@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 
 use query_planner::planner::plan_nodes::{FetchNode, FetchRewrite, QueryPlan};
+use sonic_rs::LazyValue;
 
 use crate::response::{storage::ResponsesStorage, value::Value};
 
 pub struct ExecutionContext<'a> {
     pub response_storage: ResponsesStorage,
     pub final_response: Value<'a>,
+    pub errors: Vec<LazyValue<'a>>,
     pub output_rewrites: OutputRewritesStorage,
 }
 
@@ -15,6 +17,7 @@ impl<'a> Default for ExecutionContext<'a> {
         ExecutionContext {
             response_storage: Default::default(),
             output_rewrites: Default::default(),
+            errors: Vec::new(),
             final_response: Value::Null,
         }
     }
@@ -25,7 +28,16 @@ impl<'a> ExecutionContext<'a> {
         ExecutionContext {
             response_storage: ResponsesStorage::new(),
             output_rewrites: OutputRewritesStorage::from_query_plan(query_plan),
+            errors: Vec::new(),
             final_response: Value::Null,
+        }
+    }
+
+    pub fn handle_errors(&mut self, errors: Option<Vec<LazyValue<'a>>>) {
+        if let Some(errors) = errors {
+            for error in errors {
+                self.errors.push(error);
+            }
         }
     }
 }

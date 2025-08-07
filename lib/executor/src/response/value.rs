@@ -37,30 +37,13 @@ impl Hash for Value<'_> {
 }
 
 impl<'a> Value<'a> {
-    pub fn to_data<'b: 'a>(&'a mut self) -> Option<Value<'a>> {
+    pub fn as_entities<'b: 'a>(&'a mut self) -> Option<Vec<Value<'a>>> {
         match self {
-            Value::Object(obj) => obj
-                .binary_search_by_key(&"data", |(k, _)| *k)
-                .ok()
-                .map(|index| obj.remove(index).1),
-            _ => None,
-        }
-    }
-
-    pub fn to_entities<'b: 'a>(&'a mut self) -> Option<Vec<Value<'a>>> {
-        match self {
-            Value::Object(obj) => {
+            Value::Object(data) => {
                 // We need to find the "data" field first.
-                if let Ok(data_idx) = obj.binary_search_by_key(&"data", |(k, _)| *k) {
-                    if let Value::Object(data_obj) = &mut obj[data_idx].1 {
-                        // Then, we find the "_entities" field within the "data" object.
-                        if let Ok(entities_idx) =
-                            data_obj.binary_search_by_key(&"_entities", |(k, _)| *k)
-                        {
-                            if let Value::Array(arr) = data_obj.remove(entities_idx).1 {
-                                return Some(arr);
-                            }
-                        }
+                if let Ok(entities_idx) = data.binary_search_by_key(&"_entities", |(k, _)| *k) {
+                    if let Value::Array(arr) = data.remove(entities_idx).1 {
+                        return Some(arr);
                     }
                 }
                 None
@@ -74,23 +57,6 @@ impl<'a> Value<'a> {
         self.hash(&mut hasher);
         hasher.finish()
     }
-
-    // fn to_data<'a>(&'a self) -> Option<ValueRef<'a>> {
-    //     match self {
-    //         ValueRef::Object(obj) => obj.get(&"data").and_then(|v| Some(v.as_ref())),
-    //         _ => None,
-    //     }
-    // }
-
-    // fn to_entities<'a>(&'a self) -> Option<Vec<ValueRef<'a>>> {
-    //     match self.to_data().unwrap() {
-    //         ValueRef::Object(obj) => obj.get(&"_entities").and_then(|v| match v.as_ref() {
-    //             ValueRef::Array(arr) => Some(arr.iter().map(|v| v.as_ref()).collect()),
-    //             _ => None,
-    //         }),
-    //         _ => None,
-    //     }
-    // }
 
     pub fn from(json: ValueRef<'a>) -> Value<'a> {
         match json {

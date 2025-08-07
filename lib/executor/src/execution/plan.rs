@@ -17,7 +17,7 @@ use crate::{
         request::{project_requires, RequestProjectionContext},
         response::project_by_operation,
     },
-    response::{merge::deep_merge, value::Value},
+    response::{merge::deep_merge, response::SubgraphResponse, value::Value},
     utils::{
         consts::{CLOSE_BRACKET, OPEN_BRACKET},
         traverse::{traverse_and_callback, traverse_and_callback_mut},
@@ -39,6 +39,7 @@ pub async fn execute_query_plan(
     let final_response = &ctx.final_response;
     project_by_operation(
         final_response,
+        ctx.errors,
         &extensions,
         operation_type_name,
         projection_plan,
@@ -218,9 +219,10 @@ impl<'a> Executor<'a> {
                 let output_rewrites: Option<&'a Vec<FetchRewrite>> =
                     unsafe { std::mem::transmute(ctx.output_rewrites.get(job.fetch_node_id)) };
                 let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
-                let mut value = Value::deserialize(&mut deserializer).unwrap();
-                let mut data_ref: Value<'a> =
-                    unsafe { std::mem::transmute(value.to_data().unwrap()) };
+                println!("{}", String::from_utf8(bytes.to_vec()).unwrap());
+                let response = SubgraphResponse::deserialize(&mut deserializer).unwrap();
+                let mut data_ref: Value<'a> = unsafe { std::mem::transmute(response.data) };
+                ctx.handle_errors(response.errors);
 
                 if let Some(output_rewrites) = output_rewrites {
                     for output_rewrite in output_rewrites {
@@ -237,9 +239,11 @@ impl<'a> Executor<'a> {
                 let output_rewrites: Option<&'a Vec<FetchRewrite>> =
                     unsafe { std::mem::transmute(ctx.output_rewrites.get(job.fetch_node_id)) };
                 let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
-                let mut value = Value::deserialize(&mut deserializer).unwrap();
+                let response = SubgraphResponse::deserialize(&mut deserializer).unwrap();
+                let mut data = response.data;
                 let mut entities: Vec<Value<'a>> =
-                    unsafe { std::mem::transmute(value.to_entities().unwrap()) };
+                    unsafe { std::mem::transmute(data.as_entities().unwrap()) };
+                ctx.handle_errors(response.errors);
 
                 if let Some(output_rewrites) = output_rewrites {
                     for output_rewrite in output_rewrites {

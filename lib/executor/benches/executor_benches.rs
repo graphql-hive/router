@@ -41,6 +41,7 @@ fn project_data_by_operation_test(c: &mut Criterion) {
                 let bb_root_type_name = black_box(root_type_name);
                 let result = project_by_operation(
                     &data,
+                    vec![],
                     &None,
                     bb_root_type_name,
                     &bb_projection_plan,

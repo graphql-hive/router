@@ -3,7 +3,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use query_plan_executor::projection::{
     FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan,
 };
-use sonic_rs::JsonValueTrait;
+use sonic_rs::{JsonValueTrait, LazyValue};
 use std::collections::HashMap;
 
 use tracing::{instrument, warn};
@@ -17,7 +17,7 @@ use crate::utils::consts::{
 #[instrument(level = "trace", skip_all)]
 pub fn project_by_operation(
     data: &Value,
-    // errors: &mut Vec<GraphQLError>,
+    errors: Vec<LazyValue>,
     extensions: &Option<HashMap<String, sonic_rs::Value>>,
     operation_type_name: &str,
     selections: &Vec<FieldProjectionPlan>,
@@ -30,11 +30,13 @@ pub fn project_by_operation(
     buffer.put(QUOTE);
     buffer.put(COLON);
 
+    let mut errors = errors;
+
     if let Some(data_map) = data.as_object() {
         let mut first = true;
         project_selection_set_with_map(
             data_map,
-            // errors,
+            &mut errors,
             selections,
             variable_values,
             operation_type_name,
@@ -49,14 +51,14 @@ pub fn project_by_operation(
         }
     }
 
-    // if !errors.is_empty() {
-    //     write!(
-    //         buffer,
-    //         ",\"errors\":{}",
-    //         serde_json::to_string(&errors).unwrap()
-    //     )
-    //     .unwrap();
-    // }
+    if !errors.is_empty() {
+        buffer.put(COMMA);
+        buffer.put(QUOTE);
+        buffer.put("errors".as_bytes());
+        buffer.put(QUOTE);
+        buffer.put(COLON);
+        buffer.put_slice(&sonic_rs::to_vec(&errors).unwrap());
+    }
 
     if extensions.as_ref().is_some_and(|ext| !ext.is_empty()) {
         buffer.put(COMMA);
@@ -73,7 +75,7 @@ pub fn project_by_operation(
 
 fn project_selection_set(
     data: &Value,
-    // errors: &mut Vec<GraphQLError>,
+    errors: &mut Vec<LazyValue>,
     selection: &FieldProjectionPlan,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     buffer: &mut BytesMut,
@@ -93,7 +95,7 @@ fn project_selection_set(
                 if !first {
                     buffer.put(COMMA);
                 }
-                project_selection_set(item, selection, variable_values, buffer);
+                project_selection_set(item, errors, selection, variable_values, buffer);
                 first = false;
             }
             buffer.put(CLOSE_BRACKET);
@@ -109,6 +111,7 @@ fn project_selection_set(
                         .unwrap_or(selection.field_type.as_str());
                     project_selection_set_with_map(
                         obj,
+                        errors,
                         selections,
                         variable_values,
                         type_name,
@@ -135,7 +138,7 @@ fn project_selection_set(
 #[allow(clippy::too_many_arguments)]
 fn project_selection_set_with_map(
     obj: &Vec<(&str, Value)>,
-    // errors: &mut Vec<GraphQLError>,
+    errors: &mut Vec<LazyValue>,
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     parent_type_name: &str,
@@ -168,7 +171,7 @@ fn project_selection_set_with_map(
                 buffer.put(COLON);
 
                 if let Some(field_val) = field_val {
-                    project_selection_set(field_val, selection, variable_values, buffer);
+                    project_selection_set(field_val, errors, selection, variable_values, buffer);
                 } else if selection.field_name == TYPENAME_FIELD_NAME {
                     // If the field is TYPENAME_FIELD, we should set it to the parent type name
                     buffer.put(QUOTE);
@@ -200,6 +203,7 @@ fn project_selection_set_with_map(
                 buffer.put(QUOTE);
                 buffer.put(COLON);
                 buffer.put(NULL);
+                // errors.push(Value::);
                 // errors.push(GraphQLError {
                 //     message: "Value is not a valid enum value".to_string(),
                 //     locations: None,
