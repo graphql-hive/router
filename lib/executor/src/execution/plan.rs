@@ -101,6 +101,7 @@ struct FlattenFetchJob {
 enum ExecutionJob {
     Fetch(FetchJob),
     FlattenFetch(FlattenFetchJob),
+    None,
 }
 
 impl From<ExecutionJob> for Bytes {
@@ -108,6 +109,7 @@ impl From<ExecutionJob> for Bytes {
         match value {
             ExecutionJob::Fetch(j) => j.response,
             ExecutionJob::FlattenFetch(j) => j.response,
+            ExecutionJob::None => Bytes::new(),
         }
     }
 }
@@ -152,8 +154,13 @@ impl<'a> Executor<'a> {
                     self.execute_parallel_wave(ctx, parallel_node).await;
                 }
                 PlanNode::Flatten(flatten_node) => {
-                    let (representations, representation_hashes, filtered_hashes) =
-                        self.prepare_flatten_data(&ctx.final_response, flatten_node);
+                    let result = self.prepare_flatten_data(&ctx.final_response, flatten_node);
+
+                    if result.is_none() {
+                        continue;
+                    }
+
+                    let (representations, representation_hashes, filtered_hashes) = result.unwrap();
 
                     let job = self
                         .execute_flatten_fetch_node(
@@ -195,8 +202,13 @@ impl<'a> Executor<'a> {
         match node {
             PlanNode::Fetch(fetch_node) => Box::pin(self.execute_fetch_node(fetch_node, None)),
             PlanNode::Flatten(flatten_node) => {
-                let (representations, representation_hashes, filtered_hashes) =
-                    self.prepare_flatten_data(final_response, flatten_node);
+                let result = self.prepare_flatten_data(final_response, flatten_node);
+
+                if result.is_none() {
+                    return Box::pin(async { ExecutionJob::None });
+                }
+
+                let (representations, representation_hashes, filtered_hashes) = result.unwrap();
 
                 Box::pin(self.execute_flatten_fetch_node(
                     flatten_node,
@@ -219,7 +231,6 @@ impl<'a> Executor<'a> {
                 let output_rewrites: Option<&'a Vec<FetchRewrite>> =
                     unsafe { std::mem::transmute(ctx.output_rewrites.get(job.fetch_node_id)) };
                 let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
-                println!("{}", String::from_utf8(bytes.to_vec()).unwrap());
                 let response = SubgraphResponse::deserialize(&mut deserializer).unwrap();
                 let mut data_ref: Value<'a> = unsafe { std::mem::transmute(response.data) };
                 ctx.handle_errors(response.errors);
@@ -272,6 +283,9 @@ impl<'a> Executor<'a> {
                     },
                 );
             }
+            ExecutionJob::None => {
+                // nothing to do
+            }
         }
     }
 
@@ -279,7 +293,7 @@ impl<'a> Executor<'a> {
         &self,
         final_response: &Value<'a>,
         flatten_node: &FlattenNode,
-    ) -> (BytesMut, Vec<u64>, HashMap<u64, usize>) {
+    ) -> Option<(BytesMut, Vec<u64>, HashMap<u64, usize>)> {
         let fetch_node = match flatten_node.node.as_ref() {
             PlanNode::Fetch(fetch_node) => fetch_node,
             _ => panic!("FlattenNode can only have FetchNode as child"),
@@ -339,11 +353,16 @@ impl<'a> Executor<'a> {
             },
         );
         filtered_representations.put(CLOSE_BRACKET);
-        (
+
+        if indexes.is_empty() {
+            return None;
+        }
+
+        Some((
             filtered_representations,
             representation_hashes,
             filtered_representations_hashes,
-        )
+        ))
     }
 
     async fn execute_flatten_fetch_node(
