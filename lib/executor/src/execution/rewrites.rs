@@ -40,7 +40,6 @@ impl RewriteApplier for KeyRenamer {
     ) {
         let current_segment = &path[0];
         let remaining_path = &path[1..];
-
         match value {
             Value::Array(arr) => {
                 for item in arr {
@@ -64,7 +63,7 @@ impl RewriteApplier for KeyRenamer {
                             if let Some((key, _)) =
                                 obj.iter_mut().find(|(key, _)| key == field_name)
                             {
-                                *key = field_name.as_str()
+                                *key = self.rename_key_to.as_str()
                             }
                         }
                     } else if let Some(data) = obj.iter_mut().find(|r| r.0 == field_name) {

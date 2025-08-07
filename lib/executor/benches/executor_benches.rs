@@ -39,8 +39,13 @@ fn project_data_by_operation_test(c: &mut Criterion) {
             |data| {
                 let bb_projection_plan = black_box(&projection_plan);
                 let bb_root_type_name = black_box(root_type_name);
-                let result =
-                    project_by_operation(&data, bb_root_type_name, &bb_projection_plan, &None);
+                let result = project_by_operation(
+                    &data,
+                    &None,
+                    bb_root_type_name,
+                    &bb_projection_plan,
+                    &None,
+                );
                 black_box(result);
             },
             criterion::BatchSize::LargeInput,

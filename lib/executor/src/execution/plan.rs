@@ -28,16 +28,18 @@ pub async fn execute_query_plan(
     query_plan: &QueryPlan,
     projection_plan: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+    extensions: Option<HashMap<String, sonic_rs::Value>>,
     schema_metadata: &SchemaMetadata,
     operation_type_name: &str,
     executors: &SubgraphExecutorMap,
-) -> BytesMut {
+) -> Bytes {
     let mut ctx = ExecutionContext::new(query_plan);
     let executor = Executor::new(variable_values, executors, schema_metadata);
     execute_query_plan_internal(query_plan, executor, &mut ctx).await;
     let final_response = &ctx.final_response;
     project_by_operation(
         final_response,
+        &extensions,
         operation_type_name,
         projection_plan,
         variable_values,
@@ -228,14 +230,7 @@ impl<'a> Executor<'a> {
 
                 deep_merge(&mut ctx.final_response, data_ref);
             }
-            ExecutionJob::FlattenFetch(
-                job,
-                // path,
-                // res,
-                // fetch_node_id,
-                // representation_hashes,
-                // filtered_representations_to_index_map,
-            ) => {
+            ExecutionJob::FlattenFetch(job) => {
                 let idx = ctx.response_storage.add_response(job.response);
                 let bytes: &'a [u8] =
                     unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };

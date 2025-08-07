@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
@@ -15,23 +16,22 @@ use crate::shared_state::GatewaySharedState;
 use axum::body::Body;
 use executor::execute_query_plan;
 // use http::header::CONTENT_TYPE;
-use http::{HeaderValue, Request, Response};
+use http::{HeaderName, HeaderValue, Request, Response};
+use query_plan_executor::ExposeQueryPlanMode;
 // use query_plan_executor::ExposeQueryPlanMode;
 use tower::Service;
 // use tracing::trace;
 
 #[derive(Clone, Debug, Default)]
 pub struct ExecutionService {
-    // expose_query_plan: bool,
+    expose_query_plan: bool,
 }
 
-// static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
+static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
 
 impl ExecutionService {
-    pub fn new(_expose_query_plan: bool) -> Self {
-        Self {
-          // expose_query_plan
-        }
+    pub fn new(expose_query_plan: bool) -> Self {
+        Self { expose_query_plan }
     }
 }
 
@@ -46,21 +46,21 @@ impl Service<Request<Body>> for ExecutionService {
 
     #[tracing::instrument(level = "trace", name = "ExecutionService", skip_all)]
     fn call(&mut self, mut req: Request<Body>) -> Self::Future {
-        // let mut expose_query_plan: ExposeQueryPlanMode = match self.expose_query_plan {
-        //     true => ExposeQueryPlanMode::Yes,
-        //     false => ExposeQueryPlanMode::No,
-        // };
+        let mut expose_query_plan: ExposeQueryPlanMode = match self.expose_query_plan {
+            true => ExposeQueryPlanMode::Yes,
+            false => ExposeQueryPlanMode::No,
+        };
 
-        // if let Some(expose_qp_header) = req.headers().get(&EXPOSE_QUERY_PLAN_HEADER) {
-        //     let str_value = expose_qp_header.to_str().unwrap_or_default().trim();
+        if let Some(expose_qp_header) = req.headers().get(&EXPOSE_QUERY_PLAN_HEADER) {
+            let str_value = expose_qp_header.to_str().unwrap_or_default().trim();
 
-        //     match str_value {
-        //         "true" => expose_query_plan = ExposeQueryPlanMode::Yes,
-        //         "false" => expose_query_plan = ExposeQueryPlanMode::No,
-        //         "dry-run" => expose_query_plan = ExposeQueryPlanMode::DryRun,
-        //         _ => {}
-        //     }
-        // }
+            match str_value {
+                "true" => expose_query_plan = ExposeQueryPlanMode::Yes,
+                "false" => expose_query_plan = ExposeQueryPlanMode::No,
+                "dry-run" => expose_query_plan = ExposeQueryPlanMode::DryRun,
+                _ => {}
+            }
+        }
 
         let normalized_payload = req
             .extensions_mut()
@@ -80,11 +80,23 @@ impl Service<Request<Body>> for ExecutionService {
             .remove::<CoerceVariablesPayload>()
             .expect("CoerceVariablesPayload missing");
 
+        let extensions = if expose_query_plan == ExposeQueryPlanMode::Yes
+            || expose_query_plan == ExposeQueryPlanMode::DryRun
+        {
+            Some(HashMap::from_iter([(
+                "queryPlan".to_string(),
+                sonic_rs::to_value(&query_plan_payload.query_plan).unwrap(),
+            )]))
+        } else {
+            None
+        };
+
         Box::pin(async move {
             let execution_result = execute_query_plan(
                 &query_plan_payload.query_plan,
                 &normalized_payload.projection_plan,
                 &variable_payload.variables_map,
+                extensions,
                 &app_state.schema_metadata,
                 normalized_payload.root_type_name,
                 &app_state.subgraph_executor_map,
@@ -98,7 +110,7 @@ impl Service<Request<Body>> for ExecutionService {
                     &APPLICATION_JSON
                 };
 
-            let mut response = Response::new(Body::from(execution_result.freeze()));
+            let mut response = Response::new(Body::from(execution_result));
             response
                 .headers_mut()
                 .insert(http::header::CONTENT_TYPE, response_content_type.clone());

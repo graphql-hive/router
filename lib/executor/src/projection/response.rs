@@ -1,5 +1,5 @@
 use crate::response::value::Value;
-use bytes::{BufMut, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use query_plan_executor::projection::{
     FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan,
 };
@@ -18,11 +18,11 @@ use crate::utils::consts::{
 pub fn project_by_operation(
     data: &Value,
     // errors: &mut Vec<GraphQLError>,
-    // extensions: &HashMap<String, serde_json::Value>,
+    extensions: &Option<HashMap<String, sonic_rs::Value>>,
     operation_type_name: &str,
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-) -> BytesMut {
+) -> Bytes {
     let mut buffer = BytesMut::with_capacity(4096);
     buffer.put(OPEN_BRACE);
     buffer.put(QUOTE);
@@ -57,17 +57,18 @@ pub fn project_by_operation(
     //     )
     //     .unwrap();
     // }
-    // if !extensions.is_empty() {
-    //     write!(
-    //         buffer,
-    //         ",\"extensions\":{}",
-    //         serde_json::to_string(&extensions).unwrap()
-    //     )
-    //     .unwrap();
-    // }
+
+    if extensions.as_ref().is_some_and(|ext| !ext.is_empty()) {
+        buffer.put(COMMA);
+        buffer.put(QUOTE);
+        buffer.put("extensions".as_bytes());
+        buffer.put(QUOTE);
+        buffer.put(COLON);
+        buffer.put_slice(&sonic_rs::to_vec(extensions.as_ref().unwrap()).unwrap());
+    }
 
     buffer.put(CLOSE_BRACE);
-    buffer
+    buffer.freeze()
 }
 
 fn project_selection_set(
