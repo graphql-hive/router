@@ -90,6 +90,7 @@ pub enum PlanNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FetchNode {
+    #[serde(skip_serializing)]
     pub id: i64,
     pub service_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
