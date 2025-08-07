@@ -4,10 +4,11 @@ use bytes::{BufMut, Bytes, BytesMut};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use query_plan_executor::{projection::FieldProjectionPlan, schema_metadata::SchemaMetadata};
 use query_planner::planner::plan_nodes::{
-    FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode, QueryPlan,
-    SequenceNode,
+    ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
+    QueryPlan, SequenceNode,
 };
 use serde::Deserialize;
+use sonic_rs::ValueRef;
 
 use crate::{
     context::ExecutionContext,
@@ -56,7 +57,7 @@ pub async fn execute_query_plan_internal<'a>(
 }
 
 pub struct Executor<'a> {
-    // variable_values: &'a Option<HashMap<String, serde_json::Value>>,
+    variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
     schema_metadata: &'a SchemaMetadata,
     executors: &'a SubgraphExecutorMap,
 }
@@ -116,12 +117,12 @@ impl From<ExecutionJob> for Bytes {
 
 impl<'a> Executor<'a> {
     pub fn new(
-        _variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
+        variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
         executors: &'a SubgraphExecutorMap,
         schema_metadata: &'a SchemaMetadata,
     ) -> Self {
         Executor {
-            // variable_values,
+            variable_values,
             executors,
             schema_metadata,
         }
@@ -173,6 +174,47 @@ impl<'a> Executor<'a> {
 
                     self.process_job_result(ctx, job);
                 }
+                PlanNode::Condition(node) => {
+                    match condition_node_by_variables(node, self.variable_values).as_ref() {
+                        Some(PlanNode::Fetch(node)) => {
+                            let job = self.execute_fetch_node(node, None).await;
+                            self.process_job_result(ctx, job);
+                        }
+                        Some(PlanNode::Flatten(node)) => {
+                            let result = self.prepare_flatten_data(&ctx.final_response, node);
+
+                            if result.is_none() {
+                                continue;
+                            }
+
+                            let (representations, representation_hashes, filtered_hashes) =
+                                result.unwrap();
+
+                            let job = self
+                                .execute_flatten_fetch_node(
+                                    node,
+                                    Some(representations),
+                                    Some(representation_hashes),
+                                    Some(filtered_hashes),
+                                )
+                                .await;
+
+                            self.process_job_result(ctx, job);
+                        }
+                        Some(PlanNode::Parallel(node)) => {
+                            self.execute_parallel_wave(ctx, node).await;
+                        }
+                        Some(PlanNode::Sequence(node)) => {
+                            Box::pin(self.execute_sequence_wave(ctx, node)).await;
+                        }
+                        None => {
+                            continue;
+                        }
+                        Some(_) => {
+                            panic!("Unsupported plan node type in ConditionNode");
+                        }
+                    }
+                }
                 // Our Query Planner does not produce any other plan node types in SequenceNode
                 _ => panic!("Unsupported plan node type in SequenceNode"),
             }
@@ -216,6 +258,12 @@ impl<'a> Executor<'a> {
                     Some(representation_hashes),
                     Some(filtered_hashes),
                 ))
+            }
+            PlanNode::Condition(node) => {
+                match condition_node_by_variables(node, self.variable_values) {
+                    Some(node) => Box::pin(self.prepare_job_future(node, final_response)),
+                    None => Box::pin(async { ExecutionJob::None }),
+                }
             }
             // Our Query Planner does not produce any other plan node types in ParallelNode
             _ => panic!("unexpected node type in parallel wave"),
@@ -407,5 +455,29 @@ impl<'a> Executor<'a> {
                 )
                 .await,
         })
+    }
+}
+
+fn condition_node_by_variables<'a>(
+    condition_node: &'a ConditionNode,
+    variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
+) -> Option<&'a PlanNode> {
+    let condition_value = variable_values
+        .as_ref()
+        .and_then(|vars| vars.get(&condition_node.condition))
+        .is_some_and(|val| match val.as_ref() {
+            ValueRef::Bool(b) => b,
+            _ => false,
+        });
+    if condition_value {
+        if let Some(if_clause) = &condition_node.if_clause {
+            Some(if_clause)
+        } else {
+            None
+        }
+    } else if let Some(else_clause) = &condition_node.else_clause {
+        Some(else_clause)
+    } else {
+        None
     }
 }
