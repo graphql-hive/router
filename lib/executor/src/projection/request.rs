@@ -233,12 +233,12 @@ fn project_requires_map_mut(
                         buffer.put(QUOTE);
                         buffer.put(COLON);
                         write_and_escape_string(buffer, type_name);
-                        buffer.put(COMMA);
+                        // We wrote the first field
+                        *first = false;
                     }
                 }
 
-                // To avoid writing empty fields, we write to a temporary buffer first
-                project_requires_internal(
+                let projected = project_requires_internal(
                     ctx,
                     &requires_selection.selections.items,
                     original,
@@ -246,7 +246,9 @@ fn project_requires_map_mut(
                     *first,
                     Some(response_key),
                 );
-                *first = false;
+                if projected {
+                    *first = false;
+                }
             }
             SelectionItem::InlineFragment(requires_selection) => {
                 let type_condition = &requires_selection.type_condition;

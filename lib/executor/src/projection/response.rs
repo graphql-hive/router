@@ -33,6 +33,7 @@ pub fn project_by_operation(
     let mut errors = errors;
 
     if let Some(data_map) = data.as_object() {
+        // Start with first as true to add the opening brace
         let mut first = true;
         project_selection_set_with_map(
             data_map,
@@ -41,7 +42,7 @@ pub fn project_by_operation(
             variable_values,
             operation_type_name,
             &mut buffer,
-            &mut first, // Start with first as true to add the opening brace
+            &mut first,
         );
         if !first {
             buffer.put(CLOSE_BRACE);
@@ -147,9 +148,18 @@ fn project_selection_set_with_map(
 ) {
     for selection in selections {
         let field_val = obj
-            .binary_search_by_key(&selection.response_key.as_str(), |(k, _)| k)
+            .binary_search_by_key(&selection.field_name.as_str(), |(k, _)| *k)
             .ok()
+            .or_else(|| {
+                if selection.field_name == selection.response_key {
+                    None
+                } else {
+                    obj.binary_search_by_key(&selection.response_key.as_str(), |(k, _)| *k)
+                        .ok()
+                }
+            })
             .map(|idx| &obj[idx].1);
+
         match check(
             &selection.conditions,
             parent_type_name,
