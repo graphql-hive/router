@@ -1,5 +1,5 @@
-use crate::{projection::writer::ResponseWriter, response::value::Value};
-use bytes::{Bytes, BytesMut};
+use crate::response::value::Value;
+use bytes::{BufMut, Bytes, BytesMut};
 use query_plan_executor::projection::{
     FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan,
 };
@@ -8,7 +8,11 @@ use std::collections::HashMap;
 
 use tracing::{instrument, warn};
 
-use crate::utils::consts::TYPENAME_FIELD_NAME;
+use crate::json_writer::{write_and_escape_string, write_f64, write_i64, write_u64};
+use crate::utils::consts::{
+    CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, EMPTY_OBJECT, FALSE, NULL, OPEN_BRACE, OPEN_BRACKET,
+    QUOTE, TRUE, TYPENAME_FIELD_NAME,
+};
 
 #[instrument(level = "trace", skip_all)]
 pub fn project_by_operation(
@@ -20,36 +24,53 @@ pub fn project_by_operation(
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
 ) -> Bytes {
     let mut buffer = BytesMut::with_capacity(4096);
-    let mut writer = ResponseWriter::new(&mut buffer);
+    buffer.put(OPEN_BRACE);
+    buffer.put(QUOTE);
+    buffer.put("data".as_bytes());
+    buffer.put(QUOTE);
+    buffer.put(COLON);
+
     let mut errors = errors;
 
-    writer.start_object();
-    writer.write_key("data");
-
     if let Some(data_map) = data.as_object() {
+        // Start with first as true to add the opening brace
+        let mut first = true;
         project_selection_set_with_map(
             data_map,
             &mut errors,
             selections,
             variable_values,
             operation_type_name,
-            &mut writer,
+            &mut buffer,
+            &mut first,
         );
-    } else {
-        writer.write_null();
+        if !first {
+            buffer.put(CLOSE_BRACE);
+        } else {
+            // If no selections were made, we should return an empty object
+            buffer.put(EMPTY_OBJECT);
+        }
     }
 
     if !errors.is_empty() {
-        writer.write_key("errors");
-        writer.write_raw_slice(&sonic_rs::to_vec(&errors).unwrap());
+        buffer.put(COMMA);
+        buffer.put(QUOTE);
+        buffer.put("errors".as_bytes());
+        buffer.put(QUOTE);
+        buffer.put(COLON);
+        buffer.put_slice(&sonic_rs::to_vec(&errors).unwrap());
     }
 
     if extensions.as_ref().is_some_and(|ext| !ext.is_empty()) {
-        writer.write_key("extensions");
-        writer.write_raw_slice(&sonic_rs::to_vec(extensions.as_ref().unwrap()).unwrap());
+        buffer.put(COMMA);
+        buffer.put(QUOTE);
+        buffer.put("extensions".as_bytes());
+        buffer.put(QUOTE);
+        buffer.put(COLON);
+        buffer.put_slice(&sonic_rs::to_vec(extensions.as_ref().unwrap()).unwrap());
     }
 
-    writer.end_object();
+    buffer.put(CLOSE_BRACE);
     buffer.freeze()
 }
 
@@ -58,30 +79,32 @@ fn project_selection_set(
     errors: &mut Vec<LazyValue>,
     selection: &FieldProjectionPlan,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-    writer: &mut ResponseWriter,
+    buffer: &mut BytesMut,
 ) {
     match data {
-        Value::Null => writer.write_null(),
-        Value::Bool(value) => writer.write_bool(*value),
-        Value::U64(num) => writer.write_u64(*num),
-        Value::I64(num) => writer.write_i64(*num),
-        Value::F64(num) => writer.write_f64(*num),
-        Value::String(value) => writer.write_string(value),
+        Value::Null => buffer.put(NULL),
+        Value::Bool(true) => buffer.put(TRUE),
+        Value::Bool(false) => buffer.put(FALSE),
+        Value::U64(num) => write_u64(buffer, *num),
+        Value::I64(num) => write_i64(buffer, *num),
+        Value::F64(num) => write_f64(buffer, *num),
+        Value::String(value) => write_and_escape_string(buffer, value),
         Value::Array(arr) => {
-            writer.start_array();
+            buffer.put(OPEN_BRACKET);
             let mut first = true;
             for item in arr.iter() {
                 if !first {
-                    writer.write_separator();
+                    buffer.put(COMMA);
                 }
-                project_selection_set(item, errors, selection, variable_values, writer);
+                project_selection_set(item, errors, selection, variable_values, buffer);
                 first = false;
             }
-            writer.end_array();
+            buffer.put(CLOSE_BRACKET);
         }
         Value::Object(obj) => {
             match selection.selections.as_ref() {
                 Some(selections) => {
+                    let mut first = true;
                     let type_name = obj
                         .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
                         .ok()
@@ -93,12 +116,19 @@ fn project_selection_set(
                         selections,
                         variable_values,
                         type_name,
-                        writer,
+                        buffer,
+                        &mut first,
                     );
+                    if !first {
+                        buffer.put(CLOSE_BRACE);
+                    } else {
+                        // If no selections were made, we should return an empty object
+                        buffer.put(EMPTY_OBJECT);
+                    }
                 }
                 None => {
                     // If the selection set is not projected, we should return null
-                    writer.write_null();
+                    buffer.put(NULL)
                 }
             }
         }
@@ -113,9 +143,9 @@ fn project_selection_set_with_map(
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     parent_type_name: &str,
-    writer: &mut ResponseWriter,
+    buffer: &mut BytesMut,
+    first: &mut bool,
 ) {
-    writer.start_object();
     for selection in selections {
         let field_val = obj
             .binary_search_by_key(&selection.field_name.as_str(), |(k, _)| *k)
@@ -138,16 +168,28 @@ fn project_selection_set_with_map(
             variable_values,
         ) {
             Ok(_) => {
-                writer.write_key(&selection.response_key);
+                if *first {
+                    buffer.put(OPEN_BRACE);
+                } else {
+                    buffer.put(COMMA);
+                }
+                *first = false;
+
+                buffer.put(QUOTE);
+                buffer.put(selection.response_key.as_bytes());
+                buffer.put(QUOTE);
+                buffer.put(COLON);
 
                 if let Some(field_val) = field_val {
-                    project_selection_set(field_val, errors, selection, variable_values, writer);
+                    project_selection_set(field_val, errors, selection, variable_values, buffer);
                 } else if selection.field_name == TYPENAME_FIELD_NAME {
                     // If the field is TYPENAME_FIELD, we should set it to the parent type name
-                    writer.write_string(parent_type_name);
+                    buffer.put(QUOTE);
+                    buffer.put(parent_type_name.as_bytes());
+                    buffer.put(QUOTE);
                 } else {
                     // If the field is not found in the object, set it to Null
-                    writer.write_null();
+                    buffer.put(NULL);
                 }
             }
             Err(FieldProjectionConditionError::Skip) => {
@@ -159,8 +201,18 @@ fn project_selection_set_with_map(
                 continue;
             }
             Err(FieldProjectionConditionError::InvalidEnumValue) => {
-                writer.write_key(&selection.response_key);
-                writer.write_null();
+                if *first {
+                    buffer.put(OPEN_BRACE);
+                } else {
+                    buffer.put(COMMA);
+                }
+                *first = false;
+
+                buffer.put(QUOTE);
+                buffer.put(selection.response_key.as_bytes());
+                buffer.put(QUOTE);
+                buffer.put(COLON);
+                buffer.put(NULL);
                 // errors.push(Value::);
                 // errors.push(GraphQLError {
                 //     message: "Value is not a valid enum value".to_string(),
@@ -170,13 +222,22 @@ fn project_selection_set_with_map(
                 // });
             }
             Err(FieldProjectionConditionError::InvalidFieldType) => {
+                if *first {
+                    buffer.put(OPEN_BRACE);
+                } else {
+                    buffer.put(COMMA);
+                }
+                *first = false;
+
                 // Skip this field as the field type does not match
-                writer.write_key(&selection.response_key);
-                writer.write_null();
+                buffer.put(QUOTE);
+                buffer.put(selection.response_key.as_bytes());
+                buffer.put(QUOTE);
+                buffer.put(COLON);
+                buffer.put(NULL);
             }
         }
     }
-    writer.end_object();
 }
 
 fn check(
