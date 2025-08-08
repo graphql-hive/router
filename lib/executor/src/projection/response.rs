@@ -1,3 +1,4 @@
+use crate::projection::error::ProjectionError;
 use crate::response::graphql_error::GraphQLError;
 use crate::response::value::Value;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -23,7 +24,7 @@ pub fn project_by_operation(
     operation_type_name: &str,
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-) -> Bytes {
+) -> Result<Bytes, ProjectionError> {
     let mut buffer = BytesMut::with_capacity(4096);
     buffer.put(OPEN_BRACE);
     buffer.put(QUOTE);
@@ -59,20 +60,27 @@ pub fn project_by_operation(
         buffer.put("errors".as_bytes());
         buffer.put(QUOTE);
         buffer.put(COLON);
-        buffer.put_slice(&sonic_rs::to_vec(&errors).unwrap());
+        buffer.put_slice(
+            &sonic_rs::to_vec(&errors)
+                .map_err(|e| ProjectionError::ErrorsSerializationError(e.to_string()))?,
+        );
     }
 
-    if extensions.as_ref().is_some_and(|ext| !ext.is_empty()) {
-        buffer.put(COMMA);
-        buffer.put(QUOTE);
-        buffer.put("extensions".as_bytes());
-        buffer.put(QUOTE);
-        buffer.put(COLON);
-        buffer.put_slice(&sonic_rs::to_vec(extensions.as_ref().unwrap()).unwrap());
+    if let Some(ext) = extensions.as_ref() {
+        if !ext.is_empty() {
+            let serialized_extensions = sonic_rs::to_vec(ext)
+                .map_err(|e| ProjectionError::ExtensionsSerializationError(e.to_string()))?;
+            buffer.put(COMMA);
+            buffer.put(QUOTE);
+            buffer.put("extensions".as_bytes());
+            buffer.put(QUOTE);
+            buffer.put(COLON);
+            buffer.put_slice(&serialized_extensions);
+        }
     }
 
     buffer.put(CLOSE_BRACE);
-    buffer.freeze()
+    Ok(buffer.freeze())
 }
 
 fn project_selection_set(

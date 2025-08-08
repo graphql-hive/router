@@ -750,6 +750,7 @@ dependencies = [
  "serde_json",
  "sonic-rs",
  "subgraphs",
+ "thiserror 2.0.12",
  "tokio",
  "tracing",
  "xxhash-rust",

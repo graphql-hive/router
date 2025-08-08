@@ -101,7 +101,8 @@ impl Service<Request<Body>> for ExecutionService {
                 normalized_payload.root_type_name,
                 &app_state.subgraph_executor_map,
             )
-            .await;
+            .await
+            .unwrap_or_else(|e| panic!("Failed to execute query plan: {}", e));
 
             let response_content_type: &'static HeaderValue =
                 if req.accepts_content_type(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR) {

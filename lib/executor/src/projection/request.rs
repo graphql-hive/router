@@ -4,6 +4,7 @@ use query_planner::ast::selection_item::SelectionItem;
 
 use crate::{
     json_writer::{write_and_escape_string, write_f64, write_i64, write_u64},
+    projection::error::ProjectionError,
     response::value::Value,
     utils::consts::{
         CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, FALSE, OPEN_BRACE, OPEN_BRACKET, QUOTE, TRUE,
@@ -28,7 +29,7 @@ pub fn project_requires(
     buffer: &mut BytesMut,
     first: bool,
     response_key: Option<&str>,
-) -> bool {
+) -> Result<bool, ProjectionError> {
     project_requires_internal(
         ctx,
         requires_selections,
@@ -46,10 +47,10 @@ fn project_requires_internal(
     buffer: &mut BytesMut,
     first: bool,
     response_key: Option<&str>,
-) -> bool {
+) -> Result<bool, ProjectionError> {
     match entity {
         Value::Null => {
-            return false;
+            return Ok(false);
         }
         Value::Bool(b) => {
             if !first {
@@ -134,7 +135,7 @@ fn project_requires_internal(
                     buffer,
                     first,
                     None,
-                );
+                )?;
                 if projected {
                     // Only update `first` if we actually write something
                     first = false;
@@ -145,11 +146,13 @@ fn project_requires_internal(
         Value::Object(entity_obj) => {
             if requires_selections.is_empty() {
                 // It is probably a scalar with an object value, so we write it directly
-                buffer.put_slice(&sonic_rs::to_vec(entity_obj).unwrap());
-                return true;
+                let vec = sonic_rs::to_vec(entity_obj)
+                    .map_err(|e| ProjectionError::CustomScalarSerializationError(e.to_string()))?;
+                buffer.put_slice(&vec);
+                return Ok(true);
             }
             if entity_obj.is_empty() {
-                return false;
+                return Ok(false);
             }
 
             let parent_first = first;
@@ -162,17 +165,17 @@ fn project_requires_internal(
                 &mut first,
                 response_key,
                 parent_first,
-            );
+            )?;
             if first {
                 // If no fields were projected, "first" is still true,
                 // so we skip writing the closing brace
-                return false;
+                return Ok(false);
             } else {
                 buffer.put(CLOSE_BRACE);
             }
         }
     };
-    true
+    Ok(true)
 }
 
 fn project_requires_map_mut(
@@ -183,7 +186,7 @@ fn project_requires_map_mut(
     first: &mut bool,
     parent_response_key: Option<&str>,
     parent_first: bool,
-) {
+) -> Result<(), ProjectionError> {
     for requires_selection in requires_selections {
         match &requires_selection {
             SelectionItem::Field(requires_selection) => {
@@ -244,7 +247,7 @@ fn project_requires_map_mut(
                     buffer,
                     *first,
                     Some(response_key),
-                );
+                )?;
                 if projected {
                     *first = false;
                 }
@@ -276,13 +279,13 @@ fn project_requires_map_mut(
                         first,
                         parent_response_key,
                         parent_first,
-                    );
+                    )?;
                 }
             }
             SelectionItem::FragmentSpread(_name_ref) => {
-                // We only minify the queries to subgraphs, so we never have fragment spreads here
-                unreachable!("Fragment spreads should not exist in FetchNode::requires.");
+                // We only minify the queries to subgraphs, so we never have fragment spreads here.
             }
         }
     }
+    Ok(())
 }

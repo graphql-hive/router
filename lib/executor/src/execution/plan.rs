@@ -18,7 +18,10 @@ use crate::{
         request::{project_requires, RequestProjectionContext},
         response::project_by_operation,
     },
-    response::{merge::deep_merge, subgraph_response::SubgraphResponse, value::Value},
+    response::{
+        graphql_error::GraphQLError, merge::deep_merge, subgraph_response::SubgraphResponse,
+        value::Value,
+    },
     utils::{
         consts::{CLOSE_BRACKET, OPEN_BRACKET},
         traverse::{traverse_and_callback, traverse_and_callback_mut},
@@ -33,7 +36,7 @@ pub async fn execute_query_plan(
     schema_metadata: &SchemaMetadata,
     operation_type_name: &str,
     executors: &SubgraphExecutorMap,
-) -> Bytes {
+) -> Result<Bytes, String> {
     let mut ctx = ExecutionContext::new(query_plan);
     let executor = Executor::new(variable_values, executors, schema_metadata);
     execute_query_plan_internal(query_plan, executor, &mut ctx).await;
@@ -46,6 +49,7 @@ pub async fn execute_query_plan(
         projection_plan,
         variable_values,
     )
+    .map_err(|e| e.to_string())
 }
 
 pub async fn execute_query_plan_internal<'a>(
@@ -142,8 +146,15 @@ impl<'a> Executor<'a> {
     }
 
     async fn execute_fetch_wave(&self, ctx: &mut ExecutionContext<'a>, node: &FetchNode) {
-        let result = self.execute_fetch_node(node, None).await;
-        self.process_job_result(ctx, result);
+        match self.execute_fetch_node(node, None).await {
+            Ok(result) => self.process_job_result(ctx, result),
+            Err(err) => ctx.errors.push(GraphQLError {
+                message: err,
+                locations: None,
+                path: None,
+                extensions: None,
+            }),
+        }
     }
 
     async fn execute_sequence_wave(&self, ctx: &mut ExecutionContext<'a>, node: &SequenceNode) {
@@ -163,32 +174,70 @@ impl<'a> Executor<'a> {
         let results = scope.join_all().await;
 
         for result in results {
-            self.process_job_result(ctx, result);
+            match result {
+                Ok(job) => {
+                    self.process_job_result(ctx, job);
+                }
+                Err(err) => ctx.errors.push(GraphQLError {
+                    message: err,
+                    locations: None,
+                    path: None,
+                    extensions: None,
+                }),
+            }
         }
     }
 
     async fn execute_plan_node(&self, ctx: &mut ExecutionContext<'a>, node: &PlanNode) {
         match node {
-            PlanNode::Fetch(fetch_node) => {
-                let job = self.execute_fetch_node(fetch_node, None).await;
-                self.process_job_result(ctx, job);
-            }
+            PlanNode::Fetch(fetch_node) => match self.execute_fetch_node(fetch_node, None).await {
+                Ok(job) => {
+                    self.process_job_result(ctx, job);
+                }
+                Err(err) => ctx.errors.push(GraphQLError {
+                    message: err,
+                    locations: None,
+                    path: None,
+                    extensions: None,
+                }),
+            },
             PlanNode::Parallel(parallel_node) => {
                 self.execute_parallel_wave(ctx, parallel_node).await;
             }
             PlanNode::Flatten(flatten_node) => {
-                if let Some((representations, representation_hashes, filtered_hashes)) =
-                    self.prepare_flatten_data(&ctx.final_response, flatten_node)
-                {
-                    let job = self
-                        .execute_flatten_fetch_node(
-                            flatten_node,
-                            Some(representations),
-                            Some(representation_hashes),
-                            Some(filtered_hashes),
-                        )
-                        .await;
-                    self.process_job_result(ctx, job);
+                match self.prepare_flatten_data(&ctx.final_response, flatten_node) {
+                    Ok(Some((representations, representation_hashes, filtered_hashes))) => {
+                        match self
+                            .execute_flatten_fetch_node(
+                                flatten_node,
+                                Some(representations),
+                                Some(representation_hashes),
+                                Some(filtered_hashes),
+                            )
+                            .await
+                        {
+                            Ok(job) => {
+                                self.process_job_result(ctx, job);
+                            }
+                            Err(err) => {
+                                ctx.errors.push(GraphQLError {
+                                    message: err,
+                                    locations: None,
+                                    path: None,
+                                    extensions: None,
+                                });
+                            }
+                        }
+                    }
+                    Ok(None) => { /* do nothing */ }
+                    Err(e) => {
+                        ctx.errors.push(GraphQLError {
+                            message: e,
+                            locations: None,
+                            path: None,
+                            extensions: None,
+                        });
+                    }
                 }
             }
             PlanNode::Sequence(sequence_node) => {
@@ -201,9 +250,8 @@ impl<'a> Executor<'a> {
                     Box::pin(self.execute_plan_node(ctx, node)).await;
                 }
             }
-            _ => {
-                panic!("Unexpected node in plan execution");
-            }
+            // An unsupported plan node was found, do nothing.
+            _ => {}
         }
     }
 
@@ -211,33 +259,31 @@ impl<'a> Executor<'a> {
         &'s self,
         node: &'s PlanNode,
         final_response: &Value<'a>,
-    ) -> BoxFuture<'s, ExecutionJob> {
+    ) -> BoxFuture<'s, Result<ExecutionJob, String>> {
         match node {
             PlanNode::Fetch(fetch_node) => Box::pin(self.execute_fetch_node(fetch_node, None)),
             PlanNode::Flatten(flatten_node) => {
-                let result = self.prepare_flatten_data(final_response, flatten_node);
-
-                if result.is_none() {
-                    return Box::pin(async { ExecutionJob::None });
+                match self.prepare_flatten_data(final_response, flatten_node) {
+                    Ok(Some((representations, representation_hashes, filtered_hashes))) => {
+                        Box::pin(self.execute_flatten_fetch_node(
+                            flatten_node,
+                            Some(representations),
+                            Some(representation_hashes),
+                            Some(filtered_hashes),
+                        ))
+                    }
+                    Ok(None) => Box::pin(async { Ok(ExecutionJob::None) }),
+                    Err(e) => Box::pin(async move { Err(e.to_string()) }),
                 }
-
-                let (representations, representation_hashes, filtered_hashes) = result.unwrap();
-
-                Box::pin(self.execute_flatten_fetch_node(
-                    flatten_node,
-                    Some(representations),
-                    Some(representation_hashes),
-                    Some(filtered_hashes),
-                ))
             }
             PlanNode::Condition(node) => {
                 match condition_node_by_variables(node, self.variable_values) {
                     Some(node) => Box::pin(self.prepare_job_future(node, final_response)), // This is already clean.
-                    None => Box::pin(async { ExecutionJob::None }),
+                    None => Box::pin(async { Ok(ExecutionJob::None) }),
                 }
             }
             // Our Query Planner does not produce any other plan node types in ParallelNode
-            _ => Box::pin(async { ExecutionJob::None }),
+            _ => Box::pin(async { Ok(ExecutionJob::None) }),
         }
     }
 
@@ -296,38 +342,38 @@ impl<'a> Executor<'a> {
                 };
                 ctx.handle_errors(response.errors);
                 let mut data = response.data;
-                let mut entities: Vec<Value<'a>> = if let Some(entities) = data.as_entities() {
-                    unsafe { std::mem::transmute(entities) }
-                } else {
-                    return;
-                };
+                if let Some(entities) = data.as_entities() {
+                    let mut entities: Vec<Value<'a>> = unsafe { std::mem::transmute(entities) };
 
-                if let Some(output_rewrites) = output_rewrites {
-                    for output_rewrite in output_rewrites {
-                        for entity in &mut entities {
-                            output_rewrite.rewrite(&self.schema_metadata.possible_types, entity);
-                        }
-                    }
-                }
-
-                let mut index = 0;
-                let normalized_path = job.flatten_node_path.as_slice();
-                traverse_and_callback_mut(
-                    &mut ctx.final_response,
-                    normalized_path,
-                    self.schema_metadata,
-                    &mut |target| {
-                        let hash = job.representation_hashes[index];
-                        if let Some(entity_index) = job.representation_hash_to_index.get(&hash) {
-                            if let Some(entity) = entities.get(*entity_index) {
-                                let new_val: Value<'_> =
-                                    unsafe { std::mem::transmute(entity.clone()) };
-                                deep_merge(target, new_val);
+                    if let Some(output_rewrites) = output_rewrites {
+                        for output_rewrite in output_rewrites {
+                            for entity in &mut entities {
+                                output_rewrite
+                                    .rewrite(&self.schema_metadata.possible_types, entity);
                             }
                         }
-                        index += 1;
-                    },
-                );
+                    }
+
+                    let mut index = 0;
+                    let normalized_path = job.flatten_node_path.as_slice();
+                    traverse_and_callback_mut(
+                        &mut ctx.final_response,
+                        normalized_path,
+                        self.schema_metadata,
+                        &mut |target| {
+                            let hash = job.representation_hashes[index];
+                            if let Some(entity_index) = job.representation_hash_to_index.get(&hash)
+                            {
+                                if let Some(entity) = entities.get(*entity_index) {
+                                    let new_val: Value<'_> =
+                                        unsafe { std::mem::transmute(entity.clone()) };
+                                    deep_merge(target, new_val);
+                                }
+                            }
+                            index += 1;
+                        },
+                    );
+                }
             }
             ExecutionJob::None => {
                 // nothing to do
@@ -339,12 +385,15 @@ impl<'a> Executor<'a> {
         &self,
         final_response: &Value<'a>,
         flatten_node: &FlattenNode,
-    ) -> Option<(BytesMut, Vec<u64>, HashMap<u64, usize>)> {
+    ) -> Result<Option<(BytesMut, Vec<u64>, HashMap<u64, usize>)>, String> {
         let fetch_node = match flatten_node.node.as_ref() {
             PlanNode::Fetch(fetch_node) => fetch_node,
-            _ => return None,
+            _ => return Ok(None),
         };
-        let requires_nodes = fetch_node.requires.as_ref().unwrap();
+        let requires_nodes = match fetch_node.requires.as_ref() {
+            Some(nodes) => nodes,
+            None => return Ok(None),
+        };
 
         let mut index = 0;
         let mut indexes = BTreeSet::new();
@@ -354,12 +403,16 @@ impl<'a> Executor<'a> {
         let proj_ctx = RequestProjectionContext::new(&self.schema_metadata.possible_types);
         let mut representation_hashes: Vec<u64> = Vec::new();
         let mut filtered_representations_hashes: HashMap<u64, usize> = HashMap::new();
+        let mut projection_error: Option<String> = None;
 
         traverse_and_callback(
             final_response,
             normalized_path,
             self.schema_metadata,
             &mut |entity| {
+                if projection_error.is_some() {
+                    return;
+                }
                 let hash = entity.to_hash(&requires_nodes.items, proj_ctx.possible_types);
 
                 if !entity.is_null() {
@@ -382,33 +435,43 @@ impl<'a> Executor<'a> {
                     entity
                 };
 
-                let is_projected = project_requires(
+                match project_requires(
                     &proj_ctx,
                     &requires_nodes.items,
                     entity,
                     &mut filtered_representations,
                     indexes.is_empty(),
                     None,
-                );
-
-                if is_projected {
-                    indexes.insert(index);
-                    filtered_representations_hashes.insert(hash, index);
+                ) {
+                    Ok(is_projected) => {
+                        if is_projected {
+                            indexes.insert(index);
+                            filtered_representations_hashes.insert(hash, index);
+                        }
+                    }
+                    Err(e) => {
+                        projection_error = Some(e.to_string());
+                    }
                 }
+
                 index += 1;
             },
         );
         filtered_representations.put(CLOSE_BRACKET);
 
-        if indexes.is_empty() {
-            return None;
+        if let Some(e) = projection_error {
+            return Err(e);
         }
 
-        Some((
+        if indexes.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some((
             filtered_representations,
             representation_hashes,
             filtered_representations_hashes,
-        ))
+        )))
     }
 
     async fn execute_flatten_fetch_node(
@@ -417,28 +480,28 @@ impl<'a> Executor<'a> {
         representations: Option<BytesMut>,
         representation_hashes: Option<Vec<u64>>,
         filtered_representations_hashes: Option<HashMap<u64, usize>>,
-    ) -> ExecutionJob {
-        match node.node.as_ref() {
+    ) -> Result<ExecutionJob, String> {
+        Ok(match node.node.as_ref() {
             PlanNode::Fetch(fetch_node) => ExecutionJob::FlattenFetch(FlattenFetchJob {
                 flatten_node_path: node.path.clone(),
                 response: self
                     .execute_fetch_node(fetch_node, representations)
-                    .await
+                    .await?
                     .into(),
                 fetch_node_id: fetch_node.id,
                 representation_hashes: representation_hashes.unwrap_or_default(),
                 representation_hash_to_index: filtered_representations_hashes.unwrap_or_default(),
             }),
             _ => ExecutionJob::None,
-        }
+        })
     }
 
     async fn execute_fetch_node(
         &self,
         node: &FetchNode,
         representations: Option<BytesMut>,
-    ) -> ExecutionJob {
-        ExecutionJob::Fetch(FetchJob {
+    ) -> Result<ExecutionJob, String> {
+        Ok(ExecutionJob::Fetch(FetchJob {
             fetch_node_id: node.id,
             response: self
                 .executors
@@ -452,7 +515,7 @@ impl<'a> Executor<'a> {
                     },
                 )
                 .await,
-        })
+        }))
     }
 }
 

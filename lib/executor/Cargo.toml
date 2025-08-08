@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 bumpalo = "3.19.0"
+thiserror = "2.0.12"
 itoa = "1.0.15"
 ryu = "1.0.20"
 bytes = "1.10.1"
