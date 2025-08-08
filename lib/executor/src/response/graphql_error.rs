@@ -13,6 +13,17 @@ pub struct GraphQLError {
     pub extensions: Option<Value>,
 }
 
+impl From<String> for GraphQLError {
+    fn from(message: String) -> Self {
+        GraphQLError {
+            message,
+            locations: None,
+            path: None,
+            extensions: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GraphQLErrorLocation {
     pub line: usize,

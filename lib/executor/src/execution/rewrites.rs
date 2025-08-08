@@ -71,12 +71,8 @@ impl RewriteApplier for KeyRenamer {
                     }
                 }
             },
-            _ => {
-                panic!(
-                    "Trying to apply KeyRenamer path {:?} to non-object/array type",
-                    path
-                );
-            }
+            // If the value is not an object or an array, we can't apply the rewrite.
+            _ => (),
         }
     }
 }
@@ -126,12 +122,8 @@ impl RewriteApplier for ValueSetter {
                     }
                 }
             }
-            _ => {
-                panic!(
-                    "Trying to apply ValueSetter path {:?} to non-object/array type",
-                    path
-                );
-            }
+            // If the value is not an object or an array, we can't apply the rewrite.
+            _ => (),
         }
     }
 }

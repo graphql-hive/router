@@ -33,7 +33,8 @@ impl GatewaySharedState {
 
         let subgraph_endpoint_map = supergraph_state.subgraph_endpoint_map.clone();
         let subgraph_executor_map =
-            SubgraphExecutorMap::from_http_endpoint_map(supergraph_state.subgraph_endpoint_map);
+            SubgraphExecutorMap::from_http_endpoint_map(supergraph_state.subgraph_endpoint_map)
+                .expect("Failed to create subgraph executor map");
 
         Arc::new(Self {
             schema_metadata,

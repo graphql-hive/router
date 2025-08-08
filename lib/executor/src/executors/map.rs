@@ -1,14 +1,17 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use hyper_util::{
     client::legacy::Client,
     rt::{TokioExecutor, TokioTimer},
 };
 
-use crate::executors::{
-    common::{HttpExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
-    http::HTTPSubgraphExecutor,
+use crate::{
+    executors::{
+        common::{HttpExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
+        http::HTTPSubgraphExecutor,
+    },
+    response::graphql_error::GraphQLError,
 };
 
 pub struct SubgraphExecutorMap {
@@ -36,10 +39,18 @@ impl SubgraphExecutorMap {
         match self.inner.get(subgraph_name) {
             Some(executor) => executor.execute(execution_request).await,
             None => {
-                panic!(
+                let graphql_error: GraphQLError = format!(
                     "Subgraph executor not found for subgraph: {}",
                     subgraph_name
-                );
+                )
+                .into();
+                let errors = vec![graphql_error];
+                let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
+                let mut buffer = BytesMut::new();
+                buffer.put_slice(b"{\"errors\":");
+                buffer.put_slice(&errors_bytes);
+                buffer.put_slice(b"}");
+                buffer.freeze()
             }
         }
     }
@@ -48,7 +59,9 @@ impl SubgraphExecutorMap {
         self.inner.insert(subgraph_name, boxed_arc);
     }
 
-    pub fn from_http_endpoint_map(subgraph_endpoint_map: HashMap<String, String>) -> Self {
+    pub fn from_http_endpoint_map(
+        subgraph_endpoint_map: HashMap<String, String>,
+    ) -> Result<Self, String> {
         let mut builder = Client::builder(TokioExecutor::new());
         let builder_mut = builder
             .pool_timer(TokioTimer::new())
@@ -59,13 +72,12 @@ impl SubgraphExecutorMap {
         let executor_map = subgraph_endpoint_map
             .into_iter()
             .map(|(subgraph_name, endpoint)| {
-                let executor =
-                    HTTPSubgraphExecutor::new(&endpoint, http_client_arc.clone()).to_boxed_arc();
-                (subgraph_name, executor)
+                HTTPSubgraphExecutor::new(&endpoint, http_client_arc.clone())
+                    .map(|executor| (subgraph_name, executor.to_boxed_arc()))
             })
-            .collect::<HashMap<_, _>>();
-        SubgraphExecutorMap {
+            .collect::<Result<HashMap<_, _>, String>>()?;
+        Ok(SubgraphExecutorMap {
             inner: executor_map,
-        }
+        })
     }
 }

@@ -11,6 +11,7 @@ use hyper::{body::Bytes, Version};
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 
 use crate::executors::common::HttpExecutionRequest;
+use crate::response::graphql_error::GraphQLError;
 use crate::utils::consts::CLOSE_BRACE;
 use crate::utils::consts::COLON;
 use crate::utils::consts::COMMA;
@@ -28,20 +29,23 @@ const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
 const FIRST_QUOTE_STR: &[u8] = b"{\"query\":";
 
 impl HTTPSubgraphExecutor {
-    pub fn new(endpoint: &str, http_client: Arc<Client<HttpConnector, Full<Bytes>>>) -> Self {
+    pub fn new(
+        endpoint: &str,
+        http_client: Arc<Client<HttpConnector, Full<Bytes>>>,
+    ) -> Result<Self, String> {
         let endpoint = endpoint
             .parse::<http::Uri>()
-            .expect("Failed to parse endpoint as URI");
+            .map_err(|e| format!("Failed to parse endpoint as URI: {}", e))?;
         let mut header_map = HeaderMap::new();
         header_map.insert(
             "Content-Type",
             HeaderValue::from_static("application/json; charset=utf-8"),
         );
-        HTTPSubgraphExecutor {
+        Ok(HTTPSubgraphExecutor {
             endpoint,
             http_client,
             header_map,
-        }
+        })
     }
 
     async fn _execute<'a>(
@@ -125,11 +129,22 @@ impl HTTPSubgraphExecutor {
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
     async fn execute<'a>(&self, execution_request: HttpExecutionRequest<'a>) -> Bytes {
-        self._execute(execution_request).await.unwrap_or_else(|e| {
-            panic!(
-                "Failed to execute request to subgraph {}: {}",
-                self.endpoint, e
-            );
-        })
+        match self._execute(execution_request).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                let graphql_error: GraphQLError = format!(
+                    "Failed to execute request to subgraph {}: {}",
+                    self.endpoint, e
+                )
+                .into();
+                let errors = vec![graphql_error];
+                let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
+                let mut buffer = BytesMut::new();
+                buffer.put_slice(b"{\"errors\":");
+                buffer.put_slice(&errors_bytes);
+                buffer.put_slice(b"}");
+                buffer.freeze()
+            }
+        }
     }
 }

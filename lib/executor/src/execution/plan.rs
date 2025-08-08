@@ -134,8 +134,10 @@ impl<'a> Executor<'a> {
             Some(PlanNode::Parallel(node)) => self.execute_parallel_wave(ctx, node).await,
             Some(PlanNode::Sequence(node)) => self.execute_sequence_wave(ctx, node).await,
             // Plans produced by our Query Planner can only start with: Fetch, Sequence or Parallel.
-            Some(_) => panic!("Unsupported plan node type"),
-            None => panic!("Empty plan"),
+            // Any other node type at the root is not supported, do nothing
+            Some(_) => (),
+            // An empty plan is valid, just do nothing
+            None => (),
         }
     }
 
@@ -235,7 +237,7 @@ impl<'a> Executor<'a> {
                 }
             }
             // Our Query Planner does not produce any other plan node types in ParallelNode
-            _ => panic!("unexpected node type in parallel wave"),
+            _ => Box::pin(async { ExecutionJob::None }),
         }
     }
 
@@ -248,7 +250,19 @@ impl<'a> Executor<'a> {
                 let output_rewrites: Option<&'a Vec<FetchRewrite>> =
                     unsafe { std::mem::transmute(ctx.output_rewrites.get(job.fetch_node_id)) };
                 let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
-                let response = SubgraphResponse::deserialize(&mut deserializer).unwrap();
+                let response = match SubgraphResponse::deserialize(&mut deserializer) {
+                    Ok(response) => response,
+                    Err(e) => {
+                        ctx.errors
+                            .push(crate::response::graphql_error::GraphQLError {
+                                message: format!("Failed to deserialize subgraph response: {}", e),
+                                locations: None,
+                                path: None,
+                                extensions: None,
+                            });
+                        return;
+                    }
+                };
                 let mut data_ref: Value<'a> = unsafe { std::mem::transmute(response.data) };
                 ctx.handle_errors(response.errors);
 
@@ -267,11 +281,26 @@ impl<'a> Executor<'a> {
                 let output_rewrites: Option<&'a Vec<FetchRewrite>> =
                     unsafe { std::mem::transmute(ctx.output_rewrites.get(job.fetch_node_id)) };
                 let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
-                let response = SubgraphResponse::deserialize(&mut deserializer).unwrap();
-                let mut data = response.data;
-                let mut entities: Vec<Value<'a>> =
-                    unsafe { std::mem::transmute(data.as_entities().unwrap()) };
+                let response = match SubgraphResponse::deserialize(&mut deserializer) {
+                    Ok(response) => response,
+                    Err(e) => {
+                        ctx.errors
+                            .push(crate::response::graphql_error::GraphQLError {
+                                message: format!("Failed to deserialize subgraph response: {}", e),
+                                locations: None,
+                                path: None,
+                                extensions: None,
+                            });
+                        return;
+                    }
+                };
                 ctx.handle_errors(response.errors);
+                let mut data = response.data;
+                let mut entities: Vec<Value<'a>> = if let Some(entities) = data.as_entities() {
+                    unsafe { std::mem::transmute(entities) }
+                } else {
+                    return;
+                };
 
                 if let Some(output_rewrites) = output_rewrites {
                     for output_rewrite in output_rewrites {
@@ -313,7 +342,7 @@ impl<'a> Executor<'a> {
     ) -> Option<(BytesMut, Vec<u64>, HashMap<u64, usize>)> {
         let fetch_node = match flatten_node.node.as_ref() {
             PlanNode::Fetch(fetch_node) => fetch_node,
-            _ => panic!("FlattenNode can only have FetchNode as child"),
+            _ => return None,
         };
         let requires_nodes = fetch_node.requires.as_ref().unwrap();
 
@@ -400,7 +429,7 @@ impl<'a> Executor<'a> {
                 representation_hashes: representation_hashes.unwrap_or_default(),
                 representation_hash_to_index: filtered_representations_hashes.unwrap_or_default(),
             }),
-            _ => panic!("FlattenNode can only have FetchNode as child"),
+            _ => ExecutionJob::None,
         }
     }
 
