@@ -9,6 +9,7 @@ use hyper_util::{
 use crate::{
     executors::{
         common::{HttpExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
+        error::SubgraphExecutorError,
         http::HTTPSubgraphExecutor,
     },
     response::graphql_error::GraphQLError,
@@ -61,7 +62,7 @@ impl SubgraphExecutorMap {
 
     pub fn from_http_endpoint_map(
         subgraph_endpoint_map: HashMap<String, String>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, SubgraphExecutorError> {
         let mut builder = Client::builder(TokioExecutor::new());
         let builder_mut = builder
             .pool_timer(TokioTimer::new())
@@ -75,7 +76,7 @@ impl SubgraphExecutorMap {
                 HTTPSubgraphExecutor::new(&endpoint, http_client_arc.clone())
                     .map(|executor| (subgraph_name, executor.to_boxed_arc()))
             })
-            .collect::<Result<HashMap<_, _>, String>>()?;
+            .collect::<Result<HashMap<_, _>, SubgraphExecutorError>>()?;
         Ok(SubgraphExecutorMap {
             inner: executor_map,
         })

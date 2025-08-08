@@ -12,7 +12,7 @@ use sonic_rs::ValueRef;
 
 use crate::{
     context::ExecutionContext,
-    execution::rewrites::FetchRewriteExt,
+    execution::{error::PlanExecutionError, rewrites::FetchRewriteExt},
     executors::{common::HttpExecutionRequest, map::SubgraphExecutorMap},
     projection::{
         request::{project_requires, RequestProjectionContext},
@@ -36,7 +36,7 @@ pub async fn execute_query_plan(
     schema_metadata: &SchemaMetadata,
     operation_type_name: &str,
     executors: &SubgraphExecutorMap,
-) -> Result<Bytes, String> {
+) -> Result<Bytes, PlanExecutionError> {
     let mut ctx = ExecutionContext::new(query_plan);
     let executor = Executor::new(variable_values, executors, schema_metadata);
     execute_query_plan_internal(query_plan, executor, &mut ctx).await;
@@ -49,7 +49,7 @@ pub async fn execute_query_plan(
         projection_plan,
         variable_values,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.into())
 }
 
 pub async fn execute_query_plan_internal<'a>(

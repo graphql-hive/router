@@ -46,7 +46,8 @@ fn project_data_by_operation_test(c: &mut Criterion) {
                     bb_root_type_name,
                     &bb_projection_plan,
                     &None,
-                );
+                )
+                .unwrap();
                 black_box(result);
             },
             criterion::BatchSize::LargeInput,

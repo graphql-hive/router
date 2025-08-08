@@ -11,6 +11,7 @@ use hyper::{body::Bytes, Version};
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 
 use crate::executors::common::HttpExecutionRequest;
+use crate::executors::error::SubgraphExecutorError;
 use crate::response::graphql_error::GraphQLError;
 use crate::utils::consts::CLOSE_BRACE;
 use crate::utils::consts::COLON;
@@ -32,10 +33,10 @@ impl HTTPSubgraphExecutor {
     pub fn new(
         endpoint: &str,
         http_client: Arc<Client<HttpConnector, Full<Bytes>>>,
-    ) -> Result<Self, String> {
-        let endpoint = endpoint
-            .parse::<http::Uri>()
-            .map_err(|e| format!("Failed to parse endpoint as URI: {}", e))?;
+    ) -> Result<Self, SubgraphExecutorError> {
+        let endpoint = endpoint.parse::<http::Uri>().map_err(|e| {
+            SubgraphExecutorError::EndpointParseFailure(endpoint.to_string(), e.to_string())
+        })?;
         let mut header_map = HeaderMap::new();
         header_map.insert(
             "Content-Type",
@@ -51,7 +52,7 @@ impl HTTPSubgraphExecutor {
     async fn _execute<'a>(
         &self,
         execution_request: HttpExecutionRequest<'a>,
-    ) -> Result<Bytes, String> {
+    ) -> Result<Bytes, SubgraphExecutorError> {
         // We may want to remove it, but let's see.
         let mut body = BytesMut::with_capacity(4096);
         body.put(FIRST_QUOTE_STR);
@@ -70,7 +71,10 @@ impl HTTPSubgraphExecutor {
                 body.put(QUOTE);
                 body.put(COLON);
                 let value_str = sonic_rs::to_string(variable_value).map_err(|err| {
-                    format!("Failed to serialize variable '{}': {}", variable_name, err)
+                    SubgraphExecutorError::VariablesSerializationFailure(
+                        variable_name.to_string(),
+                        err.to_string(),
+                    )
                 })?;
                 body.put(value_str.as_bytes());
             }
@@ -97,19 +101,13 @@ impl HTTPSubgraphExecutor {
             .version(Version::HTTP_11)
             .body(Full::new(body.freeze()))
             .map_err(|e| {
-                format!(
-                    "Failed to build request to subgraph {}: {}",
-                    self.endpoint, e
-                )
+                SubgraphExecutorError::RequestBuildFailure(self.endpoint.to_string(), e.to_string())
             })?;
 
         *req.headers_mut() = self.header_map.clone();
 
         let res = self.http_client.request(req).await.map_err(|e| {
-            format!(
-                "Failed to send request to subgraph {}: {}",
-                self.endpoint, e
-            )
+            SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
         })?;
 
         Ok(res
@@ -117,10 +115,7 @@ impl HTTPSubgraphExecutor {
             .collect()
             .await
             .map_err(|e| {
-                format!(
-                    "Failed to parse response from subgraph {}: {}",
-                    self.endpoint, e
-                )
+                SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
             })?
             .to_bytes())
     }

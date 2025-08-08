@@ -146,8 +146,9 @@ fn project_requires_internal(
         Value::Object(entity_obj) => {
             if requires_selections.is_empty() {
                 // It is probably a scalar with an object value, so we write it directly
-                let vec = sonic_rs::to_vec(entity_obj)
-                    .map_err(|e| ProjectionError::CustomScalarSerializationError(e.to_string()))?;
+                let vec = sonic_rs::to_vec(entity_obj).map_err(|e| {
+                    ProjectionError::CustomScalarSerializationFailure(e.to_string())
+                })?;
                 buffer.put_slice(&vec);
                 return Ok(true);
             }

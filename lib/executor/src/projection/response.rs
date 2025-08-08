@@ -62,14 +62,14 @@ pub fn project_by_operation(
         buffer.put(COLON);
         buffer.put_slice(
             &sonic_rs::to_vec(&errors)
-                .map_err(|e| ProjectionError::ErrorsSerializationError(e.to_string()))?,
+                .map_err(|e| ProjectionError::ErrorsSerializationFailure(e.to_string()))?,
         );
     }
 
     if let Some(ext) = extensions.as_ref() {
         if !ext.is_empty() {
             let serialized_extensions = sonic_rs::to_vec(ext)
-                .map_err(|e| ProjectionError::ExtensionsSerializationError(e.to_string()))?;
+                .map_err(|e| ProjectionError::ExtensionsSerializationFailure(e.to_string()))?;
             buffer.put(COMMA);
             buffer.put(QUOTE);
             buffer.put("extensions".as_bytes());
