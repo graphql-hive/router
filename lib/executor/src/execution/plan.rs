@@ -331,7 +331,7 @@ impl<'a> Executor<'a> {
             normalized_path,
             self.schema_metadata,
             &mut |entity| {
-                let hash = entity.to_hash();
+                let hash = entity.to_hash(&requires_nodes.items, proj_ctx.possible_types);
 
                 if !entity.is_null() {
                     representation_hashes.push(hash);

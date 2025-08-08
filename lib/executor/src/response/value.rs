@@ -1,4 +1,6 @@
 use core::fmt;
+use query_plan_executor::schema_metadata::PossibleTypes;
+use query_planner::ast::selection_item::SelectionItem;
 use serde::{
     de::{self, Deserializer, MapAccess, SeqAccess, Visitor},
     ser::{SerializeMap, SerializeSeq},
@@ -6,8 +8,11 @@ use serde::{
 use sonic_rs::{JsonNumberTrait, ValueRef};
 use std::{
     fmt::Display,
-    hash::{DefaultHasher, Hash, Hasher},
+    hash::{Hash, Hasher},
 };
+use xxhash_rust::xxh3::Xxh3;
+
+use crate::utils::consts::TYPENAME_FIELD_NAME;
 
 #[derive(Clone)]
 pub enum Value<'a> {
@@ -52,10 +57,84 @@ impl<'a> Value<'a> {
         }
     }
 
-    pub fn to_hash(&self) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        self.hash(&mut hasher);
+    pub fn to_hash(
+        &self,
+        selection_items: &[SelectionItem],
+        possible_types: &PossibleTypes,
+    ) -> u64 {
+        let mut hasher = Xxh3::new();
+        self.hash_with_requires(&mut hasher, selection_items, possible_types);
         hasher.finish()
+    }
+
+    fn hash_with_requires<H: Hasher>(
+        &self,
+        state: &mut H,
+        selection_items: &[SelectionItem],
+        possible_types: &PossibleTypes,
+    ) {
+        if selection_items.is_empty() {
+            self.hash(state);
+            return;
+        }
+
+        match self {
+            Value::Object(obj) => {
+                Value::hash_object_with_requires(state, obj, selection_items, possible_types);
+            }
+            Value::Array(arr) => {
+                for item in arr {
+                    item.hash_with_requires(state, selection_items, possible_types);
+                }
+            }
+            _ => {
+                self.hash(state);
+            }
+        }
+    }
+
+    fn hash_object_with_requires<H: Hasher>(
+        state: &mut H,
+        obj: &[(&'a str, Value<'a>)],
+        selection_items: &[SelectionItem],
+        possible_types: &PossibleTypes,
+    ) {
+        for item in selection_items {
+            match item {
+                SelectionItem::Field(field_selection) => {
+                    let field_name = &field_selection.name;
+                    if let Ok(idx) = obj.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
+                        let (key, value) = &obj[idx];
+                        key.hash(state);
+                        value.hash_with_requires(
+                            state,
+                            &field_selection.selections.items,
+                            possible_types,
+                        );
+                    }
+                }
+                SelectionItem::InlineFragment(inline_fragment) => {
+                    let type_condition = &inline_fragment.type_condition;
+                    let type_name = obj
+                        .iter()
+                        .find(|(key, _)| *key == TYPENAME_FIELD_NAME)
+                        .and_then(|(_, val)| val.as_str())
+                        .unwrap_or(type_condition);
+
+                    if possible_types.entity_satisfies_type_condition(type_name, type_condition) {
+                        Value::hash_object_with_requires(
+                            state,
+                            obj,
+                            &inline_fragment.selections.items,
+                            possible_types,
+                        );
+                    }
+                }
+                SelectionItem::FragmentSpread(_) => {
+                    unreachable!("Fragment spreads should not exist in FetchNode::requires.")
+                }
+            }
+        }
     }
 
     pub fn from(json: ValueRef<'a>) -> Value<'a> {

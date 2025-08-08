@@ -12,7 +12,7 @@ use crate::{
 };
 
 pub struct RequestProjectionContext<'a> {
-    possible_types: &'a PossibleTypes,
+    pub possible_types: &'a PossibleTypes,
 }
 
 impl<'a> RequestProjectionContext<'a> {

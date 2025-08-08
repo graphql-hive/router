@@ -6,6 +6,7 @@ edition = "2021"
 [lib]
 
 [dependencies]
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 bumpalo = "3.19.0"
 itoa = "1.0.15"
 ryu = "1.0.20"
