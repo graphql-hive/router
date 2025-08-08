@@ -238,7 +238,7 @@ impl<'a> Executor<'a> {
                     Ok(None) => { /* do nothing */ }
                     Err(e) => {
                         ctx.errors.push(GraphQLError {
-                            message: e,
+                            message: e.to_string(),
                             locations: None,
                             path: None,
                             extensions: None,
@@ -356,7 +356,7 @@ impl<'a> Executor<'a> {
                 if let Some((mut data, output_rewrites)) =
                     self.process_subgraph_response(ctx, job.response, job.fetch_node_id)
                 {
-                    if let Some(entities) = data.as_entities() {
+                    if let Some(entities) = data.take_entities() {
                         // SAFETY: The `entities` vector is transmuted to have lifetime `'a`. This is
                         // safe because the data it contains is borrowed from the response bytes,
                         // which are guaranteed to live for `'a`.
@@ -407,7 +407,7 @@ impl<'a> Executor<'a> {
         &self,
         final_response: &Value<'a>,
         flatten_node: &FlattenNode,
-    ) -> Result<Option<PreparedFlattenData>, String> {
+    ) -> Result<Option<PreparedFlattenData>, PlanExecutionError> {
         let fetch_node = match flatten_node.node.as_ref() {
             PlanNode::Fetch(fetch_node) => fetch_node,
             _ => return Ok(None),
@@ -425,16 +425,12 @@ impl<'a> Executor<'a> {
         let proj_ctx = RequestProjectionContext::new(&self.schema_metadata.possible_types);
         let mut representation_hashes: Vec<u64> = Vec::new();
         let mut filtered_representations_hashes: HashMap<u64, usize> = HashMap::new();
-        let mut projection_error: Option<String> = None;
 
         traverse_and_callback(
             final_response,
             normalized_path,
             self.schema_metadata,
             &mut |entity| {
-                if projection_error.is_some() {
-                    return;
-                }
                 let hash = entity.to_hash(&requires_nodes.items, proj_ctx.possible_types);
 
                 if !entity.is_null() {
@@ -442,7 +438,7 @@ impl<'a> Executor<'a> {
                 }
 
                 if filtered_representations_hashes.contains_key(&hash) {
-                    return;
+                    return Ok::<(), PlanExecutionError>(());
                 }
 
                 let arena = bumpalo::Bump::new();
@@ -457,33 +453,26 @@ impl<'a> Executor<'a> {
                     entity
                 };
 
-                match project_requires(
+                let is_projected = project_requires(
                     &proj_ctx,
                     &requires_nodes.items,
                     entity,
                     &mut filtered_representations,
                     indexes.is_empty(),
                     None,
-                ) {
-                    Ok(is_projected) => {
-                        if is_projected {
-                            indexes.insert(index);
-                            filtered_representations_hashes.insert(hash, index);
-                        }
-                    }
-                    Err(e) => {
-                        projection_error = Some(e.to_string());
-                    }
+                )?;
+
+                if is_projected {
+                    indexes.insert(index);
+                    filtered_representations_hashes.insert(hash, index);
                 }
 
                 index += 1;
-            },
-        );
-        filtered_representations.put(CLOSE_BRACKET);
 
-        if let Some(e) = projection_error {
-            return Err(e);
-        }
+                Ok(())
+            },
+        )?;
+        filtered_representations.put(CLOSE_BRACKET);
 
         if indexes.is_empty() {
             return Ok(None);

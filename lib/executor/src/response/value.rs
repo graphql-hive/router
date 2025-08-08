@@ -42,10 +42,9 @@ impl Hash for Value<'_> {
 }
 
 impl<'a> Value<'a> {
-    pub fn as_entities<'b: 'a>(&'a mut self) -> Option<Vec<Value<'a>>> {
+    pub fn take_entities<'b: 'a>(&'a mut self) -> Option<Vec<Value<'a>>> {
         match self {
             Value::Object(data) => {
-                // We need to find the "data" field first.
                 if let Ok(entities_idx) = data.binary_search_by_key(&"_entities", |(k, _)| *k) {
                     if let Value::Array(arr) = data.remove(entities_idx).1 {
                         return Some(arr);
