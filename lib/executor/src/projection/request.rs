@@ -6,8 +6,8 @@ use crate::{
     json_writer::{write_and_escape_string, write_f64, write_i64, write_u64},
     response::value::Value,
     utils::consts::{
-        CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, EMPTY_OBJECT, FALSE, OPEN_BRACE, OPEN_BRACKET,
-        QUOTE, TRUE, TYPENAME, TYPENAME_FIELD_NAME,
+        CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, FALSE, OPEN_BRACE, OPEN_BRACKET, QUOTE, TRUE,
+        TYPENAME, TYPENAME_FIELD_NAME,
     },
 };
 
@@ -145,8 +145,7 @@ fn project_requires_internal(
         Value::Object(entity_obj) => {
             if requires_selections.is_empty() {
                 // It is probably a scalar with an object value, so we write it directly
-                // buffer.push_str(&serde_json::to_string(entity_obj).unwrap());
-                buffer.put(EMPTY_OBJECT);
+                buffer.put_slice(&sonic_rs::to_vec(entity_obj).unwrap());
                 return true;
             }
             if entity_obj.is_empty() {

@@ -1,12 +1,11 @@
 use core::fmt;
 
-use crate::response::value::Value;
+use crate::response::{graphql_error::GraphQLError, value::Value};
 use serde::de::{self, Deserializer, MapAccess, Visitor};
-use sonic_rs::LazyValue;
 
 pub struct SubgraphResponse<'a> {
     pub data: Value<'a>,
-    pub errors: Option<Vec<LazyValue<'a>>>,
+    pub errors: Option<Vec<GraphQLError>>,
     pub extensions: Option<Value<'a>>,
 }
 
@@ -48,7 +47,7 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
                             if errors.is_some() {
                                 return Err(de::Error::duplicate_field("errors"));
                             }
-                            // For errors, deserialize directly as Vec<Value>
+                            // For errors, deserialize into our new `GraphQLError` struct
                             errors = Some(map.next_value()?);
                         }
                         "extensions" => {

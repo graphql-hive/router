@@ -1,9 +1,10 @@
+use crate::response::graphql_error::GraphQLError;
 use crate::response::value::Value;
 use bytes::{BufMut, Bytes, BytesMut};
 use query_plan_executor::projection::{
     FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan,
 };
-use sonic_rs::{JsonValueTrait, LazyValue};
+use sonic_rs::JsonValueTrait;
 use std::collections::HashMap;
 
 use tracing::{instrument, warn};
@@ -17,7 +18,7 @@ use crate::utils::consts::{
 #[instrument(level = "trace", skip_all)]
 pub fn project_by_operation(
     data: &Value,
-    errors: Vec<LazyValue>,
+    errors: Vec<GraphQLError>,
     extensions: &Option<HashMap<String, sonic_rs::Value>>,
     operation_type_name: &str,
     selections: &Vec<FieldProjectionPlan>,
@@ -76,7 +77,7 @@ pub fn project_by_operation(
 
 fn project_selection_set(
     data: &Value,
-    errors: &mut Vec<LazyValue>,
+    errors: &mut Vec<GraphQLError>,
     selection: &FieldProjectionPlan,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     buffer: &mut BytesMut,
@@ -139,7 +140,7 @@ fn project_selection_set(
 #[allow(clippy::too_many_arguments)]
 fn project_selection_set_with_map(
     obj: &Vec<(&str, Value)>,
-    errors: &mut Vec<LazyValue>,
+    errors: &mut Vec<GraphQLError>,
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     parent_type_name: &str,
@@ -213,13 +214,12 @@ fn project_selection_set_with_map(
                 buffer.put(QUOTE);
                 buffer.put(COLON);
                 buffer.put(NULL);
-                // errors.push(Value::);
-                // errors.push(GraphQLError {
-                //     message: "Value is not a valid enum value".to_string(),
-                //     locations: None,
-                //     path: None,
-                //     extensions: None,
-                // });
+                errors.push(GraphQLError {
+                    message: "Value is not a valid enum value".to_string(),
+                    locations: None,
+                    path: None,
+                    extensions: None,
+                });
             }
             Err(FieldProjectionConditionError::InvalidFieldType) => {
                 if *first {

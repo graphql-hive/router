@@ -1,14 +1,13 @@
 use std::collections::HashMap;
 
 use query_planner::planner::plan_nodes::{FetchNode, FetchRewrite, QueryPlan};
-use sonic_rs::LazyValue;
 
-use crate::response::{storage::ResponsesStorage, value::Value};
+use crate::response::{graphql_error::GraphQLError, storage::ResponsesStorage, value::Value};
 
 pub struct ExecutionContext<'a> {
     pub response_storage: ResponsesStorage,
     pub final_response: Value<'a>,
-    pub errors: Vec<LazyValue<'a>>,
+    pub errors: Vec<GraphQLError>,
     pub output_rewrites: OutputRewritesStorage,
 }
 
@@ -33,7 +32,7 @@ impl<'a> ExecutionContext<'a> {
         }
     }
 
-    pub fn handle_errors(&mut self, errors: Option<Vec<LazyValue<'a>>>) {
+    pub fn handle_errors(&mut self, errors: Option<Vec<GraphQLError>>) {
         if let Some(errors) = errors {
             for error in errors {
                 self.errors.push(error);
