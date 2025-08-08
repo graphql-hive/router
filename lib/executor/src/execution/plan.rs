@@ -291,92 +291,110 @@ impl<'a> Executor<'a> {
         }
     }
 
+    fn process_subgraph_response(
+        &self,
+        ctx: &mut ExecutionContext<'a>,
+        response_bytes: Bytes,
+        fetch_node_id: i64,
+    ) -> Option<(Value<'a>, Option<&'a Vec<FetchRewrite>>)> {
+        let idx = ctx.response_storage.add_response(response_bytes);
+        // SAFETY: The `bytes` are transmuted to the lifetime `'a` of the `ExecutionContext`.
+        // This is safe because the `response_storage` is part of the `ExecutionContext` (`ctx`)
+        // and will live as long as `'a`. The `Bytes` are stored in an `Arc`, so they won't be
+        // dropped until all references are gone. The `Value`s deserialized from this byte
+        // slice will borrow from it, and they are stored in `ctx.final_response`, which also
+        // lives for `'a`.
+        let bytes: &'a [u8] = unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
+
+        // SAFETY: The `output_rewrites` are transmuted to the lifetime `'a`. This is safe
+        // because `output_rewrites` is part of `OutputRewritesStorage` which is owned by
+        // `ExecutionContext` and lives for `'a`.
+        let output_rewrites: Option<&'a Vec<FetchRewrite>> =
+            unsafe { std::mem::transmute(ctx.output_rewrites.get(fetch_node_id)) };
+
+        let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
+        let response = match SubgraphResponse::deserialize(&mut deserializer) {
+            Ok(response) => response,
+            Err(e) => {
+                ctx.errors
+                    .push(crate::response::graphql_error::GraphQLError {
+                        message: format!("Failed to deserialize subgraph response: {}", e),
+                        locations: None,
+                        path: None,
+                        extensions: None,
+                    });
+                return None;
+            }
+        };
+
+        ctx.handle_errors(response.errors);
+
+        // The `response.data` has a lifetime tied to `deserializer`, which is tied to `bytes`.
+        // Since `bytes` has been transmuted to `'a`, `response.data` can also be considered
+        // to have lifetime `'a`.
+        let data: Value<'a> = unsafe { std::mem::transmute(response.data) };
+
+        Some((data, output_rewrites))
+    }
+
     fn process_job_result(&self, ctx: &mut ExecutionContext<'a>, job: ExecutionJob) {
         match job {
             ExecutionJob::Fetch(job) => {
-                let idx = ctx.response_storage.add_response(job.response);
-                let bytes: &'a [u8] =
-                    unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
-                let output_rewrites: Option<&'a Vec<FetchRewrite>> =
-                    unsafe { std::mem::transmute(ctx.output_rewrites.get(job.fetch_node_id)) };
-                let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
-                let response = match SubgraphResponse::deserialize(&mut deserializer) {
-                    Ok(response) => response,
-                    Err(e) => {
-                        ctx.errors
-                            .push(crate::response::graphql_error::GraphQLError {
-                                message: format!("Failed to deserialize subgraph response: {}", e),
-                                locations: None,
-                                path: None,
-                                extensions: None,
-                            });
-                        return;
-                    }
-                };
-                let mut data_ref: Value<'a> = unsafe { std::mem::transmute(response.data) };
-                ctx.handle_errors(response.errors);
-
-                if let Some(output_rewrites) = output_rewrites {
-                    for output_rewrite in output_rewrites {
-                        output_rewrite.rewrite(&self.schema_metadata.possible_types, &mut data_ref);
-                    }
-                }
-
-                deep_merge(&mut ctx.final_response, data_ref);
-            }
-            ExecutionJob::FlattenFetch(job) => {
-                let idx = ctx.response_storage.add_response(job.response);
-                let bytes: &'a [u8] =
-                    unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
-                let output_rewrites: Option<&'a Vec<FetchRewrite>> =
-                    unsafe { std::mem::transmute(ctx.output_rewrites.get(job.fetch_node_id)) };
-                let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
-                let response = match SubgraphResponse::deserialize(&mut deserializer) {
-                    Ok(response) => response,
-                    Err(e) => {
-                        ctx.errors
-                            .push(crate::response::graphql_error::GraphQLError {
-                                message: format!("Failed to deserialize subgraph response: {}", e),
-                                locations: None,
-                                path: None,
-                                extensions: None,
-                            });
-                        return;
-                    }
-                };
-                ctx.handle_errors(response.errors);
-                let mut data = response.data;
-                if let Some(entities) = data.as_entities() {
-                    let mut entities: Vec<Value<'a>> = unsafe { std::mem::transmute(entities) };
-
+                if let Some((mut data, output_rewrites)) =
+                    self.process_subgraph_response(ctx, job.response, job.fetch_node_id)
+                {
                     if let Some(output_rewrites) = output_rewrites {
                         for output_rewrite in output_rewrites {
-                            for entity in &mut entities {
-                                output_rewrite
-                                    .rewrite(&self.schema_metadata.possible_types, entity);
-                            }
+                            output_rewrite.rewrite(&self.schema_metadata.possible_types, &mut data);
                         }
                     }
 
-                    let mut index = 0;
-                    let normalized_path = job.flatten_node_path.as_slice();
-                    traverse_and_callback_mut(
-                        &mut ctx.final_response,
-                        normalized_path,
-                        self.schema_metadata,
-                        &mut |target| {
-                            let hash = job.representation_hashes[index];
-                            if let Some(entity_index) = job.representation_hash_to_index.get(&hash)
-                            {
-                                if let Some(entity) = entities.get(*entity_index) {
-                                    let new_val: Value<'_> =
-                                        unsafe { std::mem::transmute(entity.clone()) };
-                                    deep_merge(target, new_val);
+                    deep_merge(&mut ctx.final_response, data);
+                }
+            }
+            ExecutionJob::FlattenFetch(job) => {
+                if let Some((mut data, output_rewrites)) =
+                    self.process_subgraph_response(ctx, job.response, job.fetch_node_id)
+                {
+                    if let Some(entities) = data.as_entities() {
+                        // SAFETY: The `entities` vector is transmuted to have lifetime `'a`. This is
+                        // safe because the data it contains is borrowed from the response bytes,
+                        // which are guaranteed to live for `'a`.
+                        let mut entities: Vec<Value<'a>> = unsafe { std::mem::transmute(entities) };
+
+                        if let Some(output_rewrites) = output_rewrites {
+                            for output_rewrite in output_rewrites {
+                                for entity in &mut entities {
+                                    output_rewrite
+                                        .rewrite(&self.schema_metadata.possible_types, entity);
                                 }
                             }
-                            index += 1;
-                        },
-                    );
+                        }
+
+                        let mut index = 0;
+                        let normalized_path = job.flatten_node_path.as_slice();
+                        traverse_and_callback_mut(
+                            &mut ctx.final_response,
+                            normalized_path,
+                            self.schema_metadata,
+                            &mut |target| {
+                                let hash = job.representation_hashes[index];
+                                if let Some(entity_index) =
+                                    job.representation_hash_to_index.get(&hash)
+                                {
+                                    if let Some(entity) = entities.get(*entity_index) {
+                                        // SAFETY: `new_val` is a clone of an entity that lives for `'a`.
+                                        // The transmute is to satisfy the compiler, but the lifetime
+                                        // is valid.
+                                        let new_val: Value<'_> =
+                                            unsafe { std::mem::transmute(entity.clone()) };
+                                        deep_merge(target, new_val);
+                                    }
+                                }
+                                index += 1;
+                            },
+                        );
+                    }
                 }
             }
             ExecutionJob::None => {
