@@ -119,6 +119,12 @@ impl From<ExecutionJob> for Bytes {
     }
 }
 
+struct PreparedFlattenData {
+    representations: BytesMut,
+    representation_hashes: Vec<u64>,
+    representation_hash_to_index: HashMap<u64, usize>,
+}
+
 impl<'a> Executor<'a> {
     pub fn new(
         variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
@@ -206,13 +212,13 @@ impl<'a> Executor<'a> {
             }
             PlanNode::Flatten(flatten_node) => {
                 match self.prepare_flatten_data(&ctx.final_response, flatten_node) {
-                    Ok(Some((representations, representation_hashes, filtered_hashes))) => {
+                    Ok(Some(p)) => {
                         match self
                             .execute_flatten_fetch_node(
                                 flatten_node,
-                                Some(representations),
-                                Some(representation_hashes),
-                                Some(filtered_hashes),
+                                Some(p.representations),
+                                Some(p.representation_hashes),
+                                Some(p.representation_hash_to_index),
                             )
                             .await
                         {
@@ -264,14 +270,12 @@ impl<'a> Executor<'a> {
             PlanNode::Fetch(fetch_node) => Box::pin(self.execute_fetch_node(fetch_node, None)),
             PlanNode::Flatten(flatten_node) => {
                 match self.prepare_flatten_data(final_response, flatten_node) {
-                    Ok(Some((representations, representation_hashes, filtered_hashes))) => {
-                        Box::pin(self.execute_flatten_fetch_node(
-                            flatten_node,
-                            Some(representations),
-                            Some(representation_hashes),
-                            Some(filtered_hashes),
-                        ))
-                    }
+                    Ok(Some(p)) => Box::pin(self.execute_flatten_fetch_node(
+                        flatten_node,
+                        Some(p.representations),
+                        Some(p.representation_hashes),
+                        Some(p.representation_hash_to_index),
+                    )),
                     Ok(None) => Box::pin(async { Ok(ExecutionJob::None) }),
                     Err(e) => Box::pin(async move { Err(e.to_string()) }),
                 }
@@ -385,7 +389,7 @@ impl<'a> Executor<'a> {
         &self,
         final_response: &Value<'a>,
         flatten_node: &FlattenNode,
-    ) -> Result<Option<(BytesMut, Vec<u64>, HashMap<u64, usize>)>, String> {
+    ) -> Result<Option<PreparedFlattenData>, String> {
         let fetch_node = match flatten_node.node.as_ref() {
             PlanNode::Fetch(fetch_node) => fetch_node,
             _ => return Ok(None),
@@ -467,11 +471,11 @@ impl<'a> Executor<'a> {
             return Ok(None);
         }
 
-        Ok(Some((
-            filtered_representations,
+        Ok(Some(PreparedFlattenData {
+            representations: filtered_representations,
             representation_hashes,
-            filtered_representations_hashes,
-        )))
+            representation_hash_to_index: filtered_representations_hashes,
+        }))
     }
 
     async fn execute_flatten_fetch_node(
