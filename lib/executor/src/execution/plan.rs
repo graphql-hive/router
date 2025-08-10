@@ -418,13 +418,13 @@ impl<'a> Executor<'a> {
         };
 
         let mut index = 0;
-        let mut indexes = BTreeSet::new();
         let normalized_path = flatten_node.path.as_slice();
         let mut filtered_representations = BytesMut::new();
         filtered_representations.put(OPEN_BRACKET);
         let proj_ctx = RequestProjectionContext::new(&self.schema_metadata.possible_types);
         let mut representation_hashes: Vec<u64> = Vec::new();
         let mut filtered_representations_hashes: HashMap<u64, usize> = HashMap::new();
+        let arena = bumpalo::Bump::new();
 
         traverse_and_callback(
             final_response,
@@ -441,8 +441,6 @@ impl<'a> Executor<'a> {
                     return Ok::<(), PlanExecutionError>(());
                 }
 
-                let arena = bumpalo::Bump::new();
-
                 let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
                     let new_entity = arena.alloc(entity.clone());
                     for input_rewrite in input_rewrites {
@@ -458,12 +456,11 @@ impl<'a> Executor<'a> {
                     &requires_nodes.items,
                     entity,
                     &mut filtered_representations,
-                    indexes.is_empty(),
+                    filtered_representations_hashes.is_empty(),
                     None,
                 )?;
 
                 if is_projected {
-                    indexes.insert(index);
                     filtered_representations_hashes.insert(hash, index);
                 }
 
@@ -474,7 +471,7 @@ impl<'a> Executor<'a> {
         )?;
         filtered_representations.put(CLOSE_BRACKET);
 
-        if indexes.is_empty() {
+        if filtered_representations_hashes.is_empty() {
             return Ok(None);
         }
 
