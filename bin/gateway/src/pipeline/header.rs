@@ -3,6 +3,7 @@ use http::{
     HeaderValue,
 };
 use lazy_static::lazy_static;
+use ntex::web::HttpRequest;
 use tracing::{trace, warn};
 
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
@@ -20,7 +21,8 @@ pub trait RequestAccepts {
     fn accepts_content_type(&self, content_type: &str) -> bool;
 }
 
-impl RequestAccepts for http::Request<axum::body::Body> {
+impl RequestAccepts for HttpRequest {
+    #[inline]
     fn accepts_content_type(&self, content_type: &str) -> bool {
         let accept_header = self.headers().get(ACCEPT);
         if let Some(value) = accept_header {
@@ -38,7 +40,7 @@ pub trait AssertRequestJson {
     fn assert_json_content_type(&self) -> Result<(), PipelineError>;
 }
 
-impl AssertRequestJson for http::Request<axum::body::Body> {
+impl AssertRequestJson for HttpRequest {
     fn assert_json_content_type(&self) -> Result<(), PipelineError> {
         match self.headers().get(CONTENT_TYPE) {
             Some(value) => {

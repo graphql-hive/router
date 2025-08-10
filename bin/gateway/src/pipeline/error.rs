@@ -1,8 +1,11 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, io, sync::Arc};
 
-use axum::{body::Body, extract::rejection::QueryRejection, response::IntoResponse};
 use graphql_tools::validation::utils::ValidationError;
-use http::{HeaderName, Method, Request, Response, StatusCode};
+use http::{HeaderName, Method, StatusCode};
+use ntex::{
+    http::ResponseBuilder,
+    web::{self, error::QueryPayloadError, HttpRequest},
+};
 use query_plan_executor::{ExecutionResult, GraphQLError};
 use query_planner::{ast::normalization::error::NormalizationError, planner::PlannerError};
 use serde_json::Value;
@@ -19,7 +22,8 @@ pub trait PipelineErrorFromAcceptHeader {
     fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError;
 }
 
-impl PipelineErrorFromAcceptHeader for Request<Body> {
+impl PipelineErrorFromAcceptHeader for HttpRequest {
+    #[inline]
     fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError {
         let accept_ok = !self.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
         PipelineError { accept_ok, error }
@@ -28,25 +32,21 @@ impl PipelineErrorFromAcceptHeader for Request<Body> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PipelineErrorVariant {
-    // Internal errors
-    #[error("Internal service error: {0}")]
-    InternalServiceError(&'static str),
-
     // HTTP-related errors
     #[error("Unsupported HTTP method: {0}")]
     UnsupportedHttpMethod(Method),
     #[error("Header '{0}' has invalid value")]
     InvalidHeaderValue(HeaderName),
-    #[error("Failed to read body: {0}")]
-    FailedToReadBodyBytes(axum::Error),
     #[error("Content-Type header is missing")]
     MissingContentTypeHeader,
     #[error("Content-Type header is not supported")]
     UnsupportedContentType,
 
     // GET Specific pipeline errors
-    #[error("Failed to deserialize query parameters: {0}")]
-    GetInvalidQueryParams(QueryRejection),
+    #[error("Failed to deserialize query parameters")]
+    GetInvalidQueryParams,
+    #[error("Failed to parse query parameters")]
+    GetUnprocessableQueryParams(QueryPayloadError),
     #[error("Missing query parameter: {0}")]
     GetMissingQueryParam(&'static str),
     #[error("Cannot perform mutations over GET")]
@@ -69,6 +69,8 @@ pub enum PipelineErrorVariant {
     ValidationErrors(Arc<Vec<ValidationError>>),
     #[error("Failed to produce a plan: {0}")]
     PlannerError(PlannerError),
+    #[error("Failed to write response: {0}")]
+    ResponseWriteError(io::Error),
 }
 
 impl PipelineErrorVariant {
@@ -76,7 +78,7 @@ impl PipelineErrorVariant {
         match self {
             Self::UnsupportedHttpMethod(_) => "METHOD_NOT_ALLOWED",
             Self::PlannerError(_) => "QUERY_PLAN_BUILD_FAILED",
-            Self::InternalServiceError(_) => "INTERNAL_SERVER_ERROR",
+            Self::ResponseWriteError(_) => "INTERNAL_SERVER_ERROR",
             Self::FailedToParseOperation(_) => "GRAPHQL_PARSE_FAILED",
             Self::ValidationErrors(_) => "GRAPHQL_VALIDATION_FAILED",
             Self::VariablesCoercionError(_) => "BAD_USER_INPUT",
@@ -95,19 +97,19 @@ impl PipelineErrorVariant {
 
     pub fn graphql_error_message(&self) -> String {
         match self {
-            Self::PlannerError(_) | Self::InternalServiceError(_) => "Unexpected error".to_string(),
+            Self::PlannerError(_) | Self::ResponseWriteError(_) => "Unexpected error".to_string(),
             _ => self.to_string(),
         }
     }
 
     pub fn default_status_code(&self, prefer_ok: bool) -> StatusCode {
         match (self, prefer_ok) {
-            (Self::InternalServiceError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::PlannerError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::ResponseWriteError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::UnsupportedHttpMethod(_), _) => StatusCode::METHOD_NOT_ALLOWED,
-            (Self::FailedToReadBodyBytes(_), _) => StatusCode::BAD_REQUEST,
             (Self::InvalidHeaderValue(_), _) => StatusCode::BAD_REQUEST,
-            (Self::GetInvalidQueryParams(_), _) => StatusCode::BAD_REQUEST,
+            (Self::GetInvalidQueryParams, _) => StatusCode::BAD_REQUEST,
+            (Self::GetUnprocessableQueryParams(_), _) => StatusCode::BAD_REQUEST,
             (Self::GetMissingQueryParam(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseBody(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseVariables(_), _) => StatusCode::BAD_REQUEST,
@@ -126,8 +128,8 @@ impl PipelineErrorVariant {
     }
 }
 
-impl IntoResponse for PipelineError {
-    fn into_response(self) -> Response<Body> {
+impl PipelineError {
+    pub fn into_response(self) -> web::HttpResponse {
         let status = self.error.default_status_code(self.accept_ok);
 
         if let PipelineErrorVariant::ValidationErrors(validation_errors) = self.error {
@@ -137,11 +139,7 @@ impl IntoResponse for PipelineError {
                 extensions: None,
             };
 
-            return (
-                status,
-                serde_json::to_string(&validation_error_result).unwrap(),
-            )
-                .into_response();
+            return ResponseBuilder::new(status).json(&validation_error_result);
         }
 
         let code = self.error.graphql_error_code();
@@ -163,6 +161,6 @@ impl IntoResponse for PipelineError {
             extensions: None,
         };
 
-        (status, serde_json::to_string(&result).unwrap()).into_response()
+        ResponseBuilder::new(status).json(&result)
     }
 }
