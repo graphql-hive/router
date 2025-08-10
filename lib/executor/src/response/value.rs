@@ -115,9 +115,9 @@ impl<'a> Value<'a> {
                 SelectionItem::InlineFragment(inline_fragment) => {
                     let type_condition = &inline_fragment.type_condition;
                     let type_name = obj
-                        .iter()
-                        .find(|(key, _)| *key == TYPENAME_FIELD_NAME)
-                        .and_then(|(_, val)| val.as_str())
+                        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
+                        .ok()
+                        .and_then(|idx| obj[idx].1.as_str())
                         .unwrap_or(type_condition);
 
                     if possible_types.entity_satisfies_type_condition(type_name, type_condition) {

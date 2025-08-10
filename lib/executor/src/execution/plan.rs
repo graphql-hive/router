@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};

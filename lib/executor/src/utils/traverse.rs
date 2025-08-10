@@ -38,7 +38,8 @@ pub fn traverse_and_callback_mut<'a, Callback>(
         FlattenNodePathSegment::Field(field_name) => {
             // If the key is Field, we expect current_data to be an object
             if let Value::Object(map) = current_data {
-                if let Some((_, next_data)) = map.iter_mut().find(|(key, _)| key == field_name) {
+                if let Ok(idx) = map.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
+                    let (_, next_data) = map.get_mut(idx).unwrap();
                     let rest_of_path = &remaining_path[1..];
                     traverse_and_callback_mut(next_data, rest_of_path, schema_metadata, callback);
                 }
@@ -48,9 +49,9 @@ pub fn traverse_and_callback_mut<'a, Callback>(
             // If the key is Cast, we expect current_data to be an object or an array
             if let Value::Object(obj) = current_data {
                 let type_name = obj
-                    .iter()
-                    .find(|(key, _)| key == &TYPENAME_FIELD_NAME)
-                    .and_then(|(_, val)| val.as_str())
+                    .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
+                    .ok()
+                    .and_then(|idx| obj[idx].1.as_str())
                     .unwrap_or(type_condition);
                 if schema_metadata
                     .possible_types
@@ -105,7 +106,8 @@ where
         }
         FlattenNodePathSegment::Field(field_name) => {
             if let Value::Object(map) = current_data {
-                if let Some((_, next_data)) = map.iter().find(|(key, _)| key == field_name) {
+                if let Ok(idx) = map.binary_search_by_key(&field_name.as_str(), |(k, _)| k) {
+                    let (_, next_data) = &map[idx];
                     let rest_of_path = &remaining_path[1..];
                     traverse_and_callback(next_data, rest_of_path, schema_metadata, callback)?;
                 }
@@ -114,9 +116,9 @@ where
         FlattenNodePathSegment::Cast(type_condition) => {
             if let Value::Object(obj) = current_data {
                 let type_name = obj
-                    .iter()
-                    .find(|(key, _)| key == &TYPENAME_FIELD_NAME)
-                    .and_then(|(_, val)| val.as_str())
+                    .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
+                    .ok()
+                    .and_then(|idx| obj[idx].1.as_str())
                     .unwrap_or(type_condition);
                 if schema_metadata
                     .possible_types

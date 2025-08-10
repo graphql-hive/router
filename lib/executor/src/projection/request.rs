@@ -199,16 +199,20 @@ fn project_requires_map_mut(
                 }
 
                 let original = entity_obj
-                    .iter()
-                    .find(|(k, _)| k == field_name)
-                    .map(|(_, val)| val)
-                    .unwrap_or(
-                        entity_obj
-                            .iter()
-                            .find(|(k, _)| k == &response_key)
-                            .map(|(_, val)| val)
-                            .unwrap_or(&Value::Null),
-                    );
+                    .binary_search_by_key(&field_name.as_str(), |(k, _)| k)
+                    .ok()
+                    .map(|idx| &entity_obj[idx].1)
+                    .or_else(|| {
+                        if response_key == TYPENAME_FIELD_NAME {
+                            None
+                        } else {
+                            entity_obj
+                                .binary_search_by_key(&response_key, |(k, _)| k)
+                                .ok()
+                                .map(|idx| &entity_obj[idx].1)
+                        }
+                    })
+                    .unwrap_or(&Value::Null);
 
                 if original.is_null() {
                     continue;
@@ -227,9 +231,9 @@ fn project_requires_map_mut(
                     buffer.put(OPEN_BRACE);
                     // Write __typename only if the object has other fields
                     if let Some(type_name) = entity_obj
-                        .iter()
-                        .find(|(key, _)| key == &TYPENAME_FIELD_NAME)
-                        .and_then(|(_, val)| val.as_str())
+                        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
+                        .ok()
+                        .and_then(|idx| entity_obj[idx].1.as_str())
                     {
                         buffer.put(QUOTE);
                         buffer.put(TYPENAME);
