@@ -7,24 +7,26 @@ use query_plan_executor::schema_metadata::SchemaMetadata;
 
 pub fn collect_variables(
     operation: &query_planner::ast::operation::OperationDefinition,
-    variables: &Option<HashMap<String, Value>>,
+    mut variables: Option<HashMap<String, Value>>,
     schema_metadata: &SchemaMetadata,
 ) -> Result<Option<HashMap<String, Value>>, String> {
     if operation.variable_definitions.is_none() {
         return Ok(None);
     }
     let variable_definitions = operation.variable_definitions.as_ref().unwrap();
+    let mut incoming_variables_map = variables.take().unwrap_or_default();
+
     let collected_variables: Result<Vec<Option<(String, Value)>>, String> = variable_definitions
         .iter()
         .map(|variable_definition| {
-            let variable_name = variable_definition.name.to_string();
-            if let Some(variable_value) = variables.as_ref().and_then(|v| v.get(&variable_name)) {
+            let variable_name = variable_definition.name.as_str();
+            if let Some(variable_value) = incoming_variables_map.remove(variable_name) {
                 validate_runtime_value(
                     variable_value.as_ref(),
                     &variable_definition.variable_type,
                     schema_metadata,
                 )?;
-                return Ok(Some((variable_name, variable_value.clone())));
+                return Ok(Some((variable_name.to_string(), variable_value)));
             }
             if let Some(default_value) = &variable_definition.default_value {
                 // Assuming value_from_ast now returns Result<Value, String> or similar
@@ -36,7 +38,7 @@ pub fn collect_variables(
                     &variable_definition.variable_type,
                     schema_metadata,
                 )?;
-                return Ok(Some((variable_name, default_value_coerced)));
+                return Ok(Some((variable_name.to_string(), default_value_coerced)));
             }
             if variable_definition.variable_type.is_non_null() {
                 return Err(format!(
