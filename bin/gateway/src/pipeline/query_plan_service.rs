@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::hash::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -15,6 +14,7 @@ use http::Request;
 use query_planner::planner::plan_nodes::QueryPlan;
 use query_planner::state::supergraph_state::SupergraphState;
 use tracing::{debug, trace};
+use xxhash_rust::xxh3::Xxh3;
 
 /// Deterministic context representing the outcome of progressive override rules.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -165,7 +165,7 @@ impl GatewayPipelineLayer for QueryPlanService {
 }
 
 fn calculate_cache_key(operation_hash: u64, context: &StableOverrideContext) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = Xxh3::new();
     operation_hash.hash(&mut hasher);
     context.hash(&mut hasher);
     hasher.finish()

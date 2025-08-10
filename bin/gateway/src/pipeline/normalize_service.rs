@@ -1,4 +1,4 @@
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -7,6 +7,7 @@ use query_plan_executor::introspection::filter_introspection_fields_in_operation
 use query_plan_executor::projection::FieldProjectionPlan;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
+use xxhash_rust::xxh3::Xxh3;
 
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::gateway_layer::{
@@ -72,7 +73,7 @@ impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
 
         let cache_key = match &execution_params.operation_name {
             Some(operation_name) => {
-                let mut hasher = DefaultHasher::new();
+                let mut hasher = Xxh3::new();
                 execution_params.query.hash(&mut hasher);
                 operation_name.hash(&mut hasher);
                 hasher.finish()

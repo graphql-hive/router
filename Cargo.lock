@@ -938,6 +938,7 @@ dependencies = [
  "tracing-subscriber",
  "tracing-tree",
  "ulid",
+ "xxhash-rust",
 ]
 
 [[package]]
