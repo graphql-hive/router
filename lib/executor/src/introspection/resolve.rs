@@ -479,7 +479,7 @@ pub fn resolve_introspection<'exec, 'schema: 'exec>(
         }
     }
     data.sort_by_key(|(k, _)| *k);
-    Value::Object(vec![("data", Value::Object(data))])
+    Value::Object(data)
 }
 
 trait TypeDefinitionExtension {
