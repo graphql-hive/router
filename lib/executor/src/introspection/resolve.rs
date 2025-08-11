@@ -483,7 +483,7 @@ pub fn resolve_introspection<'exec, 'schema: 'exec>(
 }
 
 trait TypeDefinitionExtension {
-    fn name<'a>(&'a self) -> &'a str;
+    fn name(&self) -> &str;
 }
 
 /// Kamil: I couldn't use SchemaDocumentExtension of graphql_tools,
@@ -493,9 +493,9 @@ trait TypeDefinitionExtension {
 trait SchemaDocumentExtension<'schema> {
     fn type_by_name<'a>(&'a self, name: &str) -> Option<&'a TypeDefinition<'schema, String>>;
     fn type_map<'a>(&'a self) -> HashMap<&'a str, &'a TypeDefinition<'schema, String>>;
-    fn query_type_name<'a>(&'a self) -> &'a str;
-    fn mutation_type_name<'a>(&'a self) -> Option<&'a str>;
-    fn subscription_type_name<'a>(&'a self) -> Option<&'a str>;
+    fn query_type_name(&self) -> &str;
+    fn mutation_type_name(&self) -> Option<&str>;
+    fn subscription_type_name(&self) -> Option<&str>;
 }
 
 impl<'schema> SchemaDocumentExtension<'schema> for Document<'schema, String> {
@@ -523,7 +523,7 @@ impl<'schema> SchemaDocumentExtension<'schema> for Document<'schema, String> {
         type_map
     }
 
-    fn query_type_name<'a>(&'a self) -> &'a str {
+    fn query_type_name(&self) -> &str {
         for def in &self.definitions {
             if let Definition::SchemaDefinition(schema_def) = def {
                 if let Some(name) = schema_def.query.as_ref() {
@@ -535,7 +535,7 @@ impl<'schema> SchemaDocumentExtension<'schema> for Document<'schema, String> {
         root_type_name(self, "Query").unwrap_or("Query")
     }
 
-    fn mutation_type_name<'a>(&'a self) -> Option<&'a str> {
+    fn mutation_type_name(&self) -> Option<&str> {
         for def in &self.definitions {
             if let Definition::SchemaDefinition(schema_def) = def {
                 if let Some(name) = schema_def.mutation.as_ref() {
@@ -547,7 +547,7 @@ impl<'schema> SchemaDocumentExtension<'schema> for Document<'schema, String> {
         root_type_name(self, "Mutation")
     }
 
-    fn subscription_type_name<'a>(&'a self) -> Option<&'a str> {
+    fn subscription_type_name(&self) -> Option<&str> {
         for def in &self.definitions {
             if let Definition::SchemaDefinition(schema_def) = def {
                 if let Some(name) = schema_def.subscription.as_ref() {
@@ -565,21 +565,18 @@ fn root_type_name<'a, 'schema>(
     name: &'a str,
 ) -> Option<&'a str> {
     for def in &schema.definitions {
-        match def {
-            Definition::TypeDefinition(TypeDefinition::Object(obj)) => {
-                if obj.name.as_str() == name {
-                    return Some(obj.name.as_str());
-                }
+        if let Definition::TypeDefinition(TypeDefinition::Object(obj)) = def {
+            if obj.name.as_str() == name {
+                return Some(obj.name.as_str());
             }
-            _ => {}
         }
     }
 
-    return None;
+    None
 }
 
 impl<'schema> TypeDefinitionExtension for TypeDefinition<'schema, String> {
-    fn name<'a>(&'a self) -> &'a str {
+    fn name(&self) -> &str {
         match self {
             TypeDefinition::Object(o) => &o.name,
             TypeDefinition::Interface(i) => &i.name,

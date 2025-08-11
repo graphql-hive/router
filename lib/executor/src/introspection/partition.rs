@@ -73,9 +73,12 @@ fn partition_selection_set(
     for item in selection_set.items {
         match item {
             SelectionItem::Field(field) => {
-                if level.is_root() && field.name.starts_with("__") {
-                    introspection_items.push(SelectionItem::Field(field));
-                } else if field.name.starts_with("__") && field.name != "__typename" {
+                // pass root level __typename to introspection
+                if (level.is_root() && field.name.starts_with("__"))
+                    ||
+                    // do NOT pass non-root level __typename to introspection
+                    field.name.starts_with("__") && field.name != "__typename"
+                {
                     introspection_items.push(SelectionItem::Field(field));
                 } else {
                     let is_leaf = field.is_leaf();
