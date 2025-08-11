@@ -20,9 +20,7 @@ use executor::introspection::resolve::IntrospectionContext;
 // use http::header::CONTENT_TYPE;
 use http::{HeaderName, HeaderValue, Request, Response};
 use query_plan_executor::ExposeQueryPlanMode;
-// use query_plan_executor::ExposeQueryPlanMode;
 use tower::Service;
-// use tracing::trace;
 
 #[derive(Clone, Debug, Default)]
 pub struct ExecutionService {
