@@ -2,8 +2,8 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use axum::body::Body;
+use executor::introspection::partition::partition_operation;
 use http::Request;
-use query_plan_executor::introspection::filter_introspection_fields_in_operation;
 use query_plan_executor::projection::FieldProjectionPlan;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
@@ -22,9 +22,9 @@ use tracing::{error, trace};
 pub struct GraphQLNormalizationPayload {
     /// The operation to execute, without introspection fields.
     pub operation_for_plan: OperationDefinition,
+    pub operation_for_introspection: Option<OperationDefinition>,
     pub root_type_name: &'static str,
     pub projection_plan: Vec<FieldProjectionPlan>,
-    pub has_introspection: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -103,23 +103,24 @@ impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
                         doc.operation
                     );
 
-                    let operation = &doc.operation;
-                    let (has_introspection, filtered_operation_for_plan) =
-                        filter_introspection_fields_in_operation(operation);
-
-                    trace!(
-                        "Operation after removing introspection fields (introspection found={}): {}",
-                        has_introspection,
-                        filtered_operation_for_plan
-                    );
-
+                    let operation = doc.operation;
                     let (root_type_name, projection_plan) =
-                        FieldProjectionPlan::from_operation(operation, &app_state.schema_metadata);
+                        FieldProjectionPlan::from_operation(&operation, &app_state.schema_metadata);
+                    let partitioned_operation = partition_operation(operation);
+                    // let (has_introspection, filtered_operation_for_plan) =
+                    //     filter_introspection_fields_in_operation(operation);
+
+                    // trace!(
+                    //     "Operation after removing introspection fields (introspection found={}): {}",
+                    //     has_introspection,
+                    //     filtered_operation_for_plan
+                    // );
+
                     let payload = GraphQLNormalizationPayload {
                         root_type_name,
                         projection_plan,
-                        operation_for_plan: filtered_operation_for_plan,
-                        has_introspection,
+                        operation_for_plan: partitioned_operation.downstream_operation,
+                        operation_for_introspection: partitioned_operation.introspection_operation,
                     };
                     let payload_arc = Arc::new(payload);
                     app_state

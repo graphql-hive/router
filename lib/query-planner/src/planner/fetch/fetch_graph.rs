@@ -72,7 +72,7 @@ impl FetchGraph {
         self.is_descendant_of(a, b) || self.is_descendant_of(b, a)
     }
 
-    pub fn step_indices(&self) -> NodeIndices<FetchStepData> {
+    pub fn step_indices<'a>(&'a self) -> NodeIndices<'a, FetchStepData> {
         self.graph.node_indices()
     }
 

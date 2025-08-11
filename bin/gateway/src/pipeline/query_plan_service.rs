@@ -13,7 +13,7 @@ use axum::body::Body;
 use http::Request;
 use query_planner::planner::plan_nodes::QueryPlan;
 use query_planner::state::supergraph_state::SupergraphState;
-use tracing::{debug, trace};
+use tracing::debug;
 use xxhash_rust::xxh3::Xxh3;
 
 /// Deterministic context representing the outcome of progressive override rules.
@@ -104,19 +104,10 @@ impl GatewayPipelineLayer for QueryPlanService {
             calculate_cache_key(filtered_operation_for_plan.hash(), &stable_override_context);
 
         let query_plan_arc = match app_state.plan_cache.get(&plan_cache_key).await {
-            Some(plan) => {
-                trace!("Plan with hash key {} was found in cache", plan_cache_key);
-
-                plan
-            }
+            Some(plan) => plan,
             None => {
-                trace!(
-                    "Plan with hash key {} was not found in cache, planning...",
-                    plan_cache_key
-                );
-
                 let plan = if filtered_operation_for_plan.selection_set.is_empty()
-                    && normalized_operation.has_introspection
+                    && normalized_operation.operation_for_introspection.is_some()
                 {
                     debug!("No need for a plan, as the incoming query only involves introspection fields");
 
@@ -125,26 +116,16 @@ impl GatewayPipelineLayer for QueryPlanService {
                         node: None,
                     }
                 } else {
-                    match app_state.planner.plan_from_normalized_operation(
-                        filtered_operation_for_plan,
-                        request_override_context.into(),
-                    ) {
-                        Ok(p) => p,
-                        Err(err) => {
-                            return Err(
-                                req.new_pipeline_error(PipelineErrorVariant::PlannerError(err))
-                            )
-                        }
-                    }
+                    app_state
+                        .planner
+                        .plan_from_normalized_operation(
+                            filtered_operation_for_plan,
+                            request_override_context.into(),
+                        )
+                        .map_err(|err| {
+                            req.new_pipeline_error(PipelineErrorVariant::PlannerError(err))
+                        })?
                 };
-
-                trace!(
-                    "Plan with hash key {} built and stored in cache:\n{}",
-                    plan_cache_key,
-                    plan
-                );
-
-                trace!("complete plan object:\n{:?}", plan);
 
                 let arc_plan = Arc::new(plan);
                 app_state

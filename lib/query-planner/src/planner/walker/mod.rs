@@ -467,8 +467,8 @@ fn process_field<'a>(
             {
                 fields_to_resolve_locally = output_type
                     .fields()
-                    .iter()
-                    .map(|(name, _)| name.to_string())
+                    .keys()
+                    .map(|name| name.to_string())
                     .collect();
             }
         }

@@ -3,9 +3,12 @@ use std::collections::HashMap;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use query_plan_executor::{projection::FieldProjectionPlan, schema_metadata::SchemaMetadata};
-use query_planner::planner::plan_nodes::{
-    ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
-    QueryPlan, SequenceNode,
+use query_planner::{
+    ast::operation::OperationDefinition,
+    planner::plan_nodes::{
+        ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode,
+        PlanNode, QueryPlan, SequenceNode,
+    },
 };
 use serde::Deserialize;
 use sonic_rs::ValueRef;
@@ -14,6 +17,7 @@ use crate::{
     context::ExecutionContext,
     execution::{error::PlanExecutionError, rewrites::FetchRewriteExt},
     executors::{common::HttpExecutionRequest, map::SubgraphExecutorMap},
+    introspection::resolve::{resolve_introspection, IntrospectionContext},
     projection::{
         request::{project_requires, RequestProjectionContext},
         response::project_by_operation,
@@ -28,18 +32,30 @@ use crate::{
     },
 };
 
+// TODO: simplfy args
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_query_plan(
     query_plan: &QueryPlan,
     projection_plan: &Vec<FieldProjectionPlan>,
+    introspection_query: Option<&OperationDefinition>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     extensions: Option<HashMap<String, sonic_rs::Value>>,
-    schema_metadata: &SchemaMetadata,
+    introspection_context: &IntrospectionContext<'_, 'static>,
     operation_type_name: &str,
     executors: &SubgraphExecutorMap,
 ) -> Result<Bytes, PlanExecutionError> {
-    let mut ctx = ExecutionContext::new(query_plan);
-    let executor = Executor::new(variable_values, executors, schema_metadata);
-    execute_query_plan_internal(query_plan, executor, &mut ctx).await;
+    let init_value = if let Some(introspection_query) = introspection_query {
+        resolve_introspection(introspection_query, introspection_context)
+    } else {
+        Value::Null
+    };
+    let mut ctx = ExecutionContext::new(query_plan, init_value);
+
+    if query_plan.node.is_some() {
+        let executor = Executor::new(variable_values, executors, introspection_context.metadata);
+        execute_query_plan_internal(query_plan, executor, &mut ctx).await;
+    }
+
     let final_response = &ctx.final_response;
     project_by_operation(
         final_response,

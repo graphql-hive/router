@@ -23,12 +23,12 @@ impl<'a> Default for ExecutionContext<'a> {
 }
 
 impl<'a> ExecutionContext<'a> {
-    pub fn new(query_plan: &QueryPlan) -> Self {
+    pub fn new(query_plan: &QueryPlan, init_final_response: Value<'a>) -> Self {
         ExecutionContext {
             response_storage: ResponsesStorage::new(),
             output_rewrites: OutputRewritesStorage::from_query_plan(query_plan),
             errors: Vec::new(),
-            final_response: Value::Null,
+            final_response: init_final_response,
         }
     }
 

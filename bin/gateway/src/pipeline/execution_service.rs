@@ -15,6 +15,7 @@ use crate::pipeline::query_plan_service::QueryPlanPayload;
 use crate::shared_state::GatewaySharedState;
 use axum::body::Body;
 use executor::execute_query_plan;
+use executor::introspection::resolve::IntrospectionContext;
 // use http::header::CONTENT_TYPE;
 use http::{HeaderName, HeaderValue, Request, Response};
 use query_plan_executor::ExposeQueryPlanMode;
@@ -92,12 +93,18 @@ impl Service<Request<Body>> for ExecutionService {
         };
 
         Box::pin(async move {
+            let introspection_context = IntrospectionContext {
+                schema: &app_state.planner.consumer_schema.document,
+                metadata: &app_state.schema_metadata,
+            };
+
             let execution_result = execute_query_plan(
                 &query_plan_payload.query_plan,
                 &normalized_payload.projection_plan,
+                normalized_payload.operation_for_introspection.as_ref(),
                 &variable_payload.variables_map,
                 extensions,
-                &app_state.schema_metadata,
+                &introspection_context,
                 normalized_payload.root_type_name,
                 &app_state.subgraph_executor_map,
             )
