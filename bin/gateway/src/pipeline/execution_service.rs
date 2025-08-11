@@ -17,9 +17,7 @@ use axum::body::Body;
 use executor::execute_query_plan;
 use executor::execution::plan::QueryPlanExecutionContext;
 use executor::introspection::resolve::IntrospectionContext;
-// use http::header::CONTENT_TYPE;
 use http::{HeaderName, HeaderValue, Request, Response};
-use query_plan_executor::ExposeQueryPlanMode;
 use tower::Service;
 
 #[derive(Clone, Debug, Default)]
@@ -28,6 +26,13 @@ pub struct ExecutionService {
 }
 
 static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ExposeQueryPlanMode {
+    Yes,
+    No,
+    DryRun,
+}
 
 impl ExecutionService {
     pub fn new(expose_query_plan: bool) -> Self {
