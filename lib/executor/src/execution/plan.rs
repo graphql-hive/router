@@ -53,7 +53,7 @@ pub async fn execute_query_plan(
 
     if query_plan.node.is_some() {
         let executor = Executor::new(variable_values, executors, introspection_context.metadata);
-        execute_query_plan_internal(query_plan, executor, &mut ctx).await;
+        executor.execute(&mut ctx, query_plan.node.as_ref()).await;
     }
 
     let final_response = &ctx.final_response;
@@ -66,14 +66,6 @@ pub async fn execute_query_plan(
         variable_values,
     )
     .map_err(|e| e.into())
-}
-
-pub async fn execute_query_plan_internal<'a>(
-    query_plan: &QueryPlan,
-    executor: Executor<'a>,
-    ctx: &mut ExecutionContext<'a>,
-) {
-    executor.execute(ctx, query_plan.node.as_ref()).await;
 }
 
 pub struct Executor<'a> {
