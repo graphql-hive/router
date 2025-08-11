@@ -15,6 +15,7 @@ use crate::pipeline::query_plan_service::QueryPlanPayload;
 use crate::shared_state::GatewaySharedState;
 use axum::body::Body;
 use executor::execute_query_plan;
+use executor::execution::plan::QueryPlanExecutionContext;
 use executor::introspection::resolve::IntrospectionContext;
 // use http::header::CONTENT_TYPE;
 use http::{HeaderName, HeaderValue, Request, Response};
@@ -94,20 +95,20 @@ impl Service<Request<Body>> for ExecutionService {
 
         Box::pin(async move {
             let introspection_context = IntrospectionContext {
+                query: normalized_payload.operation_for_introspection.as_ref(),
                 schema: &app_state.planner.consumer_schema.document,
                 metadata: &app_state.schema_metadata,
             };
 
-            let execution_result = execute_query_plan(
-                &query_plan_payload.query_plan,
-                &normalized_payload.projection_plan,
-                normalized_payload.operation_for_introspection.as_ref(),
-                &variable_payload.variables_map,
+            let execution_result = execute_query_plan(QueryPlanExecutionContext {
+                query_plan: &query_plan_payload.query_plan,
+                projection_plan: &normalized_payload.projection_plan,
+                variable_values: &variable_payload.variables_map,
                 extensions,
-                &introspection_context,
-                normalized_payload.root_type_name,
-                &app_state.subgraph_executor_map,
-            )
+                introspection_context: &introspection_context,
+                operation_type_name: normalized_payload.root_type_name,
+                executors: &app_state.subgraph_executor_map,
+            })
             .await
             .unwrap_or_else(|e| panic!("Failed to execute query plan: {}", e));
 

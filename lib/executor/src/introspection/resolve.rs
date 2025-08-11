@@ -18,6 +18,7 @@ use query_planner::state::supergraph_state::OperationKind;
 use crate::response::value::Value;
 
 pub struct IntrospectionContext<'exec, 'schema> {
+    pub query: Option<&'exec OperationDefinition>,
     pub schema: &'exec Document<'schema, String>,
     pub metadata: &'exec SchemaMetadata,
 }
