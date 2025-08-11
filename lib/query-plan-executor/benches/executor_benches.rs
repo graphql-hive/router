@@ -2,7 +2,6 @@
 use std::collections::HashMap;
 use std::future::Future;
 
-use compio::runtime::Runtime;
 use criterion::async_executor::AsyncExecutor;
 use criterion::Criterion;
 use criterion::{criterion_group, criterion_main};
@@ -23,11 +22,17 @@ use query_planner::utils::parsing::parse_schema;
 mod non_projected_result;
 use serde_json::Value;
 
-struct CompioExecutor(Runtime);
+struct CompioExecutor(compio::runtime::Runtime);
 
 impl AsyncExecutor for CompioExecutor {
     fn block_on<T>(&self, future: impl Future<Output = T>) -> T {
         self.0.block_on(future)
+    }
+}
+
+impl Clone for CompioExecutor {
+    fn clone(&self) -> Self {
+        Self(compio::runtime::Runtime::new().unwrap())
     }
 }
 
@@ -56,28 +61,28 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
             normalized_operation,
             &schema_metadata,
         );
+    let r = CompioExecutor(compio::runtime::Runtime::new().unwrap());
     c.bench_function("query_plan_executor_pipeline_via_http", |b| {
-        b.to_async(CompioExecutor(compio::runtime::Runtime::new().unwrap()))
-            .iter(|| async {
-                let query_plan = black_box(&query_plan);
-                let schema_metadata = black_box(&schema_metadata);
-                let subgraph_executor_map = black_box(&subgraph_executor_map);
-                let projection_selections = black_box(&projection_selections);
-                let root_type_name = black_box(root_type_name);
-                let has_introspection = false;
-                let result = execute_query_plan(
-                    query_plan,
-                    subgraph_executor_map,
-                    &None,
-                    schema_metadata,
-                    root_type_name,
-                    projection_selections,
-                    has_introspection,
-                    ExposeQueryPlanMode::No,
-                )
-                .await;
-                black_box(result)
-            });
+        b.to_async(r.clone()).iter(|| async {
+            let query_plan = black_box(&query_plan);
+            let schema_metadata = black_box(&schema_metadata);
+            let subgraph_executor_map = black_box(&subgraph_executor_map);
+            let projection_selections = black_box(&projection_selections);
+            let root_type_name = black_box(root_type_name);
+            let has_introspection = false;
+            let result = execute_query_plan(
+                query_plan,
+                subgraph_executor_map,
+                &None,
+                schema_metadata,
+                root_type_name,
+                projection_selections,
+                has_introspection,
+                ExposeQueryPlanMode::No,
+            )
+            .await;
+            black_box(result)
+        });
     });
 }
 
@@ -115,9 +120,12 @@ fn query_plan_execution_without_projection_via_http(c: &mut Criterion) {
                 };
                 let query_plan = black_box(&query_plan);
                 let mut data = Value::Null;
+                println!("bef");
+
                 let result = query_plan.execute(&mut execution_context, &mut data).await;
+                println!("after");
+
                 black_box(result);
-                black_box(data);
             });
     });
 }
