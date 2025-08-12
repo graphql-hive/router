@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use axum::{body::Body, extract::rejection::QueryRejection, response::IntoResponse};
 use executor::{execution::error::PlanExecutionError, response::graphql_error::GraphQLError};
@@ -132,13 +132,9 @@ impl PipelineErrorVariant {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct ExecutionResult {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<Value>,
+pub struct FailedExecutionResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub errors: Option<Vec<GraphQLError>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extensions: Option<HashMap<String, Value>>,
 }
 
 impl IntoResponse for PipelineError {
@@ -146,10 +142,8 @@ impl IntoResponse for PipelineError {
         let status = self.error.default_status_code(self.accept_ok);
 
         if let PipelineErrorVariant::ValidationErrors(validation_errors) = self.error {
-            let validation_error_result = ExecutionResult {
-                data: None,
+            let validation_error_result = FailedExecutionResult {
                 errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
-                extensions: None,
             };
 
             return (
@@ -169,10 +163,8 @@ impl IntoResponse for PipelineError {
             locations: None,
         };
 
-        let result = ExecutionResult {
-            data: None,
+        let result = FailedExecutionResult {
             errors: Some(vec![graphql_error]),
-            extensions: None,
         };
 
         (status, sonic_rs::to_string(&result).unwrap()).into_response()
