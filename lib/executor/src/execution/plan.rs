@@ -293,7 +293,7 @@ impl<'exec> Executor<'exec> {
                         Some(p.representation_hash_to_index),
                     )),
                     Ok(None) => Box::pin(async { Ok(ExecutionJob::None) }),
-                    Err(e) => Box::pin(async move { Err(e.into()) }),
+                    Err(e) => Box::pin(async move { Err(e) }),
                 }
             }
             PlanNode::Condition(node) => {

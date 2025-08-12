@@ -53,7 +53,7 @@ impl OutputRewritesStorage {
         };
 
         for fetch_node in query_plan.fetch_nodes() {
-            output_rewrites.add_maybe(&fetch_node);
+            output_rewrites.add_maybe(fetch_node);
         }
 
         output_rewrites
