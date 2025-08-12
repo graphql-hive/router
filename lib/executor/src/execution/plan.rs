@@ -171,7 +171,7 @@ impl<'exec> Executor<'exec> {
         match self.execute_fetch_node(node, None).await {
             Ok(result) => self.process_job_result(ctx, result),
             Err(err) => ctx.errors.push(GraphQLError {
-                message: err,
+                message: err.to_string(),
                 locations: None,
                 path: None,
                 extensions: None,
@@ -201,7 +201,7 @@ impl<'exec> Executor<'exec> {
                     self.process_job_result(ctx, job);
                 }
                 Err(err) => ctx.errors.push(GraphQLError {
-                    message: err,
+                    message: err.to_string(),
                     locations: None,
                     path: None,
                     extensions: None,
@@ -217,7 +217,7 @@ impl<'exec> Executor<'exec> {
                     self.process_job_result(ctx, job);
                 }
                 Err(err) => ctx.errors.push(GraphQLError {
-                    message: err,
+                    message: err.to_string(),
                     locations: None,
                     path: None,
                     extensions: None,
@@ -243,7 +243,7 @@ impl<'exec> Executor<'exec> {
                             }
                             Err(err) => {
                                 ctx.errors.push(GraphQLError {
-                                    message: err,
+                                    message: err.to_string(),
                                     locations: None,
                                     path: None,
                                     extensions: None,
@@ -281,7 +281,7 @@ impl<'exec> Executor<'exec> {
         &'wave self,
         node: &'wave PlanNode,
         final_response: &Value<'exec>,
-    ) -> BoxFuture<'wave, Result<ExecutionJob, String>> {
+    ) -> BoxFuture<'wave, Result<ExecutionJob, PlanExecutionError>> {
         match node {
             PlanNode::Fetch(fetch_node) => Box::pin(self.execute_fetch_node(fetch_node, None)),
             PlanNode::Flatten(flatten_node) => {
@@ -293,7 +293,7 @@ impl<'exec> Executor<'exec> {
                         Some(p.representation_hash_to_index),
                     )),
                     Ok(None) => Box::pin(async { Ok(ExecutionJob::None) }),
-                    Err(e) => Box::pin(async move { Err(e.to_string()) }),
+                    Err(e) => Box::pin(async move { Err(e.into()) }),
                 }
             }
             PlanNode::Condition(node) => {
@@ -506,7 +506,7 @@ impl<'exec> Executor<'exec> {
         representations: Option<BytesMut>,
         representation_hashes: Option<Vec<u64>>,
         filtered_representations_hashes: Option<HashMap<u64, usize>>,
-    ) -> Result<ExecutionJob, String> {
+    ) -> Result<ExecutionJob, PlanExecutionError> {
         Ok(match node.node.as_ref() {
             PlanNode::Fetch(fetch_node) => ExecutionJob::FlattenFetch(FlattenFetchJob {
                 flatten_node_path: node.path.clone(),
@@ -526,7 +526,7 @@ impl<'exec> Executor<'exec> {
         &self,
         node: &FetchNode,
         representations: Option<BytesMut>,
-    ) -> Result<ExecutionJob, String> {
+    ) -> Result<ExecutionJob, PlanExecutionError> {
         Ok(ExecutionJob::Fetch(FetchJob {
             fetch_node_id: node.id,
             response: self
