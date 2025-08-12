@@ -742,12 +742,11 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "indexmap 2.10.0",
  "itoa",
- "query-plan-executor",
  "query-planner",
  "ryu",
  "serde",
- "serde_json",
  "sonic-rs",
  "subgraphs",
  "thiserror 2.0.12",
@@ -923,7 +922,6 @@ dependencies = [
  "lazy_static",
  "mimalloc",
  "moka",
- "query-plan-executor",
  "query-planner",
  "rand",
  "serde",
@@ -1732,32 +1730,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "query-plan-executor"
-version = "0.0.1"
-dependencies = [
- "async-graphql",
- "async-trait",
- "criterion",
- "futures",
- "graphql-parser",
- "graphql-tools",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "indexmap 2.10.0",
- "insta",
- "query-planner",
- "serde",
- "serde_json",
- "sonic-rs",
- "subgraphs",
- "tokio",
- "tokio-test",
- "tracing",
-]
-
-[[package]]
 name = "query-planner"
 version = "0.0.1"
 dependencies = [
@@ -2506,19 +2478,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
-]
-
-[[package]]
-name = "tokio-test"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2468baabc3311435b55dd935f702f42cd1b8abb7e754fb7dfb16bd36aa88f9f7"
-dependencies = [
- "async-stream",
- "bytes",
- "futures-core",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]
