@@ -107,14 +107,6 @@ impl GatewayPipelineLayer for GraphQLOperationNormalizationService {
                     let (root_type_name, projection_plan) =
                         FieldProjectionPlan::from_operation(&operation, &app_state.schema_metadata);
                     let partitioned_operation = partition_operation(operation);
-                    // let (has_introspection, filtered_operation_for_plan) =
-                    //     filter_introspection_fields_in_operation(operation);
-
-                    // trace!(
-                    //     "Operation after removing introspection fields (introspection found={}): {}",
-                    //     has_introspection,
-                    //     filtered_operation_for_plan
-                    // );
 
                     let payload = GraphQLNormalizationPayload {
                         root_type_name,
