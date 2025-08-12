@@ -53,17 +53,16 @@ impl OutputRewritesStorage {
         };
 
         for fetch_node in query_plan.fetch_nodes() {
-            output_rewrites.add_maybe(fetch_node.clone());
+            output_rewrites.add_maybe(&fetch_node);
         }
 
         output_rewrites
     }
 
-    fn add_maybe(&mut self, fetch_node: FetchNode) {
-        self.output_rewrites.insert(
-            fetch_node.id,
-            fetch_node.output_rewrites.clone().unwrap_or_default(),
-        );
+    fn add_maybe(&mut self, fetch_node: &FetchNode) {
+        if let Some(rewrites) = &fetch_node.output_rewrites {
+            self.output_rewrites.insert(fetch_node.id, rewrites.clone());
+        }
     }
 
     pub fn get(&self, id: i64) -> Option<&Vec<FetchRewrite>> {
