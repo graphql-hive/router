@@ -77,9 +77,9 @@ pub fn traverse_and_callback_mut<'a, Callback>(
     }
 }
 
-pub fn traverse_and_callback<'a, 'p, E, Callback>(
+pub fn traverse_and_callback<'a, E, Callback>(
     current_data: &'a Value<'a>,
-    remaining_path: &'p [FlattenNodePathSegment],
+    remaining_path: &'a [FlattenNodePathSegment],
     schema_metadata: &'a SchemaMetadata,
     callback: &mut Callback,
 ) -> Result<(), E>
