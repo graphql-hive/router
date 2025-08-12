@@ -10,7 +10,7 @@ use url::Url;
 use crate::executors::common::HttpExecutionRequest;
 use crate::executors::common::SubgraphExecutor;
 use crate::executors::error::SubgraphExecutorError;
-use crate::json_writer::BytesMutExt;
+use crate::json_writer::write_and_escape_string;
 use crate::response::graphql_error::GraphQLError;
 use crate::utils::consts::CLOSE_BRACE;
 use crate::utils::consts::COLON;
@@ -51,7 +51,7 @@ impl HTTPSubgraphExecutor {
         // We may want to remove it, but let's see.
         let mut body = BytesMut::with_capacity(4096);
         body.put(FIRST_QUOTE_STR);
-        body.write_and_escape_string(execution_request.query);
+        write_and_escape_string(&mut body, execution_request.query);
         let mut first_variable = true;
         if let Some(variables) = &execution_request.variables {
             for (variable_name, variable_value) in variables {

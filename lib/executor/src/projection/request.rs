@@ -3,7 +3,7 @@ use query_planner::ast::selection_item::SelectionItem;
 
 use crate::{
     introspection::schema::PossibleTypes,
-    json_writer::BytesMutExt,
+    json_writer::{write_and_escape_string, write_f64, write_i64, write_u64},
     projection::error::ProjectionError,
     response::value::Value,
     utils::consts::{
@@ -76,7 +76,7 @@ fn project_requires_internal(
                 buffer.put(QUOTE);
                 buffer.put(COLON);
             }
-            buffer.write_f64(*n);
+            write_f64(buffer, *n);
         }
         Value::I64(n) => {
             if !first {
@@ -88,7 +88,7 @@ fn project_requires_internal(
                 buffer.put(QUOTE);
                 buffer.put(COLON);
             }
-            buffer.write_i64(*n);
+            write_i64(buffer, *n);
         }
         Value::U64(n) => {
             if !first {
@@ -100,7 +100,7 @@ fn project_requires_internal(
                 buffer.put(QUOTE);
                 buffer.put(COLON);
             }
-            buffer.write_u64(*n);
+            write_u64(buffer, *n);
         }
         Value::String(s) => {
             if !first {
@@ -112,7 +112,7 @@ fn project_requires_internal(
                 buffer.put(QUOTE);
                 buffer.put(COLON);
             }
-            buffer.write_and_escape_string(s);
+            write_and_escape_string(buffer, s);
         }
         Value::Array(entity_array) => {
             if !first {
@@ -239,7 +239,7 @@ fn project_requires_map_mut(
                         buffer.put(TYPENAME);
                         buffer.put(QUOTE);
                         buffer.put(COLON);
-                        buffer.write_and_escape_string(type_name);
+                        write_and_escape_string(buffer, type_name);
                         // We wrote the first field
                         *first = false;
                     }

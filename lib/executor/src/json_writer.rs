@@ -1,6 +1,5 @@
 //! I took it from https://github.com/zotta/json-writer-rs/blob/f45e2f25cede0e06be76a94f6e45608780a835d4/src/lib.rs#L853
 use bytes::BufMut;
-use bytes::BytesMut;
 
 use crate::utils::consts::NULL;
 
@@ -32,81 +31,8 @@ const fn get_replacements() -> [u8; 256] {
 static REPLACEMENTS: [u8; 256] = get_replacements();
 static HEX: [u8; 16] = *b"0123456789ABCDEF";
 
-pub trait BytesMutExt {
-    fn write_and_escape_string(&mut self, string: &str);
-    fn write_f64(&mut self, value: f64);
-    fn write_u64(&mut self, value: u64);
-    fn write_i64(&mut self, value: i64);
-}
-
-impl BytesMutExt for BytesMut {
-    #[inline(always)]
-    fn write_and_escape_string(self: &mut Self, input: &str) {
-        self.put_u8(b'"');
-
-        let bytes = input.as_bytes();
-        let mut last_write = 0;
-
-        for (i, &byte) in bytes.iter().enumerate() {
-            let replacement = REPLACEMENTS[byte as usize];
-            if replacement != 0 {
-                if last_write < i {
-                    self.put(&bytes[last_write..i]);
-                }
-
-                if replacement == b'u' {
-                    let hex_bytes: [u8; 6] = [
-                        b'\\',
-                        b'u',
-                        b'0',
-                        b'0',
-                        HEX[((byte / 16) & 0xF) as usize],
-                        HEX[(byte & 0xF) as usize],
-                    ];
-                    self.put(&hex_bytes[..]);
-                } else {
-                    let escaped_bytes: [u8; 2] = [b'\\', replacement];
-                    self.put(&escaped_bytes[..]);
-                }
-                last_write = i + 1;
-            }
-        }
-
-        if last_write < bytes.len() {
-            self.put(&bytes[last_write..]);
-        }
-
-        self.put_u8(b'"');
-    }
-    #[inline(always)]
-    fn write_f64(self: &mut Self, value: f64) {
-        if !value.is_finite() {
-            // JSON does not allow infinite or nan values. In browsers JSON.stringify(Number.NaN) = "null"
-            self.put(NULL);
-            return;
-        }
-
-        let mut buf = ryu::Buffer::new();
-        let mut result = buf.format_finite(value);
-        if result.ends_with(".0") {
-            result = unsafe { result.get_unchecked(..result.len() - 2) };
-        }
-        self.put(result.as_bytes());
-    }
-    #[inline(always)]
-    fn write_u64(self: &mut Self, value: u64) {
-        let mut buf = itoa::Buffer::new();
-        self.put(buf.format(value).as_bytes());
-    }
-    #[inline(always)]
-    fn write_i64(self: &mut Self, value: i64) {
-        let mut buf = itoa::Buffer::new();
-        self.put(buf.format(value).as_bytes());
-    }
-}
-
 #[inline(always)]
-pub fn write_and_escape_string(buffer: &mut Vec<u8>, input: &str) {
+pub fn write_and_escape_string<T: BufMut>(buffer: &mut T, input: &str) {
     buffer.put_u8(b'"');
 
     let bytes = input.as_bytes();
@@ -145,7 +71,7 @@ pub fn write_and_escape_string(buffer: &mut Vec<u8>, input: &str) {
 }
 
 #[inline(always)]
-pub fn write_f64(buffer: &mut Vec<u8>, value: f64) {
+pub fn write_f64<T: BufMut>(buffer: &mut T, value: f64) {
     if !value.is_finite() {
         // JSON does not allow infinite or nan values. In browsers JSON.stringify(Number.NaN) = "null"
         buffer.put(NULL);
@@ -161,13 +87,13 @@ pub fn write_f64(buffer: &mut Vec<u8>, value: f64) {
 }
 
 #[inline(always)]
-pub fn write_u64(buffer: &mut Vec<u8>, value: u64) {
+pub fn write_u64<T: BufMut>(buffer: &mut T, value: u64) {
     let mut buf = itoa::Buffer::new();
     buffer.put(buf.format(value).as_bytes());
 }
 
 #[inline(always)]
-pub fn write_i64(buffer: &mut Vec<u8>, value: i64) {
+pub fn write_i64<T: BufMut>(buffer: &mut T, value: i64) {
     let mut buf = itoa::Buffer::new();
     buffer.put(buf.format(value).as_bytes());
 }
