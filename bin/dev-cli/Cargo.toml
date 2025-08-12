@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 query-planner = { path = "../../lib/query-planner" }
-graphql-parser = "0.4.1"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-tracing-tree = "0.4.0"
-serde_json = "1.0.140"
+graphql-parser = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-tree = { workspace = true }
+serde_json = { workspace = true }

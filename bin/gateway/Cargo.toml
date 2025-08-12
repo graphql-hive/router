@@ -10,40 +10,20 @@ path = "src/main.rs"
 [dependencies]
 query-planner = { path = "../../lib/query-planner" }
 query-plan-executor = { path = "../../lib/query-plan-executor" }
-
 mimalloc = { version = "0.1.47", features = ["override"] }
-
-# Async runtime
-compio = { version = "0.15.0", features = ["macros"] }
-
-# GraphQL
-graphql-parser = "0.4.1" # Using version from original file
-graphql-tools = "0.4.0"  # Using version from original file
-
-# Serialization
-serde = { version = "1.0.203", features = ["derive"] }
-serde_json = "1.0.140"
-sonic-rs = "0.5"
-
-# HTTP client and caching
+compio = { workspace = true }
+graphql-parser = { workspace = true }
+graphql-tools = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sonic-rs = { workspace = true }
 moka = { version = "0.12.8", features = ["future"] }
-
-# Tracing
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = [
-  "env-filter",
-  "time",
-  "json",
-] }
-tracing-tree = "0.4.0"
-
-# HTTP
-ulid = "1.2.1"
-http = "1.3.1"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-tree = { workspace = true }
+http = { workspace = true }
 ntex = { version = "2", features = ["compio"] }
-
-# Utils
-thiserror = "2.0.12"
-lazy_static = "1.5.0"
-async-trait = "0.1.88"
-rand = "0.9.1"
+thiserror = { workspace = true }
+lazy_static = { workspace = true }
+async-trait = { workspace = true }
+rand = { workspace = true }
