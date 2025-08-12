@@ -22,17 +22,11 @@ use query_planner::utils::parsing::parse_schema;
 mod non_projected_result;
 use serde_json::Value;
 
-struct CompioExecutor(compio::runtime::Runtime);
+struct CompioExecutor<'a>(&'a compio::runtime::Runtime);
 
-impl AsyncExecutor for CompioExecutor {
+impl<'a> AsyncExecutor for CompioExecutor<'a> {
     fn block_on<T>(&self, future: impl Future<Output = T>) -> T {
         self.0.block_on(future)
-    }
-}
-
-impl Clone for CompioExecutor {
-    fn clone(&self) -> Self {
-        Self(compio::runtime::Runtime::new().unwrap())
     }
 }
 
@@ -61,9 +55,9 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
             normalized_operation,
             &schema_metadata,
         );
-    let r = CompioExecutor(compio::runtime::Runtime::new().unwrap());
+    let r = compio::runtime::Runtime::new().unwrap();
     c.bench_function("query_plan_executor_pipeline_via_http", |b| {
-        b.to_async(r.clone()).iter(|| async {
+        b.to_async(CompioExecutor(&r)).iter(|| async {
             let query_plan = black_box(&query_plan);
             let schema_metadata = black_box(&schema_metadata);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
@@ -106,27 +100,25 @@ fn query_plan_execution_without_projection_via_http(c: &mut Criterion) {
     let subgraph_endpoint_map = planner.supergraph.subgraph_endpoint_map;
     let schema_metadata = planner.consumer_schema.schema_metadata();
     let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(subgraph_endpoint_map);
+    let r = compio::runtime::Runtime::new().unwrap();
     c.bench_function("query_plan_execution_without_projection_via_http", |b| {
-        b.to_async(CompioExecutor(compio::runtime::Runtime::new().unwrap()))
-            .iter(|| async {
-                let schema_metadata = black_box(&schema_metadata);
-                let subgraph_executor_map = black_box(&subgraph_executor_map);
-                let mut execution_context = query_plan_executor::QueryPlanExecutionContext {
-                    variable_values: &None,
-                    schema_metadata,
-                    subgraph_executor_map,
-                    errors: Vec::new(),
-                    extensions: HashMap::new(),
-                };
-                let query_plan = black_box(&query_plan);
-                let mut data = Value::Null;
-                println!("bef");
+        b.to_async(CompioExecutor(&r)).iter(|| async {
+            let schema_metadata = black_box(&schema_metadata);
+            let subgraph_executor_map = black_box(&subgraph_executor_map);
+            let mut execution_context = query_plan_executor::QueryPlanExecutionContext {
+                variable_values: &None,
+                schema_metadata,
+                subgraph_executor_map,
+                errors: Vec::new(),
+                extensions: HashMap::new(),
+            };
+            let query_plan = black_box(&query_plan);
+            let mut data = Value::Null;
 
-                let result = query_plan.execute(&mut execution_context, &mut data).await;
-                println!("after");
+            let result = query_plan.execute(&mut execution_context, &mut data).await;
 
-                black_box(result);
-            });
+            black_box(result);
+        });
     });
 }
 
@@ -164,28 +156,29 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
             &schema_metadata,
         );
 
+    let r = compio::runtime::Runtime::new().unwrap();
+
     c.bench_function("query_plan_executor_pipeline_locally", |b| {
-        b.to_async(CompioExecutor(compio::runtime::Runtime::new().unwrap()))
-            .iter(|| async {
-                let query_plan = black_box(&query_plan);
-                let schema_metadata = black_box(&schema_metadata);
-                let subgraph_executor_map = black_box(&subgraph_executor_map);
-                let projection_selections = black_box(&projection_selections);
-                let root_type_name = black_box(root_type_name);
-                let has_introspection = false;
-                let result = execute_query_plan(
-                    query_plan,
-                    subgraph_executor_map,
-                    &None,
-                    schema_metadata,
-                    root_type_name,
-                    projection_selections,
-                    has_introspection,
-                    ExposeQueryPlanMode::No,
-                )
-                .await;
-                black_box(result)
-            });
+        b.to_async(CompioExecutor(&r)).iter(|| async {
+            let query_plan = black_box(&query_plan);
+            let schema_metadata = black_box(&schema_metadata);
+            let subgraph_executor_map = black_box(&subgraph_executor_map);
+            let projection_selections = black_box(&projection_selections);
+            let root_type_name = black_box(root_type_name);
+            let has_introspection = false;
+            let result = execute_query_plan(
+                query_plan,
+                subgraph_executor_map,
+                &None,
+                schema_metadata,
+                root_type_name,
+                projection_selections,
+                has_introspection,
+                ExposeQueryPlanMode::No,
+            )
+            .await;
+            black_box(result)
+        });
     });
 }
 
@@ -217,26 +210,26 @@ fn query_plan_executor_without_projection_locally(c: &mut Criterion) {
     subgraph_executor_map.insert_boxed_arc("products".to_string(), products.to_boxed_arc());
     subgraph_executor_map.insert_boxed_arc("reviews".to_string(), reviews.to_boxed_arc());
 
+    let r = compio::runtime::Runtime::new().unwrap();
     c.bench_function("query_plan_executor_without_projection_locally", |b| {
-        b.to_async(CompioExecutor(compio::runtime::Runtime::new().unwrap()))
-            .iter(|| async {
-                let query_plan = black_box(&query_plan);
-                let schema_metadata = black_box(&schema_metadata);
-                let subgraph_executor_map = black_box(&subgraph_executor_map);
+        b.to_async(CompioExecutor(&r)).iter(|| async {
+            let query_plan = black_box(&query_plan);
+            let schema_metadata = black_box(&schema_metadata);
+            let subgraph_executor_map = black_box(&subgraph_executor_map);
 
-                let mut execution_context = query_plan_executor::QueryPlanExecutionContext {
-                    variable_values: &None,
-                    schema_metadata,
-                    subgraph_executor_map,
-                    errors: Vec::new(),
-                    extensions: HashMap::new(),
-                };
-                let query_plan = black_box(&query_plan);
-                let mut data = Value::Null;
-                let result = query_plan.execute(&mut execution_context, &mut data).await;
-                black_box(result);
-                black_box(data);
-            });
+            let mut execution_context = query_plan_executor::QueryPlanExecutionContext {
+                variable_values: &None,
+                schema_metadata,
+                subgraph_executor_map,
+                errors: Vec::new(),
+                extensions: HashMap::new(),
+            };
+            let query_plan = black_box(&query_plan);
+            let mut data = Value::Null;
+            let result = query_plan.execute(&mut execution_context, &mut data).await;
+            black_box(result);
+            black_box(data);
+        });
     });
 }
 
