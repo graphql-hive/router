@@ -1164,6 +1164,7 @@ pub enum ExposeQueryPlanMode {
     )
 )]
 #[allow(clippy::too_many_arguments)]
+#[inline]
 pub async fn execute_query_plan(
     query_plan: &QueryPlan,
     subgraph_executor_map: &SubgraphExecutorMap,
@@ -1190,6 +1191,7 @@ pub async fn execute_query_plan(
     } else {
         HashMap::new()
     };
+
     let mut execution_context = QueryPlanExecutionContext {
         variable_values,
         subgraph_executor_map,
@@ -1197,11 +1199,13 @@ pub async fn execute_query_plan(
         errors: result_errors,
         extensions: result_extensions,
     };
+
     if expose_query_plan != ExposeQueryPlanMode::DryRun {
         query_plan
             .execute(&mut execution_context, &mut result_data)
             .await;
     }
+
     result_errors = execution_context.errors; // Get the final errors from the execution context
     result_extensions = execution_context.extensions; // Get the final extensions from the execution context
     let mut writer = Vec::with_capacity(4096);

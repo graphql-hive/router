@@ -1,24 +1,21 @@
 use std::collections::HashMap;
 
-use axum::body::Body;
-use axum::extract::Query;
-use http::{Method, Request};
-use http_body_util::BodyExt;
+use http::Method;
+use ntex::util::Bytes;
+use ntex::web::types::Query;
+use ntex::web::HttpRequest;
 use serde::Deserialize;
 use serde_json::Value;
 use tracing::{trace, warn};
 
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
-use crate::pipeline::gateway_layer::{
-    GatewayPipelineLayer, GatewayPipelineStepDecision, ProcessorLayer,
-};
 use crate::pipeline::header::AssertRequestJson;
 
 #[derive(Clone, Debug, Default)]
 pub struct GraphQLRequestParamsExtractor;
 
 #[derive(serde::Deserialize, Debug)]
-struct GETQueryParams {
+pub struct GETQueryParams {
     pub query: Option<String>,
     #[serde(rename = "camelCase")]
     pub operation_name: Option<String>,
@@ -77,74 +74,56 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
     }
 }
 
-#[async_trait::async_trait]
-impl GatewayPipelineLayer for GraphQLRequestParamsExtractor {
-    #[tracing::instrument(level = "trace", name = "GraphQLRequestParamsExtractor", skip_all)]
-    async fn process(
-        &self,
-        req: &mut Request<Body>,
-    ) -> Result<GatewayPipelineStepDecision, PipelineError> {
-        let http_method = req.method();
-        let execution_request: ExecutionRequest =
-            match *http_method {
-                Method::GET => {
-                    trace!("processing GET GraphQL operation");
+#[inline]
+pub fn get_execution_request(
+    req: &HttpRequest,
+    body_bytes: &Bytes,
+) -> Result<ExecutionRequest, PipelineError> {
+    let http_method = req.method();
+    let execution_request: ExecutionRequest = match *http_method {
+        Method::GET => {
+            trace!("processing GET GraphQL operation");
 
-                    let query_params = Query::<GETQueryParams>::try_from_uri(req.uri())
-                        .map_err(|qe| {
-                            req.new_pipeline_error(PipelineErrorVariant::GetInvalidQueryParams(qe))
-                        })?
-                        .0;
+            let query_params_str = req.uri().query().ok_or_else(|| {
+                req.new_pipeline_error(PipelineErrorVariant::GetInvalidQueryParams)
+            })?;
 
-                    trace!("parsed GET query params: {:?}", query_params);
+            let query_params = Query::<GETQueryParams>::from_query(query_params_str)
+                .map_err(|e| {
+                    req.new_pipeline_error(PipelineErrorVariant::GetUnprocessableQueryParams(e))
+                })?
+                .0;
 
-                    query_params
-                        .try_into()
-                        .map_err(|err| req.new_pipeline_error(err))?
-                }
-                Method::POST => {
-                    trace!("Processing POST GraphQL request");
+            trace!("parsed GET query params: {:?}", query_params);
 
-                    req.assert_json_content_type()?;
+            query_params
+                .try_into()
+                .map_err(|err| req.new_pipeline_error(err))?
+        }
+        Method::POST => {
+            trace!("Processing POST GraphQL request");
 
-                    let body_bytes = req
-                        .body_mut()
-                        .collect()
-                        .await
-                        .map_err(|err| {
-                            warn!("Failed to read body bytes: {}", err);
-                            req.new_pipeline_error(PipelineErrorVariant::FailedToReadBodyBytes(err))
-                        })?
-                        .to_bytes();
+            req.assert_json_content_type()?;
 
-                    let execution_request = unsafe {
-                        sonic_rs::from_slice_unchecked::<ExecutionRequest>(&body_bytes).map_err(
-                            |e| {
-                                warn!("Failed to parse body: {}", e);
-                                req.new_pipeline_error(PipelineErrorVariant::FailedToParseBody(e))
-                            },
-                        )?
-                    };
-
-                    execution_request
-                }
-                _ => {
-                    warn!("unsupported HTTP method: {}", http_method);
-
-                    return Err(req.new_pipeline_error(
-                        PipelineErrorVariant::UnsupportedHttpMethod(http_method.to_owned()),
-                    ));
-                }
+            let execution_request = unsafe {
+                sonic_rs::from_slice_unchecked::<ExecutionRequest>(body_bytes).map_err(|e| {
+                    warn!("Failed to parse body: {}", e);
+                    req.new_pipeline_error(PipelineErrorVariant::FailedToParseBody(e))
+                })?
             };
 
-        req.extensions_mut().insert(execution_request);
+            execution_request
+        }
+        _ => {
+            warn!("unsupported HTTP method: {}", http_method);
 
-        Ok(GatewayPipelineStepDecision::Continue)
-    }
-}
+            return Err(
+                req.new_pipeline_error(PipelineErrorVariant::UnsupportedHttpMethod(
+                    http_method.to_owned(),
+                )),
+            );
+        }
+    };
 
-impl GraphQLRequestParamsExtractor {
-    pub fn new_layer() -> ProcessorLayer<Self> {
-        ProcessorLayer::new(Self)
-    }
+    Ok(execution_request)
 }
