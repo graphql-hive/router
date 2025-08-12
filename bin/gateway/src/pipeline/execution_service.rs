@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use crate::pipeline::coerce_variables_service::CoerceVariablesPayload;
+use crate::pipeline::error::{PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::header::{
     RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON, APPLICATION_GRAPHQL_RESPONSE_JSON_STR,
     APPLICATION_JSON,
@@ -14,6 +15,7 @@ use crate::pipeline::normalize_service::GraphQLNormalizationPayload;
 use crate::pipeline::query_plan_service::QueryPlanPayload;
 use crate::shared_state::GatewaySharedState;
 use axum::body::Body;
+use axum::response::IntoResponse;
 use executor::execute_query_plan;
 use executor::execution::plan::QueryPlanExecutionContext;
 use executor::introspection::resolve::IntrospectionContext;
@@ -103,7 +105,7 @@ impl Service<Request<Body>> for ExecutionService {
                 metadata: &app_state.schema_metadata,
             };
 
-            let execution_result = execute_query_plan(QueryPlanExecutionContext {
+            match execute_query_plan(QueryPlanExecutionContext {
                 query_plan: &query_plan_payload.query_plan,
                 projection_plan: &normalized_payload.projection_plan,
                 variable_values: &variable_payload.variables_map,
@@ -113,21 +115,29 @@ impl Service<Request<Body>> for ExecutionService {
                 executors: &app_state.subgraph_executor_map,
             })
             .await
-            .unwrap_or_else(|e| panic!("Failed to execute query plan: {}", e));
+            {
+                Ok(execution_result) => {
+                    let response_content_type: &'static HeaderValue =
+                        if req.accepts_content_type(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR) {
+                            &APPLICATION_GRAPHQL_RESPONSE_JSON
+                        } else {
+                            &APPLICATION_JSON
+                        };
 
-            let response_content_type: &'static HeaderValue =
-                if req.accepts_content_type(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR) {
-                    &APPLICATION_GRAPHQL_RESPONSE_JSON
-                } else {
-                    &APPLICATION_JSON
-                };
+                    let mut response = Response::new(Body::from(execution_result));
+                    response
+                        .headers_mut()
+                        .insert(http::header::CONTENT_TYPE, response_content_type.clone());
 
-            let mut response = Response::new(Body::from(execution_result));
-            response
-                .headers_mut()
-                .insert(http::header::CONTENT_TYPE, response_content_type.clone());
-
-            Ok(response)
+                    Ok(response)
+                }
+                Err(err) => {
+                    tracing::error!("Failed to execute query plan: {}", err);
+                    Ok(req
+                        .new_pipeline_error(PipelineErrorVariant::PlanExecutionError(err))
+                        .into_response())
+                }
+            }
         })
     }
 }

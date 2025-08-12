@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use axum::{body::Body, extract::rejection::QueryRejection, response::IntoResponse};
-use executor::response::graphql_error::GraphQLError;
+use executor::{execution::error::PlanExecutionError, response::graphql_error::GraphQLError};
 use graphql_tools::validation::utils::ValidationError;
 use http::{HeaderName, Method, Request, Response, StatusCode};
 use query_planner::{ast::normalization::error::NormalizationError, planner::PlannerError};
@@ -68,6 +68,8 @@ pub enum PipelineErrorVariant {
     VariablesCoercionError(String),
     #[error("Validation errors")]
     ValidationErrors(Arc<Vec<ValidationError>>),
+    #[error("Failed to execute a plan: {0}")]
+    PlanExecutionError(PlanExecutionError),
     #[error("Failed to produce a plan: {0}")]
     PlannerError(PlannerError),
 }
@@ -77,6 +79,7 @@ impl PipelineErrorVariant {
         match self {
             Self::UnsupportedHttpMethod(_) => "METHOD_NOT_ALLOWED",
             Self::PlannerError(_) => "QUERY_PLAN_BUILD_FAILED",
+            Self::PlanExecutionError(_) => "QUERY_PLAN_EXECUTION_FAILED",
             Self::InternalServiceError(_) => "INTERNAL_SERVER_ERROR",
             Self::FailedToParseOperation(_) => "GRAPHQL_PARSE_FAILED",
             Self::ValidationErrors(_) => "GRAPHQL_VALIDATION_FAILED",
@@ -105,6 +108,7 @@ impl PipelineErrorVariant {
         match (self, prefer_ok) {
             (Self::InternalServiceError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::PlannerError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::PlanExecutionError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::UnsupportedHttpMethod(_), _) => StatusCode::METHOD_NOT_ALLOWED,
             (Self::FailedToReadBodyBytes(_), _) => StatusCode::BAD_REQUEST,
             (Self::InvalidHeaderValue(_), _) => StatusCode::BAD_REQUEST,
