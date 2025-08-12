@@ -150,7 +150,7 @@ impl IntoResponse for PipelineError {
 
             return (
                 status,
-                serde_json::to_string(&validation_error_result).unwrap(),
+                sonic_rs::to_string(&validation_error_result).unwrap(),
             )
                 .into_response();
         }
@@ -171,6 +171,6 @@ impl IntoResponse for PipelineError {
             extensions: None,
         };
 
-        (status, serde_json::to_string(&result).unwrap()).into_response()
+        (status, sonic_rs::to_string(&result).unwrap()).into_response()
     }
 }
