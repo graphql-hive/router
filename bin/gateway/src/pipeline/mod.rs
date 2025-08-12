@@ -103,5 +103,5 @@ pub async fn execute_pipeline(
     .await
     .map_err(|err| req.new_pipeline_error(PipelineErrorVariant::PlanExecutionError(err)))?;
 
-    Ok(execution_result)
+    Ok(execution_result.into())
 }

@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
-use ntex_bytes::Bytes as OutputBytes;
 use query_planner::planner::plan_nodes::{
     ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
     QueryPlan, SequenceNode,
@@ -45,7 +44,7 @@ pub struct QueryPlanExecutionContext<'exec> {
 
 pub async fn execute_query_plan<'exec>(
     ctx: QueryPlanExecutionContext<'exec>,
-) -> Result<OutputBytes, PlanExecutionError> {
+) -> Result<Vec<u8>, PlanExecutionError> {
     let init_value = if let Some(introspection_query) = ctx.introspection_context.query {
         resolve_introspection(introspection_query, ctx.introspection_context)
     } else {

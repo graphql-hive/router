@@ -1,11 +1,11 @@
-use crate::json_writer::BytesMutExt;
+use crate::json_writer::{write_and_escape_string, write_f64, write_i64, write_u64};
 use crate::projection::error::ProjectionError;
 use crate::projection::plan::{
     FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan,
 };
 use crate::response::graphql_error::GraphQLError;
 use crate::response::value::Value;
-use ntex_bytes::{Bytes as OutputBytes, BytesMut as OutputBytesMut};
+use bytes::BufMut;
 use sonic_rs::JsonValueTrait;
 use std::collections::HashMap;
 
@@ -23,13 +23,13 @@ pub fn project_by_operation(
     operation_type_name: &str,
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-) -> Result<OutputBytes, ProjectionError> {
-    let mut buffer = OutputBytesMut::new();
-    buffer.extend_from_slice(OPEN_BRACE);
-    buffer.extend_from_slice(QUOTE);
-    buffer.extend_from_slice("data".as_bytes());
-    buffer.extend_from_slice(QUOTE);
-    buffer.extend_from_slice(COLON);
+) -> Result<Vec<u8>, ProjectionError> {
+    let mut buffer = Vec::with_capacity(4096);
+    buffer.put(OPEN_BRACE);
+    buffer.put(QUOTE);
+    buffer.put("data".as_bytes());
+    buffer.put(QUOTE);
+    buffer.put(COLON);
 
     let mut errors = errors;
 
@@ -46,20 +46,20 @@ pub fn project_by_operation(
             &mut first,
         );
         if !first {
-            buffer.extend_from_slice(CLOSE_BRACE);
+            buffer.put(CLOSE_BRACE);
         } else {
             // If no selections were made, we should return an empty object
-            buffer.extend_from_slice(EMPTY_OBJECT);
+            buffer.put(EMPTY_OBJECT);
         }
     }
 
     if !errors.is_empty() {
-        buffer.extend_from_slice(COMMA);
-        buffer.extend_from_slice(QUOTE);
-        buffer.extend_from_slice("errors".as_bytes());
-        buffer.extend_from_slice(QUOTE);
-        buffer.extend_from_slice(COLON);
-        buffer.extend_from_slice(
+        buffer.put(COMMA);
+        buffer.put(QUOTE);
+        buffer.put("errors".as_bytes());
+        buffer.put(QUOTE);
+        buffer.put(COLON);
+        buffer.put_slice(
             &sonic_rs::to_vec(&errors)
                 .map_err(|e| ProjectionError::ErrorsSerializationFailure(e.to_string()))?,
         );
@@ -69,17 +69,17 @@ pub fn project_by_operation(
         if !ext.is_empty() {
             let serialized_extensions = sonic_rs::to_vec(ext)
                 .map_err(|e| ProjectionError::ExtensionsSerializationFailure(e.to_string()))?;
-            buffer.extend_from_slice(COMMA);
-            buffer.extend_from_slice(QUOTE);
-            buffer.extend_from_slice("extensions".as_bytes());
-            buffer.extend_from_slice(QUOTE);
-            buffer.extend_from_slice(COLON);
-            buffer.extend_from_slice(&serialized_extensions);
+            buffer.put(COMMA);
+            buffer.put(QUOTE);
+            buffer.put("extensions".as_bytes());
+            buffer.put(QUOTE);
+            buffer.put(COLON);
+            buffer.put_slice(&serialized_extensions);
         }
     }
 
-    buffer.extend_from_slice(CLOSE_BRACE);
-    Ok(buffer.freeze())
+    buffer.put(CLOSE_BRACE);
+    Ok(buffer)
 }
 
 fn project_selection_set(
@@ -87,27 +87,27 @@ fn project_selection_set(
     errors: &mut Vec<GraphQLError>,
     selection: &FieldProjectionPlan,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-    buffer: &mut OutputBytesMut,
+    buffer: &mut Vec<u8>,
 ) {
     match data {
-        Value::Null => buffer.extend_from_slice(NULL),
-        Value::Bool(true) => buffer.extend_from_slice(TRUE),
-        Value::Bool(false) => buffer.extend_from_slice(FALSE),
-        Value::U64(num) => buffer.write_u64(*num),
-        Value::I64(num) => buffer.write_i64(*num),
-        Value::F64(num) => buffer.write_f64(*num),
-        Value::String(value) => buffer.write_and_escape_string(value),
+        Value::Null => buffer.put(NULL),
+        Value::Bool(true) => buffer.put(TRUE),
+        Value::Bool(false) => buffer.put(FALSE),
+        Value::U64(num) => write_u64(buffer, *num),
+        Value::I64(num) => write_i64(buffer, *num),
+        Value::F64(num) => write_f64(buffer, *num),
+        Value::String(value) => write_and_escape_string(buffer, value),
         Value::Array(arr) => {
-            buffer.extend_from_slice(OPEN_BRACKET);
+            buffer.put(OPEN_BRACKET);
             let mut first = true;
             for item in arr.iter() {
                 if !first {
-                    buffer.extend_from_slice(COMMA);
+                    buffer.put(COMMA);
                 }
                 project_selection_set(item, errors, selection, variable_values, buffer);
                 first = false;
             }
-            buffer.extend_from_slice(CLOSE_BRACKET);
+            buffer.put(CLOSE_BRACKET);
         }
         Value::Object(obj) => {
             match selection.selections.as_ref() {
@@ -128,15 +128,15 @@ fn project_selection_set(
                         &mut first,
                     );
                     if !first {
-                        buffer.extend_from_slice(CLOSE_BRACE);
+                        buffer.put(CLOSE_BRACE);
                     } else {
                         // If no selections were made, we should return an empty object
-                        buffer.extend_from_slice(EMPTY_OBJECT);
+                        buffer.put(EMPTY_OBJECT);
                     }
                 }
                 None => {
                     // If the selection set is not projected, we should return null
-                    buffer.extend_from_slice(NULL)
+                    buffer.put(NULL)
                 }
             }
         }
@@ -151,7 +151,7 @@ fn project_selection_set_with_map(
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     parent_type_name: &str,
-    buffer: &mut OutputBytesMut,
+    buffer: &mut Vec<u8>,
     first: &mut bool,
 ) {
     for selection in selections {
@@ -177,27 +177,27 @@ fn project_selection_set_with_map(
         ) {
             Ok(_) => {
                 if *first {
-                    buffer.extend_from_slice(OPEN_BRACE);
+                    buffer.put(OPEN_BRACE);
                 } else {
-                    buffer.extend_from_slice(COMMA);
+                    buffer.put(COMMA);
                 }
                 *first = false;
 
-                buffer.extend_from_slice(QUOTE);
-                buffer.extend_from_slice(selection.response_key.as_bytes());
-                buffer.extend_from_slice(QUOTE);
-                buffer.extend_from_slice(COLON);
+                buffer.put(QUOTE);
+                buffer.put(selection.response_key.as_bytes());
+                buffer.put(QUOTE);
+                buffer.put(COLON);
 
                 if let Some(field_val) = field_val {
                     project_selection_set(field_val, errors, selection, variable_values, buffer);
                 } else if selection.field_name == TYPENAME_FIELD_NAME {
                     // If the field is TYPENAME_FIELD, we should set it to the parent type name
-                    buffer.extend_from_slice(QUOTE);
-                    buffer.extend_from_slice(parent_type_name.as_bytes());
-                    buffer.extend_from_slice(QUOTE);
+                    buffer.put(QUOTE);
+                    buffer.put(parent_type_name.as_bytes());
+                    buffer.put(QUOTE);
                 } else {
                     // If the field is not found in the object, set it to Null
-                    buffer.extend_from_slice(NULL);
+                    buffer.put(NULL);
                 }
             }
             Err(FieldProjectionConditionError::Skip) => {
@@ -210,17 +210,17 @@ fn project_selection_set_with_map(
             }
             Err(FieldProjectionConditionError::InvalidEnumValue) => {
                 if *first {
-                    buffer.extend_from_slice(OPEN_BRACE);
+                    buffer.put(OPEN_BRACE);
                 } else {
-                    buffer.extend_from_slice(COMMA);
+                    buffer.put(COMMA);
                 }
                 *first = false;
 
-                buffer.extend_from_slice(QUOTE);
-                buffer.extend_from_slice(selection.response_key.as_bytes());
-                buffer.extend_from_slice(QUOTE);
-                buffer.extend_from_slice(COLON);
-                buffer.extend_from_slice(NULL);
+                buffer.put(QUOTE);
+                buffer.put(selection.response_key.as_bytes());
+                buffer.put(QUOTE);
+                buffer.put(COLON);
+                buffer.put(NULL);
                 errors.push(GraphQLError {
                     message: "Value is not a valid enum value".to_string(),
                     locations: None,
@@ -230,18 +230,18 @@ fn project_selection_set_with_map(
             }
             Err(FieldProjectionConditionError::InvalidFieldType) => {
                 if *first {
-                    buffer.extend_from_slice(OPEN_BRACE);
+                    buffer.put(OPEN_BRACE);
                 } else {
-                    buffer.extend_from_slice(COMMA);
+                    buffer.put(COMMA);
                 }
                 *first = false;
 
                 // Skip this field as the field type does not match
-                buffer.extend_from_slice(QUOTE);
-                buffer.extend_from_slice(selection.response_key.as_bytes());
-                buffer.extend_from_slice(QUOTE);
-                buffer.extend_from_slice(COLON);
-                buffer.extend_from_slice(NULL);
+                buffer.put(QUOTE);
+                buffer.put(selection.response_key.as_bytes());
+                buffer.put(QUOTE);
+                buffer.put(COLON);
+                buffer.put(NULL);
             }
         }
     }
