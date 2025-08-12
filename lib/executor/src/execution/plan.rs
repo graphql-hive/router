@@ -549,22 +549,13 @@ fn condition_node_by_variables<'a>(
     condition_node: &'a ConditionNode,
     variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
 ) -> Option<&'a PlanNode> {
-    let condition_value = variable_values
-        .as_ref()
-        .and_then(|vars| vars.get(&condition_node.condition))
-        .is_some_and(|val| match val.as_ref() {
-            ValueRef::Bool(b) => b,
-            _ => false,
-        });
-    if condition_value {
-        if let Some(if_clause) = &condition_node.if_clause {
-            Some(if_clause)
-        } else {
-            None
-        }
-    } else if let Some(else_clause) = &condition_node.else_clause {
-        Some(else_clause)
+    let vars = variable_values.as_ref()?;
+    let value = vars.get(&condition_node.condition)?;
+    let condition_met = matches!(value.as_ref(), ValueRef::Bool(true));
+
+    if condition_met {
+        condition_node.if_clause.as_deref()
     } else {
-        None
+        condition_node.else_clause.as_deref()
     }
 }
