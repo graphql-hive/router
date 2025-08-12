@@ -42,8 +42,6 @@ pub struct QueryPlanExecutionContext<'exec> {
     pub executors: &'exec SubgraphExecutorMap,
 }
 
-// TODO: simplfy args
-#[allow(clippy::too_many_arguments)]
 pub async fn execute_query_plan<'exec>(
     ctx: QueryPlanExecutionContext<'exec>,
 ) -> Result<Bytes, PlanExecutionError> {
@@ -78,10 +76,10 @@ pub async fn execute_query_plan<'exec>(
     .map_err(|e| e.into())
 }
 
-pub struct Executor<'a> {
-    variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
-    schema_metadata: &'a SchemaMetadata,
-    executors: &'a SubgraphExecutorMap,
+pub struct Executor<'exec> {
+    variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
+    schema_metadata: &'exec SchemaMetadata,
+    executors: &'exec SubgraphExecutorMap,
 }
 
 struct ConcurrencyScope<'exec, T> {
@@ -143,11 +141,11 @@ struct PreparedFlattenData {
     representation_hash_to_index: HashMap<u64, usize>,
 }
 
-impl<'a> Executor<'a> {
+impl<'exec> Executor<'exec> {
     pub fn new(
-        variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
-        executors: &'a SubgraphExecutorMap,
-        schema_metadata: &'a SchemaMetadata,
+        variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
+        executors: &'exec SubgraphExecutorMap,
+        schema_metadata: &'exec SchemaMetadata,
     ) -> Self {
         Executor {
             variable_values,
@@ -156,7 +154,7 @@ impl<'a> Executor<'a> {
         }
     }
 
-    pub async fn execute(&self, ctx: &mut ExecutionContext<'a>, plan: Option<&PlanNode>) {
+    pub async fn execute(&self, ctx: &mut ExecutionContext<'exec>, plan: Option<&PlanNode>) {
         match plan {
             Some(PlanNode::Fetch(node)) => self.execute_fetch_wave(ctx, node).await,
             Some(PlanNode::Parallel(node)) => self.execute_parallel_wave(ctx, node).await,
@@ -169,7 +167,7 @@ impl<'a> Executor<'a> {
         }
     }
 
-    async fn execute_fetch_wave(&self, ctx: &mut ExecutionContext<'a>, node: &FetchNode) {
+    async fn execute_fetch_wave(&self, ctx: &mut ExecutionContext<'exec>, node: &FetchNode) {
         match self.execute_fetch_node(node, None).await {
             Ok(result) => self.process_job_result(ctx, result),
             Err(err) => ctx.errors.push(GraphQLError {
@@ -181,13 +179,13 @@ impl<'a> Executor<'a> {
         }
     }
 
-    async fn execute_sequence_wave(&self, ctx: &mut ExecutionContext<'a>, node: &SequenceNode) {
+    async fn execute_sequence_wave(&self, ctx: &mut ExecutionContext<'exec>, node: &SequenceNode) {
         for child in &node.nodes {
             Box::pin(self.execute_plan_node(ctx, child)).await;
         }
     }
 
-    async fn execute_parallel_wave(&self, ctx: &mut ExecutionContext<'a>, node: &ParallelNode) {
+    async fn execute_parallel_wave(&self, ctx: &mut ExecutionContext<'exec>, node: &ParallelNode) {
         let mut scope = ConcurrencyScope::new();
 
         for child in &node.nodes {
@@ -212,7 +210,7 @@ impl<'a> Executor<'a> {
         }
     }
 
-    async fn execute_plan_node(&self, ctx: &mut ExecutionContext<'a>, node: &PlanNode) {
+    async fn execute_plan_node(&self, ctx: &mut ExecutionContext<'exec>, node: &PlanNode) {
         match node {
             PlanNode::Fetch(fetch_node) => match self.execute_fetch_node(fetch_node, None).await {
                 Ok(job) => {
@@ -279,11 +277,11 @@ impl<'a> Executor<'a> {
         }
     }
 
-    fn prepare_job_future<'s>(
-        &'s self,
-        node: &'s PlanNode,
-        final_response: &Value<'a>,
-    ) -> BoxFuture<'s, Result<ExecutionJob, String>> {
+    fn prepare_job_future<'wave>(
+        &'wave self,
+        node: &'wave PlanNode,
+        final_response: &Value<'exec>,
+    ) -> BoxFuture<'wave, Result<ExecutionJob, String>> {
         match node {
             PlanNode::Fetch(fetch_node) => Box::pin(self.execute_fetch_node(fetch_node, None)),
             PlanNode::Flatten(flatten_node) => {
@@ -311,10 +309,10 @@ impl<'a> Executor<'a> {
 
     fn process_subgraph_response(
         &self,
-        ctx: &mut ExecutionContext<'a>,
+        ctx: &mut ExecutionContext<'exec>,
         response_bytes: Bytes,
         fetch_node_id: i64,
-    ) -> Option<(Value<'a>, Option<&'a Vec<FetchRewrite>>)> {
+    ) -> Option<(Value<'exec>, Option<&'exec Vec<FetchRewrite>>)> {
         let idx = ctx.response_storage.add_response(response_bytes);
         // SAFETY: The `bytes` are transmuted to the lifetime `'a` of the `ExecutionContext`.
         // This is safe because the `response_storage` is part of the `ExecutionContext` (`ctx`)
@@ -322,12 +320,13 @@ impl<'a> Executor<'a> {
         // dropped until all references are gone. The `Value`s deserialized from this byte
         // slice will borrow from it, and they are stored in `ctx.final_response`, which also
         // lives for `'a`.
-        let bytes: &'a [u8] = unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
+        let bytes: &'exec [u8] =
+            unsafe { std::mem::transmute(ctx.response_storage.get_bytes(idx)) };
 
         // SAFETY: The `output_rewrites` are transmuted to the lifetime `'a`. This is safe
         // because `output_rewrites` is part of `OutputRewritesStorage` which is owned by
         // `ExecutionContext` and lives for `'a`.
-        let output_rewrites: Option<&'a Vec<FetchRewrite>> =
+        let output_rewrites: Option<&'exec Vec<FetchRewrite>> =
             unsafe { std::mem::transmute(ctx.output_rewrites.get(fetch_node_id)) };
 
         let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
@@ -350,12 +349,12 @@ impl<'a> Executor<'a> {
         // The `response.data` has a lifetime tied to `deserializer`, which is tied to `bytes`.
         // Since `bytes` has been transmuted to `'a`, `response.data` can also be considered
         // to have lifetime `'a`.
-        let data: Value<'a> = unsafe { std::mem::transmute(response.data) };
+        let data: Value<'exec> = unsafe { std::mem::transmute(response.data) };
 
         Some((data, output_rewrites))
     }
 
-    fn process_job_result(&self, ctx: &mut ExecutionContext<'a>, job: ExecutionJob) {
+    fn process_job_result(&self, ctx: &mut ExecutionContext<'exec>, job: ExecutionJob) {
         match job {
             ExecutionJob::Fetch(job) => {
                 if let Some((mut data, output_rewrites)) =
@@ -378,7 +377,8 @@ impl<'a> Executor<'a> {
                         // SAFETY: The `entities` vector is transmuted to have lifetime `'a`. This is
                         // safe because the data it contains is borrowed from the response bytes,
                         // which are guaranteed to live for `'a`.
-                        let mut entities: Vec<Value<'a>> = unsafe { std::mem::transmute(entities) };
+                        let mut entities: Vec<Value<'exec>> =
+                            unsafe { std::mem::transmute(entities) };
 
                         if let Some(output_rewrites) = output_rewrites {
                             for output_rewrite in output_rewrites {
@@ -423,7 +423,7 @@ impl<'a> Executor<'a> {
 
     fn prepare_flatten_data(
         &self,
-        final_response: &Value<'a>,
+        final_response: &Value<'exec>,
         flatten_node: &FlattenNode,
     ) -> Result<Option<PreparedFlattenData>, PlanExecutionError> {
         let fetch_node = match flatten_node.node.as_ref() {
