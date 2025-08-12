@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use query_planner::state::supergraph_state::TypeNode;
 use sonic_rs::{JsonNumberTrait, Value, ValueRef};
 
-use query_plan_executor::schema_metadata::SchemaMetadata;
+use crate::introspection::schema::SchemaMetadata;
 
 pub fn collect_variables(
     operation: &query_planner::ast::operation::OperationDefinition,

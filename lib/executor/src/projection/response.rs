@@ -1,10 +1,10 @@
 use crate::projection::error::ProjectionError;
+use crate::projection::plan::{
+    FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan,
+};
 use crate::response::graphql_error::GraphQLError;
 use crate::response::value::Value;
 use bytes::{BufMut, Bytes, BytesMut};
-use query_plan_executor::projection::{
-    FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan,
-};
 use sonic_rs::JsonValueTrait;
 use std::collections::HashMap;
 

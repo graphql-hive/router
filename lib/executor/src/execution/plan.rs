@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
-use query_plan_executor::{projection::FieldProjectionPlan, schema_metadata::SchemaMetadata};
 use query_planner::planner::plan_nodes::{
     ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
     QueryPlan, SequenceNode,
@@ -14,8 +13,12 @@ use crate::{
     context::ExecutionContext,
     execution::{error::PlanExecutionError, rewrites::FetchRewriteExt},
     executors::{common::HttpExecutionRequest, map::SubgraphExecutorMap},
-    introspection::resolve::{resolve_introspection, IntrospectionContext},
+    introspection::{
+        resolve::{resolve_introspection, IntrospectionContext},
+        schema::SchemaMetadata,
+    },
     projection::{
+        plan::FieldProjectionPlan,
         request::{project_requires, RequestProjectionContext},
         response::project_by_operation,
     },

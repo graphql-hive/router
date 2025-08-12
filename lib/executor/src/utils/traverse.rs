@@ -1,7 +1,9 @@
-use query_plan_executor::schema_metadata::SchemaMetadata;
 use query_planner::planner::plan_nodes::FlattenNodePathSegment;
 
-use crate::{response::value::Value, utils::consts::TYPENAME_FIELD_NAME};
+use crate::{
+    introspection::schema::SchemaMetadata, response::value::Value,
+    utils::consts::TYPENAME_FIELD_NAME,
+};
 
 pub fn traverse_and_callback_mut<'a, Callback>(
     current_data: &mut Value<'a>,

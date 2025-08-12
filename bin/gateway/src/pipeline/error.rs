@@ -1,11 +1,12 @@
 use std::{collections::HashMap, sync::Arc};
 
 use axum::{body::Body, extract::rejection::QueryRejection, response::IntoResponse};
+use executor::response::graphql_error::GraphQLError;
 use graphql_tools::validation::utils::ValidationError;
 use http::{HeaderName, Method, Request, Response, StatusCode};
-use query_plan_executor::{ExecutionResult, GraphQLError};
 use query_planner::{ast::normalization::error::NormalizationError, planner::PlannerError};
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use sonic_rs::{object, Value};
 
 use crate::pipeline::header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR};
 
@@ -126,6 +127,16 @@ impl PipelineErrorVariant {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct ExecutionResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub errors: Option<Vec<GraphQLError>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<HashMap<String, Value>>,
+}
+
 impl IntoResponse for PipelineError {
     fn into_response(self) -> Response<Body> {
         let status = self.error.default_status_code(self.accept_ok);
@@ -148,10 +159,7 @@ impl IntoResponse for PipelineError {
         let message = self.error.graphql_error_message();
 
         let graphql_error = GraphQLError {
-            extensions: Some(HashMap::from([(
-                "code".to_string(),
-                Value::String(code.to_string()),
-            )])),
+            extensions: Some(Value::from_iter(&object! {"code": code.to_string()})),
             message,
             path: None,
             locations: None,

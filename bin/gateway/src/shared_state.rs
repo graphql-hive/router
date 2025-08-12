@@ -1,10 +1,12 @@
 use std::{collections::HashMap, sync::Arc};
 
-use executor::SubgraphExecutorMap;
+use executor::{
+    introspection::schema::{SchemaMetadata, SchemaWithMetadata},
+    SubgraphExecutorMap,
+};
 use graphql_parser::schema::Document;
 use graphql_tools::validation::{utils::ValidationError, validate::ValidationPlan};
 use moka::future::Cache;
-use query_plan_executor::schema_metadata::{SchemaMetadata, SchemaWithMetadata};
 use query_planner::{
     planner::{plan_nodes::QueryPlan, Planner},
     state::supergraph_state::SupergraphState,

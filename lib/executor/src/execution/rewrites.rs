@@ -1,9 +1,11 @@
-use query_plan_executor::schema_metadata::PossibleTypes;
 use query_planner::planner::plan_nodes::{
     FetchNodePathSegment, FetchRewrite, KeyRenamer, ValueSetter,
 };
 
-use crate::{response::value::Value, utils::consts::TYPENAME_FIELD_NAME};
+use crate::{
+    introspection::schema::PossibleTypes, response::value::Value,
+    utils::consts::TYPENAME_FIELD_NAME,
+};
 
 pub trait FetchRewriteExt {
     fn rewrite<'a>(&'a self, possible_types: &PossibleTypes, value: &mut Value<'a>);

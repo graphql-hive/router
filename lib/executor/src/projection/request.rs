@@ -1,8 +1,8 @@
 use bytes::{BufMut, BytesMut};
-use query_plan_executor::schema_metadata::PossibleTypes;
 use query_planner::ast::selection_item::SelectionItem;
 
 use crate::{
+    introspection::schema::PossibleTypes,
     json_writer::{write_and_escape_string, write_f64, write_i64, write_u64},
     projection::error::ProjectionError,
     response::value::Value,

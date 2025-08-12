@@ -6,7 +6,6 @@ use graphql_parser::schema::{
     TypeDefinition,
 };
 
-use query_plan_executor::schema_metadata::SchemaMetadata;
 use query_planner::ast::{
     operation::OperationDefinition,
     selection_item::SelectionItem,
@@ -15,6 +14,7 @@ use query_planner::ast::{
 };
 use query_planner::state::supergraph_state::OperationKind;
 
+use crate::introspection::schema::SchemaMetadata;
 use crate::response::value::Value;
 
 pub struct IntrospectionContext<'exec, 'schema> {

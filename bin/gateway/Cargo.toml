@@ -9,7 +9,6 @@ path = "src/main.rs"
 
 [dependencies]
 query-planner = { path = "../../lib/query-planner" }
-query-plan-executor = { path = "../../lib/query-plan-executor" }
 executor = { path = "../../lib/executor" }
 
 mimalloc = { version = "0.1.47", features = ["override"] }

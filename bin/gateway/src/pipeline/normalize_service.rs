@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use executor::introspection::partition::partition_operation;
+use executor::projection::plan::FieldProjectionPlan;
 use http::Request;
-use query_plan_executor::projection::FieldProjectionPlan;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
 use xxhash_rust::xxh3::Xxh3;

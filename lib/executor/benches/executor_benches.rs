@@ -1,9 +1,9 @@
 use criterion::Criterion;
 use criterion::{criterion_group, criterion_main};
+use executor::introspection::schema::SchemaWithMetadata;
+use executor::projection::plan::FieldProjectionPlan;
 use executor::projection::response::project_by_operation;
 use executor::response::value::Value;
-use query_plan_executor::projection::FieldProjectionPlan;
-use query_plan_executor::schema_metadata::SchemaWithMetadata;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::utils::parsing::{parse_operation, parse_schema};
 use std::hint::black_box;

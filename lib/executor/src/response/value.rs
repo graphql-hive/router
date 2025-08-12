@@ -1,5 +1,4 @@
 use core::fmt;
-use query_plan_executor::schema_metadata::PossibleTypes;
 use query_planner::ast::selection_item::SelectionItem;
 use serde::{
     de::{self, Deserializer, MapAccess, SeqAccess, Visitor},
@@ -12,7 +11,7 @@ use std::{
 };
 use xxhash_rust::xxh3::Xxh3;
 
-use crate::utils::consts::TYPENAME_FIELD_NAME;
+use crate::{introspection::schema::PossibleTypes, utils::consts::TYPENAME_FIELD_NAME};
 
 #[derive(Clone)]
 pub enum Value<'a> {
