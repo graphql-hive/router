@@ -12,9 +12,10 @@ name = "subgraphs"
 path = "lib.rs"
 
 [dependencies]
+lazy_static = { workspace = true }
+rand = { workspace = true }
+tokio = { workspace = true }
+
 async-graphql = "7.0.17"
 async-graphql-axum = "7.0.17"
 axum = "0.8.4"
-lazy_static = "1.5.0"
-rand = "0.9.1"
-tokio = { version = "1.45.1", features = ["macros", "rt-multi-thread"] }

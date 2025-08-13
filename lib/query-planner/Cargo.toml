@@ -6,32 +6,24 @@ edition = "2021"
 [lib]
 
 [dependencies]
-# GraphQL
-graphql-tools = "0.4.0"
-graphql-parser = "0.4.1"
-# Serialization
-serde = "1.0.219"
-sonic-rs = "0.5.3"
-# Tracing
-tracing = { version = "0.1.41" }
-# Data Structures
+graphql-tools = { workspace = true }
+graphql-parser = { workspace = true }
+serde = { workspace = true }
+sonic-rs = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
 petgraph = "0.8.2"
 bitflags = "2.9.1"
-# Utils
 lazy-init = "0.5.1"
-thiserror = "2.0.12"
 rustc-hash = "2.1.1"
 
 [dev-dependencies]
-# Testing
-insta = { version = "1.42.1" }
-# Benchmarking
-criterion = { version = "0.7", features = ["html_reports"] }
-# Tracing
-tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-tracing-tree = "0.4.0"
-# Utils
-lazy_static = "1.5.0"
+insta = { workspace = true }
+criterion = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-tree = { workspace = true }
+lazy_static = { workspace = true }
 
 [[bench]]
 name = "qp_benches"

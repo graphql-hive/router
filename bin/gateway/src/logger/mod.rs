@@ -1,4 +1,3 @@
-use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::{
     fmt::{self, format::FmtSpan, time::UtcTime},
     layer::SubscriberExt,
@@ -13,7 +12,7 @@ pub enum LoggingFormat {
     Json,
 }
 
-pub fn configure_logging(format: LoggingFormat, generate_perfetto_file: bool) -> Option<impl Drop> {
+pub fn configure_logging(format: LoggingFormat) {
     let timer = UtcTime::rfc_3339();
     let filter = EnvFilter::from_default_env();
 
@@ -40,23 +39,7 @@ pub fn configure_logging(format: LoggingFormat, generate_perfetto_file: bool) ->
             .boxed(),
     };
 
-    let (guard, perfetto_layer) = match generate_perfetto_file {
-        true => {
-            let (chrome_layer, _guard) = ChromeLayerBuilder::new().build();
-
-            (Some(_guard), Some(chrome_layer))
-        }
-        false => (None, None),
-    };
-
     let registry = tracing_subscriber::registry();
     let registry = registry.with(layer.boxed()).with(filter.boxed());
-
-    if let Some(perfetto_layer) = perfetto_layer {
-        registry.with(perfetto_layer.boxed()).init();
-    } else {
-        registry.init();
-    }
-
-    guard
+    registry.init();
 }
