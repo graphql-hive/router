@@ -33,20 +33,20 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@fb51252c7ba57d633bc668f941da052e410add48 # v1
       - run: cargo build --release
 
-  build-wasm:
-    name: build-wasm
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      - uses: actions-rust-lang/setup-rust-toolchain@fb51252c7ba57d633bc668f941da052e410add48 # v1
+  # build-wasm:
+  #   name: build-wasm
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  #     - uses: actions-rust-lang/setup-rust-toolchain@fb51252c7ba57d633bc668f941da052e410add48 # v1
 
-      - uses: jetli/wasm-pack-action@0d096b08b4e5a7de8c28de67e11e945404e9eefa # v0.4.0
-        with:
-          version: "latest"
+  #     - uses: jetli/wasm-pack-action@0d096b08b4e5a7de8c28de67e11e945404e9eefa # v0.4.0
+  #       with:
+  #         version: "latest"
 
-      - name: "wasm-pack: nodejs"
-        run: wasm-pack build -t nodejs -d pkg-node
-        working-directory: ./lib/wasm-lib
+  #     - name: "wasm-pack: nodejs"
+  #       run: wasm-pack build -t nodejs -d pkg-node
+  #       working-directory: ./lib/wasm-lib
 
   fmt:
     name: fmt
@@ -71,22 +71,22 @@ jobs:
         run: cargo clippy --all
 
   unit-benchmark:
-    strategy: 
+    strategy:
       matrix:
         include:
           - name: "Query Planner"
             package: "./lib/query-planner"
-          - name: "Query Plan Executor"
-            package: "./lib/query-plan-executor"
+          - name: "Executor"
+            package: "./lib/executor"
     name: ${{ matrix.name }} Benchmark
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@fb51252c7ba57d633bc668f941da052e410add48 # v1
-      - if: matrix.name == 'Query Plan Executor'
+      - if: matrix.name == 'Executor'
         name: Build subgraphs
         run: cargo build --release -p subgraphs
-      - if: matrix.name == 'Query Plan Executor'
+      - if: matrix.name == 'Executor'
         name: Run subgraphs
         run: ./target/release/subgraphs & sleep 5
       - name: Run benchmarks
@@ -98,7 +98,6 @@ jobs:
         with:
           name: ${{matrix.package}}-benchmark-results
           path: ${{matrix.package}}/target/criterion
-
 
   k6-benchmark:
     name: Overall K6 Benchmark
@@ -153,7 +152,7 @@ jobs:
         uses: mikepenz/action-junit-report@3585e9575db828022551b4231f165eb59a0e74e3 # v5
         if: (!cancelled())
         with:
-          report_paths: 'audits/reports/*.xml'
+          report_paths: "audits/reports/*.xml"
           group_reports: false
           annotate_only: true
           fail_on_failure: true # do not fail the job if the report fails
@@ -204,7 +203,7 @@ jobs:
         uses: mikepenz/action-junit-report@3585e9575db828022551b4231f165eb59a0e74e3 # v5
         if: (!cancelled())
         with:
-          report_paths: 'audits/reports/*.xml'
+          report_paths: "audits/reports/*.xml"
           group_reports: false
           job_name: federation-audit
           check_name: federation-audit
@@ -222,4 +221,3 @@ jobs:
           comment: true
           updateComment: true
           exclude_sources: /lib/,/audits/node_modules/
-    

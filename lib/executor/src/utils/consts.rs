@@ -1,0 +1,13 @@
+pub const TYPENAME_FIELD_NAME: &str = "__typename";
+pub const TYPENAME: &[u8] = b"__typename";
+pub const NULL: &[u8] = b"null";
+pub const TRUE: &[u8] = b"true";
+pub const FALSE: &[u8] = b"false";
+pub const COMMA: &[u8] = b",";
+pub const COLON: &[u8] = b":";
+pub const QUOTE: &[u8] = b"\"";
+pub const OPEN_BRACE: &[u8] = b"{";
+pub const CLOSE_BRACE: &[u8] = b"}";
+pub const OPEN_BRACKET: &[u8] = b"[";
+pub const CLOSE_BRACKET: &[u8] = b"]";
+pub const EMPTY_OBJECT: &[u8] = b"{}";

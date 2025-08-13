@@ -5,6 +5,7 @@ mod shared_state;
 
 use crate::{
     http_utils::{
+        health::health_check_handler,
         landing_page::landing_page_handler,
         request_id::{RequestIdGenerator, REQUEST_ID_HEADER_NAME},
     },
@@ -111,6 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/graphql", any_service(pipeline))
+        .route("/health", get(health_check_handler))
         .layer(
             CorsLayer::new()
                 .allow_methods([Method::GET, Method::POST, Method::OPTIONS])

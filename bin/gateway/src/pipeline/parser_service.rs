@@ -1,10 +1,11 @@
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use axum::body::Body;
 use graphql_parser::query::Document;
 use http::Request;
 use query_planner::utils::parsing::safe_parse_operation;
+use xxhash_rust::xxh3::Xxh3;
 
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::gateway_layer::{
@@ -52,7 +53,7 @@ impl GatewayPipelineLayer for GraphQLParserService {
             })?;
 
         let cache_key = {
-            let mut hasher = DefaultHasher::new();
+            let mut hasher = Xxh3::new();
             execution_params.query.hash(&mut hasher);
             hasher.finish()
         };

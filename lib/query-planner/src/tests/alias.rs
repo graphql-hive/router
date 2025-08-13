@@ -138,7 +138,7 @@ fn conflict_list_type_in_interface() -> Result<(), Box<dyn Error>> {
     },
     "###);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
     {
       "kind": "QueryPlan",
       "node": {
@@ -212,7 +212,7 @@ fn multiple_mismtaches_same_level() -> Result<(), Box<dyn Error>> {
     },
     "###);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r###"
     {
       "kind": "QueryPlan",
       "node": {
@@ -413,7 +413,7 @@ fn simple_mismatch_between_union_fields() -> Result<(), Box<dyn Error>> {
     },
     "#);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -603,7 +603,7 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
     },
     "#);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -892,7 +892,7 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
     },
     "#);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {
@@ -1242,7 +1242,7 @@ fn deeply_nested_no_conflicts() -> Result<(), Box<dyn Error>> {
     },
     "#);
 
-    insta::assert_snapshot!(format!("{}", serde_json::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
+    insta::assert_snapshot!(format!("{}", sonic_rs::to_string_pretty(&query_plan).unwrap_or_default()), @r#"
     {
       "kind": "QueryPlan",
       "node": {

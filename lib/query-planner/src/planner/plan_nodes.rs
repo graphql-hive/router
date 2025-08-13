@@ -26,6 +26,54 @@ pub struct QueryPlan {
     pub node: Option<PlanNode>,
 }
 
+impl QueryPlan {
+    pub fn fetch_nodes(&self) -> Vec<&FetchNode> {
+        match self.node.as_ref() {
+            Some(node) => {
+                let mut list = vec![];
+                Self::fetch_nodes_from_node(node, &mut list);
+                list
+            }
+            None => vec![],
+        }
+    }
+
+    fn fetch_nodes_from_node<'a>(node: &'a PlanNode, list: &mut Vec<&'a FetchNode>) {
+        match node {
+            PlanNode::Condition(node) => {
+                if let Some(node) = node.else_clause.as_ref() {
+                    Self::fetch_nodes_from_node(node.as_ref(), list);
+                }
+                if let Some(node) = node.if_clause.as_ref() {
+                    Self::fetch_nodes_from_node(node.as_ref(), list);
+                }
+            }
+            PlanNode::Fetch(node) => {
+                list.push(node);
+            }
+            PlanNode::Sequence(node) => {
+                for child in &node.nodes {
+                    Self::fetch_nodes_from_node(child, list);
+                }
+            }
+            PlanNode::Parallel(node) => {
+                for child in &node.nodes {
+                    Self::fetch_nodes_from_node(child, list);
+                }
+            }
+            PlanNode::Flatten(node) => {
+                Self::fetch_nodes_from_node(&node.node, list);
+            }
+            PlanNode::Subscription(node) => {
+                Self::fetch_nodes_from_node(node.primary.as_ref(), list);
+            }
+            PlanNode::Defer(_) => {
+                unreachable!("DeferNode is not supported yet");
+            }
+        }
+    }
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "kind")]
@@ -42,6 +90,8 @@ pub enum PlanNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FetchNode {
+    #[serde(skip_serializing)]
+    pub id: i64,
     pub service_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variable_usages: Option<BTreeSet<String>>,
@@ -202,8 +252,7 @@ impl From<MergePath> for FlattenNodePath {
 #[serde(rename_all = "camelCase")]
 pub struct ValueSetter {
     pub path: Vec<FetchNodePathSegment>,
-    // Use serde_json::Value for the 'any' type
-    pub set_value_to: serde_json::Value,
+    pub set_value_to: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -342,6 +391,7 @@ impl FetchNode {
     pub fn from_fetch_step(step: &FetchStepData, supergraph: &SupergraphState) -> Self {
         match step.is_entity_call() {
             true => FetchNode {
+                id: step.id,
                 service_name: step.service_name.0.clone(),
                 variable_usages: step.variable_usages.clone(),
                 operation_kind: Some(OperationKind::Query),
@@ -363,6 +413,7 @@ impl FetchNode {
                 let document_str = document.to_string();
 
                 FetchNode {
+                    id: step.id,
                     service_name: step.service_name.0.clone(),
                     variable_usages: step.variable_usages.clone(),
                     operation_kind: Some(step.into()),

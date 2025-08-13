@@ -48,6 +48,10 @@ impl FetchGraph {
     pub fn all_nodes(&self) -> NodeReferences<'_, FetchStepData> {
         self.graph.node_references()
     }
+
+    pub fn create_fetch_id(&self) -> i64 {
+        (self.graph.node_count() + 1) as i64
+    }
 }
 
 impl FetchGraph {
@@ -68,7 +72,7 @@ impl FetchGraph {
         self.is_descendant_of(a, b) || self.is_descendant_of(b, a)
     }
 
-    pub fn step_indices(&self) -> NodeIndices<FetchStepData> {
+    pub fn step_indices<'a>(&'a self) -> NodeIndices<'a, FetchStepData> {
         self.graph.node_indices()
     }
 
@@ -247,6 +251,7 @@ fn create_noop_fetch_step(fetch_graph: &mut FetchGraph, created_from_requires: b
         FetchStepFlags::empty()
     };
     fetch_graph.add_step(FetchStepData {
+        id: fetch_graph.create_fetch_id(),
         service_name: SubgraphName::any(),
         response_path: MergePath::default(),
         input: TypeAwareSelection {
@@ -284,6 +289,7 @@ fn create_fetch_step_for_entity_call(
         FetchStepFlags::empty()
     };
     fetch_graph.add_step(FetchStepData {
+        id: fetch_graph.create_fetch_id(),
         service_name: subgraph_name.clone(),
         response_path: response_path.clone(),
         input: TypeAwareSelection {
@@ -316,6 +322,7 @@ fn create_fetch_step_for_root_move(
     mutation_field_position: MutationFieldPosition,
 ) -> NodeIndex {
     let idx = fetch_graph.add_step(FetchStepData {
+        id: fetch_graph.create_fetch_id(),
         service_name: subgraph_name.clone(),
         response_path: MergePath::default(),
         input: TypeAwareSelection {
@@ -736,7 +743,7 @@ fn process_entity_move_edge(
                 FetchNodePathSegment::TypenameEquals(output_type_name.to_string()),
                 FetchNodePathSegment::Key("__typename".to_string()),
             ],
-            set_value_to: output_type_name.clone().into(),
+            set_value_to: output_type_name.clone(),
         }));
 
         fetch_step
@@ -879,7 +886,7 @@ fn process_interface_object_type_move_edge(
             FetchNodePathSegment::TypenameEquals(interface_type_name.to_string()),
             FetchNodePathSegment::Key("__typename".to_string()),
         ],
-        set_value_to: interface_type_name.clone().into(),
+        set_value_to: interface_type_name.clone(),
     }));
 
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
@@ -1288,7 +1295,7 @@ fn process_requires_field_edge(
                 FetchNodePathSegment::TypenameEquals(head_type_name.to_string()),
                 FetchNodePathSegment::Key("__typename".to_string()),
             ],
-            set_value_to: head_type_name.clone().into(),
+            set_value_to: head_type_name.clone(),
         }));
     }
 

@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::body::Body;
+use executor::variables::collect_variables;
 use http::{Method, Request};
-use query_plan_executor::variables::collect_variables;
 use query_planner::state::supergraph_state::OperationKind;
-use serde_json::Value;
+use sonic_rs::Value;
 use tracing::{error, trace, warn};
 
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
@@ -37,6 +37,15 @@ impl GatewayPipelineLayer for CoerceVariablesService {
         &self,
         req: &mut Request<Body>,
     ) -> Result<GatewayPipelineStepDecision, PipelineError> {
+        let execution_params = req
+            .extensions_mut()
+            .remove::<ExecutionRequest>()
+            .ok_or_else(|| {
+                req.new_pipeline_error(PipelineErrorVariant::InternalServiceError(
+                    "ExecutionRequest is missing",
+                ))
+            })?;
+
         let normalized_operation = req
             .extensions()
             .get::<Arc<GraphQLNormalizationPayload>>()
@@ -45,12 +54,6 @@ impl GatewayPipelineLayer for CoerceVariablesService {
                     "GraphQLNormalizationPayload is missing",
                 ))
             })?;
-
-        let execution_params = req.extensions().get::<ExecutionRequest>().ok_or_else(|| {
-            req.new_pipeline_error(PipelineErrorVariant::InternalServiceError(
-                "ExecutionRequest is missing",
-            ))
-        })?;
 
         let app_state = req
             .extensions()
@@ -75,7 +78,7 @@ impl GatewayPipelineLayer for CoerceVariablesService {
 
         match collect_variables(
             &normalized_operation.operation_for_plan,
-            &execution_params.variables,
+            execution_params.variables,
             &app_state.schema_metadata,
         ) {
             Ok(values) => {

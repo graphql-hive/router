@@ -1,11 +1,12 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use axum::{body::Body, extract::rejection::QueryRejection, response::IntoResponse};
+use executor::{execution::error::PlanExecutionError, response::graphql_error::GraphQLError};
 use graphql_tools::validation::utils::ValidationError;
 use http::{HeaderName, Method, Request, Response, StatusCode};
-use query_plan_executor::{ExecutionResult, GraphQLError};
 use query_planner::{ast::normalization::error::NormalizationError, planner::PlannerError};
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use sonic_rs::{object, Value};
 
 use crate::pipeline::header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR};
 
@@ -67,6 +68,8 @@ pub enum PipelineErrorVariant {
     VariablesCoercionError(String),
     #[error("Validation errors")]
     ValidationErrors(Arc<Vec<ValidationError>>),
+    #[error("Failed to execute a plan: {0}")]
+    PlanExecutionError(PlanExecutionError),
     #[error("Failed to produce a plan: {0}")]
     PlannerError(PlannerError),
 }
@@ -76,6 +79,7 @@ impl PipelineErrorVariant {
         match self {
             Self::UnsupportedHttpMethod(_) => "METHOD_NOT_ALLOWED",
             Self::PlannerError(_) => "QUERY_PLAN_BUILD_FAILED",
+            Self::PlanExecutionError(_) => "QUERY_PLAN_EXECUTION_FAILED",
             Self::InternalServiceError(_) => "INTERNAL_SERVER_ERROR",
             Self::FailedToParseOperation(_) => "GRAPHQL_PARSE_FAILED",
             Self::ValidationErrors(_) => "GRAPHQL_VALIDATION_FAILED",
@@ -104,6 +108,7 @@ impl PipelineErrorVariant {
         match (self, prefer_ok) {
             (Self::InternalServiceError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::PlannerError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::PlanExecutionError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::UnsupportedHttpMethod(_), _) => StatusCode::METHOD_NOT_ALLOWED,
             (Self::FailedToReadBodyBytes(_), _) => StatusCode::BAD_REQUEST,
             (Self::InvalidHeaderValue(_), _) => StatusCode::BAD_REQUEST,
@@ -126,20 +131,24 @@ impl PipelineErrorVariant {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct FailedExecutionResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub errors: Option<Vec<GraphQLError>>,
+}
+
 impl IntoResponse for PipelineError {
     fn into_response(self) -> Response<Body> {
         let status = self.error.default_status_code(self.accept_ok);
 
         if let PipelineErrorVariant::ValidationErrors(validation_errors) = self.error {
-            let validation_error_result = ExecutionResult {
-                data: None,
+            let validation_error_result = FailedExecutionResult {
                 errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
-                extensions: None,
             };
 
             return (
                 status,
-                serde_json::to_string(&validation_error_result).unwrap(),
+                sonic_rs::to_string(&validation_error_result).unwrap(),
             )
                 .into_response();
         }
@@ -148,21 +157,16 @@ impl IntoResponse for PipelineError {
         let message = self.error.graphql_error_message();
 
         let graphql_error = GraphQLError {
-            extensions: Some(HashMap::from([(
-                "code".to_string(),
-                Value::String(code.to_string()),
-            )])),
+            extensions: Some(Value::from_iter(&object! {"code": code.to_string()})),
             message,
             path: None,
             locations: None,
         };
 
-        let result = ExecutionResult {
-            data: None,
+        let result = FailedExecutionResult {
             errors: Some(vec![graphql_error]),
-            extensions: None,
         };
 
-        (status, serde_json::to_string(&result).unwrap()).into_response()
+        (status, sonic_rs::to_string(&result).unwrap()).into_response()
     }
 }
