@@ -78,12 +78,9 @@ pub fn write_f64(writer: &mut BytesMut, value: f64) {
         return;
     }
 
-    let mut buf = ryu::Buffer::new();
-    let mut result = buf.format_finite(value);
-    if result.ends_with(".0") {
-        result = unsafe { result.get_unchecked(..result.len() - 2) };
-    }
-    writer.put_slice(result.as_bytes());
+    let mut buffer = ryu::Buffer::new();
+    let s = buffer.format_finite(value);
+    writer.put(s.as_bytes())
 }
 
 pub fn write_u64(writer: &mut BytesMut, value: u64) {
