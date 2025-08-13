@@ -1,0 +1,75 @@
+name: docker
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: write
+  contents: read
+  issues: read
+  checks: write
+  pull-requests: write
+  packages: write
+  id-token: write
+
+env:
+  IMAGE_NAME: ghcr.io/graphql-hive/router
+  LICENSE: MIT
+  VENDOR: theguild
+  PLATFORMS: linux/amd64,linux/arm64
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+      - name: setup qemu
+        uses: docker/setup-qemu-action@v3.6.0
+      - name: setup buildx
+        uses: docker/setup-buildx-action@v3.11.1
+      - name: setup docker tags
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          labels: |
+            org.opencontainers.image.licenses=${{ env.LICENSE }}
+            org.opencontainers.image.vendor=${{ env.VENDOR }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: docker/login-action@v3.5.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: find toolchain
+        id: rust_toolchain
+        run: |
+          RUST_TOOLCHAIN_VERSION=$(grep 'channel' rust-toolchain.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "version=$RUST_TOOLCHAIN_VERSION" >> $GITHUB_OUTPUT
+      - name: build and push
+        uses: docker/build-push-action@v6.18.0
+        with:
+          file: ./docker/gateway.Dockerfile
+          context: .
+          build-args: RUST_TOOLCHAIN_VERSION=${{ steps.rust_toolchain.outputs.version }}
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max

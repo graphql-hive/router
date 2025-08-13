@@ -71,8 +71,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let supergraph_path = &args[1];
 
-    let supergraph_sdl =
-        std::fs::read_to_string(supergraph_path).expect("Unable to read input file");
+    let supergraph_sdl = std::fs::read_to_string(supergraph_path).unwrap_or_else(|_| {
+        panic!(
+            "Unable to read supergraph file from path: {}",
+            supergraph_path
+        )
+    });
     let parsed_schema = parse_schema(&supergraph_sdl);
     let gateway_shared_state = GatewaySharedState::new(parsed_schema);
 
