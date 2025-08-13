@@ -1,8 +1,6 @@
 #![recursion_limit = "256"]
 use std::collections::HashMap;
-use std::future::Future;
 
-use criterion::async_executor::AsyncExecutor;
 use criterion::Criterion;
 use criterion::{criterion_group, criterion_main};
 use query_plan_executor::executors::common::SubgraphExecutor;
@@ -21,16 +19,11 @@ use query_planner::utils::parsing::parse_operation;
 use query_planner::utils::parsing::parse_schema;
 mod non_projected_result;
 use serde_json::Value;
-
-struct CompioExecutor<'a>(&'a compio::runtime::Runtime);
-
-impl<'a> AsyncExecutor for CompioExecutor<'a> {
-    fn block_on<T>(&self, future: impl Future<Output = T>) -> T {
-        self.0.block_on(future)
-    }
-}
+// This is a struct that tells Criterion.rs to use the "futures" crate's current-thread executor
+use tokio::runtime::Runtime;
 
 fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
+    let rt = Runtime::new().expect("Failed to create Tokio runtime");
     let operation_path = "../../bench/operation.graphql";
     let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
         .expect("Unable to read input file");
@@ -55,9 +48,8 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
             normalized_operation,
             &schema_metadata,
         );
-    let r = compio::runtime::Runtime::new().unwrap();
     c.bench_function("query_plan_executor_pipeline_via_http", |b| {
-        b.to_async(CompioExecutor(&r)).iter(|| async {
+        b.to_async(&rt).iter(|| async {
             let query_plan = black_box(&query_plan);
             let schema_metadata = black_box(&schema_metadata);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
@@ -81,6 +73,7 @@ fn query_plan_executor_pipeline_via_http(c: &mut Criterion) {
 }
 
 fn query_plan_execution_without_projection_via_http(c: &mut Criterion) {
+    let rt = Runtime::new().expect("Failed to create Tokio runtime");
     let operation_path = "../../bench/operation.graphql";
     let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
         .expect("Unable to read input file");
@@ -100,9 +93,8 @@ fn query_plan_execution_without_projection_via_http(c: &mut Criterion) {
     let subgraph_endpoint_map = planner.supergraph.subgraph_endpoint_map;
     let schema_metadata = planner.consumer_schema.schema_metadata();
     let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(subgraph_endpoint_map);
-    let r = compio::runtime::Runtime::new().unwrap();
     c.bench_function("query_plan_execution_without_projection_via_http", |b| {
-        b.to_async(CompioExecutor(&r)).iter(|| async {
+        b.to_async(&rt).iter(|| async {
             let schema_metadata = black_box(&schema_metadata);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
             let mut execution_context = query_plan_executor::QueryPlanExecutionContext {
@@ -114,15 +106,15 @@ fn query_plan_execution_without_projection_via_http(c: &mut Criterion) {
             };
             let query_plan = black_box(&query_plan);
             let mut data = Value::Null;
-
             let result = query_plan.execute(&mut execution_context, &mut data).await;
-
             black_box(result);
+            black_box(data);
         });
     });
 }
 
 fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
+    let rt = Runtime::new().expect("Failed to create Tokio runtime");
     let operation_path = "../../bench/operation.graphql";
     let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
         .expect("Unable to read input file");
@@ -156,10 +148,8 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
             &schema_metadata,
         );
 
-    let r = compio::runtime::Runtime::new().unwrap();
-
     c.bench_function("query_plan_executor_pipeline_locally", |b| {
-        b.to_async(CompioExecutor(&r)).iter(|| async {
+        b.to_async(&rt).iter(|| async {
             let query_plan = black_box(&query_plan);
             let schema_metadata = black_box(&schema_metadata);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
@@ -183,6 +173,7 @@ fn query_plan_executor_pipeline_locally(c: &mut Criterion) {
 }
 
 fn query_plan_executor_without_projection_locally(c: &mut Criterion) {
+    let rt = Runtime::new().expect("Failed to create Tokio runtime");
     let operation_path = "../../bench/operation.graphql";
     let supergraph_sdl = std::fs::read_to_string("../../bench/supergraph.graphql")
         .expect("Unable to read input file");
@@ -210,9 +201,8 @@ fn query_plan_executor_without_projection_locally(c: &mut Criterion) {
     subgraph_executor_map.insert_boxed_arc("products".to_string(), products.to_boxed_arc());
     subgraph_executor_map.insert_boxed_arc("reviews".to_string(), reviews.to_boxed_arc());
 
-    let r = compio::runtime::Runtime::new().unwrap();
     c.bench_function("query_plan_executor_without_projection_locally", |b| {
-        b.to_async(CompioExecutor(&r)).iter(|| async {
+        b.to_async(&rt).iter(|| async {
             let query_plan = black_box(&query_plan);
             let schema_metadata = black_box(&schema_metadata);
             let subgraph_executor_map = black_box(&subgraph_executor_map);
