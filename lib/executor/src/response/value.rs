@@ -190,6 +190,37 @@ impl<'a> Value<'a> {
     pub fn is_object(&self) -> bool {
         matches!(self, Value::Object(_))
     }
+
+    #[inline]
+    pub fn estimate_size(&self) -> usize {
+        match self {
+            Value::String(s) => key_size(s),
+            Value::Object(obj) => {
+                let mut total = 0usize;
+                for (k, v) in obj.iter() {
+                    total += key_size(k);
+                    total += v.estimate_size();
+                }
+                // braces + commas + colons
+                let len = obj.len();
+                total + 2 + len + len.saturating_sub(1)
+            }
+            Value::Bool(_) => 5, /* false = 5, true = 4 */
+            Value::Null => 4,
+            Value::Array(arr) => {
+                let mut total = 0usize;
+                for v in arr.iter() {
+                    total += v.estimate_size();
+                }
+                // brackets + commas
+                let len = arr.len();
+                total + 2 + len.saturating_sub(1)
+            }
+            Value::F64(_) => 25, /* worst case scenario */
+            Value::I64(n) => i64_len(*n),
+            Value::U64(n) => u64_len(*n),
+        }
+    }
 }
 
 // Our new trait with the desired methods
@@ -357,4 +388,27 @@ impl serde::Serialize for Value<'_> {
             }
         }
     }
+}
+#[inline]
+fn key_size(key: &str) -> usize {
+    key.len() + 2 /* for "<key>" */
+}
+
+/// Calculates the number of digits in a u64.
+#[inline]
+fn u64_len(n: u64) -> usize {
+    if n == 0 {
+        return 1;
+    }
+    n.ilog10() as usize + 1
+}
+
+/// Calculates the number of characters for an i64, including the sign.
+#[inline]
+fn i64_len(n: i64) -> usize {
+    if n == 0 {
+        return 1;
+    }
+    let len = if n.is_negative() { 1 } else { 0 };
+    len + n.unsigned_abs().ilog10() as usize + 1
 }
