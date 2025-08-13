@@ -6,7 +6,10 @@ use std::{
     hash::Hash,
 };
 
-use crate::utils::pretty_display::{get_indent, PrettyDisplay};
+use crate::{
+    ast::merge_path::{Condition, MergePath, Segment},
+    utils::pretty_display::{get_indent, PrettyDisplay},
+};
 
 use super::{arguments::ArgumentsMap, selection_item::SelectionItem};
 
@@ -55,8 +58,22 @@ impl Display for SelectionSet {
 }
 
 impl SelectionSet {
+    pub fn cost(&self) -> u64 {
+        let mut cost = 1;
+
+        for node in &self.items {
+            cost += node.cost();
+        }
+
+        cost
+    }
+
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
+    }
+
+    pub fn contains(&self, other: &Self) -> bool {
+        selection_items_are_subset_of(&self.items, &other.items)
     }
 
     pub fn variable_usages(&self) -> BTreeSet<String> {
@@ -341,6 +358,234 @@ impl PrettyDisplay for InlineFragmentSelection {
         self.selections.pretty_fmt(f, depth + 1)?;
         writeln!(f, "{indent}}}")
     }
+}
+
+pub fn selection_items_are_subset_of(source: &[SelectionItem], target: &[SelectionItem]) -> bool {
+    target.iter().all(|target_node| {
+        source
+            .iter()
+            .any(|source_node| selection_item_is_subset_of(source_node, target_node))
+    })
+}
+
+fn selection_item_is_subset_of(source: &SelectionItem, target: &SelectionItem) -> bool {
+    match (source, target) {
+        (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) => {
+            if source_field.name != target_field.name {
+                return false;
+            }
+
+            if source_field.is_leaf() != target_field.is_leaf() {
+                return false;
+            }
+
+            selection_items_are_subset_of(
+                &source_field.selections.items,
+                &target_field.selections.items,
+            )
+        }
+        // TODO: support fragments
+        _ => false,
+    }
+}
+
+pub fn merge_selection_set(target: &mut SelectionSet, source: &SelectionSet, as_first: bool) {
+    if source.items.is_empty() {
+        return;
+    }
+
+    let mut pending_items = Vec::with_capacity(source.items.len());
+    for source_item in source.items.iter() {
+        let mut found = false;
+        for target_item in target.items.iter_mut() {
+            match (source_item, target_item) {
+                (SelectionItem::Field(source_field), SelectionItem::Field(target_field)) => {
+                    if source_field == target_field {
+                        found = true;
+                        merge_selection_set(
+                            &mut target_field.selections,
+                            &source_field.selections,
+                            as_first,
+                        );
+                        break;
+                    }
+                }
+                (
+                    SelectionItem::InlineFragment(source_fragment),
+                    SelectionItem::InlineFragment(target_fragment),
+                ) => {
+                    if source_fragment.type_condition == target_fragment.type_condition {
+                        found = true;
+                        merge_selection_set(
+                            &mut target_fragment.selections,
+                            &source_fragment.selections,
+                            as_first,
+                        );
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if !found {
+            pending_items.push(source_item.clone())
+        }
+    }
+
+    if !pending_items.is_empty() {
+        if as_first {
+            let mut new_items = pending_items;
+            new_items.append(&mut target.items);
+            target.items = new_items;
+        } else {
+            target.items.extend(pending_items);
+        }
+    }
+}
+
+pub fn find_selection_set_by_path_mut<'a>(
+    root_selection_set: &'a mut SelectionSet,
+    path: &MergePath,
+) -> Option<&'a mut SelectionSet> {
+    let mut current_selection_set = root_selection_set;
+
+    for path_element in path.inner.iter() {
+        match path_element {
+            Segment::List => {
+                continue;
+            }
+            Segment::Cast(type_name, condition) => {
+                let next_selection_set_option =
+                    current_selection_set
+                        .items
+                        .iter_mut()
+                        .find_map(|item| match item {
+                            SelectionItem::Field(_) => None,
+                            SelectionItem::InlineFragment(f) => {
+                                if f.type_condition.eq(type_name)
+                                    && fragment_condition_equal(condition, f)
+                                {
+                                    Some(&mut f.selections)
+                                } else {
+                                    None
+                                }
+                            }
+                            SelectionItem::FragmentSpread(_) => None,
+                        });
+
+                match next_selection_set_option {
+                    Some(next_set) => {
+                        current_selection_set = next_set;
+                    }
+                    None => {
+                        return None;
+                    }
+                }
+            }
+            Segment::Field(field_name, args_hash, condition) => {
+                let next_selection_set_option =
+                    current_selection_set
+                        .items
+                        .iter_mut()
+                        .find_map(|item| match item {
+                            SelectionItem::Field(field) => {
+                                if field.selection_identifier() == field_name
+                                    && field.arguments_hash() == *args_hash
+                                    && field_condition_equal(condition, field)
+                                {
+                                    Some(&mut field.selections)
+                                } else {
+                                    None
+                                }
+                            }
+                            SelectionItem::InlineFragment(..) => None,
+                            SelectionItem::FragmentSpread(_) => None,
+                        });
+
+                match next_selection_set_option {
+                    Some(next_set) => {
+                        current_selection_set = next_set;
+                    }
+                    None => {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+    Some(current_selection_set)
+}
+
+pub fn field_condition_equal(cond: &Option<Condition>, field: &FieldSelection) -> bool {
+    match cond {
+        Some(cond) => match cond {
+            Condition::Include(var_name) => {
+                field.include_if.as_ref().is_some_and(|v| v == var_name)
+            }
+            Condition::Skip(var_name) => field.skip_if.as_ref().is_some_and(|v| v == var_name),
+        },
+        None => field.include_if.is_none() && field.skip_if.is_none(),
+    }
+}
+
+fn fragment_condition_equal(cond: &Option<Condition>, fragment: &InlineFragmentSelection) -> bool {
+    match cond {
+        Some(cond) => match cond {
+            Condition::Include(var_name) => {
+                fragment.include_if.as_ref().is_some_and(|v| v == var_name)
+            }
+            Condition::Skip(var_name) => fragment.skip_if.as_ref().is_some_and(|v| v == var_name),
+        },
+        None => fragment.include_if.is_none() && fragment.skip_if.is_none(),
+    }
+}
+
+/// Find the arguments conflicts between two selections.
+/// Returns a vector of tuples containing the indices of conflicting fields in both "source" and "other"
+/// Both indices are returned in order to allow for easy resolution of conflicts later, in either side.
+pub fn find_arguments_conflicts(
+    source: &SelectionSet,
+    other: &SelectionSet,
+) -> Vec<(usize, usize)> {
+    other
+        .items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, other_selection)| {
+            if let SelectionItem::Field(other_field) = other_selection {
+                let other_identifier = other_field.selection_identifier();
+                let other_args_hash = other_field.arguments_hash();
+
+                let existing_in_self =
+                    source
+                        .items
+                        .iter()
+                        .enumerate()
+                        .find_map(|(self_index, self_selection)| {
+                            if let SelectionItem::Field(self_field) = self_selection {
+                                // If the field selection identifier matches and the arguments hash is different,
+                                // then it means that we can't merge the two input siblings
+                                if self_field.selection_identifier() == other_identifier
+                                    && self_field.arguments_hash() != other_args_hash
+                                {
+                                    return Some(self_index);
+                                }
+                            }
+
+                            None
+                        });
+
+                if let Some(existing_index) = existing_in_self {
+                    return Some((existing_index, index));
+                }
+
+                return None;
+            }
+
+            None
+        })
+        .collect()
 }
 
 #[cfg(test)]

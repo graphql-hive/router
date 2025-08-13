@@ -182,7 +182,7 @@ fn override_object_field_but_interface_is_requested() -> Result<(), Box<dyn Erro
         document,
     )?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
@@ -197,7 +197,7 @@ fn override_object_field_but_interface_is_requested() -> Result<(), Box<dyn Erro
             }
           }
         },
-        Flatten(path: "feed.@|[ImagePost]") {
+        Flatten(path: "feed.@") {
           Fetch(service: "b") {
             {
               ... on ImagePost {
@@ -214,7 +214,7 @@ fn override_object_field_but_interface_is_requested() -> Result<(), Box<dyn Erro
         },
       },
     },
-    "#);
+    "###);
     Ok(())
 }
 

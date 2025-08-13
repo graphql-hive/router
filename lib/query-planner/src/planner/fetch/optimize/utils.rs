@@ -7,12 +7,13 @@ use petgraph::{
 use tracing::{instrument, trace};
 
 use crate::{
-    ast::{
-        merge_path::Condition, selection_item::SelectionItem,
-        selection_set::InlineFragmentSelection,
-    },
+    ast::{merge_path::MergePath, selection_set::find_arguments_conflicts},
     planner::fetch::{
-        error::FetchGraphError, fetch_graph::FetchGraph, fetch_step_data::FetchStepFlags,
+        error::FetchGraphError,
+        fetch_graph::FetchGraph,
+        fetch_step_data::{FetchStepData, FetchStepFlags, FetchStepKind},
+        selections::FetchStepSelections,
+        state::MultiTypeFetchStep,
     },
 };
 
@@ -21,7 +22,8 @@ use crate::{
 pub(crate) fn perform_fetch_step_merge(
     self_index: NodeIndex,
     other_index: NodeIndex,
-    fetch_graph: &mut FetchGraph,
+    fetch_graph: &mut FetchGraph<MultiTypeFetchStep>,
+    force_merge_inputs: bool,
 ) -> Result<(), FetchGraphError> {
     let (me, other) = fetch_graph.get_pair_of_steps_mut(self_index, other_index)?;
 
@@ -44,29 +46,11 @@ pub(crate) fn perform_fetch_step_merge(
         // { products { ... on Product @skip(if: $bool) { __typename id price } } }
         //
         // We can't do it when both are entity calls fetch steps.
-        other.output.add(&other.input);
+        other
+            .output
+            .migrate_from_another(&other.input, &MergePath::default())?;
 
-        let old_selection_set = other.output.selection_set.clone();
-        match condition {
-            Condition::Include(var_name) => {
-                other.output.selection_set.items =
-                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: other.output.type_name.clone(),
-                        selections: old_selection_set,
-                        skip_if: None,
-                        include_if: Some(var_name),
-                    })];
-            }
-            Condition::Skip(var_name) => {
-                other.output.selection_set.items =
-                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: other.output.type_name.clone(),
-                        selections: old_selection_set,
-                        skip_if: Some(var_name),
-                        include_if: None,
-                    })];
-            }
-        }
+        other.output.wrap_with_condition(condition);
     } else if me.is_entity_call() && other.condition.is_some() {
         // We don't want to pass a condition
         // to a regular (non-entity call) fetch step,
@@ -74,19 +58,22 @@ pub(crate) fn perform_fetch_step_merge(
         me.condition = other.condition.take();
     }
 
-    let maybe_aliases = me.output.add_at_path_and_solve_conflicts(
+    let scoped_aliases = me.output.safe_migrate_from_another(
         &other.output,
-        other.response_path.slice_from(me.response_path.len()),
+        &other.response_path.slice_from(me.response_path.len()),
         (
             me.flags.contains(FetchStepFlags::USED_FOR_REQUIRES),
             other.flags.contains(FetchStepFlags::USED_FOR_REQUIRES),
         ),
-        false,
-    );
+    )?;
 
-    // In cases where merging a step resulted in internal aliasing, keep a record of the aliases.
-    if let Some(aliases) = maybe_aliases {
-        me.internal_aliases_locations.extend(aliases);
+    if !scoped_aliases.is_empty() {
+        trace!(
+            "Total of {} alises applied during safe merge of selections",
+            scoped_aliases.len()
+        );
+        // In cases where merging a step resulted in internal aliasing, keep a record of the aliases.
+        me.internal_aliases_locations.extend(scoped_aliases);
     }
 
     if let Some(input_rewrites) = other.input_rewrites.take() {
@@ -97,15 +84,19 @@ pub(crate) fn perform_fetch_step_merge(
         }
     }
 
-    // It's safe to not check if a condition was turned into an inline fragment,
-    // because if a condition is present and "me" is a non-entity fetch step,
-    // then the type_name values of the inputs are different.
-    if me.input.type_name == other.input.type_name {
+    if force_merge_inputs {
+        me.input
+            .migrate_from_another(&other.input, &MergePath::default())?;
+    } else if me.input.selecting_same_types(&other.input) {
+        // It's safe to not check if a condition was turned into an inline fragment,
+        // because if a condition is present and "me" is a non-entity fetch step,
+        // then the type_name values of the inputs are different.
         if me.response_path != other.response_path {
             return Err(FetchGraphError::MismatchedResponsePath);
         }
 
-        me.input.add(&other.input);
+        me.input
+            .migrate_from_another(&other.input, &MergePath::default())?;
     }
 
     let mut children_indexes: Vec<NodeIndex> = vec![];
@@ -145,7 +136,7 @@ pub(crate) fn perform_fetch_step_merge(
 /// The search starts from all direct parents of `child_index` *except*
 /// `target_ancestor_index`, and follows incoming edges from there.
 pub fn is_reachable_via_alternative_upstream_path(
-    graph: &FetchGraph,
+    graph: &FetchGraph<MultiTypeFetchStep>,
     child_index: NodeIndex,
     target_ancestor_index: NodeIndex,
 ) -> Result<bool, FetchGraphError> {
@@ -185,4 +176,78 @@ pub fn is_reachable_via_alternative_upstream_path(
 
     // no indirect path exists
     Ok(false)
+}
+
+impl FetchStepData<MultiTypeFetchStep> {
+    pub fn can_merge(
+        &self,
+        self_index: NodeIndex,
+        other_index: NodeIndex,
+        other: &Self,
+        fetch_graph: &FetchGraph<MultiTypeFetchStep>,
+    ) -> bool {
+        if self_index == other_index {
+            return false;
+        }
+
+        if self.service_name != other.service_name {
+            return false;
+        }
+
+        // We allow to merge root with entity calls by adding an inline fragment with the @include/@skip
+        if self.is_entity_call() && other.is_entity_call() && self.condition != other.condition {
+            return false;
+        }
+
+        // If both are entities, their response_paths should match,
+        // as we can't merge entity calls resolving different entities
+        if matches!(self.kind, FetchStepKind::Entity) && self.kind == other.kind {
+            if !self.response_path.eq(&other.response_path) {
+                return false;
+            }
+        } else {
+            // otherwise we can merge
+            if !other.response_path.starts_with(&self.response_path) {
+                return false;
+            }
+        }
+
+        if self.has_arguments_conflicts_with(other) {
+            return false;
+        }
+
+        // if the `other` FetchStep has a single parent and it's `this` FetchStep
+        if fetch_graph.parents_of(other_index).count() == 1
+            && fetch_graph
+                .parents_of(other_index)
+                .all(|edge| edge.source() == self_index)
+        {
+            return true;
+        }
+
+        // if they do not share parents, they can't be merged
+        if !fetch_graph.parents_of(self_index).all(|self_edge| {
+            fetch_graph
+                .parents_of(other_index)
+                .any(|other_edge| other_edge.source() == self_edge.source())
+        }) {
+            return false;
+        }
+
+        true
+    }
+
+    pub fn has_arguments_conflicts_with(&self, other: &Self) -> bool {
+        let input_conflicts = FetchStepSelections::<MultiTypeFetchStep>::iter_matching_types(
+            &self.input,
+            &other.input,
+            |_, self_selections, other_selections| {
+                find_arguments_conflicts(self_selections, other_selections)
+            },
+        );
+
+        input_conflicts
+            .iter()
+            .any(|(_, conflicts)| !conflicts.is_empty())
+    }
 }

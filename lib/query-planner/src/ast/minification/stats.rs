@@ -90,6 +90,7 @@ fn walk_and_collect_stats(
                                 }
 
                                 return Err(MinificationError::UnsupportedFieldInEntities(
+                                    type_def.name().to_string(),
                                     field.name.clone(),
                                 ));
                             }

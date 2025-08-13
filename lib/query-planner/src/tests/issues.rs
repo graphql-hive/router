@@ -33,7 +33,7 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
     );
     let query_plan = build_query_plan("fixture/issues/281.supergraph.graphql", document)?;
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    insta::assert_snapshot!(format!("{}", query_plan), @r###"
     QueryPlan {
       Sequence {
         Fetch(service: "a") {
@@ -59,39 +59,23 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
             id
           }
         },
-        Parallel {
-          Flatten(path: "viewer.review|[UserReview].product") {
-            Fetch(service: "b") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  pid
-                }
+        Flatten(path: "viewer.review.product") {
+          Fetch(service: "b") {
+            {
+              ... on Product {
+                __typename
+                id
               }
-            },
-          },
-          Flatten(path: "viewer.review|[AnonymousReview].product") {
-            Fetch(service: "b") {
-              {
-                ... on Product {
-                  __typename
-                  id
-                }
-              } =>
-              {
-                ... on Product {
-                  b
-                }
+            } =>
+            {
+              ... on Product {
+                pid
+                b
               }
-            },
+            }
           },
         },
-        Flatten(path: "viewer.review|[UserReview].product") {
+        Flatten(path: "viewer.review.product") {
           Fetch(service: "c") {
             {
               ... on Product {
@@ -107,7 +91,7 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
             }
           },
         },
-        Flatten(path: "viewer.review|[UserReview].product") {
+        Flatten(path: "viewer.review.product") {
           Fetch(service: "d") {
             {
               ... on Product {
@@ -124,7 +108,7 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
         },
       },
     },
-    "#);
+    "###);
 
     Ok(())
 }
