@@ -13,6 +13,12 @@ use query_planner::{
 
 use crate::{introspection::schema::SchemaMetadata, utils::consts::TYPENAME_FIELD_NAME};
 
+#[derive(Debug, Clone)]
+pub enum TypeCondition {
+    Exact(String),
+    OneOf(HashSet<String>),
+}
+
 #[derive(Debug)]
 pub struct FieldProjectionPlan {
     pub field_name: String,
@@ -26,8 +32,8 @@ pub struct FieldProjectionPlan {
 pub enum FieldProjectionCondition {
     IncludeIfVariable(String),
     SkipIfVariable(String),
-    ParentTypeCondition(HashSet<String>),
-    FieldTypeCondition(HashSet<String>),
+    ParentTypeCondition(TypeCondition),
+    FieldTypeCondition(TypeCondition),
     EnumValuesCondition(HashSet<String>),
     Or(Box<FieldProjectionCondition>, Box<FieldProjectionCondition>),
     And(Box<FieldProjectionCondition>, Box<FieldProjectionCondition>),
@@ -52,10 +58,17 @@ impl FieldProjectionPlan {
             None => "Query",
         };
 
-        let field_type_conditions = schema_metadata
-            .possible_types
-            .get_possible_types(root_type_name);
-        let conditions = FieldProjectionCondition::ParentTypeCondition(field_type_conditions);
+        let root_type_condition = if schema_metadata.is_object_type(root_type_name) {
+            TypeCondition::Exact(root_type_name.to_string())
+        } else {
+            TypeCondition::OneOf(
+                schema_metadata
+                    .possible_types
+                    .get_possible_types(root_type_name),
+            )
+        };
+
+        let conditions = FieldProjectionCondition::ParentTypeCondition(root_type_condition);
         (
             root_type_name,
             Self::from_selection_set(
@@ -191,20 +204,26 @@ impl FieldProjectionPlan {
             }
         };
 
-        let possible_types_for_field = schema_metadata
-            .possible_types
-            .get_possible_types(&field_type);
+        let type_condition = if schema_metadata.is_object_type(&field_type)
+            || schema_metadata.is_scalar_type(&field_type)
+        {
+            TypeCondition::Exact(field_type.to_string())
+        } else {
+            TypeCondition::OneOf(
+                schema_metadata
+                    .possible_types
+                    .get_possible_types(&field_type),
+            )
+        };
         let conditions_for_selections = Self::apply_directive_conditions(
-            FieldProjectionCondition::ParentTypeCondition(possible_types_for_field.clone()),
+            FieldProjectionCondition::ParentTypeCondition(type_condition.clone()),
             &field.include_if,
             &field.skip_if,
         );
 
         let mut condition_for_field = FieldProjectionCondition::And(
             Box::new(parent_condition.clone()),
-            Box::new(FieldProjectionCondition::FieldTypeCondition(
-                possible_types_for_field,
-            )),
+            Box::new(FieldProjectionCondition::FieldTypeCondition(type_condition)),
         );
         condition_for_field = Self::apply_directive_conditions(
             condition_for_field,
@@ -244,14 +263,20 @@ impl FieldProjectionPlan {
         parent_condition: &FieldProjectionCondition,
     ) {
         let inline_fragment_type = &inline_fragment.type_condition;
-        let possible_types_for_fragment = schema_metadata
-            .possible_types
-            .get_possible_types(inline_fragment_type);
+        let type_condition = if schema_metadata.is_object_type(inline_fragment_type) {
+            TypeCondition::Exact(inline_fragment_type.to_string())
+        } else {
+            TypeCondition::OneOf(
+                schema_metadata
+                    .possible_types
+                    .get_possible_types(inline_fragment_type),
+            )
+        };
 
         let mut condition_for_fragment = FieldProjectionCondition::And(
             Box::new(parent_condition.clone()),
             Box::new(FieldProjectionCondition::ParentTypeCondition(
-                possible_types_for_fragment,
+                type_condition,
             )),
         );
 

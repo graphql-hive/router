@@ -1,6 +1,6 @@
 use crate::projection::error::ProjectionError;
 use crate::projection::plan::{
-    FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan,
+    FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan, TypeCondition,
 };
 use crate::response::graphql_error::GraphQLError;
 use crate::response::value::Value;
@@ -115,8 +115,8 @@ fn project_selection_set(
                 Some(selections) => {
                     let mut first = true;
                     let type_name = obj
-                        .binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                        .ok()
+                        .iter()
+                        .position(|(k, _)| k == &TYPENAME_FIELD_NAME)
                         .and_then(|idx| obj[idx].1.as_str())
                         .unwrap_or(selection.field_type.as_str());
                     project_selection_set_with_map(
@@ -157,25 +157,27 @@ fn project_selection_set_with_map(
 ) {
     for selection in selections {
         let field_val = obj
-            .binary_search_by_key(&selection.field_name.as_str(), |(k, _)| *k)
-            .ok()
-            .or_else(|| {
-                if selection.field_name == selection.response_key {
-                    None
-                } else {
-                    obj.binary_search_by_key(&selection.response_key.as_str(), |(k, _)| *k)
-                        .ok()
-                }
-            })
+            .iter()
+            .position(|(k, _)| k == &selection.response_key.as_str())
             .map(|idx| &obj[idx].1);
+        let typename_field = field_val
+            .and_then(|value| value.as_object())
+            .and_then(|obj| {
+                obj.iter()
+                    .position(|(k, _)| k == &TYPENAME_FIELD_NAME)
+                    .and_then(|idx| obj[idx].1.as_str())
+            })
+            .unwrap_or(&selection.field_type);
 
-        match check(
+        let res = check(
             &selection.conditions,
             parent_type_name,
-            &selection.field_type,
+            typename_field,
             field_val,
             variable_values,
-        ) {
+        );
+
+        match res {
             Ok(_) => {
                 if *first {
                     buffer.put(OPEN_BRACE);
@@ -309,23 +311,24 @@ fn check(
             }
             Ok(())
         }
-        FieldProjectionCondition::ParentTypeCondition(possible_types) => {
-            if possible_types.contains(parent_type_name) {
+        FieldProjectionCondition::ParentTypeCondition(type_condition) => {
+            let is_valid = match type_condition {
+                TypeCondition::Exact(expected_type) => parent_type_name == expected_type,
+                TypeCondition::OneOf(possible_types) => possible_types.contains(parent_type_name),
+            };
+            if is_valid {
                 Ok(())
             } else {
                 Err(FieldProjectionConditionError::InvalidParentType)
             }
         }
-        FieldProjectionCondition::FieldTypeCondition(possible_types) => {
-            let field_type_name = field_value
-                .and_then(|value| value.as_object())
-                .and_then(|obj| {
-                    obj.binary_search_by_key(&TYPENAME_FIELD_NAME, |(k, _)| k)
-                        .ok()
-                        .and_then(|idx| obj[idx].1.as_str())
-                })
-                .unwrap_or(field_type_name);
-            if possible_types.contains(field_type_name) {
+        FieldProjectionCondition::FieldTypeCondition(type_condition) => {
+            let is_valid = match type_condition {
+                TypeCondition::Exact(expected_type) => field_type_name == expected_type,
+                TypeCondition::OneOf(possible_types) => possible_types.contains(field_type_name),
+            };
+
+            if is_valid {
                 Ok(())
             } else {
                 Err(FieldProjectionConditionError::InvalidFieldType)
