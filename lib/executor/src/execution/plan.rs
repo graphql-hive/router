@@ -346,12 +346,7 @@ impl<'exec> Executor<'exec> {
 
         ctx.handle_errors(response.errors);
 
-        // The `response.data` has a lifetime tied to `deserializer`, which is tied to `bytes`.
-        // Since `bytes` has been transmuted to `'a`, `response.data` can also be considered
-        // to have lifetime `'a`.
-        let data: Value<'exec> = unsafe { std::mem::transmute(response.data) };
-
-        Some((data, output_rewrites))
+        Some((response.data, output_rewrites))
     }
 
     fn process_job_result(&self, ctx: &mut ExecutionContext<'exec>, job: ExecutionJob) {
@@ -373,13 +368,7 @@ impl<'exec> Executor<'exec> {
                 if let Some((mut data, output_rewrites)) =
                     self.process_subgraph_response(ctx, job.response, job.fetch_node_id)
                 {
-                    if let Some(entities) = data.take_entities() {
-                        // SAFETY: The `entities` vector is transmuted to have lifetime `'a`. This is
-                        // safe because the data it contains is borrowed from the response bytes,
-                        // which are guaranteed to live for `'a`.
-                        let mut entities: Vec<Value<'exec>> =
-                            unsafe { std::mem::transmute(entities) };
-
+                    if let Some(mut entities) = data.take_entities() {
                         if let Some(output_rewrites) = output_rewrites {
                             for output_rewrite in output_rewrites {
                                 for entity in &mut entities {
