@@ -11,6 +11,18 @@ pub struct SchemaMetadata {
     pub possible_types: PossibleTypes,
     pub enum_values: HashMap<String, HashSet<String>>,
     pub type_fields: HashMap<String, HashMap<String, String>>,
+    pub object_types: HashSet<String>,
+    pub scalar_types: HashSet<String>,
+}
+
+impl SchemaMetadata {
+    pub fn is_object_type(&self, name: &str) -> bool {
+        self.object_types.contains(name)
+    }
+
+    pub fn is_scalar_type(&self, name: &str) -> bool {
+        self.scalar_types.contains(name)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -44,6 +56,14 @@ impl SchemaWithMetadata for ConsumerSchema {
         let mut first_possible_types: HashMap<String, Vec<String>> = HashMap::new();
         let mut type_fields: HashMap<String, HashMap<String, String>> = HashMap::new();
         let mut enum_values: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut scalar_types: HashSet<String> = HashSet::from_iter(vec![
+            "Boolean".to_string(),
+            "Float".to_string(),
+            "Int".to_string(),
+            "ID".to_string(),
+            "String".to_string(),
+        ]);
+        let mut object_types: HashSet<String> = HashSet::new();
 
         for definition in &self.document.definitions {
             match definition {
@@ -57,6 +77,7 @@ impl SchemaWithMetadata for ConsumerSchema {
                 }
                 Definition::TypeDefinition(TypeDefinition::Object(object_type)) => {
                     let name = object_type.name.to_string();
+                    object_types.insert(name.clone());
                     let fields = type_fields.entry(name).or_default();
                     for field in &object_type.fields {
                         let field_type_name = field.field_type.type_name();
@@ -93,6 +114,9 @@ impl SchemaWithMetadata for ConsumerSchema {
                     }
                     first_possible_types.insert(name, types);
                 }
+                Definition::TypeDefinition(TypeDefinition::Scalar(scalar_type)) => {
+                    scalar_types.insert(scalar_type.name.to_string());
+                }
                 _ => {}
             }
         }
@@ -119,6 +143,8 @@ impl SchemaWithMetadata for ConsumerSchema {
             },
             enum_values,
             type_fields,
+            object_types,
+            scalar_types,
         }
     }
 }
