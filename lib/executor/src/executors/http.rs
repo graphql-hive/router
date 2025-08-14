@@ -9,6 +9,7 @@ use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::{body::Bytes, Version};
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use tokio::sync::Semaphore;
 
 use crate::executors::common::HttpExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
@@ -24,6 +25,7 @@ pub struct HTTPSubgraphExecutor {
     pub endpoint: http::Uri,
     pub http_client: Arc<Client<HttpConnector, Full<Bytes>>>,
     pub header_map: HeaderMap,
+    pub semaphore: Arc<Semaphore>,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -31,22 +33,25 @@ const FIRST_QUOTE_STR: &[u8] = b"{\"query\":";
 
 impl HTTPSubgraphExecutor {
     pub fn new(
-        endpoint: &str,
+        endpoint: http::Uri,
         http_client: Arc<Client<HttpConnector, Full<Bytes>>>,
-    ) -> Result<Self, SubgraphExecutorError> {
-        let endpoint = endpoint.parse::<http::Uri>().map_err(|e| {
-            SubgraphExecutorError::EndpointParseFailure(endpoint.to_string(), e.to_string())
-        })?;
+        semaphore: Arc<Semaphore>,
+    ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
             "Content-Type",
             HeaderValue::from_static("application/json; charset=utf-8"),
         );
-        Ok(HTTPSubgraphExecutor {
+        header_map.insert(
+            http::header::CONNECTION,
+            HeaderValue::from_static("keep-alive"),
+        );
+        Self {
             endpoint,
             http_client,
             header_map,
-        })
+            semaphore,
+        }
     }
 
     async fn _execute<'a>(
@@ -124,6 +129,10 @@ impl HTTPSubgraphExecutor {
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
     async fn execute<'a>(&self, execution_request: HttpExecutionRequest<'a>) -> Bytes {
+        // This unwrap is safe because the semaphore is never closed during the gateway lifecycle.
+        // The acquire() only fails if the semaphore is closed, so this will always return Ok.
+        let _permit = self.semaphore.acquire().await.unwrap();
+
         match self._execute(execution_request).await {
             Ok(bytes) => bytes,
             Err(e) => {

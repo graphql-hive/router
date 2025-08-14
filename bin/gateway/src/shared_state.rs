@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use executor::{
+    executors::config::HttpExecutorConfig,
     introspection::schema::{SchemaMetadata, SchemaWithMetadata},
     SubgraphExecutorMap,
 };
@@ -34,9 +35,12 @@ impl GatewaySharedState {
         let schema_metadata = planner.consumer_schema.schema_metadata();
 
         let subgraph_endpoint_map = supergraph_state.subgraph_endpoint_map.clone();
-        let subgraph_executor_map =
-            SubgraphExecutorMap::from_http_endpoint_map(supergraph_state.subgraph_endpoint_map)
-                .expect("Failed to create subgraph executor map");
+        let http_executor_config = HttpExecutorConfig::default();
+        let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(
+            supergraph_state.subgraph_endpoint_map,
+            http_executor_config,
+        )
+        .expect("Failed to create subgraph executor map");
 
         Arc::new(Self {
             schema_metadata,

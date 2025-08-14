@@ -20,6 +20,8 @@ sonic-rs = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 xxhash-rust = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+dashmap = "5.5.3"
 
 hyper-util = { version = "0.1.16", features = [
   "client",
