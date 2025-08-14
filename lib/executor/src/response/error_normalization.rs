@@ -69,6 +69,7 @@ pub fn normalize_errors_for_representations(
                                     if !real_path.is_empty() {
                                         new_error.path = Some(real_path);
                                     }
+                                    new_error = add_subgraph_info_to_error(new_error, subgraph_name);
                                     new_errors.push(new_error);
                                 }
                                 continue 'error_loop;
@@ -98,19 +99,24 @@ pub fn normalize_errors_for_representations(
         if !real_path.is_empty() {
             new_error.path = Some(real_path);
         }
-        let mut extensions = new_error.extensions.unwrap_or_default();
-        if !extensions.contains_key("serviceName") {
-            extensions.insert("serviceName".to_string(), subgraph_name.into());
-        }
-        if !extensions.contains_key("code") {
-            extensions.insert("code".to_string(), "DOWNSTREAM_SERVICE_ERROR".into());
-        }
-        new_error.extensions = Some(extensions);
+        new_error = add_subgraph_info_to_error(new_error, subgraph_name);
 
         new_errors.push(new_error);
     }
 
     new_errors
+}
+
+pub fn add_subgraph_info_to_error(mut error: GraphQLError, subgraph_name: &str) -> GraphQLError {
+    let mut extensions = error.extensions.unwrap_or_default();
+    if !extensions.contains_key("serviceName") {
+        extensions.insert("serviceName".to_string(), subgraph_name.into());
+    }
+    if !extensions.contains_key("code") {
+        extensions.insert("code".to_string(), "DOWNSTREAM_SERVICE_ERROR".into());
+    }
+    error.extensions = Some(extensions);
+    error
 }
 
 #[test]

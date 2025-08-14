@@ -23,7 +23,7 @@ use crate::{
         response::project_by_operation,
     },
     response::{
-        error_normalization::normalize_errors_for_representations, graphql_error::GraphQLError,
+        error_normalization::{add_subgraph_info_to_error, normalize_errors_for_representations}, graphql_error::GraphQLError,
         merge::deep_merge, subgraph_response::SubgraphResponse, value::Value,
     },
     utils::{
@@ -355,18 +355,9 @@ impl<'exec> QueryPlanExecutor<'exec> {
                     deep_merge(&mut ctx.final_response, response.data);
 
                     if let Some(errors) = response.errors {
-                        for error in errors {
-                            let mut extensions = error.extensions.unwrap_or_default();
-                            if !extensions.contains_key("serviceName") {
-                                extensions.insert(
-                                    "serviceName".to_string(),
-                                    job.subgraph_name.as_str().into(),
-                                );
-                            }
-                            if !extensions.contains_key("code") {
-                                extensions
-                                    .insert("code".to_string(), "DOWNSTREAM_SERVICE_ERROR".into());
-                            }
+                        for mut error in errors {
+                            error = add_subgraph_info_to_error(error, &job.subgraph_name);
+                            ctx.errors.push(error);
                         }
                     }
                 }
