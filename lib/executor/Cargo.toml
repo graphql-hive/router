@@ -22,6 +22,7 @@ thiserror = { workspace = true }
 xxhash-rust = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 dashmap = "5.5.3"
+ahash = "0.8.12"
 
 hyper-util = { version = "0.1.16", features = [
   "client",

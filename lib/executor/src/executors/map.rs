@@ -7,12 +7,13 @@ use hyper_util::{
     client::legacy::Client,
     rt::{TokioExecutor, TokioTimer},
 };
-use tokio::sync::Semaphore;
+use tokio::sync::{OnceCell, Semaphore};
 
 use crate::{
     executors::{
         common::{HttpExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
         config::HttpExecutorConfig,
+        dedupe::{ABuildHasher, RequestFingerprint, SharedResponse},
         error::SubgraphExecutorError,
         http::HTTPSubgraphExecutor,
     },
@@ -76,6 +77,11 @@ impl SubgraphExecutorMap {
 
         let client_arc = Arc::new(client);
         let semaphores_by_origin: DashMap<String, Arc<Semaphore>> = DashMap::new();
+        let max_connections_per_host = config.max_connections_per_host;
+        let config_arc = Arc::new(config);
+        let in_flight_requests: Arc<
+            DashMap<RequestFingerprint, Arc<OnceCell<SharedResponse>>, ABuildHasher>,
+        > = Arc::new(DashMap::with_hasher(ABuildHasher::default()));
 
         let executor_map = subgraph_endpoint_map
             .into_iter()
@@ -99,11 +105,16 @@ impl SubgraphExecutorMap {
 
                 let semaphore = semaphores_by_origin
                     .entry(origin)
-                    .or_insert_with(|| Arc::new(Semaphore::new(config.max_connections_per_host)))
+                    .or_insert_with(|| Arc::new(Semaphore::new(max_connections_per_host)))
                     .clone();
 
-                let executor =
-                    HTTPSubgraphExecutor::new(endpoint_uri, client_arc.clone(), semaphore);
+                let executor = HTTPSubgraphExecutor::new(
+                    endpoint_uri,
+                    client_arc.clone(),
+                    semaphore,
+                    config_arc.clone(),
+                    in_flight_requests.clone(),
+                );
 
                 Ok((subgraph_name, executor.to_boxed_arc()))
             })
