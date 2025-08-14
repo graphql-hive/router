@@ -8,7 +8,7 @@ use hyper_util::{
 
 use crate::{
     executors::{
-        common::{HttpExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
+        common::{SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
         error::SubgraphExecutorError,
         http::HTTPSubgraphExecutor,
     },
@@ -35,7 +35,7 @@ impl SubgraphExecutorMap {
     pub async fn execute<'a>(
         &self,
         subgraph_name: &str,
-        execution_request: HttpExecutionRequest<'a>,
+        execution_request: SubgraphExecutionRequest<'a>,
     ) -> Bytes {
         match self.inner.get(subgraph_name) {
             Some(executor) => executor.execute(execution_request).await,

@@ -17,7 +17,7 @@ use crate::shared_state::GatewaySharedState;
 use axum::body::Body;
 use axum::response::IntoResponse;
 use executor::execute_query_plan;
-use executor::execution::plan::QueryPlanExecutionContext;
+use executor::execution::plan::ExecuteQueryPlanParams;
 use executor::introspection::resolve::IntrospectionContext;
 use http::{HeaderName, HeaderValue, Request, Response};
 use tower::Service;
@@ -105,7 +105,7 @@ impl Service<Request<Body>> for ExecutionService {
                 metadata: &app_state.schema_metadata,
             };
 
-            match execute_query_plan(QueryPlanExecutionContext {
+            match execute_query_plan(ExecuteQueryPlanParams {
                 query_plan: &query_plan_payload.query_plan,
                 projection_plan: &normalized_payload.projection_plan,
                 variable_values: &variable_payload.variables_map,

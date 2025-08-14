@@ -1,18 +1,18 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use query_planner::planner::plan_nodes::{
-    ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
-    QueryPlan, SequenceNode,
+    ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, FlattenNodePathSegment,
+    ParallelNode, PlanNode, QueryPlan, SequenceNode,
 };
 use serde::Deserialize;
 use sonic_rs::ValueRef;
 
 use crate::{
-    context::ExecutionContext,
+    context::QueryPlanExecutionContext,
     execution::{error::PlanExecutionError, rewrites::FetchRewriteExt},
-    executors::{common::HttpExecutionRequest, map::SubgraphExecutorMap},
+    executors::{common::SubgraphExecutionRequest, map::SubgraphExecutorMap},
     introspection::{
         resolve::{resolve_introspection, IntrospectionContext},
         schema::SchemaMetadata,
@@ -23,16 +23,16 @@ use crate::{
         response::project_by_operation,
     },
     response::{
-        graphql_error::GraphQLError, merge::deep_merge, subgraph_response::SubgraphResponse,
-        value::Value,
+        error_normalization::normalize_errors_for_representations, graphql_error::GraphQLError,
+        merge::deep_merge, subgraph_response::SubgraphResponse, value::Value,
     },
     utils::{
-        consts::{CLOSE_BRACKET, OPEN_BRACKET},
-        traverse::{traverse_and_callback, traverse_and_callback_mut},
+        consts::{CLOSE_BRACKET, OPEN_BRACKET, TYPENAME_FIELD_NAME},
+        traverse::traverse_and_callback,
     },
 };
 
-pub struct QueryPlanExecutionContext<'exec> {
+pub struct ExecuteQueryPlanParams<'exec> {
     pub query_plan: &'exec QueryPlan,
     pub projection_plan: &'exec Vec<FieldProjectionPlan>,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
@@ -43,7 +43,7 @@ pub struct QueryPlanExecutionContext<'exec> {
 }
 
 pub async fn execute_query_plan<'exec>(
-    ctx: QueryPlanExecutionContext<'exec>,
+    ctx: ExecuteQueryPlanParams<'exec>,
 ) -> Result<Bytes, PlanExecutionError> {
     let init_value = if let Some(introspection_query) = ctx.introspection_context.query {
         resolve_introspection(introspection_query, ctx.introspection_context)
@@ -51,10 +51,10 @@ pub async fn execute_query_plan<'exec>(
         Value::Null
     };
 
-    let mut exec_ctx = ExecutionContext::new(ctx.query_plan, init_value);
+    let mut exec_ctx = QueryPlanExecutionContext::new(ctx.query_plan, init_value);
 
     if ctx.query_plan.node.is_some() {
-        let executor = Executor::new(
+        let executor = QueryPlanExecutor::new(
             ctx.variable_values,
             ctx.executors,
             ctx.introspection_context.metadata,
@@ -76,47 +76,25 @@ pub async fn execute_query_plan<'exec>(
     .map_err(|e| e.into())
 }
 
-pub struct Executor<'exec> {
+pub struct QueryPlanExecutor<'exec> {
     variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     schema_metadata: &'exec SchemaMetadata,
-    executors: &'exec SubgraphExecutorMap,
-}
-
-struct ConcurrencyScope<'exec, T> {
-    jobs: FuturesUnordered<BoxFuture<'exec, T>>,
-}
-
-impl<'exec, T> ConcurrencyScope<'exec, T> {
-    fn new() -> Self {
-        Self {
-            jobs: FuturesUnordered::new(),
-        }
-    }
-
-    fn spawn(&mut self, future: BoxFuture<'exec, T>) {
-        self.jobs.push(future);
-    }
-
-    async fn join_all(mut self) -> Vec<T> {
-        let mut results = Vec::with_capacity(self.jobs.len());
-        while let Some(result) = self.jobs.next().await {
-            results.push(result);
-        }
-        results
-    }
+    subgraph_executors: &'exec SubgraphExecutorMap,
 }
 
 struct FetchJob {
+    subgraph_name: String,
     fetch_node_id: i64,
     response: Bytes,
 }
 
 struct FlattenFetchJob {
+    subgraph_name: String,
     flatten_node_path: FlattenNodePath,
     response: Bytes,
     fetch_node_id: i64,
     representation_hashes: Vec<u64>,
-    representation_hash_to_index: HashMap<u64, usize>,
+    filtered_representations_hashes: HashMap<u64, Vec<VecDeque<usize>>>,
 }
 
 enum ExecutionJob {
@@ -138,23 +116,27 @@ impl From<ExecutionJob> for Bytes {
 struct PreparedFlattenData {
     representations: BytesMut,
     representation_hashes: Vec<u64>,
-    representation_hash_to_index: HashMap<u64, usize>,
+    filtered_representations_hashes: HashMap<u64, Vec<VecDeque<usize>>>,
 }
 
-impl<'exec> Executor<'exec> {
+impl<'exec> QueryPlanExecutor<'exec> {
     pub fn new(
         variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
         executors: &'exec SubgraphExecutorMap,
         schema_metadata: &'exec SchemaMetadata,
     ) -> Self {
-        Executor {
+        QueryPlanExecutor {
             variable_values,
-            executors,
+            subgraph_executors: executors,
             schema_metadata,
         }
     }
 
-    pub async fn execute(&self, ctx: &mut ExecutionContext<'exec>, plan: Option<&PlanNode>) {
+    pub async fn execute(
+        &self,
+        ctx: &mut QueryPlanExecutionContext<'exec>,
+        plan: Option<&PlanNode>,
+    ) {
         match plan {
             Some(PlanNode::Fetch(node)) => self.execute_fetch_wave(ctx, node).await,
             Some(PlanNode::Parallel(node)) => self.execute_parallel_wave(ctx, node).await,
@@ -167,7 +149,11 @@ impl<'exec> Executor<'exec> {
         }
     }
 
-    async fn execute_fetch_wave(&self, ctx: &mut ExecutionContext<'exec>, node: &FetchNode) {
+    async fn execute_fetch_wave(
+        &self,
+        ctx: &mut QueryPlanExecutionContext<'exec>,
+        node: &FetchNode,
+    ) {
         match self.execute_fetch_node(node, None).await {
             Ok(result) => self.process_job_result(ctx, result),
             Err(err) => ctx.errors.push(GraphQLError {
@@ -179,23 +165,29 @@ impl<'exec> Executor<'exec> {
         }
     }
 
-    async fn execute_sequence_wave(&self, ctx: &mut ExecutionContext<'exec>, node: &SequenceNode) {
+    async fn execute_sequence_wave(
+        &self,
+        ctx: &mut QueryPlanExecutionContext<'exec>,
+        node: &SequenceNode,
+    ) {
         for child in &node.nodes {
             Box::pin(self.execute_plan_node(ctx, child)).await;
         }
     }
 
-    async fn execute_parallel_wave(&self, ctx: &mut ExecutionContext<'exec>, node: &ParallelNode) {
-        let mut scope = ConcurrencyScope::new();
+    async fn execute_parallel_wave(
+        &self,
+        ctx: &mut QueryPlanExecutionContext<'exec>,
+        node: &ParallelNode,
+    ) {
+        let mut scope = FuturesUnordered::new();
 
         for child in &node.nodes {
             let job_future = self.prepare_job_future(child, &ctx.final_response);
-            scope.spawn(job_future);
+            scope.push(job_future);
         }
 
-        let results = scope.join_all().await;
-
-        for result in results {
+        while let Some(result) = scope.next().await {
             match result {
                 Ok(job) => {
                     self.process_job_result(ctx, job);
@@ -210,7 +202,7 @@ impl<'exec> Executor<'exec> {
         }
     }
 
-    async fn execute_plan_node(&self, ctx: &mut ExecutionContext<'exec>, node: &PlanNode) {
+    async fn execute_plan_node(&self, ctx: &mut QueryPlanExecutionContext<'exec>, node: &PlanNode) {
         match node {
             PlanNode::Fetch(fetch_node) => match self.execute_fetch_node(fetch_node, None).await {
                 Ok(job) => {
@@ -234,7 +226,7 @@ impl<'exec> Executor<'exec> {
                                 flatten_node,
                                 Some(p.representations),
                                 Some(p.representation_hashes),
-                                Some(p.representation_hash_to_index),
+                                Some(p.filtered_representations_hashes),
                             )
                             .await
                         {
@@ -290,7 +282,7 @@ impl<'exec> Executor<'exec> {
                         flatten_node,
                         Some(p.representations),
                         Some(p.representation_hashes),
-                        Some(p.representation_hash_to_index),
+                        Some(p.filtered_representations_hashes),
                     )),
                     Ok(None) => Box::pin(async { Ok(ExecutionJob::None) }),
                     Err(e) => Box::pin(async move { Err(e) }),
@@ -309,10 +301,10 @@ impl<'exec> Executor<'exec> {
 
     fn process_subgraph_response(
         &self,
-        ctx: &mut ExecutionContext<'exec>,
+        ctx: &mut QueryPlanExecutionContext<'exec>,
         response_bytes: Bytes,
         fetch_node_id: i64,
-    ) -> Option<(Value<'exec>, Option<&'exec Vec<FetchRewrite>>)> {
+    ) -> Option<(SubgraphResponse<'exec>, Option<&'exec Vec<FetchRewrite>>)> {
         let idx = ctx.response_storage.add_response(response_bytes);
         // SAFETY: The `bytes` are transmuted to the lifetime `'a` of the `ExecutionContext`.
         // This is safe because the `response_storage` is part of the `ExecutionContext` (`ctx`)
@@ -344,31 +336,46 @@ impl<'exec> Executor<'exec> {
             }
         };
 
-        ctx.handle_errors(response.errors);
-
-        Some((response.data, output_rewrites))
+        Some((response, output_rewrites))
     }
 
-    fn process_job_result(&self, ctx: &mut ExecutionContext<'exec>, job: ExecutionJob) {
+    fn process_job_result(&self, ctx: &mut QueryPlanExecutionContext<'exec>, job: ExecutionJob) {
         match job {
             ExecutionJob::Fetch(job) => {
-                if let Some((mut data, output_rewrites)) =
+                if let Some((mut response, output_rewrites)) =
                     self.process_subgraph_response(ctx, job.response, job.fetch_node_id)
                 {
                     if let Some(output_rewrites) = output_rewrites {
                         for output_rewrite in output_rewrites {
-                            output_rewrite.rewrite(&self.schema_metadata.possible_types, &mut data);
+                            output_rewrite
+                                .rewrite(&self.schema_metadata.possible_types, &mut response.data);
                         }
                     }
 
-                    deep_merge(&mut ctx.final_response, data);
+                    deep_merge(&mut ctx.final_response, response.data);
+
+                    if let Some(errors) = response.errors {
+                        for error in errors {
+                            let mut extensions = error.extensions.unwrap_or_default();
+                            if !extensions.contains_key("serviceName") {
+                                extensions.insert(
+                                    "serviceName".to_string(),
+                                    job.subgraph_name.as_str().into(),
+                                );
+                            }
+                            if !extensions.contains_key("code") {
+                                extensions
+                                    .insert("code".to_string(), "DOWNSTREAM_SERVICE_ERROR".into());
+                            }
+                        }
+                    }
                 }
             }
-            ExecutionJob::FlattenFetch(job) => {
-                if let Some((mut data, output_rewrites)) =
+            ExecutionJob::FlattenFetch(mut job) => {
+                if let Some((ref mut response, output_rewrites)) =
                     self.process_subgraph_response(ctx, job.response, job.fetch_node_id)
                 {
-                    if let Some(mut entities) = data.take_entities() {
+                    if let Some(mut entities) = response.data.take_entities() {
                         if let Some(output_rewrites) = output_rewrites {
                             for output_rewrite in output_rewrites {
                                 for entity in &mut entities {
@@ -377,30 +384,110 @@ impl<'exec> Executor<'exec> {
                                 }
                             }
                         }
-
-                        let mut index = 0;
-                        let normalized_path = job.flatten_node_path.as_slice();
-                        traverse_and_callback_mut(
-                            &mut ctx.final_response,
-                            normalized_path,
-                            self.schema_metadata,
-                            &mut |target| {
-                                let hash = job.representation_hashes[index];
-                                if let Some(entity_index) =
-                                    job.representation_hash_to_index.get(&hash)
-                                {
-                                    if let Some(entity) = entities.get(*entity_index) {
-                                        // SAFETY: `new_val` is a clone of an entity that lives for `'a`.
-                                        // The transmute is to satisfy the compiler, but the lifetime
-                                        // is valid.
-                                        let new_val: Value<'_> =
-                                            unsafe { std::mem::transmute(entity.clone()) };
-                                        deep_merge(target, new_val);
+                        'entity_loop: for (entity, hash) in entities
+                            .into_iter()
+                            .zip(job.representation_hashes.iter_mut())
+                        {
+                            if let Some(target_paths) =
+                                job.filtered_representations_hashes.get_mut(hash)
+                            {
+                                for indexes_in_path in target_paths {
+                                    let mut target: &mut Value<'exec> = &mut ctx.final_response;
+                                    for path_segment in job.flatten_node_path.as_slice().iter() {
+                                        match path_segment {
+                                            FlattenNodePathSegment::List => {
+                                                let index = indexes_in_path.pop_front().unwrap();
+                                                if let Value::Array(arr) = target {
+                                                    if let Some(item) = arr.get_mut(index) {
+                                                        target = item;
+                                                    } else {
+                                                        continue 'entity_loop; // Skip if index is out of bounds
+                                                    }
+                                                } else {
+                                                    continue 'entity_loop; // Skip if target is not an array
+                                                }
+                                            }
+                                            FlattenNodePathSegment::Field(field_name) => {
+                                                if let Value::Object(map) = target {
+                                                    if let Ok(idx) = map.binary_search_by_key(
+                                                        &field_name.as_str(),
+                                                        |(k, _)| k,
+                                                    ) {
+                                                        if let Some((_, value)) = map.get_mut(idx) {
+                                                            target = value;
+                                                        } else {
+                                                            continue 'entity_loop;
+                                                            // Skip if field not found
+                                                        }
+                                                    } else {
+                                                        continue 'entity_loop; // Skip if field not found
+                                                    }
+                                                } else {
+                                                    continue 'entity_loop; // Skip if target is not an object
+                                                }
+                                            }
+                                            FlattenNodePathSegment::Cast(type_condition) => {
+                                                let mut type_name: &str = type_condition;
+                                                if let Some(map) = target.as_object() {
+                                                    if let Ok(idx) = map.binary_search_by_key(
+                                                        &TYPENAME_FIELD_NAME,
+                                                        |(k, _)| k,
+                                                    ) {
+                                                        if let Some((_, type_name_value)) =
+                                                            map.get(idx)
+                                                        {
+                                                            if let Some(type_name_str) =
+                                                                type_name_value.as_str()
+                                                            {
+                                                                type_name = type_name_str;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                if !self
+                                                    .schema_metadata
+                                                    .possible_types
+                                                    .entity_satisfies_type_condition(
+                                                        type_name,
+                                                        type_condition,
+                                                    )
+                                                {
+                                                    continue 'entity_loop; // Skip if type condition is not satisfied
+                                                }
+                                            }
+                                        }
                                     }
+                                    if !indexes_in_path.is_empty() {
+                                        // If there are still indexes left, we need to traverse them
+                                        while let Some(index) = indexes_in_path.pop_front() {
+                                            if let Value::Array(arr) = target {
+                                                if let Some(item) = arr.get_mut(index) {
+                                                    target = item;
+                                                } else {
+                                                    continue 'entity_loop; // Skip if index is out of bounds
+                                                }
+                                            } else {
+                                                continue 'entity_loop; // Skip if target is not an array
+                                            }
+                                        }
+                                    }
+                                    let new_val: Value<'_> =
+                                        unsafe { std::mem::transmute(entity.clone()) };
+                                    deep_merge(target, new_val);
                                 }
-                                index += 1;
-                            },
+                            }
+                        }
+                    }
+
+                    if let Some(errors) = &response.errors {
+                        let normalized_errors = normalize_errors_for_representations(
+                            &job.subgraph_name,
+                            job.flatten_node_path.as_slice(),
+                            &job.representation_hashes,
+                            &job.filtered_representations_hashes,
+                            errors,
                         );
+                        ctx.errors.extend(normalized_errors);
                     }
                 }
             }
@@ -424,54 +511,67 @@ impl<'exec> Executor<'exec> {
             None => return Ok(None),
         };
 
-        let mut index = 0;
         let normalized_path = flatten_node.path.as_slice();
         let mut filtered_representations = BytesMut::new();
         filtered_representations.put(OPEN_BRACKET);
         let proj_ctx = RequestProjectionContext::new(&self.schema_metadata.possible_types);
         let mut representation_hashes: Vec<u64> = Vec::new();
-        let mut filtered_representations_hashes: HashMap<u64, usize> = HashMap::new();
+        let mut filtered_representations_hashes: HashMap<u64, Vec<VecDeque<usize>>> =
+            HashMap::new();
         let arena = bumpalo::Bump::new();
-
+        let mut number_of_indexes = 0;
+        for segment in normalized_path.iter() {
+            if *segment == FlattenNodePathSegment::List {
+                number_of_indexes += 1;
+            }
+        }
         traverse_and_callback(
             final_response,
             normalized_path,
             self.schema_metadata,
-            &mut |entity| {
+            VecDeque::with_capacity(number_of_indexes),
+            &mut |entity: &Value,
+                  indexes_in_path: VecDeque<usize>|
+             -> Result<(), PlanExecutionError> {
+                if entity.is_null() {
+                    return Ok(());
+                }
+
                 let hash = entity.to_hash(&requires_nodes.items, proj_ctx.possible_types);
 
-                if !entity.is_null() {
-                    representation_hashes.push(hash);
-                }
+                let indexes_in_paths = filtered_representations_hashes.get_mut(&hash);
 
-                if filtered_representations_hashes.contains_key(&hash) {
-                    return Ok::<(), PlanExecutionError>(());
-                }
-
-                let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
-                    let new_entity = arena.alloc(entity.clone());
-                    for input_rewrite in input_rewrites {
-                        input_rewrite.rewrite(&self.schema_metadata.possible_types, new_entity);
+                match indexes_in_paths {
+                    Some(indexes_in_paths) => {
+                        indexes_in_paths.push(indexes_in_path);
                     }
-                    new_entity
-                } else {
-                    entity
-                };
+                    None => {
+                        let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
+                            let new_entity = arena.alloc(entity.clone());
+                            for input_rewrite in input_rewrites {
+                                input_rewrite
+                                    .rewrite(&self.schema_metadata.possible_types, new_entity);
+                            }
+                            new_entity
+                        } else {
+                            entity
+                        };
 
-                let is_projected = project_requires(
-                    &proj_ctx,
-                    &requires_nodes.items,
-                    entity,
-                    &mut filtered_representations,
-                    filtered_representations_hashes.is_empty(),
-                    None,
-                )?;
+                        let is_projected = project_requires(
+                            &proj_ctx,
+                            &requires_nodes.items,
+                            entity,
+                            &mut filtered_representations,
+                            filtered_representations_hashes.is_empty(),
+                            None,
+                        )?;
 
-                if is_projected {
-                    filtered_representations_hashes.insert(hash, index);
+                        if is_projected {
+                            representation_hashes.push(hash);
+                            filtered_representations_hashes.insert(hash, vec![indexes_in_path]);
+                        }
+                    }
                 }
-
-                index += 1;
 
                 Ok(())
             },
@@ -485,7 +585,7 @@ impl<'exec> Executor<'exec> {
         Ok(Some(PreparedFlattenData {
             representations: filtered_representations,
             representation_hashes,
-            representation_hash_to_index: filtered_representations_hashes,
+            filtered_representations_hashes,
         }))
     }
 
@@ -494,18 +594,20 @@ impl<'exec> Executor<'exec> {
         node: &FlattenNode,
         representations: Option<BytesMut>,
         representation_hashes: Option<Vec<u64>>,
-        filtered_representations_hashes: Option<HashMap<u64, usize>>,
+        filtered_representations_hashes: Option<HashMap<u64, Vec<VecDeque<usize>>>>,
     ) -> Result<ExecutionJob, PlanExecutionError> {
         Ok(match node.node.as_ref() {
             PlanNode::Fetch(fetch_node) => ExecutionJob::FlattenFetch(FlattenFetchJob {
                 flatten_node_path: node.path.clone(),
+                subgraph_name: fetch_node.service_name.to_string(),
                 response: self
                     .execute_fetch_node(fetch_node, representations)
                     .await?
                     .into(),
                 fetch_node_id: fetch_node.id,
                 representation_hashes: representation_hashes.unwrap_or_default(),
-                representation_hash_to_index: filtered_representations_hashes.unwrap_or_default(),
+                filtered_representations_hashes: filtered_representations_hashes
+                    .unwrap_or_default(),
             }),
             _ => ExecutionJob::None,
         })
@@ -517,12 +619,13 @@ impl<'exec> Executor<'exec> {
         representations: Option<BytesMut>,
     ) -> Result<ExecutionJob, PlanExecutionError> {
         Ok(ExecutionJob::Fetch(FetchJob {
+            subgraph_name: node.service_name.to_string(),
             fetch_node_id: node.id,
             response: self
-                .executors
+                .subgraph_executors
                 .execute(
                     &node.service_name,
-                    HttpExecutionRequest {
+                    SubgraphExecutionRequest {
                         query: node.operation.document_str.as_str(),
                         operation_name: node.operation_name.as_deref(),
                         variables: None,

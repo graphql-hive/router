@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use axum::{body::Body, extract::rejection::QueryRejection, response::IntoResponse};
 use executor::{execution::error::PlanExecutionError, response::graphql_error::GraphQLError};
@@ -6,7 +6,7 @@ use graphql_tools::validation::utils::ValidationError;
 use http::{HeaderName, Method, Request, Response, StatusCode};
 use query_planner::{ast::normalization::error::NormalizationError, planner::PlannerError};
 use serde::{Deserialize, Serialize};
-use sonic_rs::{object, Value};
+use sonic_rs::Value;
 
 use crate::pipeline::header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR};
 
@@ -156,8 +156,10 @@ impl IntoResponse for PipelineError {
         let code = self.error.graphql_error_code();
         let message = self.error.graphql_error_message();
 
+        let mut extensions = HashMap::new();
+        extensions.insert("code".to_string(), Value::from(code));
         let graphql_error = GraphQLError {
-            extensions: Some(Value::from_iter(&object! {"code": code.to_string()})),
+            extensions: Some(extensions),
             message,
             path: None,
             locations: None,

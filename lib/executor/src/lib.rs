@@ -10,3 +10,6 @@ pub mod variables;
 
 pub use execution::plan::execute_query_plan;
 pub use executors::map::SubgraphExecutorMap;
+
+#[cfg(test)]
+mod tests;
