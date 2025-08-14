@@ -378,6 +378,7 @@ impl<'exec> QueryPlanExecutor<'exec> {
                                 }
                             }
                         }
+                        let normalized_path = job.flatten_node_path.as_slice();
                         'entity_loop: for (entity, hash) in entities
                             .into_iter()
                             .zip(job.representation_hashes.iter_mut())
@@ -387,7 +388,7 @@ impl<'exec> QueryPlanExecutor<'exec> {
                             {
                                 for indexes_in_path in target_paths {
                                     let mut target: &mut Value<'exec> = &mut ctx.final_response;
-                                    for path_segment in job.flatten_node_path.as_slice().iter() {
+                                    for path_segment in normalized_path {
                                         match path_segment {
                                             FlattenNodePathSegment::List => {
                                                 let index = indexes_in_path.pop_front().unwrap();
@@ -421,32 +422,28 @@ impl<'exec> QueryPlanExecutor<'exec> {
                                                 }
                                             }
                                             FlattenNodePathSegment::Cast(type_condition) => {
-                                                let mut type_name: &str = type_condition;
                                                 if let Some(map) = target.as_object() {
                                                     if let Ok(idx) = map.binary_search_by_key(
                                                         &TYPENAME_FIELD_NAME,
                                                         |(k, _)| k,
                                                     ) {
-                                                        if let Some((_, type_name_value)) =
-                                                            map.get(idx)
-                                                        {
-                                                            if let Some(type_name_str) =
-                                                                type_name_value.as_str()
+                                                        if let Some((_, type_name)) = map.get(idx) {
+                                                            if let Some(type_name) =
+                                                                type_name.as_str()
                                                             {
-                                                                type_name = type_name_str;
+                                                                if !self
+                                                                    .schema_metadata
+                                                                    .possible_types
+                                                                    .entity_satisfies_type_condition(
+                                                                        type_name,
+                                                                        type_condition,
+                                                                    )
+                                                                {
+                                                                    continue 'entity_loop; // Skip if type condition is not satisfied
+                                                                }
                                                             }
                                                         }
                                                     }
-                                                }
-                                                if !self
-                                                    .schema_metadata
-                                                    .possible_types
-                                                    .entity_satisfies_type_condition(
-                                                        type_name,
-                                                        type_condition,
-                                                    )
-                                                {
-                                                    continue 'entity_loop; // Skip if type condition is not satisfied
                                                 }
                                             }
                                         }
