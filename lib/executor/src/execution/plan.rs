@@ -23,7 +23,7 @@ use crate::{
         response::project_by_operation,
     },
     response::{
-        error_normalization::{add_subgraph_info_to_error, normalize_errors_for_representations},
+        error_normalization::{add_subgraph_info_to_error, normalize_error_for_representation},
         graphql_error::GraphQLError,
         merge::deep_merge,
         subgraph_response::SubgraphResponse,
@@ -474,14 +474,16 @@ impl<'exec> QueryPlanExecutor<'exec> {
                     }
 
                     if let Some(errors) = &response.errors {
-                        let normalized_errors = normalize_errors_for_representations(
-                            &job.subgraph_name,
-                            job.flatten_node_path.as_slice(),
-                            &job.representation_hashes,
-                            &job.filtered_representations_hashes,
-                            errors,
-                        );
-                        ctx.errors.extend(normalized_errors);
+                        for error in errors {
+                            let normalized_errors = normalize_error_for_representation(
+                                error,
+                                &job.subgraph_name,
+                                job.flatten_node_path.as_slice(),
+                                &job.representation_hashes,
+                                &job.filtered_representations_hashes,
+                            );
+                            ctx.errors.extend(normalized_errors);
+                        }
                     }
                 }
             }

@@ -11,100 +11,90 @@ use crate::response::graphql_error::{GraphQLError, GraphQLErrorPathSegment};
  * and flatten path is ['product', 'reviews', 0, 'author']
  * it becomes `["product", "reviews", "0", "author", "name"]`.
  */
-pub fn normalize_errors_for_representations(
+pub fn normalize_error_for_representation(
+    error: &GraphQLError,
     subgraph_name: &str,
     normalized_path: &[FlattenNodePathSegment],
     representation_hashes: &[u64],
     hashes_to_indexes: &HashMap<u64, Vec<VecDeque<usize>>>,
-    errors: &Vec<GraphQLError>,
 ) -> Vec<GraphQLError> {
     let mut new_errors: Vec<GraphQLError> = Vec::new();
-    'error_loop: for error in errors {
-        if let Some(path_in_error) = &error.path {
-            if let Some(GraphQLErrorPathSegment::String(first_path)) = path_in_error.first() {
-                if first_path == "_entities" {
-                    if let Some(GraphQLErrorPathSegment::Index(entity_index)) = path_in_error.get(1)
-                    {
-                        if let Some(representation_hash) = representation_hashes.get(*entity_index)
-                        {
-                            if let Some(indexes_in_paths) =
-                                hashes_to_indexes.get(representation_hash)
-                            {
-                                for indexes_in_path in indexes_in_paths {
-                                    let mut indexes_in_path = indexes_in_path.clone();
-                                    let mut real_path: Vec<GraphQLErrorPathSegment> =
-                                        Vec::with_capacity(
-                                            normalized_path.len() + path_in_error.len() - 2,
-                                        );
-                                    for segment in normalized_path {
-                                        match segment {
-                                            FlattenNodePathSegment::Field(field_name) => {
-                                                real_path.push(GraphQLErrorPathSegment::String(
-                                                    field_name.to_string(),
+    if let Some(path_in_error) = &error.path {
+        if let Some(GraphQLErrorPathSegment::String(first_path)) = path_in_error.first() {
+            if first_path == "_entities" {
+                if let Some(GraphQLErrorPathSegment::Index(entity_index)) = path_in_error.get(1) {
+                    if let Some(representation_hash) = representation_hashes.get(*entity_index) {
+                        if let Some(indexes_in_paths) = hashes_to_indexes.get(representation_hash) {
+                            for indexes_in_path in indexes_in_paths {
+                                let mut indexes_in_path = indexes_in_path.clone();
+                                let mut real_path: Vec<GraphQLErrorPathSegment> =
+                                    Vec::with_capacity(
+                                        normalized_path.len() + path_in_error.len() - 2,
+                                    );
+                                for segment in normalized_path {
+                                    match segment {
+                                        FlattenNodePathSegment::Field(field_name) => {
+                                            real_path.push(GraphQLErrorPathSegment::String(
+                                                field_name.to_string(),
+                                            ));
+                                        }
+                                        FlattenNodePathSegment::List => {
+                                            if let Some(index_in_path) = indexes_in_path.pop_front()
+                                            {
+                                                real_path.push(GraphQLErrorPathSegment::Index(
+                                                    index_in_path,
                                                 ));
                                             }
-                                            FlattenNodePathSegment::List => {
-                                                if let Some(index_in_path) =
-                                                    indexes_in_path.pop_front()
-                                                {
-                                                    real_path.push(GraphQLErrorPathSegment::Index(
-                                                        index_in_path,
-                                                    ));
-                                                }
-                                            }
-                                            FlattenNodePathSegment::Cast(_type_condition) => {
-                                                // Cast segments are not included in the error path
-                                                continue;
-                                            }
+                                        }
+                                        FlattenNodePathSegment::Cast(_type_condition) => {
+                                            // Cast segments are not included in the error path
+                                            continue;
                                         }
                                     }
-                                    if !indexes_in_path.is_empty() {
-                                        // If there are still indexes left, we need to traverse them
-                                        while let Some(index) = indexes_in_path.pop_front() {
-                                            real_path.push(GraphQLErrorPathSegment::Index(index));
-                                        }
-                                    }
-                                    real_path.extend_from_slice(&path_in_error[2..]);
-                                    let mut new_error = error.clone();
-                                    if !real_path.is_empty() {
-                                        new_error.path = Some(real_path);
-                                    }
-                                    new_error =
-                                        add_subgraph_info_to_error(new_error, subgraph_name);
-                                    new_errors.push(new_error);
                                 }
-                                continue 'error_loop;
+                                if !indexes_in_path.is_empty() {
+                                    // If there are still indexes left, we need to traverse them
+                                    while let Some(index) = indexes_in_path.pop_front() {
+                                        real_path.push(GraphQLErrorPathSegment::Index(index));
+                                    }
+                                }
+                                real_path.extend_from_slice(&path_in_error[2..]);
+                                let mut new_error = error.clone();
+                                if !real_path.is_empty() {
+                                    new_error.path = Some(real_path);
+                                }
+                                new_error = add_subgraph_info_to_error(new_error, subgraph_name);
+                                new_errors.push(new_error);
                             }
+                            return new_errors;
                         }
                     }
                 }
             }
         }
-        // Use the path without indexes in case of unlocated error
-        let mut real_path: Vec<GraphQLErrorPathSegment> = Vec::with_capacity(normalized_path.len());
-        for segment in normalized_path {
-            match segment {
-                FlattenNodePathSegment::Field(field_name) => {
-                    real_path.push(GraphQLErrorPathSegment::String(field_name.to_string()));
-                }
-                FlattenNodePathSegment::List => {
-                    break;
-                }
-                FlattenNodePathSegment::Cast(_type_condition) => {
-                    // Cast segments are not included in the error path
-                    continue;
-                }
+    }
+    // Use the path without indexes in case of unlocated error
+    let mut real_path: Vec<GraphQLErrorPathSegment> = Vec::with_capacity(normalized_path.len());
+    for segment in normalized_path {
+        match segment {
+            FlattenNodePathSegment::Field(field_name) => {
+                real_path.push(GraphQLErrorPathSegment::String(field_name.to_string()));
+            }
+            FlattenNodePathSegment::List => {
+                break;
+            }
+            FlattenNodePathSegment::Cast(_type_condition) => {
+                // Cast segments are not included in the error path
+                continue;
             }
         }
-        let mut new_error = error.clone();
-        if !real_path.is_empty() {
-            new_error.path = Some(real_path);
-        }
-        new_error = add_subgraph_info_to_error(new_error, subgraph_name);
-
-        new_errors.push(new_error);
     }
-
+    let mut new_error = error.clone();
+    if !real_path.is_empty() {
+        new_error.path = Some(real_path);
+    }
+    new_error = add_subgraph_info_to_error(new_error, subgraph_name);
+    new_errors.push(new_error);
     new_errors
 }
 
@@ -158,13 +148,17 @@ fn test_normalize_errors_for_representations() {
             extensions: None,
         },
     ];
-    let normalized_errors = normalize_errors_for_representations(
-        "products",
-        &normalized_path,
-        &representation_hashes,
-        &indexes_in_paths,
-        &errors,
-    );
+    let mut normalized_errors = Vec::new();
+    for error in &errors {
+        let normalized_error = normalize_error_for_representation(
+            error,
+            "products",
+            &normalized_path,
+            &representation_hashes,
+            &indexes_in_paths,
+        );
+        normalized_errors.extend(normalized_error);
+    }
     println!("{:?}", normalized_errors);
     assert_eq!(normalized_errors.len(), 2);
     assert_eq!(
