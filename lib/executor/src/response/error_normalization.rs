@@ -69,7 +69,8 @@ pub fn normalize_errors_for_representations(
                                     if !real_path.is_empty() {
                                         new_error.path = Some(real_path);
                                     }
-                                    new_error = add_subgraph_info_to_error(new_error, subgraph_name);
+                                    new_error =
+                                        add_subgraph_info_to_error(new_error, subgraph_name);
                                     new_errors.push(new_error);
                                 }
                                 continue 'error_loop;

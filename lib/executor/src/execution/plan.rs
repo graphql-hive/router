@@ -23,8 +23,11 @@ use crate::{
         response::project_by_operation,
     },
     response::{
-        error_normalization::{add_subgraph_info_to_error, normalize_errors_for_representations}, graphql_error::GraphQLError,
-        merge::deep_merge, subgraph_response::SubgraphResponse, value::Value,
+        error_normalization::{add_subgraph_info_to_error, normalize_errors_for_representations},
+        graphql_error::GraphQLError,
+        merge::deep_merge,
+        subgraph_response::SubgraphResponse,
+        value::Value,
     },
     utils::{
         consts::{CLOSE_BRACKET, OPEN_BRACKET, TYPENAME_FIELD_NAME},
