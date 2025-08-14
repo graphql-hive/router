@@ -10,7 +10,7 @@ pub struct HttpExecutorConfig {
 }
 
 fn default_max_connections_per_host() -> usize {
-    100
+    200
 }
 
 fn default_pool_idle_timeout_seconds() -> u64 {
