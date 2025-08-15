@@ -7,12 +7,12 @@ use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
 
-use bytes::{BufMut, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use http::HeaderMap;
 use http::HeaderValue;
 use http_body_util::BodyExt;
 use http_body_util::Full;
-use hyper::{body::Bytes, Version};
+use hyper::Version;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
 
@@ -68,11 +68,10 @@ impl HTTPSubgraphExecutor {
         }
     }
 
-    async fn _execute<'a>(
+    fn build_request_body<'a>(
         &self,
-        execution_request: HttpExecutionRequest<'a>,
-    ) -> Result<SharedResponse, SubgraphExecutorError> {
-        // We may want to remove it, but let's see.
+        execution_request: &HttpExecutionRequest<'a>,
+    ) -> Result<Bytes, SubgraphExecutorError> {
         let mut body = BytesMut::with_capacity(4096);
         body.put(FIRST_QUOTE_STR);
         write_and_escape_string(&mut body, execution_request.query);
@@ -114,11 +113,15 @@ impl HTTPSubgraphExecutor {
         }
         body.put(CLOSE_BRACE);
 
+        Ok(body.freeze())
+    }
+
+    async fn _send_request(&self, body: Bytes) -> Result<SharedResponse, SubgraphExecutorError> {
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
             .uri(&self.endpoint)
             .version(Version::HTTP_11)
-            .body(Full::new(body.freeze()))
+            .body(Full::new(body))
             .map_err(|e| {
                 SubgraphExecutorError::RequestBuildFailure(self.endpoint.to_string(), e.to_string())
             })?;
@@ -164,11 +167,16 @@ impl HTTPSubgraphExecutor {
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
     async fn execute<'a>(&self, execution_request: HttpExecutionRequest<'a>) -> Bytes {
+        let body = match self.build_request_body(&execution_request) {
+            Ok(body) => body,
+            Err(e) => return self.error_to_graphql_bytes(e),
+        };
+
         if !self.config.dedupe_enabled || !execution_request.dedupe {
             // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
-            return match self._execute(execution_request).await {
+            return match self._send_request(body).await {
                 Ok(shared_response) => shared_response.body,
                 Err(e) => self.error_to_graphql_bytes(e),
             };
@@ -178,10 +186,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             &http::Method::POST,
             &self.endpoint,
             &self.header_map,
-            execution_request
-                .representations
-                .as_ref()
-                .map_or(&[], |b| b.as_ref()),
+            &body,
             &self.config.dedupe_fingerprint_headers,
         );
 
@@ -200,7 +205,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
                     let _permit = self.semaphore.acquire().await.unwrap();
-                    self._execute(execution_request).await
+                    self._send_request(body).await
                 };
                 // It's important to remove the entry from the map before returning the result.
                 // This ensures that once the OnceCell is set, no future requests can join it.
