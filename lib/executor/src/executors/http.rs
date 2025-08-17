@@ -1,14 +1,20 @@
 use std::sync::Arc;
 
+use crate::executors::config::HttpExecutorConfig;
+use crate::executors::dedupe::{ABuildHasher, RequestFingerprint, SharedResponse};
+use dashmap::DashMap;
+use tokio::sync::OnceCell;
+
 use async_trait::async_trait;
-use bytes::BufMut;
-use bytes::BytesMut;
+
+use bytes::{BufMut, Bytes, BytesMut};
 use http::HeaderMap;
 use http::HeaderValue;
 use http_body_util::BodyExt;
 use http_body_util::Full;
-use hyper::{body::Bytes, Version};
+use hyper::Version;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use tokio::sync::Semaphore;
 
 use crate::executors::common::HttpExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
@@ -24,6 +30,10 @@ pub struct HTTPSubgraphExecutor {
     pub endpoint: http::Uri,
     pub http_client: Arc<Client<HttpConnector, Full<Bytes>>>,
     pub header_map: HeaderMap,
+    pub semaphore: Arc<Semaphore>,
+    pub config: Arc<HttpExecutorConfig>,
+    pub in_flight_requests:
+        Arc<DashMap<RequestFingerprint, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -31,29 +41,37 @@ const FIRST_QUOTE_STR: &[u8] = b"{\"query\":";
 
 impl HTTPSubgraphExecutor {
     pub fn new(
-        endpoint: &str,
+        endpoint: http::Uri,
         http_client: Arc<Client<HttpConnector, Full<Bytes>>>,
-    ) -> Result<Self, SubgraphExecutorError> {
-        let endpoint = endpoint.parse::<http::Uri>().map_err(|e| {
-            SubgraphExecutorError::EndpointParseFailure(endpoint.to_string(), e.to_string())
-        })?;
+        semaphore: Arc<Semaphore>,
+        config: Arc<HttpExecutorConfig>,
+        in_flight_requests: Arc<
+            DashMap<RequestFingerprint, Arc<OnceCell<SharedResponse>>, ABuildHasher>,
+        >,
+    ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
             "Content-Type",
             HeaderValue::from_static("application/json; charset=utf-8"),
         );
-        Ok(HTTPSubgraphExecutor {
+        header_map.insert(
+            http::header::CONNECTION,
+            HeaderValue::from_static("keep-alive"),
+        );
+        Self {
             endpoint,
             http_client,
             header_map,
-        })
+            semaphore,
+            config,
+            in_flight_requests,
+        }
     }
 
-    async fn _execute<'a>(
+    fn build_request_body<'a>(
         &self,
-        execution_request: HttpExecutionRequest<'a>,
+        execution_request: &HttpExecutionRequest<'a>,
     ) -> Result<Bytes, SubgraphExecutorError> {
-        // We may want to remove it, but let's see.
         let mut body = BytesMut::with_capacity(4096);
         body.put(FIRST_QUOTE_STR);
         write_and_escape_string(&mut body, execution_request.query);
@@ -95,11 +113,15 @@ impl HTTPSubgraphExecutor {
         }
         body.put(CLOSE_BRACE);
 
+        Ok(body.freeze())
+    }
+
+    async fn _send_request(&self, body: Bytes) -> Result<SharedResponse, SubgraphExecutorError> {
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
             .uri(&self.endpoint)
             .version(Version::HTTP_11)
-            .body(Full::new(body.freeze()))
+            .body(Full::new(body))
             .map_err(|e| {
                 SubgraphExecutorError::RequestBuildFailure(self.endpoint.to_string(), e.to_string())
             })?;
@@ -110,36 +132,92 @@ impl HTTPSubgraphExecutor {
             SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
         })?;
 
-        Ok(res
-            .into_body()
-            .collect()
-            .await
-            .map_err(|e| {
-                SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-            })?
-            .to_bytes())
+        let (parts, body) = res.into_parts();
+
+        Ok(SharedResponse {
+            status: parts.status,
+            body: body
+                .collect()
+                .await
+                .map_err(|e| {
+                    SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
+                })?
+                .to_bytes(),
+            headers: parts.headers,
+        })
+    }
+
+    fn error_to_graphql_bytes(&self, e: SubgraphExecutorError) -> Bytes {
+        let graphql_error: GraphQLError = format!(
+            "Failed to execute request to subgraph {}: {}",
+            self.endpoint, e
+        )
+        .into();
+        let errors = vec![graphql_error];
+        // This unwrap is safe as GraphQLError serialization shouldn't fail.
+        let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
+        let mut buffer = BytesMut::new();
+        buffer.put_slice(b"{\"errors\":");
+        buffer.put_slice(&errors_bytes);
+        buffer.put_slice(b"}");
+        buffer.freeze()
     }
 }
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
     async fn execute<'a>(&self, execution_request: HttpExecutionRequest<'a>) -> Bytes {
-        match self._execute(execution_request).await {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                let graphql_error: GraphQLError = format!(
-                    "Failed to execute request to subgraph {}: {}",
-                    self.endpoint, e
-                )
-                .into();
-                let errors = vec![graphql_error];
-                let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
-                let mut buffer = BytesMut::new();
-                buffer.put_slice(b"{\"errors\":");
-                buffer.put_slice(&errors_bytes);
-                buffer.put_slice(b"}");
-                buffer.freeze()
-            }
+        let body = match self.build_request_body(&execution_request) {
+            Ok(body) => body,
+            Err(e) => return self.error_to_graphql_bytes(e),
+        };
+
+        if !self.config.dedupe_enabled || !execution_request.dedupe {
+            // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
+            // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
+            let _permit = self.semaphore.acquire().await.unwrap();
+            return match self._send_request(body).await {
+                Ok(shared_response) => shared_response.body,
+                Err(e) => self.error_to_graphql_bytes(e),
+            };
+        }
+
+        let fingerprint = RequestFingerprint::new(
+            &http::Method::POST,
+            &self.endpoint,
+            &self.header_map,
+            &body,
+            &self.config.dedupe_fingerprint_headers,
+        );
+
+        // Clone the cell from the map, dropping the lock from the DashMap immediately.
+        // Prevents any deadlocks.
+        let cell = self
+            .in_flight_requests
+            .entry(fingerprint.clone())
+            .or_default()
+            .value()
+            .clone();
+
+        let response_result = cell
+            .get_or_try_init(|| async {
+                let res = {
+                    // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
+                    // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
+                    let _permit = self.semaphore.acquire().await.unwrap();
+                    self._send_request(body).await
+                };
+                // It's important to remove the entry from the map before returning the result.
+                // This ensures that once the OnceCell is set, no future requests can join it.
+                // The cache is for the lifetime of the in-flight request only.
+                self.in_flight_requests.remove(&fingerprint);
+                res
+            })
+            .await;
+
+        match response_result {
+            Ok(shared_response) => shared_response.body.clone(),
+            Err(e) => self.error_to_graphql_bytes(e.clone()),
         }
     }
 }

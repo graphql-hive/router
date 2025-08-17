@@ -1,9 +1,10 @@
 use async_graphql_axum::GraphQL;
 use axum::{
     extract::Request,
+    http::StatusCode,
     middleware::{self, Next},
-    response::Response,
-    routing::post_service,
+    response::{IntoResponse, Response},
+    routing::{get, post_service},
     Router,
 };
 use std::env::var;
@@ -29,6 +30,10 @@ async fn delay_middleware(req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
+async fn health_check_handler() -> impl IntoResponse {
+    StatusCode::OK
+}
+
 #[tokio::main]
 async fn main() {
     let host = var("HOST").unwrap_or("0.0.0.0".to_owned());
@@ -51,6 +56,7 @@ async fn main() {
             "/reviews",
             post_service(GraphQL::new(reviews::get_subgraph())),
         )
+        .route("/health", get(health_check_handler))
         .route_layer(middleware::from_fn(delay_middleware));
 
     println!("Starting server on http://localhost:4200");
