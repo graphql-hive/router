@@ -57,7 +57,7 @@ jobs:
         name: upload build artifact
         with:
           name: build/${{ matrix.name }}
-          path: target/${{ matrix.zigbuild_target }}/release/${{ env.BINARY_NAME }}
+          path: target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
           if-no-files-found: error
 
   # docker:
