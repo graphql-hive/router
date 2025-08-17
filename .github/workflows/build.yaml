@@ -46,10 +46,10 @@ jobs:
         name: rust toolchain (${{ matrix.rust_target }})
         with:
           target: ${{ matrix.rust_target }}
-      - uses: korandoru/setup-zig@v1
+      - uses: mlugg/setup-zig@v2
         name: setup zig
         with:
-          zig-version: ${{ env.ZIG_VERSION }}
+          version: ${{ env.ZIG_VERSION }}
       - uses: Swatinem/rust-cache@v2
         with:
           cache-targets: ${{ matrix.rust_target }}
