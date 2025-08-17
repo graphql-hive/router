@@ -1,0 +1,147 @@
+name: build
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  release:
+    types: [published]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: write
+  contents: read
+  issues: read
+  checks: write
+  pull-requests: write
+  packages: write
+  id-token: write
+
+env:
+  DOCKER_IMAGE_NAME: ghcr.io/graphql-hive/router
+  DOCKER_LICENSE: MIT
+  DOCKER_VENDOR: theguild
+  DOCKER_PLATFORMS: linux/amd64,linux/arm64
+  ZIG_VERSION: 0.14.1
+  BINARY_NAME: gateway
+
+jobs:
+  binary:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: linux_arm64
+            rust_target: aarch64-unknown-linux-gnu
+            zigbuild_target: aarch64-unknown-linux-gnu.2.28
+          - name: linux_amd64
+            rust_target: x86_64-unknown-linux-gnu
+            zigbuild_target: x86_64-unknown-linux-gnu.2.28
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        name: checkout
+      - uses: actions-rust-lang/setup-rust-toolchain@fb51252c7ba57d633bc668f941da052e410add48 # v1
+        name: rust toolchain (${{ matrix.rust_target }})
+        with:
+          target: ${{ matrix.rust_target }}
+          cache-key: ${{ matrix.name }}
+      - run: cargo install cargo-zigbuild
+        name: install zigbuild
+      - uses: mlugg/setup-zig@v2
+        name: setup zig
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: compile (${{ matrix.zigbuild_target }})
+        run: cargo zigbuild --release --target ${{ matrix.zigbuild_target }}
+      - uses: actions/upload-artifact@v4.6.2
+        name: upload build artifact
+        with:
+          name: gateway_${{ matrix.name }}
+          path: target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
+          if-no-files-found: error
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
+        if: ${{ github.event_name == 'release' }}
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
+          asset_name: gateway_${{ matrix.name }}
+          tag: ${{ github.ref }}
+  docker:
+    runs-on: ubuntu-latest
+    needs:
+      - binary
+    steps:
+      - name: checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+      - name: setup qemu
+        uses: docker/setup-qemu-action@v3.6.0
+      - name: setup buildx
+        uses: docker/setup-buildx-action@v3.11.1
+      - name: setup docker tags
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.DOCKER_IMAGE_NAME }}
+          labels: |
+            org.opencontainers.image.licenses=${{ env.DOCKER_LICENSE }}
+            org.opencontainers.image.vendor=${{ env.DOCKER_VENDOR }}
+          tags: |
+            type=ref,event=pr
+            type=semver,pattern={{version}},value=${{ github.event.release.name }},enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=sha
+            type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+      - name: download binary artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+          pattern: gateway_*
+      - name: prepare artifacts
+        run: |
+          mkdir -p ./target/linux/arm64
+          mkdir -p ./target/linux/amd64
+
+          mv ./artifacts/gateway_linux_arm64/gateway ./target/linux/arm64/gateway
+          mv ./artifacts/gateway_linux_amd64/gateway ./target/linux/amd64/gateway
+          ls -ltra ./target/linux/arm64/
+          ls -ltra ./target/linux/amd64/
+      - uses: docker/login-action@v3.5.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: build and push
+        id: docker
+        uses: docker/build-push-action@v6.18.0
+        with:
+          file: ./docker/gateway.Dockerfile
+          context: .
+          platforms: ${{ env.DOCKER_PLATFORMS }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+      - name: docker pr comment
+        uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2
+        if: ${{ github.event_name == 'pull_request' }}
+        with:
+          header: ${{ github.workflow }}
+          message: |
+            🐋 This PR was built and pushed to the following [Docker images](https://github.com/graphql-hive?ecosystem=container&tab=packages&visibility=public):
+
+            **Image Names**: `${{ env.DOCKER_IMAGE_NAME }}`
+
+            **Platforms**: `${{ env.DOCKER_PLATFORMS }}`
+
+            **Image Tags**: `${{ steps.meta.outputs.tags }}`
+
+            <details>
+              <summary>Docker metadata</summary>
+
+              ```json
+              ${{ steps.docker.outputs.metadata }}
+              ```
+            </details>
