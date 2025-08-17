@@ -71,6 +71,7 @@ jobs:
           file: target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
           asset_name: gateway_${{ matrix.name }}
           tag: ${{ github.ref }}
+
   docker:
     runs-on: ubuntu-latest
     needs:
