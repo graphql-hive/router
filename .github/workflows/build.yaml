@@ -4,6 +4,8 @@ on:
     branches:
       - main
   pull_request:
+  release:
+    types: [published]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -82,14 +84,10 @@ jobs:
             org.opencontainers.image.licenses=${{ env.DOCKER_LICENSE }}
             org.opencontainers.image.vendor=${{ env.DOCKER_VENDOR }}
           tags: |
-            type=ref,event=branch
             type=ref,event=pr
-            type=ref,event=tag
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=semver,pattern={{version}},value=${{ github.event.release.name }},enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
             type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
       - name: download binary artifacts
         uses: actions/download-artifact@v5
         with:
