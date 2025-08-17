@@ -51,6 +51,10 @@ jobs:
         with:
           zig-version: ${{ env.ZIG_VERSION }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: ${{ matrix.rust_target }}
+          key: ${{ matrix.name }}
+          cache-directories: target/${{ matrix.rust_target }}
       - name: compile (${{ matrix.zigbuild_target }})
         run: cargo zigbuild --release --target ${{ matrix.zigbuild_target }}
       - uses: actions/upload-artifact@v4.6.2
