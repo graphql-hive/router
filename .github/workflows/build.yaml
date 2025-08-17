@@ -19,23 +19,47 @@ permissions:
   id-token: write
 
 env:
-  IMAGE_NAME: ghcr.io/graphql-hive/router
-  LICENSE: MIT
-  VENDOR: theguild
-  PLATFORMS: linux/amd64,linux/arm64
+  DOCKER_IMAGE_NAME: ghcr.io/graphql-hive/router
+  DOCKER_LICENSE: MIT
+  DOCKER_VENDOR: theguild
+  DOCKER_PLATFORMS: linux/amd64,linux/arm64
+  ZIG_VERSION: 0.14.1
+  ZIGBUILD_GLIBC_VERSION: 2.28
+  BINARY_NAME: gateway
 
 jobs:
   binary:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: linux/arm64
+            rust_target: aarch64-unknown-linux-gnu
+            zigbuild_target: aarch64-unknown-linux-gnu.${{ env.ZIGBUILD_GLIBC_VERSION }}
+          - name: linux/amd64
+            rust_target: x86_64-unknown-linux-gnu
+            zigbuild_target: x86_64-unknown-linux-gnu.${{ env.ZIGBUILD_GLIBC_VERSION }}
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        name: checkout
       - uses: actions-rust-lang/setup-rust-toolchain@fb51252c7ba57d633bc668f941da052e410add48 # v1
-      - uses: korandoru/setup-zig@v1
+        name: rust toolchain (${{ matrix.rust_target }})
         with:
-          zig-version: 0.14.1
+          rust-target: ${{ matrix.rust_target }}
+      - uses: korandoru/setup-zig@v1
+        name: setup zig
+        with:
+          zig-version: ${{ env.ZIG_VERSION }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo install --locked cargo-zigbuild
-      - run: bash docker/build-binary.sh
+      - name: compile (${{ matrix.zigbuild_target }})
+        run: cargo zigbuild --release --target ${{ matrix.zigbuild_target }}
+      - uses: actions/upload-artifact@v4.6.2
+        name: upload build artifact
+        with:
+          name: build/${{ matrix.name }}
+          path: target/${{ matrix.zigbuild_target }}/release/${{ env.BINARY_NAME }}
+          if-no-files-found: error
 
   # docker:
   #   runs-on: ubuntu-latest
