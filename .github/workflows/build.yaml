@@ -111,6 +111,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: build and push
+        id: docker
         uses: docker/build-push-action@v6.18.0
         with:
           file: ./docker/gateway.Dockerfile
@@ -119,3 +120,24 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+      - name: docker pr comment
+        uses: marocchino/sticky-pull-request-comment@52423e01640425a022ef5fd42c6fb5f633a02728 # v2
+        if: ${{ github.event_name == 'pull_request' }}
+        with:
+          header: ${{ github.workflow }}
+          message: |
+            🐋 This PR was built and pushed to the following [Docker images](https://github.com/graphql-hive?ecosystem=container&tab=packages&visibility=public):
+
+            **Image Names**: `${{ env.DOCKER_IMAGE_NAME }}`
+
+            **Platforms**: `${{ env.DOCKER_PLATFORMS }}`
+
+            **Image Tags**: `${{ steps.meta.outputs.tags }}`
+
+            <details>
+              <summary>Docker metadata</summary>
+
+              ```json
+              ${{ steps.docker.outputs.metadata }}
+              ```
+            </details>
