@@ -13,7 +13,7 @@ concurrency:
 
 permissions:
   actions: write
-  contents: read
+  contents: write
   issues: read
   checks: write
   pull-requests: write
