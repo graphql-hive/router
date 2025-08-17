@@ -3,11 +3,6 @@ set -e
 
 export BINARY_NAME=gateway
 
-cargo install --locked cargo-zigbuild
-
-# Fails? run "brew install zig"
-which zig
-
 echo "Cleaning up old builds..."
 rm -rf target/linux
 
