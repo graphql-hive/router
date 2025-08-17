@@ -45,7 +45,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@fb51252c7ba57d633bc668f941da052e410add48 # v1
         name: rust toolchain (${{ matrix.rust_target }})
         with:
-          rust-target: ${{ matrix.rust_target }}
+          target: ${{ matrix.rust_target }}
       - uses: korandoru/setup-zig@v1
         name: setup zig
         with:
