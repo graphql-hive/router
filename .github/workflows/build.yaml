@@ -51,20 +51,20 @@ jobs:
           cache-key: ${{ matrix.name }}
       - run: cargo install cargo-zigbuild
         name: install zigbuild
-      - uses: mlugg/setup-zig@v2
+      - uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f # v2
         name: setup zig
         with:
           version: ${{ env.ZIG_VERSION }}
       - name: compile (${{ matrix.zigbuild_target }})
         run: cargo zigbuild --release --target ${{ matrix.zigbuild_target }}
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         name: upload build artifact
         with:
           name: gateway_${{ matrix.name }}
           path: target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
           if-no-files-found: error
       - name: Upload binaries to release
-        uses: svenstaro/upload-release-action@v2
+        uses: svenstaro/upload-release-action@81c65b7cd4de9b2570615ce3aad67a41de5b1a13 # v2
         if: ${{ github.event_name == 'release' }}
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -79,12 +79,12 @@ jobs:
       - name: checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
       - name: setup qemu
-        uses: docker/setup-qemu-action@v3.6.0
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
       - name: setup buildx
-        uses: docker/setup-buildx-action@v3.11.1
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
       - name: setup docker tags
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@818d4b7b91585d195f67373fd9cb0332e31a7175 # v4
         with:
           images: ${{ env.DOCKER_IMAGE_NAME }}
           labels: |
@@ -96,7 +96,7 @@ jobs:
             type=sha
             type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
       - name: download binary artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           path: artifacts
           pattern: gateway_*
@@ -109,14 +109,14 @@ jobs:
           mv ./artifacts/gateway_linux_amd64/gateway ./target/linux/amd64/gateway
           ls -ltra ./target/linux/arm64/
           ls -ltra ./target/linux/amd64/
-      - uses: docker/login-action@v3.5.0
+      - uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: build and push
         id: docker
-        uses: docker/build-push-action@v6.18.0
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           file: ./docker/gateway.Dockerfile
           context: .
