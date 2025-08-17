@@ -12,7 +12,7 @@ It can be run as a standalone binary or a Docker Image. Query planner can be use
 
 See [GitHub Releases](https://github.com/graphql-hive/gateway-rs/releases) and use the artifacts published to each release.
 
-## Docker
+### Docker
 
 The gateway is published via [Docker to GitHub Container Registry](). You may use it directly using the following command:
 
