@@ -48,7 +48,8 @@ jobs:
           target: ${{ matrix.rust_target }}
           cache-key: ${{ matrix.name }}
           cache-directories: target/${{ matrix.rust_target }}
-      - run: cargo install --locked cargo-zigbuild
+      - run: cargo install cargo-zigbuild
+        name: install zigbuild
       - uses: mlugg/setup-zig@v2
         name: setup zig
         with:
