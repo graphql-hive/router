@@ -102,9 +102,10 @@ jobs:
           mkdir -p ./target/linux/arm64
           mkdir -p ./target/linux/amd64
 
-          ls -ltr artifacts/
           mv ./artifacts/gateway_linux_arm64/gateway ./target/linux/arm64/gateway
           mv ./artifacts/gateway_linux_amd64/gateway ./target/linux/amd64/gateway
+          ls -ltra ./target/linux/arm64/
+          ls -ltra ./target/linux/amd64/
       - uses: docker/login-action@v3.5.0
         with:
           registry: ghcr.io
