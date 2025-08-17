@@ -25,7 +25,7 @@ pub fn project_by_operation(
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
 ) -> Result<Bytes, ProjectionError> {
-    let mut buffer = BytesMut::with_capacity(4096);
+    let mut buffer = BytesMut::with_capacity(data.estimate_size() + 9 /* {"data":} */);
     buffer.put(OPEN_BRACE);
     buffer.put(QUOTE);
     buffer.put("data".as_bytes());
