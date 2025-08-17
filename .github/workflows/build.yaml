@@ -47,7 +47,8 @@ jobs:
         with:
           target: ${{ matrix.rust_target }}
           cache-key: ${{ matrix.name }}
-          cache-directories: target/${{ matrix.rust_target }}
+          cache-workspace-crates: true
+          cache-all-crates: true
       - run: cargo install cargo-zigbuild
         name: install zigbuild
       - uses: mlugg/setup-zig@v2
@@ -96,15 +97,14 @@ jobs:
         with:
           path: artifacts
           pattern: gateway_*
-          merge-multiple: true
       - name: prepare artifacts
         run: |
           mkdir -p ./target/linux/arm64
           mkdir -p ./target/linux/amd64
 
           ls -ltr artifacts/
-          mv ./artifacts/gateway_linux_arm64 ./target/linux/arm64/gateway
-          mv ./artifacts/gateway_linux_amd64 ./target/linux/amd64/gateway
+          mv ./artifacts/gateway_linux_arm64/gateway ./target/linux/arm64/gateway
+          mv ./artifacts/gateway_linux_amd64/gateway ./target/linux/amd64/gateway
       - uses: docker/login-action@v3.5.0
         with:
           registry: ghcr.io
