@@ -91,7 +91,7 @@ jobs:
             type=semver,pattern={{major}}
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
-      - name: Download All Artifacts
+      - name: download binary artifacts
         uses: actions/download-artifact@v5
         with:
           path: artifacts
@@ -102,10 +102,8 @@ jobs:
           mkdir -p ./target/linux/arm64
           mkdir -p ./target/linux/amd64
 
-          cd artifacts
-          ls artifacts
-          mv artifacts/gateway_linux_arm64 artifacts/linux/arm64/gateway
-          mv artifacts/gateway_linux_amd64 artifacts/linux/amd64/gateway
+          mv artifacts/gateway_linux_arm64 target/linux/arm64/gateway
+          mv artifacts/gateway_linux_amd64 target/linux/amd64/gateway
       - uses: docker/login-action@v3.5.0
         with:
           registry: ghcr.io
