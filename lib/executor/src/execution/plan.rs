@@ -58,6 +58,8 @@ pub async fn execute_query_plan<'exec>(
             ctx.variable_values,
             ctx.executors,
             ctx.introspection_context.metadata,
+            // Deduplicate subgraph requests only if the operation type is a query
+            ctx.operation_type_name == "Query",
         );
         executor
             .execute(&mut exec_ctx, ctx.query_plan.node.as_ref())
@@ -80,6 +82,7 @@ pub struct Executor<'exec> {
     variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     schema_metadata: &'exec SchemaMetadata,
     executors: &'exec SubgraphExecutorMap,
+    dedupe_subgraph_requests: bool,
 }
 
 struct ConcurrencyScope<'exec, T> {
@@ -146,11 +149,13 @@ impl<'exec> Executor<'exec> {
         variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
         executors: &'exec SubgraphExecutorMap,
         schema_metadata: &'exec SchemaMetadata,
+        dedupe_subgraph_requests: bool,
     ) -> Self {
         Executor {
             variable_values,
             executors,
             schema_metadata,
+            dedupe_subgraph_requests,
         }
     }
 
@@ -524,6 +529,7 @@ impl<'exec> Executor<'exec> {
                     &node.service_name,
                     HttpExecutionRequest {
                         query: node.operation.document_str.as_str(),
+                        dedupe: self.dedupe_subgraph_requests,
                         operation_name: node.operation_name.as_deref(),
                         variables: None,
                         representations,
