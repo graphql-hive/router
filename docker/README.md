@@ -2,6 +2,8 @@
 
 The following instructions will guide you through the process of compiling and packaging the gateway, **locally**.
 
+> This process is also automated using GitHub Actions, see [workflow file](../.github/workflows/build.yaml).
+
 ## Binary
 
 Make sure to install `zig` and `zigbuild` in your system:
