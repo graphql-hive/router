@@ -10,7 +10,7 @@ use http_body_util::Full;
 use hyper::{body::Bytes, Version};
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 
-use crate::executors::common::HttpExecutionRequest;
+use crate::executors::common::SubgraphExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
 use crate::response::graphql_error::GraphQLError;
 use crate::utils::consts::CLOSE_BRACE;
@@ -51,7 +51,7 @@ impl HTTPSubgraphExecutor {
 
     async fn _execute<'a>(
         &self,
-        execution_request: HttpExecutionRequest<'a>,
+        execution_request: SubgraphExecutionRequest<'a>,
     ) -> Result<Bytes, SubgraphExecutorError> {
         // We may want to remove it, but let's see.
         let mut body = BytesMut::with_capacity(4096);
@@ -123,7 +123,7 @@ impl HTTPSubgraphExecutor {
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
-    async fn execute<'a>(&self, execution_request: HttpExecutionRequest<'a>) -> Bytes {
+    async fn execute<'a>(&self, execution_request: SubgraphExecutionRequest<'a>) -> Bytes {
         match self._execute(execution_request).await {
             Ok(bytes) => bytes,
             Err(e) => {

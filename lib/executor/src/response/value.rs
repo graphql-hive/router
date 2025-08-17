@@ -183,6 +183,13 @@ impl<'a> Value<'a> {
         }
     }
 
+    pub fn as_array(&self) -> Option<&Vec<Value<'a>>> {
+        match self {
+            Value::Array(arr) => Some(arr),
+            _ => None,
+        }
+    }
+
     pub fn is_null(&self) -> bool {
         matches!(self, Value::Null)
     }

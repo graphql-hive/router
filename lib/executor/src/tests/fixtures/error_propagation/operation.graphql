@@ -1,0 +1,17 @@
+fragment Movie on Movie {
+  id
+  name
+  director {
+    id
+    name
+  }
+}
+
+query {
+  movie1: movie(id: "1") {
+    ...Movie
+  }
+  movie2: movie(id: "2") {
+    ...Movie
+  }
+}

@@ -4,16 +4,16 @@ use query_planner::planner::plan_nodes::{FetchNode, FetchRewrite, QueryPlan};
 
 use crate::response::{graphql_error::GraphQLError, storage::ResponsesStorage, value::Value};
 
-pub struct ExecutionContext<'a> {
+pub struct QueryPlanExecutionContext<'a> {
     pub response_storage: ResponsesStorage,
     pub final_response: Value<'a>,
     pub errors: Vec<GraphQLError>,
     pub output_rewrites: OutputRewritesStorage,
 }
 
-impl<'a> Default for ExecutionContext<'a> {
+impl<'a> Default for QueryPlanExecutionContext<'a> {
     fn default() -> Self {
-        ExecutionContext {
+        QueryPlanExecutionContext {
             response_storage: Default::default(),
             output_rewrites: Default::default(),
             errors: Vec::new(),
@@ -22,21 +22,13 @@ impl<'a> Default for ExecutionContext<'a> {
     }
 }
 
-impl<'a> ExecutionContext<'a> {
+impl<'a> QueryPlanExecutionContext<'a> {
     pub fn new(query_plan: &QueryPlan, init_final_response: Value<'a>) -> Self {
-        ExecutionContext {
+        QueryPlanExecutionContext {
             response_storage: ResponsesStorage::new(),
             output_rewrites: OutputRewritesStorage::from_query_plan(query_plan),
             errors: Vec::new(),
             final_response: init_final_response,
-        }
-    }
-
-    pub fn handle_errors(&mut self, errors: Option<Vec<GraphQLError>>) {
-        if let Some(errors) = errors {
-            for error in errors {
-                self.errors.push(error);
-            }
         }
     }
 }

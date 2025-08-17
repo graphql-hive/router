@@ -2,7 +2,7 @@ use graphql_parser::Pos;
 use graphql_tools::validation::utils::ValidationError;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use sonic_rs::Value;
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,7 +12,7 @@ pub struct GraphQLError {
     pub locations: Option<Vec<GraphQLErrorLocation>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<Vec<GraphQLErrorPathSegment>>,
-    pub extensions: Option<Value>,
+    pub extensions: Option<HashMap<String, Value>>,
 }
 
 impl From<String> for GraphQLError {
@@ -52,7 +52,7 @@ pub struct GraphQLErrorLocation {
     pub column: usize,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, PartialEq)]
 pub enum GraphQLErrorPathSegment {
     String(String),
     Index(usize),

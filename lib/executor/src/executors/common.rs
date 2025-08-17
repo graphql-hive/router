@@ -5,7 +5,7 @@ use bytes::{Bytes, BytesMut};
 
 #[async_trait]
 pub trait SubgraphExecutor {
-    async fn execute<'a>(&self, execution_request: HttpExecutionRequest<'a>) -> Bytes;
+    async fn execute<'a>(&self, execution_request: SubgraphExecutionRequest<'a>) -> Bytes;
     fn to_boxed_arc<'a>(self) -> Arc<Box<dyn SubgraphExecutor + Send + Sync + 'a>>
     where
         Self: Sized + Send + Sync + 'a,
@@ -18,7 +18,7 @@ pub type SubgraphExecutorType = dyn crate::executors::common::SubgraphExecutor +
 
 pub type SubgraphExecutorBoxedArc = Arc<Box<SubgraphExecutorType>>;
 
-pub struct HttpExecutionRequest<'a> {
+pub struct SubgraphExecutionRequest<'a> {
     pub query: &'a str,
     pub operation_name: Option<&'a str>,
     // TODO: variables could be stringified before even executing the request

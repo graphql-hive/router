@@ -38,6 +38,10 @@ bumpalo = "3.19.0"
 subgraphs = { path = "../../bench/subgraphs" }
 criterion = { workspace = true }
 tokio = { workspace = true }
+async-graphql = "7.0.17"
+tokio-test = "0.4.4"
+insta = "1.42.1"
+serde_json = "1.0.109"
 
 [[bench]]
 name = "executor_benches"
