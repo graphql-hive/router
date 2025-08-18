@@ -67,7 +67,7 @@ async fn plan(
     state: &GatewaySharedState,
 ) -> Result<(QueryPlan, NormalizedDocument), PipelineErrorVariant> {
     let parsed_operation = safe_parse_operation(&input.query)
-        .map_err(|err| PipelineErrorVariant::FailedToParseOperation(err))?;
+        .map_err(PipelineErrorVariant::FailedToParseOperation)?;
     let consumer_schema_ast = &state.planner.consumer_schema.document;
     let validation_errors = validate(
         consumer_schema_ast,
@@ -75,7 +75,7 @@ async fn plan(
         &state.validation_plan,
     );
 
-    if validation_errors.len() > 0 {
+    if !validation_errors.is_empty() {
         return Err(PipelineErrorVariant::ValidationErrors(Arc::new(
             validation_errors,
         )));
@@ -86,7 +86,7 @@ async fn plan(
         &parsed_operation,
         input.operation_name.as_deref(),
     )
-    .map_err(|err| PipelineErrorVariant::NormalizationError(err))?;
+    .map_err(PipelineErrorVariant::NormalizationError)?;
 
     let request_override_context = PlannerOverrideContext::new(
         HashSet::new(),
@@ -96,7 +96,7 @@ async fn plan(
     let plan = state
         .planner
         .plan_from_normalized_operation(&normalized_operation.operation, request_override_context)
-        .map_err(|err| PipelineErrorVariant::PlannerError(err))?;
+        .map_err(PipelineErrorVariant::PlannerError)?;
 
     Ok((plan, normalized_operation))
 }
