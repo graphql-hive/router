@@ -123,7 +123,10 @@ jobs:
       - name: Build gateway
         run: cargo build --release -p gateway
       - name: Run gateway
-        run: ./target/release/gateway bench/supergraph.graphql & sleep 5
+        run: ./target/release/gateway & sleep 5
+        env:
+          HIVE_SUPERGRAPH_SOURCE: file
+          HIVE_SUPERGRAPH_PATH: bench/supergraph.graphql
       - name: Run k6 benchmark
         run: k6 run bench/k6.js
 

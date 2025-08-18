@@ -1,10 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use executor::{
-    executors::config::HttpExecutorConfig,
     introspection::schema::{SchemaMetadata, SchemaWithMetadata},
     SubgraphExecutorMap,
 };
+use gateway_config::HiveRouterConfig;
 use graphql_parser::schema::Document;
 use graphql_tools::validation::{utils::ValidationError, validate::ValidationPlan};
 use moka::future::Cache;
@@ -28,17 +28,19 @@ pub struct GatewaySharedState {
 }
 
 impl GatewaySharedState {
-    pub fn new(parsed_supergraph_sdl: Document<'static, String>) -> Arc<Self> {
+    pub fn new(
+        parsed_supergraph_sdl: Document<'static, String>,
+        router_config: &HiveRouterConfig,
+    ) -> Arc<Self> {
         let supergraph_state = SupergraphState::new(&parsed_supergraph_sdl);
         let planner =
             Planner::new_from_supergraph(&parsed_supergraph_sdl).expect("failed to create planner");
         let schema_metadata = planner.consumer_schema.schema_metadata();
 
         let subgraph_endpoint_map = supergraph_state.subgraph_endpoint_map.clone();
-        let http_executor_config = HttpExecutorConfig::default();
         let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(
             supergraph_state.subgraph_endpoint_map,
-            http_executor_config,
+            router_config.traffic_shaping.clone(),
         )
         .expect("Failed to create subgraph executor map");
 

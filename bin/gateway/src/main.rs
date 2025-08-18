@@ -9,7 +9,7 @@ use crate::{
         landing_page::landing_page_handler,
         request_id::{RequestIdGenerator, REQUEST_ID_HEADER_NAME},
     },
-    logger::{configure_logging, LoggingFormat},
+    logger::configure_logging,
     shared_state::GatewaySharedState,
 };
 use axum::{
@@ -18,13 +18,13 @@ use axum::{
     routing::{any_service, get},
     Router,
 };
+use gateway_config::load_config;
 use http::Request;
 use mimalloc::MiMalloc;
 use tokio::signal;
 
 use axum::Extension;
 use tower::ServiceBuilder;
-use tracing::debug_span;
 
 use crate::pipeline::{
     coerce_variables_service::CoerceVariablesService, execution_service::ExecutionService,
@@ -35,50 +35,27 @@ use crate::pipeline::{
     query_plan_service::QueryPlanService, validation_service::GraphQLValidationService,
 };
 use query_planner::utils::parsing::parse_schema;
-use std::{env, net::SocketAddr};
 use tokio::net::TcpListener;
 use tower_http::{
     cors::CorsLayer,
     request_id::{PropagateRequestIdLayer, RequestId, SetRequestIdLayer},
     trace::TraceLayer,
 };
-use tracing::info;
+use tracing::{debug_span, info};
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let log_format = env::var("LOG_FORMAT")
-        .map(|v| match v.as_str().to_lowercase() {
-            str if str == "json" => LoggingFormat::Json,
-            str if str == "tree" => LoggingFormat::PrettyTree,
-            str if str == "compact" => LoggingFormat::PrettyCompact,
-            _ => LoggingFormat::PrettyCompact,
-        })
-        .unwrap_or(LoggingFormat::PrettyCompact);
-    configure_logging(log_format);
+    let config_path = std::env::var("HIVE_CONFIG_FILE_PATH").ok();
+    let gateway_config = load_config(config_path)?;
+    configure_logging(&gateway_config.log);
 
-    let expose_query_plan = env::var("EXPOSE_QUERY_PLAN")
-        .map(|v| matches!(v.as_str().to_lowercase(), str if str == "true" || str == "1"))
-        .unwrap_or(false);
-
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: gateway <SUPERGRAPH_PATH>");
-        return Err("Missing supergraph path argument".into());
-    }
-
-    let supergraph_path = &args[1];
-
-    let supergraph_sdl = std::fs::read_to_string(supergraph_path).unwrap_or_else(|_| {
-        panic!(
-            "Unable to read supergraph file from path: {}",
-            supergraph_path
-        )
-    });
+    let allow_expose_query_plan = gateway_config.query_planner.allow_expose;
+    let supergraph_sdl = gateway_config.supergraph.load().await?;
     let parsed_schema = parse_schema(&supergraph_sdl);
-    let gateway_shared_state = GatewaySharedState::new(parsed_schema);
+    let gateway_shared_state = GatewaySharedState::new(parsed_schema, &gateway_config);
 
     let pipeline = ServiceBuilder::new()
         .layer(Extension(gateway_shared_state.clone()))
@@ -111,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(CoerceVariablesService::new_layer())
         .layer(QueryPlanService::new_layer())
         .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER_NAME.clone()))
-        .service(ExecutionService::new(expose_query_plan));
+        .service(ExecutionService::new(allow_expose_query_plan));
 
     let app = Router::new()
         .route("/graphql", any_service(pipeline))
@@ -128,7 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .fallback(get(landing_page_handler))
         .with_state(gateway_shared_state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 4000));
+    let addr = gateway_config.http.address();
     info!("Starting server on {}", addr);
 
     let listener = TcpListener::bind(addr).await?;

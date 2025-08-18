@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use crate::executors::config::HttpExecutorConfig;
 use crate::executors::dedupe::{ABuildHasher, RequestFingerprint, SharedResponse};
 use dashmap::DashMap;
+use gateway_config::traffic_shaping::TrafficShapingExecutorConfig;
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
@@ -31,7 +31,7 @@ pub struct HTTPSubgraphExecutor {
     pub http_client: Arc<Client<HttpConnector, Full<Bytes>>>,
     pub header_map: HeaderMap,
     pub semaphore: Arc<Semaphore>,
-    pub config: Arc<HttpExecutorConfig>,
+    pub config: Arc<TrafficShapingExecutorConfig>,
     pub in_flight_requests:
         Arc<DashMap<RequestFingerprint, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
 }
@@ -44,7 +44,7 @@ impl HTTPSubgraphExecutor {
         endpoint: http::Uri,
         http_client: Arc<Client<HttpConnector, Full<Bytes>>>,
         semaphore: Arc<Semaphore>,
-        config: Arc<HttpExecutorConfig>,
+        config: Arc<TrafficShapingExecutorConfig>,
         in_flight_requests: Arc<
             DashMap<RequestFingerprint, Arc<OnceCell<SharedResponse>>, ABuildHasher>,
         >,

@@ -1,0 +1,17 @@
+[package]
+name = "gateway-config"
+version = "0.0.1"
+edition = "2021"
+
+[[bin]]
+name = "config_schema_generator"
+path = "src/config_schema_generator.rs"
+
+[lib]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+schemars = "1.0.4"
+config = { version = "0.15.14", features = ["yaml", "json", "json5"] }

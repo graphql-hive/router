@@ -6,3 +6,5 @@ profile.json.gz
 ./supergraph.graphql
 ./flamegraph.svg
 trace-*.json
+router-config.schema.json
+node_modules

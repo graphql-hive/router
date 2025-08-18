@@ -1,0 +1,10 @@
+{
+  "name": "docs-md-generator",
+  "scripts": {
+    "generate": "jsonschema2mk --extension yaml-examples --schema ../../router-config.schema.json > ../README.md"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "jsonschema2mk": "2.1.1"
+  }
+}

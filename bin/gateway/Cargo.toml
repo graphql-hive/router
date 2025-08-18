@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 query-planner = { path = "../../lib/query-planner" }
 executor = { path = "../../lib/executor" }
+gateway-config = { path = "../../lib/gateway-config" }
 
 tokio = { workspace = true }
 futures = { workspace = true }
