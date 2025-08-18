@@ -1,6 +1,7 @@
 mod http_utils;
 mod logger;
 mod pipeline;
+mod planner_service;
 mod shared_state;
 
 use crate::{
@@ -10,12 +11,15 @@ use crate::{
         request_id::{RequestIdGenerator, REQUEST_ID_HEADER_NAME},
     },
     logger::{configure_logging, LoggingFormat},
+    planner_service::{
+        planner_service_handler, supergraph_schema_handler, supergraph_version_handler,
+    },
     shared_state::GatewaySharedState,
 };
 use axum::{
     body::Body,
     http::Method,
-    routing::{any_service, get},
+    routing::{any_service, get, post},
     Router,
 };
 use http::Request;
@@ -78,7 +82,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
     });
     let parsed_schema = parse_schema(&supergraph_sdl);
-    let gateway_shared_state = GatewaySharedState::new(parsed_schema);
+    let supergraph_version = env::var("SUPERGRAPH_VERSION").unwrap_or_default();
+    let gateway_shared_state = GatewaySharedState::new(parsed_schema, supergraph_version);
 
     let pipeline = ServiceBuilder::new()
         .layer(Extension(gateway_shared_state.clone()))
@@ -115,7 +120,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/graphql", any_service(pipeline))
+        .route("/supergraph/version", get(supergraph_version_handler))
+        .route("/supergraph/schema", get(supergraph_schema_handler))
+        .route("/build-query-plan", post(planner_service_handler))
         .route("/health", get(health_check_handler))
+        .layer(Extension(gateway_shared_state.clone()))
         .layer(
             CorsLayer::new()
                 .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
