@@ -66,8 +66,8 @@ async fn plan(
     input: &PlannerServiceJsonInput,
     state: &GatewaySharedState,
 ) -> Result<(QueryPlan, NormalizedDocument), PipelineErrorVariant> {
-    let parsed_operation = safe_parse_operation(&input.query)
-        .map_err(PipelineErrorVariant::FailedToParseOperation)?;
+    let parsed_operation =
+        safe_parse_operation(&input.query).map_err(PipelineErrorVariant::FailedToParseOperation)?;
     let consumer_schema_ast = &state.planner.consumer_schema.document;
     let validation_errors = validate(
         consumer_schema_ast,
