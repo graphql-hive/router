@@ -25,10 +25,15 @@ pub struct GatewaySharedState {
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub parse_cache: Cache<u64, Arc<graphql_parser::query::Document<'static, String>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
+    pub supergraph_version: String,
+    pub sdl: String,
 }
 
 impl GatewaySharedState {
-    pub fn new(parsed_supergraph_sdl: Document<'static, String>) -> Arc<Self> {
+    pub fn new(
+        parsed_supergraph_sdl: Document<'static, String>,
+        supergraph_version: String,
+    ) -> Arc<Self> {
         let supergraph_state = SupergraphState::new(&parsed_supergraph_sdl);
         let planner =
             Planner::new_from_supergraph(&parsed_supergraph_sdl).expect("failed to create planner");
@@ -52,6 +57,8 @@ impl GatewaySharedState {
             validate_cache: moka::future::Cache::new(1000),
             parse_cache: moka::future::Cache::new(1000),
             normalize_cache: moka::future::Cache::new(1000),
+            supergraph_version,
+            sdl: parsed_supergraph_sdl.to_string(),
         })
     }
 }
