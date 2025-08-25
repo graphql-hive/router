@@ -13,7 +13,7 @@ use query_planner::{
     state::supergraph_state::SupergraphState,
 };
 
-use crate::pipeline::normalize_service::GraphQLNormalizationPayload;
+use crate::pipeline::normalize::GraphQLNormalizationPayload;
 
 pub struct GatewaySharedState {
     pub schema_metadata: SchemaMetadata,
@@ -25,12 +25,13 @@ pub struct GatewaySharedState {
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub parse_cache: Cache<u64, Arc<graphql_parser::query::Document<'static, String>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
+    pub router_config: HiveRouterConfig,
 }
 
 impl GatewaySharedState {
     pub fn new(
         parsed_supergraph_sdl: Document<'static, String>,
-        router_config: &HiveRouterConfig,
+        router_config: HiveRouterConfig,
     ) -> Arc<Self> {
         let supergraph_state = SupergraphState::new(&parsed_supergraph_sdl);
         let planner =
@@ -54,6 +55,7 @@ impl GatewaySharedState {
             validate_cache: moka::future::Cache::new(1000),
             parse_cache: moka::future::Cache::new(1000),
             normalize_cache: moka::future::Cache::new(1000),
+            router_config,
         })
     }
 }
