@@ -29,6 +29,36 @@ env:
   BINARY_NAME: gateway
 
 jobs:
+  config:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+      - uses: actions-rust-lang/setup-rust-toolchain@fb51252c7ba57d633bc668f941da052e410add48 # v1
+      - name: generate config schema
+        run: cargo router-config
+      - name: generate documentation
+        working-directory: docs/generator
+        run: |
+          npm install
+          npm run generate
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        name: upload config artifact
+        with:
+          name: router-config.schema.json
+          path: router-config.schema.json
+          if-no-files-found: error
+      - name: Upload config to release
+        uses: svenstaro/upload-release-action@81c65b7cd4de9b2570615ce3aad67a41de5b1a13 # v2
+        if: ${{ github.event_name == 'release' }}
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: router-config.schema.json
+          asset_name: router-config.schema.json
+          tag: ${{ github.ref }}
+      - name: check config docs changes
+        run: git diff --exit-code ./docs/README.md
+
   binary:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest

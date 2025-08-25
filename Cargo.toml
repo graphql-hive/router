@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "lib/query-planner",
+  "lib/gateway-config",
   "lib/wasm-lib",
   "lib/executor",
   "bin/dev-cli",

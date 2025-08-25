@@ -1,28 +1,68 @@
 ![Hive GraphQL Platform](https://the-guild.dev/graphql/hive/github-org-image.png)
 
-# Hive Gateway (Rust)
+# Hive Router (Rust)
 
 A fully open-source MIT-licensed GraphQL API gateway that can act as a [GraphQL federation](https://the-guild.dev/graphql/hive/federation) Gateway, built with Rust for maximum performance and robustness.
 
 It can be run as a standalone binary or a Docker Image. Query planner can be used as a standalone Crate library.
 
+[Binary Releases](https://github.com/graphql-hive/gateway-rs/releases) | [Docker Releases](https://github.com/graphql-hive/router/pkgs/container/router) | [Configuration reference](./docs/README.md)
+
 ## Try it out
+
+Start by creating a simple configuration file. You may use YAML or JSON formats.
+
+```yaml
+# hive-router.config.yaml
+supergraph:
+  source: file
+  path: ./supergraph.graphql
+```
+
+Alternativly, you can use environment variables to configure the router:
+
+```env
+HIVE_SUPERGRAPH_SOURCE=file
+HIVE_SUPERGRAPH_PATH=./supergraph.graphql
+```
+
+Then, pick your preferred runtime:
 
 ### Binary
 
 See [GitHub Releases](https://github.com/graphql-hive/gateway-rs/releases) and use the artifacts published to each release.
 
-### Docker
-
-The gateway is published via [Docker to GitHub Container Registry](). You may use it directly using the following command:
-
 ```bash
-docker run -p 4000:4000 -v ./my-supergraph.graphql:/app/config/supergraph.graphql ghcr.io/graphql-hive/router:latest
+# By default, "hive-router.config.yaml" is used for configuration. Override it by setting "HIVE_CONFIG_FILE_PATH=some-custom-file.yaml"
+# If you are using env vars, make sure to set the variables before running the gateway.
+./gateway
 ```
 
-Replace `my-supergraph.graphql` with a local supergraph file.
+### Docker
 
-Replace `latest` with a specific version tag, or a pre-release for one of the PRs (`pr-<number>` or `sha-<commit-sha>`).
+The router image is being published to [Docker to GitHub Container Registry](). You may use it directly using the following command:
+
+```bash
+docker run \
+  -p 4000:4000 \
+  -e HIVE_SUPERGRAPH_SOURCE="file" \
+  -e HIVE_SUPERGRAPH_PATH="/app/supergraph.graphql" \
+  -v ./my-supergraph.graphql:/app/supergraph.graphql \
+  ghcr.io/graphql-hive/router:latest
+```
+
+> Replace `my-supergraph.graphql` with a local supergraph file.
+
+Alternativly, you can mount the configuration file using `-v` and pass all other configurations there:
+
+```bash
+docker run \
+  -p 4000:4000 \
+  -v ./hive-router.config.yaml:/app/hive-router.config.yaml \
+  ghcr.io/graphql-hive/router:latest
+```
+
+> Replace `latest` with a specific version tag, or a pre-release for one of the PRs (`pr-<number>` or `sha-<commit-sha>`).
 
 > To try the query planner, see [bin/dev-cli/README.md](bin/dev-cli/README.md) for instructions to quickly use the qp-dev-cli for seeing the QP in action.
 

@@ -10,4 +10,7 @@ export RUST_LOG=debug
 echo "running gateway..."
 
 cd ..
-cargo gateway audits/fed-audit-supergraph.graphql
+
+export HIVE_SUPERGRAPH_SOURCE="file"
+export HIVE_SUPERGRAPH_PATH="audits/fed-audit-supergraph.graphql"
+cargo gateway

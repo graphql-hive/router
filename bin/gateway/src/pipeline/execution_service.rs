@@ -24,7 +24,7 @@ use tower::Service;
 
 #[derive(Clone, Debug, Default)]
 pub struct ExecutionService {
-    expose_query_plan: bool,
+    allow_expose_query_plan: bool,
 }
 
 static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
@@ -37,8 +37,10 @@ enum ExposeQueryPlanMode {
 }
 
 impl ExecutionService {
-    pub fn new(expose_query_plan: bool) -> Self {
-        Self { expose_query_plan }
+    pub fn new(allow_expose_query_plan: bool) -> Self {
+        Self {
+            allow_expose_query_plan,
+        }
     }
 }
 
@@ -53,19 +55,17 @@ impl Service<Request<Body>> for ExecutionService {
 
     #[tracing::instrument(level = "trace", name = "ExecutionService", skip_all)]
     fn call(&mut self, mut req: Request<Body>) -> Self::Future {
-        let mut expose_query_plan: ExposeQueryPlanMode = match self.expose_query_plan {
-            true => ExposeQueryPlanMode::Yes,
-            false => ExposeQueryPlanMode::No,
-        };
+        let mut expose_query_plan = ExposeQueryPlanMode::No;
 
-        if let Some(expose_qp_header) = req.headers().get(&EXPOSE_QUERY_PLAN_HEADER) {
-            let str_value = expose_qp_header.to_str().unwrap_or_default().trim();
+        if self.allow_expose_query_plan {
+            if let Some(expose_qp_header) = req.headers().get(&EXPOSE_QUERY_PLAN_HEADER) {
+                let str_value = expose_qp_header.to_str().unwrap_or_default().trim();
 
-            match str_value {
-                "true" => expose_query_plan = ExposeQueryPlanMode::Yes,
-                "false" => expose_query_plan = ExposeQueryPlanMode::No,
-                "dry-run" => expose_query_plan = ExposeQueryPlanMode::DryRun,
-                _ => {}
+                match str_value {
+                    "true" => expose_query_plan = ExposeQueryPlanMode::Yes,
+                    "dry-run" => expose_query_plan = ExposeQueryPlanMode::DryRun,
+                    _ => {}
+                }
             }
         }
 

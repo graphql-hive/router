@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use dashmap::DashMap;
+use gateway_config::traffic_shaping::TrafficShapingExecutorConfig;
 use http::Uri;
 use hyper_util::{
     client::legacy::Client,
@@ -12,7 +13,6 @@ use tokio::sync::{OnceCell, Semaphore};
 use crate::{
     executors::{
         common::{HttpExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
-        config::HttpExecutorConfig,
         dedupe::{ABuildHasher, RequestFingerprint, SharedResponse},
         error::SubgraphExecutorError,
         http::HTTPSubgraphExecutor,
@@ -67,7 +67,7 @@ impl SubgraphExecutorMap {
 
     pub fn from_http_endpoint_map(
         subgraph_endpoint_map: HashMap<String, String>,
-        config: HttpExecutorConfig,
+        config: TrafficShapingExecutorConfig,
     ) -> Result<Self, SubgraphExecutorError> {
         let client = Client::builder(TokioExecutor::new())
             .pool_timer(TokioTimer::new())

@@ -1,3 +1,6 @@
+use std::str::FromStr;
+
+use gateway_config::log::{LogFormat, LoggingConfig};
 use tracing_subscriber::{
     fmt::{self, format::FmtSpan, time::UtcTime},
     layer::SubscriberExt,
@@ -5,19 +8,13 @@ use tracing_subscriber::{
     EnvFilter, Layer, Registry,
 };
 
-#[allow(dead_code)]
-pub enum LoggingFormat {
-    PrettyTree,
-    PrettyCompact,
-    Json,
-}
-
-pub fn configure_logging(format: LoggingFormat) {
+pub fn configure_logging(config: &LoggingConfig) {
     let timer = UtcTime::rfc_3339();
-    let filter = EnvFilter::from_default_env();
+    let filter = EnvFilter::from_str(config.env_filter_str())
+        .unwrap_or_else(|e| panic!("failed to initialize env-filter logger: {}", e));
 
-    let layer = match format {
-        LoggingFormat::PrettyTree => tracing_tree::HierarchicalLayer::new(2)
+    let layer = match config.format {
+        LogFormat::PrettyTree => tracing_tree::HierarchicalLayer::new(2)
             .with_bracketed_fields(true)
             .with_deferred_spans(false)
             .with_wraparound(25)
@@ -27,12 +24,12 @@ pub fn configure_logging(format: LoggingFormat) {
             .with_thread_ids(false)
             .with_targets(false)
             .boxed(),
-        LoggingFormat::Json => fmt::Layer::<Registry>::default()
+        LogFormat::Json => fmt::Layer::<Registry>::default()
             .json()
             .with_timer(timer)
             .with_span_events(FmtSpan::CLOSE)
             .boxed(),
-        LoggingFormat::PrettyCompact => fmt::Layer::<Registry>::default()
+        LogFormat::PrettyCompact => fmt::Layer::<Registry>::default()
             .compact()
             .with_timer(timer)
             .with_span_events(FmtSpan::CLOSE)
