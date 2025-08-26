@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use axum::body::Body;
 use executor::variables::collect_variables;
-use http::{Method, Request};
+use http::Method;
+use ntex::web::HttpRequest;
 use query_planner::state::supergraph_state::OperationKind;
 use sonic_rs::Value;
 use tracing::{error, trace, warn};
@@ -20,7 +20,7 @@ pub struct CoerceVariablesPayload {
 
 #[inline]
 pub fn coerce_request_variables(
-    req: &Request<Body>,
+    req: &HttpRequest,
     app_state: &Arc<GatewaySharedState>,
     execution_params: ExecutionRequest,
     normalized_operation: &Arc<GraphQLNormalizationPayload>,

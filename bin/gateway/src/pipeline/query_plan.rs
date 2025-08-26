@@ -5,15 +5,14 @@ use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, Pipel
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
 use crate::shared_state::GatewaySharedState;
-use axum::body::Body;
-use http::Request;
+use ntex::web::HttpRequest;
 use query_planner::planner::plan_nodes::QueryPlan;
 use tracing::debug;
 use xxhash_rust::xxh3::Xxh3;
 
 #[inline]
 pub async fn plan_operation_with_cache(
-    req: &mut Request<Body>,
+    req: &HttpRequest,
     app_state: &Arc<GatewaySharedState>,
     normalized_operation: &Arc<GraphQLNormalizationPayload>,
     request_override_context: &RequestOverrideContext,

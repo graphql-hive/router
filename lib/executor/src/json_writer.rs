@@ -1,5 +1,5 @@
 //! I took it from https://github.com/zotta/json-writer-rs/blob/f45e2f25cede0e06be76a94f6e45608780a835d4/src/lib.rs#L853
-use bytes::{BufMut, BytesMut};
+use bytes::BufMut;
 
 use crate::utils::consts::NULL;
 
@@ -33,7 +33,7 @@ static HEX: [u8; 16] = *b"0123456789ABCDEF";
 
 /// Escapes and append part of string
 #[inline(always)]
-pub fn write_and_escape_string(writer: &mut BytesMut, input: &str) {
+pub fn write_and_escape_string(writer: &mut Vec<u8>, input: &str) {
     writer.put_u8(b'"');
 
     let bytes = input.as_bytes();
@@ -71,7 +71,7 @@ pub fn write_and_escape_string(writer: &mut BytesMut, input: &str) {
     writer.put_u8(b'"');
 }
 
-pub fn write_f64(writer: &mut BytesMut, value: f64) {
+pub fn write_f64(writer: &mut Vec<u8>, value: f64) {
     if !value.is_finite() {
         // JSON does not allow infinite or nan values. In browsers JSON.stringify(Number.NaN) = "null"
         writer.put(NULL);
@@ -83,12 +83,12 @@ pub fn write_f64(writer: &mut BytesMut, value: f64) {
     writer.put(s.as_bytes())
 }
 
-pub fn write_u64(writer: &mut BytesMut, value: u64) {
+pub fn write_u64(writer: &mut Vec<u8>, value: u64) {
     let mut buf = itoa::Buffer::new();
     writer.put(buf.format(value).as_bytes());
 }
 
-pub fn write_i64(writer: &mut BytesMut, value: i64) {
+pub fn write_i64(writer: &mut Vec<u8>, value: i64) {
     let mut buf = itoa::Buffer::new();
     writer.put(buf.format(value).as_bytes());
 }

@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use axum::body::Body;
-use axum::extract::Query;
-use http::{Method, Request};
-use http_body_util::BodyExt;
+use http::Method;
+use ntex::util::Bytes;
+use ntex::web::types::Query;
+use ntex::web::HttpRequest;
 use serde::Deserialize;
 use sonic_rs::Value;
 use tracing::{trace, warn};
@@ -73,16 +73,19 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
 
 #[inline]
 pub async fn get_execution_request(
-    req: &mut Request<Body>,
+    req: &mut HttpRequest,
+    body_bytes: Bytes,
 ) -> Result<ExecutionRequest, PipelineError> {
     let http_method = req.method();
     let execution_request: ExecutionRequest = match *http_method {
         Method::GET => {
             trace!("processing GET GraphQL operation");
-
-            let query_params = Query::<GETQueryParams>::try_from_uri(req.uri())
-                .map_err(|qe| {
-                    req.new_pipeline_error(PipelineErrorVariant::GetInvalidQueryParams(qe))
+            let query_params_str = req.uri().query().ok_or_else(|| {
+                req.new_pipeline_error(PipelineErrorVariant::GetInvalidQueryParams)
+            })?;
+            let query_params = Query::<GETQueryParams>::from_query(query_params_str)
+                .map_err(|e| {
+                    req.new_pipeline_error(PipelineErrorVariant::GetUnprocessableQueryParams(e))
                 })?
                 .0;
 
@@ -96,16 +99,6 @@ pub async fn get_execution_request(
             trace!("Processing POST GraphQL request");
 
             req.assert_json_content_type()?;
-
-            let body_bytes = req
-                .body_mut()
-                .collect()
-                .await
-                .map_err(|err| {
-                    warn!("Failed to read body bytes: {}", err);
-                    req.new_pipeline_error(PipelineErrorVariant::FailedToReadBodyBytes(err))
-                })?
-                .to_bytes();
 
             let execution_request = unsafe {
                 sonic_rs::from_slice_unchecked::<ExecutionRequest>(&body_bytes).map_err(|e| {

@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
-use axum::{body::Body, extract::rejection::QueryRejection, response::IntoResponse};
 use executor::{execution::error::PlanExecutionError, response::graphql_error::GraphQLError};
 use graphql_tools::validation::utils::ValidationError;
-use http::{HeaderName, Method, Request, Response, StatusCode};
+use http::{HeaderName, Method, StatusCode};
+use ntex::{
+    http::ResponseBuilder,
+    web::{self, error::QueryPayloadError, HttpRequest},
+};
 use query_planner::{ast::normalization::error::NormalizationError, planner::PlannerError};
 use serde::{Deserialize, Serialize};
 use sonic_rs::{object, Value};
@@ -20,7 +23,7 @@ pub trait PipelineErrorFromAcceptHeader {
     fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError;
 }
 
-impl PipelineErrorFromAcceptHeader for Request<Body> {
+impl PipelineErrorFromAcceptHeader for HttpRequest {
     #[inline]
     fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError {
         let accept_ok = !self.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
@@ -35,20 +38,20 @@ pub enum PipelineErrorVariant {
     UnsupportedHttpMethod(Method),
     #[error("Header '{0}' has invalid value")]
     InvalidHeaderValue(HeaderName),
-    #[error("Failed to read body: {0}")]
-    FailedToReadBodyBytes(axum::Error),
     #[error("Content-Type header is missing")]
     MissingContentTypeHeader,
     #[error("Content-Type header is not supported")]
     UnsupportedContentType,
 
     // GET Specific pipeline errors
-    #[error("Failed to deserialize query parameters: {0}")]
-    GetInvalidQueryParams(QueryRejection),
+    #[error("Failed to deserialize query parameters")]
+    GetInvalidQueryParams,
     #[error("Missing query parameter: {0}")]
     GetMissingQueryParam(&'static str),
     #[error("Cannot perform mutations over GET")]
     MutationNotAllowedOverHttpGet,
+    #[error("Failed to parse query parameters")]
+    GetUnprocessableQueryParams(QueryPayloadError),
 
     // GraphQL-specific errors
     #[error("Failed to parse GraphQL request payload")]
@@ -105,9 +108,9 @@ impl PipelineErrorVariant {
             (Self::PlannerError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::PlanExecutionError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::UnsupportedHttpMethod(_), _) => StatusCode::METHOD_NOT_ALLOWED,
-            (Self::FailedToReadBodyBytes(_), _) => StatusCode::BAD_REQUEST,
             (Self::InvalidHeaderValue(_), _) => StatusCode::BAD_REQUEST,
-            (Self::GetInvalidQueryParams(_), _) => StatusCode::BAD_REQUEST,
+            (Self::GetUnprocessableQueryParams(_), _) => StatusCode::BAD_REQUEST,
+            (Self::GetInvalidQueryParams, _) => StatusCode::BAD_REQUEST,
             (Self::GetMissingQueryParam(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseBody(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseVariables(_), _) => StatusCode::BAD_REQUEST,
@@ -132,8 +135,8 @@ pub struct FailedExecutionResult {
     pub errors: Option<Vec<GraphQLError>>,
 }
 
-impl IntoResponse for PipelineError {
-    fn into_response(self) -> Response<Body> {
+impl PipelineError {
+    pub fn into_response(self) -> web::HttpResponse {
         let status = self.error.default_status_code(self.accept_ok);
 
         if let PipelineErrorVariant::ValidationErrors(validation_errors) = self.error {
@@ -141,11 +144,7 @@ impl IntoResponse for PipelineError {
                 errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
             };
 
-            return (
-                status,
-                sonic_rs::to_string(&validation_error_result).unwrap(),
-            )
-                .into_response();
+            return ResponseBuilder::new(status).json(&validation_error_result);
         }
 
         let code = self.error.graphql_error_code();
@@ -162,6 +161,6 @@ impl IntoResponse for PipelineError {
             errors: Some(vec![graphql_error]),
         };
 
-        (status, sonic_rs::to_string(&result).unwrap()).into_response()
+        ResponseBuilder::new(status).json(&result)
     }
 }

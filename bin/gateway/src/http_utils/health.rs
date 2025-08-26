@@ -1,6 +1,5 @@
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use ntex::web::{self, Responder};
 
-pub async fn health_check_handler() -> impl IntoResponse {
-    StatusCode::OK
+pub async fn health_check_handler() -> impl Responder {
+    web::HttpResponse::Ok()
 }

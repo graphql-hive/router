@@ -1,4 +1,4 @@
-use bytes::{BufMut, BytesMut};
+use bytes::BufMut;
 use query_planner::ast::selection_item::SelectionItem;
 
 use crate::{
@@ -26,7 +26,7 @@ pub fn project_requires(
     ctx: &RequestProjectionContext,
     requires_selections: &Vec<SelectionItem>,
     entity: &Value,
-    buffer: &mut BytesMut,
+    buffer: &mut Vec<u8>,
     first: bool,
     response_key: Option<&str>,
 ) -> Result<bool, ProjectionError> {
@@ -44,7 +44,7 @@ fn project_requires_internal(
     ctx: &RequestProjectionContext,
     requires_selections: &Vec<SelectionItem>,
     entity: &Value,
-    buffer: &mut BytesMut,
+    buffer: &mut Vec<u8>,
     first: bool,
     response_key: Option<&str>,
 ) -> Result<bool, ProjectionError> {
@@ -183,7 +183,7 @@ fn project_requires_map_mut(
     ctx: &RequestProjectionContext,
     requires_selections: &Vec<SelectionItem>,
     entity_obj: &Vec<(&str, Value<'_>)>,
-    buffer: &mut BytesMut,
+    buffer: &mut Vec<u8>,
     first: &mut bool,
     parent_response_key: Option<&str>,
     parent_first: bool,

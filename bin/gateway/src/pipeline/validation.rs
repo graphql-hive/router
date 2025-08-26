@@ -3,14 +3,13 @@ use std::sync::Arc;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::parser::GraphQLParserPayload;
 use crate::shared_state::GatewaySharedState;
-use axum::body::Body;
 use graphql_tools::validation::validate::validate;
-use http::Request;
+use ntex::web::HttpRequest;
 use tracing::{error, trace};
 
 #[inline]
 pub async fn validate_operation_with_cache(
-    req: &mut Request<Body>,
+    req: &HttpRequest,
     app_state: &Arc<GatewaySharedState>,
     parser_payload: &GraphQLParserPayload,
 ) -> Result<(), PipelineError> {
