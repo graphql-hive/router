@@ -4,7 +4,7 @@ use axum::{
     body::{Body, Bytes},
     response::{Html, IntoResponse},
 };
-use http::{HeaderValue, Method, Request, Response};
+use http::{header::CONTENT_TYPE, HeaderValue, Method, Request, Response};
 
 use crate::{
     pipeline::{
@@ -14,7 +14,7 @@ use crate::{
         execution_request::get_execution_request,
         header::{
             RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON,
-            APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON,
+            APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, TEXT_HTML_CONTENT_TYPE,
         },
         normalize::normalize_request_with_cache,
         parser::parse_operation_with_cache,
@@ -43,7 +43,7 @@ pub async fn graphql_request_handler(
     req: &mut Request<Body>,
     state: Arc<GatewaySharedState>,
 ) -> Response<Body> {
-    if req.method() == Method::GET && req.accepts_content_type("text/html") {
+    if req.method() == Method::GET && req.accepts_content_type(*TEXT_HTML_CONTENT_TYPE) {
         return Html(GRAPHIQL_HTML).into_response();
     }
 
@@ -60,7 +60,7 @@ pub async fn graphql_request_handler(
 
             response
                 .headers_mut()
-                .insert(http::header::CONTENT_TYPE, response_content_type.clone());
+                .insert(CONTENT_TYPE, response_content_type.clone());
 
             response
         }
@@ -81,7 +81,7 @@ pub async fn execute_pipeline(
     let normalize_payload =
         normalize_request_with_cache(req, &state, &execution_request, &parser_payload).await?;
     let variable_payload =
-        coerce_request_variables(req, &state, &execution_request, &normalize_payload)?;
+        coerce_request_variables(req, &state, execution_request, &normalize_payload)?;
     let query_plan_payload =
         plan_operation_with_cache(req, &state, &normalize_payload, &progressive_override_ctx)
             .await?;

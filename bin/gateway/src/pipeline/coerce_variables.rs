@@ -20,9 +20,9 @@ pub struct CoerceVariablesPayload {
 
 #[inline]
 pub fn coerce_request_variables(
-    req: &mut Request<Body>,
+    req: &Request<Body>,
     app_state: &Arc<GatewaySharedState>,
-    execution_params: &ExecutionRequest,
+    execution_params: ExecutionRequest,
     normalized_operation: &Arc<GraphQLNormalizationPayload>,
 ) -> Result<CoerceVariablesPayload, PipelineError> {
     if req.method() == Method::GET {
@@ -37,8 +37,7 @@ pub fn coerce_request_variables(
 
     match collect_variables(
         &normalized_operation.operation_for_plan,
-        // TODO: confirm if it's ok to clone here
-        execution_params.variables.clone(),
+        execution_params.variables,
         &app_state.schema_metadata,
     ) {
         Ok(values) => {

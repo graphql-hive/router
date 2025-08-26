@@ -23,6 +23,7 @@ pub type PossibleTypesMap<'a> = HashMap<&'a str, HashSet<&'a str>>;
 ///    for each possible concrete type.
 /// 3. Handling directives on fragments by merging and propagating them downwards, ensuring
 ///    the correct semantics are maintained.
+#[inline]
 pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     let possible_types = build_possible_types_map(ctx);
     let query_type_name = ctx.query_type_name();
@@ -64,6 +65,7 @@ pub fn flatten_fragments(ctx: &mut NormalizationContext) -> Result<(), Normaliza
     Ok(())
 }
 
+#[inline]
 fn build_possible_types_map<'a>(ctx: &NormalizationContext<'a>) -> PossibleTypesMap<'a> {
     let mut possible_types = PossibleTypesMap::new();
     let maybe_subgraph_name = ctx.subgraph_name.as_ref();
@@ -135,6 +137,7 @@ fn build_possible_types_map<'a>(ctx: &NormalizationContext<'a>) -> PossibleTypes
     possible_types
 }
 
+#[inline]
 fn handle_selection_set(
     state: &SupergraphState,
     possible_types: &PossibleTypesMap,
@@ -169,6 +172,7 @@ fn handle_selection_set(
 }
 
 /// Processes a field's selection set recursively.
+#[inline]
 fn process_field(
     state: &SupergraphState,
     possible_types: &PossibleTypesMap,
@@ -201,6 +205,7 @@ fn process_field(
     )
 }
 
+#[inline]
 fn process_inline_fragment(
     state: &SupergraphState,
     possible_types: &PossibleTypesMap,
@@ -239,6 +244,7 @@ fn process_inline_fragment(
 }
 
 /// Expands a fragment that has a specific type condition.
+#[inline]
 fn expand_fragment_with_type_condition(
     state: &SupergraphState,
     possible_types: &PossibleTypesMap,
@@ -288,6 +294,7 @@ fn expand_fragment_with_type_condition(
 
 /// Expands a fragment on an abstract type (interface or union) into a set of fragments
 /// on concrete object types.
+#[inline]
 fn expand_abstract_fragment(
     state: &SupergraphState,
     possible_types: &PossibleTypesMap,

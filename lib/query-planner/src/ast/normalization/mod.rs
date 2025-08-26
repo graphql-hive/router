@@ -20,6 +20,7 @@ use crate::state::supergraph_state::SupergraphState;
 use error::NormalizationError;
 
 /// Normalizes the operation by mutating it
+#[inline]
 pub fn normalize_operation_mut(
     supergraph: &SupergraphState,
     query: &mut query_ast::Document<'static, String>,
@@ -49,6 +50,7 @@ pub fn normalize_operation_mut(
     Ok(())
 }
 
+#[inline]
 pub fn normalize_operation(
     supergraph: &SupergraphState,
     query: &query_ast::Document<'static, String>,
@@ -69,6 +71,7 @@ pub fn normalize_operation(
     ))
 }
 
+#[inline]
 pub fn create_normalized_document<'a, 'd>(
     operation_ast: query_ast::OperationDefinition<'d, String>,
     operation_name: Option<&'a str>,

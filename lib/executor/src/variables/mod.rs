@@ -5,6 +5,7 @@ use sonic_rs::{JsonNumberTrait, Value, ValueRef};
 
 use crate::introspection::schema::SchemaMetadata;
 
+#[inline]
 pub fn collect_variables(
     operation: &query_planner::ast::operation::OperationDefinition,
     mut variables: Option<HashMap<String, Value>>,
@@ -60,6 +61,7 @@ pub fn collect_variables(
     }
 }
 
+#[inline]
 fn validate_runtime_value(
     value: ValueRef,
     type_node: &TypeNode,

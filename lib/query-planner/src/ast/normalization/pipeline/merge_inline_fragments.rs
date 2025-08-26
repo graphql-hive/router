@@ -7,6 +7,7 @@ use crate::ast::normalization::context::NormalizationContext;
 use crate::ast::normalization::error::NormalizationError;
 use crate::utils::ast::equal_directives_arr;
 
+#[inline]
 pub fn merge_inline_fragments(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     for definition in &mut ctx.document.definitions {
         match definition {
@@ -33,6 +34,7 @@ pub fn merge_inline_fragments(ctx: &mut NormalizationContext) -> Result<(), Norm
     Ok(())
 }
 
+#[inline]
 fn handle_selection_set<'a>(
     selection_set: &mut SelectionSet<'a, String>,
 ) -> Result<(), NormalizationError> {
@@ -80,6 +82,7 @@ fn handle_selection_set<'a>(
     Ok(())
 }
 
+#[inline]
 fn inline_fragments_equal<'a>(
     a: &InlineFragment<'a, String>,
     b: &InlineFragment<'a, String>,

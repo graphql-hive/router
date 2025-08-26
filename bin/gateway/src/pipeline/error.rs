@@ -21,6 +21,7 @@ pub trait PipelineErrorFromAcceptHeader {
 }
 
 impl PipelineErrorFromAcceptHeader for Request<Body> {
+    #[inline]
     fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError {
         let accept_ok = !self.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
         PipelineError { accept_ok, error }

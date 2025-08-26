@@ -7,6 +7,7 @@ use crate::ast::normalization::context::NormalizationContext;
 use crate::ast::normalization::error::NormalizationError;
 use crate::utils::ast::equal_directives_arr;
 
+#[inline]
 pub fn drop_duplicated_fields(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     for def in &mut ctx.document.definitions {
         match def {
@@ -33,6 +34,7 @@ pub fn drop_duplicated_fields(ctx: &mut NormalizationContext) -> Result<(), Norm
     Ok(())
 }
 
+#[inline]
 fn are_fields_shallow_equal<'a>(a: &Field<'a, String>, b: &Field<'a, String>) -> bool {
     if a.name != b.name {
         return false;
@@ -53,6 +55,7 @@ fn are_fields_shallow_equal<'a>(a: &Field<'a, String>, b: &Field<'a, String>) ->
     a.selection_set.items.is_empty() && b.selection_set.items.is_empty()
 }
 
+#[inline]
 fn handle_selection_set<'a>(
     selection_set: &mut SelectionSet<'a, String>,
 ) -> Result<(), NormalizationError> {
