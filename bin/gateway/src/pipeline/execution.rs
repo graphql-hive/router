@@ -71,7 +71,7 @@ pub async fn execute_plan(
         executors: &app_state.subgraph_executor_map,
     })
     .await
-    .map(|v| Bytes::from(v))
+    .map(Bytes::from)
     .map_err(|err| {
         tracing::error!("Failed to execute query plan: {}", err);
         req.new_pipeline_error(PipelineErrorVariant::PlanExecutionError(err))

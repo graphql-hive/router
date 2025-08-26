@@ -74,21 +74,21 @@ pub async fn execute_pipeline(
     state: &Arc<GatewaySharedState>,
 ) -> Result<Bytes, PipelineError> {
     let execution_request = get_execution_request(req, body_bytes).await?;
-    let parser_payload = parse_operation_with_cache(req, &state, &execution_request).await?;
-    validate_operation_with_cache(req, &state, &parser_payload).await?;
+    let parser_payload = parse_operation_with_cache(req, state, &execution_request).await?;
+    validate_operation_with_cache(req, state, &parser_payload).await?;
 
     let progressive_override_ctx = request_override_context()?;
     let normalize_payload =
-        normalize_request_with_cache(req, &state, &execution_request, &parser_payload).await?;
+        normalize_request_with_cache(req, state, &execution_request, &parser_payload).await?;
     let variable_payload =
-        coerce_request_variables(req, &state, execution_request, &normalize_payload)?;
+        coerce_request_variables(req, state, execution_request, &normalize_payload)?;
     let query_plan_payload =
-        plan_operation_with_cache(req, &state, &normalize_payload, &progressive_override_ctx)
+        plan_operation_with_cache(req, state, &normalize_payload, &progressive_override_ctx)
             .await?;
 
     let execution_result = execute_plan(
         req,
-        &state,
+        state,
         &normalize_payload,
         &query_plan_payload,
         &variable_payload,
