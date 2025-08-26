@@ -33,4 +33,4 @@ rand = { workspace = true }
 mimalloc = { version = "0.1.47", features = ["override"] }
 moka = { version = "0.12.10", features = ["future"] }
 ulid = "1.2.1"
-axum = "0.8.4"
+ntex = { version = "2", features = ["tokio"] }

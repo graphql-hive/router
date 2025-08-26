@@ -11,31 +11,28 @@ use crate::{
     pipeline::graphql_request_handler,
     shared_state::GatewaySharedState,
 };
-use axum::{
-    extract::{Request, State},
-    response::IntoResponse,
-    routing::{self},
-    Router,
-};
+
 use gateway_config::load_config;
 use mimalloc::MiMalloc;
-use tokio::signal;
+use ntex::{
+    util::Bytes,
+    web::{self, HttpRequest},
+};
 
 use query_planner::utils::parsing::parse_schema;
-use tokio::net::TcpListener;
-use tracing::info;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
 async fn graphql_endpoint_handler(
-    State(app_state): State<Arc<GatewaySharedState>>,
-    mut request: Request,
-) -> impl IntoResponse {
-    graphql_request_handler(&mut request, app_state).await
+    mut request: HttpRequest,
+    body_bytes: Bytes,
+    app_state: web::types::State<Arc<GatewaySharedState>>,
+) -> impl web::Responder {
+    graphql_request_handler(&mut request, body_bytes, app_state.get_ref()).await
 }
 
-#[tokio::main]
+#[ntex::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_path = std::env::var("HIVE_CONFIG_FILE_PATH").ok();
     let gateway_config = load_config(config_path)?;
@@ -46,42 +43,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = gateway_config.http.address();
     let gateway_shared_state = GatewaySharedState::new(parsed_schema, gateway_config);
 
-    let app = Router::new()
-        .route("/graphql", routing::any(graphql_endpoint_handler))
-        .route("/health", routing::get(health_check_handler))
-        .fallback(routing::get(landing_page_handler))
-        .with_state(gateway_shared_state);
-
-    info!("Starting server on {}", addr);
-
-    let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, app.into_make_service())
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    web::HttpServer::new(move || {
+        web::App::new()
+            .state(gateway_shared_state.clone())
+            .route("/graphql", web::to(graphql_endpoint_handler))
+            .route("/health", web::to(health_check_handler))
+            .default_service(web::to(landing_page_handler))
+    })
+    .bind(addr)?
+    .run()
+    .await?;
 
     Ok(())
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
 }

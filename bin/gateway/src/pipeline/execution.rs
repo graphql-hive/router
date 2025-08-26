@@ -5,11 +5,12 @@ use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::shared_state::GatewaySharedState;
-use axum::body::{Body, Bytes};
 use executor::execute_query_plan;
 use executor::execution::plan::QueryPlanExecutionContext;
 use executor::introspection::resolve::IntrospectionContext;
-use http::{HeaderName, Request};
+use http::HeaderName;
+use ntex::util::Bytes;
+use ntex::web::HttpRequest;
 use query_planner::planner::plan_nodes::QueryPlan;
 
 static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
@@ -23,7 +24,7 @@ enum ExposeQueryPlanMode {
 
 #[inline]
 pub async fn execute_plan(
-    req: &mut Request<Body>,
+    req: &mut HttpRequest,
     app_state: &Arc<GatewaySharedState>,
     normalized_payload: &Arc<GraphQLNormalizationPayload>,
     query_plan_payload: &Arc<QueryPlan>,
@@ -70,6 +71,7 @@ pub async fn execute_plan(
         executors: &app_state.subgraph_executor_map,
     })
     .await
+    .map(|v| Bytes::from(v))
     .map_err(|err| {
         tracing::error!("Failed to execute query plan: {}", err);
         req.new_pipeline_error(PipelineErrorVariant::PlanExecutionError(err))

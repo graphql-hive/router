@@ -4,7 +4,7 @@ use crate::projection::plan::{
 };
 use crate::response::graphql_error::GraphQLError;
 use crate::response::value::Value;
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::BufMut;
 use sonic_rs::JsonValueTrait;
 use std::collections::HashMap;
 
@@ -24,8 +24,8 @@ pub fn project_by_operation(
     operation_type_name: &str,
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-) -> Result<Bytes, ProjectionError> {
-    let mut buffer = BytesMut::with_capacity(data.estimate_size() + 9 /* {"data":} */);
+) -> Result<Vec<u8>, ProjectionError> {
+    let mut buffer = Vec::with_capacity(data.estimate_size() + 9 /* {"data":} */);
     buffer.put(OPEN_BRACE);
     buffer.put(QUOTE);
     buffer.put("data".as_bytes());
@@ -80,7 +80,7 @@ pub fn project_by_operation(
     }
 
     buffer.put(CLOSE_BRACE);
-    Ok(buffer.freeze())
+    Ok(buffer)
 }
 
 fn project_selection_set(
@@ -88,7 +88,7 @@ fn project_selection_set(
     errors: &mut Vec<GraphQLError>,
     selection: &FieldProjectionPlan,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-    buffer: &mut BytesMut,
+    buffer: &mut Vec<u8>,
 ) {
     match data {
         Value::Null => buffer.put(NULL),
@@ -152,7 +152,7 @@ fn project_selection_set_with_map(
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     parent_type_name: &str,
-    buffer: &mut BytesMut,
+    buffer: &mut Vec<u8>,
     first: &mut bool,
 ) {
     for selection in selections {

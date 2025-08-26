@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use axum::{
-    body::{Body, Bytes},
-    response::{Html, IntoResponse},
+use http::{header::CONTENT_TYPE, HeaderValue, Method};
+use ntex::{
+    util::Bytes,
+    web::{self, HttpRequest},
 };
-use http::{header::CONTENT_TYPE, HeaderValue, Method, Request, Response};
 
 use crate::{
     pipeline::{
@@ -40,14 +40,17 @@ static GRAPHIQL_HTML: &str = include_str!("../../static/graphiql.html");
 
 #[inline]
 pub async fn graphql_request_handler(
-    req: &mut Request<Body>,
-    state: Arc<GatewaySharedState>,
-) -> Response<Body> {
+    req: &mut HttpRequest,
+    body_bytes: Bytes,
+    state: &Arc<GatewaySharedState>,
+) -> impl web::Responder {
     if req.method() == Method::GET && req.accepts_content_type(*TEXT_HTML_CONTENT_TYPE) {
-        return Html(GRAPHIQL_HTML).into_response();
+        return web::HttpResponse::Ok()
+            .header(CONTENT_TYPE, *TEXT_HTML_CONTENT_TYPE)
+            .body(GRAPHIQL_HTML);
     }
 
-    match execute_pipeline(req, state).await {
+    match execute_pipeline(req, body_bytes, state).await {
         Ok(response_bytes) => {
             let response_content_type: &'static HeaderValue =
                 if req.accepts_content_type(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR) {
@@ -56,13 +59,9 @@ pub async fn graphql_request_handler(
                     &APPLICATION_JSON
                 };
 
-            let mut response = response_bytes.into_response();
-
-            response
-                .headers_mut()
-                .insert(CONTENT_TYPE, response_content_type.clone());
-
-            response
+            web::HttpResponse::Ok()
+                .header(http::header::CONTENT_TYPE, response_content_type)
+                .body(response_bytes)
         }
         Err(err) => err.into_response(),
     }
@@ -70,10 +69,11 @@ pub async fn graphql_request_handler(
 
 #[inline]
 pub async fn execute_pipeline(
-    req: &mut Request<Body>,
-    state: Arc<GatewaySharedState>,
+    req: &mut HttpRequest,
+    body_bytes: Bytes,
+    state: &Arc<GatewaySharedState>,
 ) -> Result<Bytes, PipelineError> {
-    let execution_request = get_execution_request(req).await?;
+    let execution_request = get_execution_request(req, body_bytes).await?;
     let parser_payload = parse_operation_with_cache(req, &state, &execution_request).await?;
     validate_operation_with_cache(req, &state, &parser_payload).await?;
 

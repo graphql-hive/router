@@ -1,9 +1,8 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use axum::body::Body;
 use graphql_parser::query::Document;
-use http::Request;
+use ntex::web::HttpRequest;
 use query_planner::utils::parsing::safe_parse_operation;
 use xxhash_rust::xxh3::Xxh3;
 
@@ -20,7 +19,7 @@ pub struct GraphQLParserPayload {
 
 #[inline]
 pub async fn parse_operation_with_cache(
-    req: &mut Request<Body>,
+    req: &HttpRequest,
     app_state: &Arc<GatewaySharedState>,
     execution_params: &ExecutionRequest,
 ) -> Result<GraphQLParserPayload, PipelineError> {

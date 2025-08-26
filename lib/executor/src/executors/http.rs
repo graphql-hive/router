@@ -71,8 +71,8 @@ impl HTTPSubgraphExecutor {
     fn build_request_body<'a>(
         &self,
         execution_request: &HttpExecutionRequest<'a>,
-    ) -> Result<Bytes, SubgraphExecutorError> {
-        let mut body = BytesMut::with_capacity(4096);
+    ) -> Result<Vec<u8>, SubgraphExecutorError> {
+        let mut body = Vec::with_capacity(4096);
         body.put(FIRST_QUOTE_STR);
         write_and_escape_string(&mut body, execution_request.query);
         let mut first_variable = true;
@@ -113,15 +113,15 @@ impl HTTPSubgraphExecutor {
         }
         body.put(CLOSE_BRACE);
 
-        Ok(body.freeze())
+        Ok(body)
     }
 
-    async fn _send_request(&self, body: Bytes) -> Result<SharedResponse, SubgraphExecutorError> {
+    async fn _send_request(&self, body: Vec<u8>) -> Result<SharedResponse, SubgraphExecutorError> {
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
             .uri(&self.endpoint)
             .version(Version::HTTP_11)
-            .body(Full::new(body))
+            .body(Full::new(Bytes::from(body)))
             .map_err(|e| {
                 SubgraphExecutorError::RequestBuildFailure(self.endpoint.to_string(), e.to_string())
             })?;

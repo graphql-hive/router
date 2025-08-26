@@ -1,10 +1,9 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use axum::body::Body;
 use executor::introspection::partition::partition_operation;
 use executor::projection::plan::FieldProjectionPlan;
-use http::Request;
+use ntex::web::HttpRequest;
 use query_planner::ast::normalization::normalize_operation;
 use query_planner::ast::operation::OperationDefinition;
 use xxhash_rust::xxh3::Xxh3;
@@ -26,7 +25,7 @@ pub struct GraphQLNormalizationPayload {
 
 #[inline]
 pub async fn normalize_request_with_cache(
-    req: &mut Request<Body>,
+    req: &HttpRequest,
     app_state: &Arc<GatewaySharedState>,
     execution_params: &ExecutionRequest,
     parser_payload: &GraphQLParserPayload,

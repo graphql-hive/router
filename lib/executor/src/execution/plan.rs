@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use query_planner::planner::plan_nodes::{
     ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
@@ -44,7 +44,7 @@ pub struct QueryPlanExecutionContext<'exec> {
 
 pub async fn execute_query_plan<'exec>(
     ctx: QueryPlanExecutionContext<'exec>,
-) -> Result<Bytes, PlanExecutionError> {
+) -> Result<Vec<u8>, PlanExecutionError> {
     let init_value = if let Some(introspection_query) = ctx.introspection_context.query {
         resolve_introspection(introspection_query, ctx.introspection_context)
     } else {
@@ -139,7 +139,7 @@ impl From<ExecutionJob> for Bytes {
 }
 
 struct PreparedFlattenData {
-    representations: BytesMut,
+    representations: Vec<u8>,
     representation_hashes: Vec<u64>,
     representation_hash_to_index: HashMap<u64, usize>,
 }
@@ -431,7 +431,7 @@ impl<'exec> Executor<'exec> {
 
         let mut index = 0;
         let normalized_path = flatten_node.path.as_slice();
-        let mut filtered_representations = BytesMut::new();
+        let mut filtered_representations = Vec::new();
         filtered_representations.put(OPEN_BRACKET);
         let proj_ctx = RequestProjectionContext::new(&self.schema_metadata.possible_types);
         let mut representation_hashes: Vec<u64> = Vec::new();
@@ -497,7 +497,7 @@ impl<'exec> Executor<'exec> {
     async fn execute_flatten_fetch_node(
         &self,
         node: &FlattenNode,
-        representations: Option<BytesMut>,
+        representations: Option<Vec<u8>>,
         representation_hashes: Option<Vec<u64>>,
         filtered_representations_hashes: Option<HashMap<u64, usize>>,
     ) -> Result<ExecutionJob, PlanExecutionError> {
@@ -519,7 +519,7 @@ impl<'exec> Executor<'exec> {
     async fn execute_fetch_node(
         &self,
         node: &FetchNode,
-        representations: Option<BytesMut>,
+        representations: Option<Vec<u8>>,
     ) -> Result<ExecutionJob, PlanExecutionError> {
         Ok(ExecutionJob::Fetch(FetchJob {
             fetch_node_id: node.id,
