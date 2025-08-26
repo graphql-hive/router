@@ -21,6 +21,7 @@ pub trait PipelineErrorFromAcceptHeader {
 }
 
 impl PipelineErrorFromAcceptHeader for Request<Body> {
+    #[inline]
     fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError {
         let accept_ok = !self.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
         PipelineError { accept_ok, error }
@@ -29,10 +30,6 @@ impl PipelineErrorFromAcceptHeader for Request<Body> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PipelineErrorVariant {
-    // Internal errors
-    #[error("Internal service error: {0}")]
-    InternalServiceError(&'static str),
-
     // HTTP-related errors
     #[error("Unsupported HTTP method: {0}")]
     UnsupportedHttpMethod(Method),
@@ -80,7 +77,6 @@ impl PipelineErrorVariant {
             Self::UnsupportedHttpMethod(_) => "METHOD_NOT_ALLOWED",
             Self::PlannerError(_) => "QUERY_PLAN_BUILD_FAILED",
             Self::PlanExecutionError(_) => "QUERY_PLAN_EXECUTION_FAILED",
-            Self::InternalServiceError(_) => "INTERNAL_SERVER_ERROR",
             Self::FailedToParseOperation(_) => "GRAPHQL_PARSE_FAILED",
             Self::ValidationErrors(_) => "GRAPHQL_VALIDATION_FAILED",
             Self::VariablesCoercionError(_) => "BAD_USER_INPUT",
@@ -99,14 +95,13 @@ impl PipelineErrorVariant {
 
     pub fn graphql_error_message(&self) -> String {
         match self {
-            Self::PlannerError(_) | Self::InternalServiceError(_) => "Unexpected error".to_string(),
+            Self::PlannerError(_) => "Unexpected error".to_string(),
             _ => self.to_string(),
         }
     }
 
     pub fn default_status_code(&self, prefer_ok: bool) -> StatusCode {
         match (self, prefer_ok) {
-            (Self::InternalServiceError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::PlannerError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::PlanExecutionError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::UnsupportedHttpMethod(_), _) => StatusCode::METHOD_NOT_ALLOWED,

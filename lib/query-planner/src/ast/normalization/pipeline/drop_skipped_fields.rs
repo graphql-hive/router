@@ -5,6 +5,7 @@ use graphql_parser::query::{
 
 use crate::ast::normalization::{context::NormalizationContext, error::NormalizationError};
 
+#[inline]
 pub fn drop_skipped_fields(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     for def in &mut ctx.document.definitions {
         match def {
@@ -31,6 +32,7 @@ pub fn drop_skipped_fields(ctx: &mut NormalizationContext) -> Result<(), Normali
     Ok(())
 }
 
+#[inline]
 fn handle_selection_set<'a>(
     selection_set: &mut SelectionSet<'a, String>,
 ) -> Result<(), NormalizationError> {
@@ -70,6 +72,7 @@ fn handle_selection_set<'a>(
     Ok(())
 }
 
+#[inline]
 fn should_keep(directives: &Vec<Directive<'_, String>>) -> bool {
     if extract_condition_directive("skip", directives).is_some_and(|skip| skip) {
         return false;
@@ -82,6 +85,7 @@ fn should_keep(directives: &Vec<Directive<'_, String>>) -> bool {
     true
 }
 
+#[inline]
 fn extract_condition_directive(
     directive_name: &str,
     directives: &Vec<Directive<'_, String>>,

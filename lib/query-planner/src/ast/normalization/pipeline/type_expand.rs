@@ -23,6 +23,7 @@ use crate::{
 /// one resolvable query path to each field.
 /// Instead of looking for Interface.Field edge,
 /// the Query Planner will look for Object.Field.
+#[inline]
 pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     let mut possible_types = PossibleTypesMap::new();
     let maybe_subgraph_name = ctx.subgraph_name.as_ref();
@@ -120,6 +121,7 @@ pub fn type_expand(ctx: &mut NormalizationContext) -> Result<(), NormalizationEr
     Ok(())
 }
 
+#[inline]
 fn handle_selection_set(
     state: &SupergraphState,
     possible_types: &PossibleTypesMap,
@@ -226,6 +228,8 @@ fn handle_selection_set(
 }
 
 type ShouldContinue = bool;
+
+#[inline]
 fn handle_type_expansion_candidate<'a>(
     state: &SupergraphState,
     possible_types: &PossibleTypesMap,

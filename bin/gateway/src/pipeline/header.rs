@@ -12,6 +12,7 @@ lazy_static! {
     pub static ref APPLICATION_JSON: HeaderValue = HeaderValue::from_static(&APPLICATION_JSON_STR);
     pub static ref APPLICATION_GRAPHQL_RESPONSE_JSON_STR: &'static str =
         "application/graphql-response+json";
+    pub static ref TEXT_HTML_CONTENT_TYPE: &'static str = "text/html";
     pub static ref APPLICATION_GRAPHQL_RESPONSE_JSON: HeaderValue =
         HeaderValue::from_static(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
 }
@@ -21,16 +22,13 @@ pub trait RequestAccepts {
 }
 
 impl RequestAccepts for http::Request<axum::body::Body> {
+    #[inline]
     fn accepts_content_type(&self, content_type: &str) -> bool {
-        let accept_header = self.headers().get(ACCEPT);
-        if let Some(value) = accept_header {
-            value
-                .to_str()
-                .map(|s| s.contains(content_type))
-                .unwrap_or(false)
-        } else {
-            false
-        }
+        self.headers()
+            .get(ACCEPT)
+            .and_then(|value| value.to_str().ok())
+            .map(|s| s.contains(content_type))
+            .unwrap_or(false)
     }
 }
 
@@ -39,6 +37,7 @@ pub trait AssertRequestJson {
 }
 
 impl AssertRequestJson for http::Request<axum::body::Body> {
+    #[inline]
     fn assert_json_content_type(&self) -> Result<(), PipelineError> {
         match self.headers().get(CONTENT_TYPE) {
             Some(value) => {

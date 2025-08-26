@@ -2,6 +2,7 @@ use graphql_parser::query::{Definition, OperationDefinition};
 
 use crate::ast::normalization::{context::NormalizationContext, error::NormalizationError};
 
+#[inline]
 pub fn drop_unused_operations(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     let mut already_found = false;
 

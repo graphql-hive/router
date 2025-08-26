@@ -3,48 +3,37 @@ mod logger;
 mod pipeline;
 mod shared_state;
 
+use std::sync::Arc;
+
 use crate::{
-    http_utils::{
-        health::health_check_handler,
-        landing_page::landing_page_handler,
-        request_id::{RequestIdGenerator, REQUEST_ID_HEADER_NAME},
-    },
+    http_utils::{health::health_check_handler, landing_page::landing_page_handler},
     logger::configure_logging,
+    pipeline::graphql_request_handler,
     shared_state::GatewaySharedState,
 };
 use axum::{
-    body::Body,
-    http::Method,
-    routing::{any_service, get},
+    extract::{Request, State},
+    response::IntoResponse,
+    routing::{self},
     Router,
 };
 use gateway_config::load_config;
-use http::Request;
 use mimalloc::MiMalloc;
 use tokio::signal;
 
-use axum::Extension;
-use tower::ServiceBuilder;
-
-use crate::pipeline::{
-    coerce_variables_service::CoerceVariablesService, execution_service::ExecutionService,
-    graphiql_service::GraphiQLResponderService,
-    graphql_request_params::GraphQLRequestParamsExtractor,
-    normalize_service::GraphQLOperationNormalizationService, parser_service::GraphQLParserService,
-    progressive_override_service::ProgressiveOverrideExtractor,
-    query_plan_service::QueryPlanService, validation_service::GraphQLValidationService,
-};
 use query_planner::utils::parsing::parse_schema;
 use tokio::net::TcpListener;
-use tower_http::{
-    cors::CorsLayer,
-    request_id::{PropagateRequestIdLayer, RequestId, SetRequestIdLayer},
-    trace::TraceLayer,
-};
-use tracing::{debug_span, info};
+use tracing::info;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
+
+async fn graphql_endpoint_handler(
+    State(app_state): State<Arc<GatewaySharedState>>,
+    mut request: Request,
+) -> impl IntoResponse {
+    graphql_request_handler(&mut request, app_state).await
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -52,60 +41,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let gateway_config = load_config(config_path)?;
     configure_logging(&gateway_config.log);
 
-    let allow_expose_query_plan = gateway_config.query_planner.allow_expose;
     let supergraph_sdl = gateway_config.supergraph.load().await?;
     let parsed_schema = parse_schema(&supergraph_sdl);
-    let gateway_shared_state = GatewaySharedState::new(parsed_schema, &gateway_config);
-
-    let pipeline = ServiceBuilder::new()
-        .layer(Extension(gateway_shared_state.clone()))
-        .layer(SetRequestIdLayer::new(
-            REQUEST_ID_HEADER_NAME.clone(),
-            RequestIdGenerator,
-        ))
-        .layer(
-            TraceLayer::new_for_http().make_span_with(|request: &Request<Body>| {
-                let request_id = request
-                    .extensions()
-                    .get::<RequestId>()
-                    .map(|v| v.header_value().to_str().unwrap())
-                    .unwrap_or_else(|| "");
-
-                debug_span!(
-                    "http_request",
-                    request_id = %request_id,
-                    method = %request.method(),
-                    uri = %request.uri(),
-                )
-            }),
-        )
-        .layer(GraphiQLResponderService::new_layer())
-        .layer(GraphQLRequestParamsExtractor::new_layer())
-        .layer(GraphQLParserService::new_layer())
-        .layer(GraphQLValidationService::new_layer())
-        .layer(ProgressiveOverrideExtractor::new_layer())
-        .layer(GraphQLOperationNormalizationService::new_layer())
-        .layer(CoerceVariablesService::new_layer())
-        .layer(QueryPlanService::new_layer())
-        .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER_NAME.clone()))
-        .service(ExecutionService::new(allow_expose_query_plan));
+    let addr = gateway_config.http.address();
+    let gateway_shared_state = GatewaySharedState::new(parsed_schema, gateway_config);
 
     let app = Router::new()
-        .route("/graphql", any_service(pipeline))
-        .route("/health", get(health_check_handler))
-        .layer(
-            CorsLayer::new()
-                .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-                .allow_headers(vec![
-                    axum::http::header::ACCEPT,
-                    axum::http::header::CONTENT_TYPE,
-                ])
-                .allow_origin(tower_http::cors::Any),
-        )
-        .fallback(get(landing_page_handler))
+        .route("/graphql", routing::any(graphql_endpoint_handler))
+        .route("/health", routing::get(health_check_handler))
+        .fallback(routing::get(landing_page_handler))
         .with_state(gateway_shared_state);
 
-    let addr = gateway_config.http.address();
     info!("Starting server on {}", addr);
 
     let listener = TcpListener::bind(addr).await?;

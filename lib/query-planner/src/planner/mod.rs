@@ -88,6 +88,7 @@ impl Planner {
         })
     }
 
+    #[inline]
     pub fn plan_from_normalized_operation(
         &self,
         normalized_operation: &OperationDefinition,

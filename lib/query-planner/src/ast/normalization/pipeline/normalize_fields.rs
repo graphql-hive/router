@@ -4,6 +4,7 @@ use graphql_parser::query::{
 
 use crate::ast::normalization::{context::NormalizationContext, error::NormalizationError};
 
+#[inline]
 pub fn normalize_fields(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     for def in ctx.document.definitions.iter_mut() {
         match def {
@@ -30,6 +31,7 @@ pub fn normalize_fields(ctx: &mut NormalizationContext) -> Result<(), Normalizat
     Ok(())
 }
 
+#[inline]
 fn normalize_selection_set<'b, 'a>(
     selection_set: &'b mut SelectionSet<'a, String>,
 ) -> Result<(), NormalizationError> {
@@ -53,6 +55,7 @@ fn normalize_selection_set<'b, 'a>(
     Ok(())
 }
 
+#[inline]
 fn drop_name_equal_alias<'b, 'a>(
     field: &'b mut Field<'a, String>,
 ) -> Result<(), NormalizationError> {
@@ -69,12 +72,14 @@ fn drop_name_equal_alias<'b, 'a>(
     Ok(())
 }
 
+#[inline]
 fn sort_arguments<'b, 'a>(field: &'b mut Field<'a, String>) -> Result<(), NormalizationError> {
     field.arguments.sort_by(|(a, _), (b, _)| a.cmp(b));
 
     Ok(())
 }
 
+#[inline]
 fn sort_field_directives<'b, 'a>(
     field: &'b mut Field<'a, String>,
 ) -> Result<(), NormalizationError> {
@@ -82,6 +87,7 @@ fn sort_field_directives<'b, 'a>(
     Ok(())
 }
 
+#[inline]
 fn sort_fragment_directives<'b, 'a>(
     fragment: &'b mut InlineFragment<'a, String>,
 ) -> Result<(), NormalizationError> {

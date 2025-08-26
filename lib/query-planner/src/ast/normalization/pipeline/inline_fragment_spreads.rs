@@ -7,6 +7,7 @@ use graphql_parser::query::{
 
 use crate::ast::normalization::{context::NormalizationContext, error::NormalizationError};
 
+#[inline]
 pub fn inline_fragment_spreads(ctx: &mut NormalizationContext) -> Result<(), NormalizationError> {
     let mut fragment_map: HashMap<String, FragmentDefinition<'static, String>> = HashMap::new();
     for definition in &ctx.document.definitions {
@@ -40,6 +41,7 @@ pub fn inline_fragment_spreads(ctx: &mut NormalizationContext) -> Result<(), Nor
     Ok(())
 }
 
+#[inline]
 fn handle_selection_set<'a>(
     selection_set: &mut SelectionSet<'a, String>,
     fragment_map: &HashMap<String, FragmentDefinition<'a, String>>,
