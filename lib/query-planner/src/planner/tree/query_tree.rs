@@ -1,4 +1,4 @@
-use std::{fmt::Write, sync::Arc};
+use std::sync::Arc;
 
 use tracing::instrument;
 
@@ -60,17 +60,5 @@ impl QueryTree {
         }
 
         accumulator
-    }
-
-    pub fn pretty_print(&self, graph: &Graph) -> Result<String, std::fmt::Error> {
-        let mut result = String::new();
-        let root_node = graph.node(self.root.node_index).unwrap();
-        write!(result, "{}", root_node)?;
-
-        for step in self.root.children.iter() {
-            write!(result, "{}", step.pretty_print(graph, 1)?)?;
-        }
-
-        Ok(result)
     }
 }

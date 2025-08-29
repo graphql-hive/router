@@ -74,16 +74,6 @@ fn main() {
                 }
             }
         }
-        "tree" => {
-            let (graph, query_tree, _supergraph_state) = process_merged_tree(&args[2], &args[3]);
-
-            println!(
-                "{}",
-                query_tree
-                    .pretty_print(&graph)
-                    .expect("failed to print merged tree")
-            )
-        }
         "fetch_graph" => {
             let fetch_graph = process_fetch_graph(&args[2], &args[3]);
             println!("{}", fetch_graph);

@@ -1,11 +1,10 @@
 use petgraph::graph::{EdgeIndex, NodeIndex};
-use std::fmt::Write;
 use std::sync::Arc;
 use tracing::{instrument, trace};
 
 use crate::{
     ast::{arguments::ArgumentsMap, merge_path::Condition},
-    graph::{edge::Edge, error::GraphError, Graph},
+    graph::{error::GraphError, Graph},
     planner::walker::path::{OperationPath, PathSegment, SelectionAttributes},
 };
 
@@ -224,104 +223,5 @@ impl QueryTreeNode {
         }
 
         Ok(root_tree_node)
-    }
-
-    fn internal_pretty_print(
-        &self,
-        graph: &Graph,
-        indent_level: usize,
-    ) -> Result<String, std::fmt::Error> {
-        let mut result = String::new();
-        let indent = "  ".repeat(indent_level);
-
-        let edge_index = self
-            .edge_from_parent
-            .expect("internal_pretty_print called on a node without a parent edge");
-        let edge = graph.edge(edge_index).unwrap();
-
-        let node = graph.node(self.node_index).unwrap();
-        let tail_str = format!("{}", node);
-
-        let condition_str = match self.condition.as_ref() {
-            Some(condition) => format!(" {}", condition),
-            None => "".to_string(),
-        };
-
-        if !self.requirements.is_empty() {
-            write!(result, "\n{}🧩 [", indent)?;
-
-            for req_step in self.requirements.iter() {
-                write!(result, "{}", req_step.pretty_print(graph, indent_level)?)?;
-            }
-
-            write!(result, "\n{}]", indent)?;
-        }
-
-        match edge {
-            Edge::EntityMove(_) => {
-                write!(result, "\n{}🔑 {}", indent, tail_str)
-            }
-            Edge::SubgraphEntrypoint { .. } => {
-                write!(result, "\n{}🚪 ({})", indent, tail_str)
-            }
-            Edge::AbstractMove(t) => {
-                write!(result, "\n{}... on {}{}", indent, t, condition_str)
-            }
-            _ => {
-                let args_str = self
-                    .selection_arguments()
-                    .map(|v| match v.is_empty() {
-                        true => "".to_string(),
-                        false => format!("({})", v),
-                    })
-                    .unwrap_or("".to_string());
-                write!(
-                    result,
-                    "\n{}{}{} of {}{}",
-                    indent,
-                    edge.display_name(),
-                    args_str,
-                    tail_str,
-                    condition_str
-                )
-            }
-        }?;
-
-        for sub_step in self.children.iter() {
-            write!(
-                result,
-                "{}",
-                sub_step.pretty_print(graph, indent_level + 1)?
-            )?;
-        }
-
-        Ok(result)
-    }
-
-    pub fn pretty_print(
-        &self,
-        graph: &Graph,
-        indent_level: usize,
-    ) -> Result<String, std::fmt::Error> {
-        let mut result = String::new();
-
-        match self.edge_from_parent {
-            Some(_) => write!(
-                result,
-                "{}",
-                self.internal_pretty_print(graph, indent_level)?
-            )?,
-            None => {
-                for sub_step in self.children.iter() {
-                    write!(
-                        result,
-                        "{}",
-                        sub_step.pretty_print(graph, indent_level + 1)?
-                    )?;
-                }
-            }
-        };
-
-        Ok(result)
     }
 }
