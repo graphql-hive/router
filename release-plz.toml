@@ -1,0 +1,18 @@
+[workspace]
+allow_dirty = true
+changelog_update = true
+dependencies_update = false
+git_release_enable = true
+git_tag_enable = true
+
+[[package]]
+name = "qp-dev-cli"
+release = false
+
+[[package]]
+name = "router-config"
+release = false
+
+[[package]]
+name = "query-planner-wasm"
+release = false
