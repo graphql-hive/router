@@ -179,7 +179,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: audits/.node-version
-      - run: cargo build --package router
+      - run: cargo build --package hive-router
       - run: npm install
         working-directory: audits
       - run: npm run test:federation-all
