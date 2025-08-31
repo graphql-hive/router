@@ -14,8 +14,9 @@ hive-router-query-planner = "<...>"
 ## Usage
 
 ```rs
-use hive_router_query_planner::utils::parsing::{parse_schema, safe_parse_operation};
+use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::planner::Planner;
+use hive_router_query_planner::utils::parsing::{parse_schema, safe_parse_operation};
 
 fn main() {
   // First, parse your Federation supergraph SDL
