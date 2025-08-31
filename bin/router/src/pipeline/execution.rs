@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
-use crate::shared_state::GatewaySharedState;
+use crate::shared_state::RouterSharedState;
 use executor::execute_query_plan;
 use executor::execution::plan::QueryPlanExecutionContext;
 use executor::introspection::resolve::IntrospectionContext;
@@ -25,7 +25,7 @@ enum ExposeQueryPlanMode {
 #[inline]
 pub async fn execute_plan(
     req: &mut HttpRequest,
-    app_state: &Arc<GatewaySharedState>,
+    app_state: &Arc<RouterSharedState>,
     normalized_payload: &Arc<GraphQLNormalizationPayload>,
     query_plan_payload: &Arc<QueryPlan>,
     variable_payload: &CoerceVariablesPayload,

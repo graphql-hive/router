@@ -70,15 +70,15 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all
 
-  unit-benchmark:
+  benchmark:
     strategy:
       matrix:
         include:
-          - name: "Query Planner"
+          - name: "query-planner"
             package: "./lib/query-planner"
-          - name: "Executor"
+          - name: "executor"
             package: "./lib/executor"
-    name: ${{ matrix.name }} Benchmark
+    name: benchmark / ${{ matrix.name }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
@@ -99,8 +99,8 @@ jobs:
           name: ${{matrix.package}}-benchmark-results
           path: ${{matrix.package}}/target/criterion
 
-  k6-benchmark:
-    name: Overall K6 Benchmark
+  router-benchmark:
+    name: benchmark / router
     runs-on: ubuntu-latest
     env:
       NODE_NO_WARNINGS: true
@@ -120,10 +120,10 @@ jobs:
         run: cargo build --release -p subgraphs
       - name: Run subgraphs
         run: ./target/release/subgraphs & sleep 5
-      - name: Build gateway
-        run: cargo build --release -p gateway
-      - name: Run gateway
-        run: ./target/release/gateway & sleep 5
+      - name: Build router
+        run: cargo build --release -p router
+      - name: Run router
+        run: ./target/release/hive_router & sleep 5
         env:
           HIVE_SUPERGRAPH_SOURCE: file
           HIVE_SUPERGRAPH_PATH: bench/supergraph.graphql
@@ -179,7 +179,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: audits/.node-version
-      - run: cargo build --package gateway
+      - run: cargo build --package router
       - run: npm install
         working-directory: audits
       - run: npm run test:federation-all

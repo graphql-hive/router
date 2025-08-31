@@ -43,7 +43,7 @@ pub struct HiveRouterConfig {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum GatewayConfigError {
+pub enum RouterConfigError {
     #[error("Failed to load configuration: {0}")]
     ConfigLoadError(config::ConfigError),
 }

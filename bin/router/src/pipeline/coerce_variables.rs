@@ -11,7 +11,7 @@ use tracing::{error, trace, warn};
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::execution_request::ExecutionRequest;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
-use crate::shared_state::GatewaySharedState;
+use crate::shared_state::RouterSharedState;
 
 #[derive(Clone, Debug)]
 pub struct CoerceVariablesPayload {
@@ -21,7 +21,7 @@ pub struct CoerceVariablesPayload {
 #[inline]
 pub fn coerce_request_variables(
     req: &HttpRequest,
-    app_state: &Arc<GatewaySharedState>,
+    app_state: &Arc<RouterSharedState>,
     execution_params: ExecutionRequest,
     normalized_operation: &Arc<GraphQLNormalizationPayload>,
 ) -> Result<CoerceVariablesPayload, PipelineError> {

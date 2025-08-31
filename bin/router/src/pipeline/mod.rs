@@ -22,7 +22,7 @@ use crate::{
         query_plan::plan_operation_with_cache,
         validation::validate_operation_with_cache,
     },
-    shared_state::GatewaySharedState,
+    shared_state::RouterSharedState,
 };
 
 pub mod coerce_variables;
@@ -42,7 +42,7 @@ static GRAPHIQL_HTML: &str = include_str!("../../static/graphiql.html");
 pub async fn graphql_request_handler(
     req: &mut HttpRequest,
     body_bytes: Bytes,
-    state: &Arc<GatewaySharedState>,
+    state: &Arc<RouterSharedState>,
 ) -> impl web::Responder {
     if req.method() == Method::GET && req.accepts_content_type(*TEXT_HTML_CONTENT_TYPE) {
         return web::HttpResponse::Ok()
@@ -71,7 +71,7 @@ pub async fn graphql_request_handler(
 pub async fn execute_pipeline(
     req: &mut HttpRequest,
     body_bytes: Bytes,
-    state: &Arc<GatewaySharedState>,
+    state: &Arc<RouterSharedState>,
 ) -> Result<Bytes, PipelineError> {
     let execution_request = get_execution_request(req, body_bytes).await?;
     let parser_payload = parse_operation_with_cache(req, state, &execution_request).await?;

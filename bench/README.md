@@ -2,17 +2,20 @@
 
 ```
 cargo subgraphs
-cargo gateway bench/supergraph.graphql
+
+export HIVE_SUPERGRAPH_SOURCE="file"
+export HIVE_SUPERGRAPH_PATH="bench/supergraph.graphql"
+cargo router
 ```
 
 ## Release mode:
 
 ```
 cargo build --release -p subgraphs
-cargo build --release -p gateway
+cargo build --release -p router
 
 ./target/release/subgraphs
-./target/release/gateway bench/supergraph.graphql
+./target/release/hive_router bench/supergraph.graphql
 ```
 
 ## Load test

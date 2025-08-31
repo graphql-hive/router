@@ -11,7 +11,7 @@ use xxhash_rust::xxh3::Xxh3;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::execution_request::ExecutionRequest;
 use crate::pipeline::parser::GraphQLParserPayload;
-use crate::shared_state::GatewaySharedState;
+use crate::shared_state::RouterSharedState;
 use tracing::{error, trace};
 
 #[derive(Debug)]
@@ -26,7 +26,7 @@ pub struct GraphQLNormalizationPayload {
 #[inline]
 pub async fn normalize_request_with_cache(
     req: &HttpRequest,
-    app_state: &Arc<GatewaySharedState>,
+    app_state: &Arc<RouterSharedState>,
     execution_params: &ExecutionRequest,
     parser_payload: &GraphQLParserPayload,
 ) -> Result<Arc<GraphQLNormalizationPayload>, PipelineError> {

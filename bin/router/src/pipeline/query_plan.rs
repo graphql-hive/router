@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
-use crate::shared_state::GatewaySharedState;
+use crate::shared_state::RouterSharedState;
 use ntex::web::HttpRequest;
 use query_planner::planner::plan_nodes::QueryPlan;
 use tracing::debug;
@@ -13,7 +13,7 @@ use xxhash_rust::xxh3::Xxh3;
 #[inline]
 pub async fn plan_operation_with_cache(
     req: &HttpRequest,
-    app_state: &Arc<GatewaySharedState>,
+    app_state: &Arc<RouterSharedState>,
     normalized_operation: &Arc<GraphQLNormalizationPayload>,
     request_override_context: &RequestOverrideContext,
 ) -> Result<Arc<QueryPlan>, PipelineError> {

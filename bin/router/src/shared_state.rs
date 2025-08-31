@@ -4,7 +4,6 @@ use executor::{
     introspection::schema::{SchemaMetadata, SchemaWithMetadata},
     SubgraphExecutorMap,
 };
-use gateway_config::HiveRouterConfig;
 use graphql_parser::schema::Document;
 use graphql_tools::validation::{utils::ValidationError, validate::ValidationPlan};
 use moka::future::Cache;
@@ -12,10 +11,11 @@ use query_planner::{
     planner::{plan_nodes::QueryPlan, Planner},
     state::supergraph_state::SupergraphState,
 };
+use router_config::HiveRouterConfig;
 
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 
-pub struct GatewaySharedState {
+pub struct RouterSharedState {
     pub schema_metadata: SchemaMetadata,
     pub planner: Planner,
     pub validation_plan: ValidationPlan,
@@ -27,7 +27,7 @@ pub struct GatewaySharedState {
     pub router_config: HiveRouterConfig,
 }
 
-impl GatewaySharedState {
+impl RouterSharedState {
     pub fn new(
         parsed_supergraph_sdl: Document<'static, String>,
         router_config: HiveRouterConfig,

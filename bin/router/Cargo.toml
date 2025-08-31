@@ -1,16 +1,15 @@
 [package]
-name = "gateway"
-version = "0.0.1"
+name = "router"
 edition = "2021"
 
 [[bin]]
-name = "gateway"
+name = "hive_router"
 path = "src/main.rs"
 
 [dependencies]
 query-planner = { path = "../../lib/query-planner" }
 executor = { path = "../../lib/executor" }
-gateway-config = { path = "../../lib/gateway-config" }
+router-config = { path = "../../lib/router-config" }
 
 tokio = { workspace = true }
 futures = { workspace = true }

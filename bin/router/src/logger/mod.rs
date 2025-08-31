@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use gateway_config::log::{LogFormat, LoggingConfig};
+use router_config::log::{LogFormat, LoggingConfig};
 use tracing_subscriber::{
     fmt::{self, format::FmtSpan, time::UtcTime},
     layer::SubscriberExt,

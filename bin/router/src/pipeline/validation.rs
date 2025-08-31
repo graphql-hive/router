@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::parser::GraphQLParserPayload;
-use crate::shared_state::GatewaySharedState;
+use crate::shared_state::RouterSharedState;
 use graphql_tools::validation::validate::validate;
 use ntex::web::HttpRequest;
 use tracing::{error, trace};
@@ -10,7 +10,7 @@ use tracing::{error, trace};
 #[inline]
 pub async fn validate_operation_with_cache(
     req: &HttpRequest,
-    app_state: &Arc<GatewaySharedState>,
+    app_state: &Arc<RouterSharedState>,
     parser_payload: &GraphQLParserPayload,
 ) -> Result<(), PipelineError> {
     let consumer_schema_ast = &app_state.planner.consumer_schema.document;

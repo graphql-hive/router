@@ -5,15 +5,15 @@ use query_planner::ast::{
 };
 
 /// Represents an operation that has been partitioned into a part for subgraphs
-/// and an optional part for introspection (gateway-level).
+/// and an optional part for introspection (router-level).
 pub struct PartitionedOperation {
     /// Resolved by the subgraphs
     pub downstream_operation: OperationDefinition,
-    /// Resolved by the gateway
+    /// Resolved by the router
     pub introspection_operation: Option<OperationDefinition>,
 }
 
-/// Partitions an operation into a part for subgraphs and an optional part for introspection (gateway-level)
+/// Partitions an operation into a part for subgraphs and an optional part for introspection (router-level)
 pub fn partition_operation(mut op: OperationDefinition) -> PartitionedOperation {
     let selection_set = std::mem::take(&mut op.selection_set);
     let (downstream_selection_set, introspection_selection_set) =

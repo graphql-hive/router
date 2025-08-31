@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-export BINARY_NAME=gateway
+export BINARY_NAME=hive_router
 
 # Linux ARM (aarch64)
 rm -rf target/linux/arm64
