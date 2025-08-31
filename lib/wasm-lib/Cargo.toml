@@ -1,7 +1,5 @@
 [package]
 name = "query-planner-wasm"
-version = "0.0.1"
-authors = ["Dotan Simha <dotansimha@gmail.com>"]
 edition = "2018"
 
 [lib]
