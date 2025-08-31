@@ -2,11 +2,11 @@
 
 # Hive Router (Rust)
 
-A fully open-source MIT-licensed GraphQL API gateway that can act as a [GraphQL federation](https://the-guild.dev/graphql/hive/federation) Gateway, built with Rust for maximum performance and robustness.
+A fully open-source MIT-licensed GraphQL API router that can act as a [GraphQL federation](https://the-guild.dev/graphql/hive/federation) Router, built with Rust for maximum performance and robustness.
 
 It can be run as a standalone binary or a Docker Image. Query planner can be used as a standalone Crate library.
 
-[Binary Releases](https://github.com/graphql-hive/gateway-rs/releases) | [Docker Releases](https://github.com/graphql-hive/router/pkgs/container/router) | [Configuration reference](./docs/README.md)
+[Binary Releases](https://github.com/graphql-hive/router/releases) | [Docker Releases](https://github.com/graphql-hive/router/pkgs/container/router) | [Configuration reference](./docs/README.md)
 
 ## Try it out
 
@@ -30,12 +30,12 @@ Then, pick your preferred runtime:
 
 ### Binary
 
-See [GitHub Releases](https://github.com/graphql-hive/gateway-rs/releases) and use the artifacts published to each release.
+See [GitHub Releases](https://github.com/graphql-hive/router/releases) and use the artifacts published to each release.
 
 ```bash
 # By default, "hive-router.config.yaml" is used for configuration. Override it by setting "HIVE_CONFIG_FILE_PATH=some-custom-file.yaml"
 # If you are using env vars, make sure to set the variables before running the gateway.
-./gateway
+./hive_router
 ```
 
 ### Docker

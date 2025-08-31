@@ -195,7 +195,7 @@ impl SubgraphState {
     }
 
     // TODO: Implement this function when input object types are supported
-    // https://github.com/graphql-hive/gateway-rs/issues/80
+    // https://github.com/graphql-hive/router/issues/80
     fn process_input_object_type(
         _graph_id: &str,
         _graph_join_types: &[JoinTypeDirective],

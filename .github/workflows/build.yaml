@@ -26,7 +26,7 @@ env:
   DOCKER_VENDOR: theguild
   DOCKER_PLATFORMS: linux/amd64,linux/arm64
   ZIG_VERSION: 0.14.1
-  BINARY_NAME: gateway
+  BINARY_NAME: hive_router
 
 jobs:
   config:
@@ -90,7 +90,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         name: upload build artifact
         with:
-          name: gateway_${{ matrix.name }}
+          name: hive_router_${{ matrix.name }}
           path: target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
           if-no-files-found: error
       - name: Upload binaries to release
@@ -99,7 +99,7 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
-          asset_name: gateway_${{ matrix.name }}
+          asset_name: hive_router_${{ matrix.name }}
           tag: ${{ github.ref }}
   docker:
     runs-on: ubuntu-latest
@@ -129,14 +129,14 @@ jobs:
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           path: artifacts
-          pattern: gateway_*
+          pattern: hive_router_*
       - name: prepare artifacts
         run: |
           mkdir -p ./target/linux/arm64
           mkdir -p ./target/linux/amd64
 
-          mv ./artifacts/gateway_linux_arm64/gateway ./target/linux/arm64/gateway
-          mv ./artifacts/gateway_linux_amd64/gateway ./target/linux/amd64/gateway
+          mv ./artifacts/${{ env.BINARY_NAME }}_linux_arm64/${{ env.BINARY_NAME }} ./target/linux/arm64/${{ env.BINARY_NAME }}
+          mv ./artifacts/${{ env.BINARY_NAME }}_linux_amd64/${{ env.BINARY_NAME }} ./target/linux/amd64/${{ env.BINARY_NAME }}
           ls -ltra ./target/linux/arm64/
           ls -ltra ./target/linux/amd64/
       - uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
@@ -148,7 +148,7 @@ jobs:
         id: docker
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
-          file: ./docker/gateway.Dockerfile
+          file: ./docker/router.Dockerfile
           context: .
           platforms: ${{ env.DOCKER_PLATFORMS }}
           push: true

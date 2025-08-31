@@ -1,10 +1,10 @@
 # The following are aliases you can use with "cargo command_name"
 [alias]
-gateway = "run --package gateway"
+router = "run --package router"
 dev = "run --package qp-dev-cli"
 subgraphs = "run --package subgraphs"
 test_all = "test --workspace"
 test_qp = "test --package query-planner -- --nocapture"
 test_qpe = "test --package query-plan-executor -- --nocapture"
 "clippy:fix" = "clippy --all --fix --allow-dirty --allow-staged"
-"router-config" = "run --release -p gateway-config router-config.schema.json"
+"router-config" = "run --release -p router-config router-config.schema.json"

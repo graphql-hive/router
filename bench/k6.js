@@ -29,7 +29,7 @@ export function handleSummary(data) {
       commit: __ENV.GITHUB_SHA,
       pr: __ENV.GITHUB_PR,
       org: "graphql-hive",
-      repo: "gateway-rs",
+      repo: "router",
       commentKey: `k6-benchmark`,
       renderTitle({ passes }) {
         return passes

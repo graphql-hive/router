@@ -120,10 +120,10 @@ jobs:
         run: cargo build --release -p subgraphs
       - name: Run subgraphs
         run: ./target/release/subgraphs & sleep 5
-      - name: Build gateway
-        run: cargo build --release -p gateway
-      - name: Run gateway
-        run: ./target/release/gateway & sleep 5
+      - name: Build router
+        run: cargo build --release -p router
+      - name: Run router
+        run: ./target/release/hive_router & sleep 5
         env:
           HIVE_SUPERGRAPH_SOURCE: file
           HIVE_SUPERGRAPH_PATH: bench/supergraph.graphql
@@ -179,7 +179,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: audits/.node-version
-      - run: cargo build --package gateway
+      - run: cargo build --package router
       - run: npm install
         working-directory: audits
       - run: npm run test:federation-all

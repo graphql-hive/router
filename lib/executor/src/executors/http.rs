@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::executors::dedupe::{ABuildHasher, RequestFingerprint, SharedResponse};
 use dashmap::DashMap;
-use gateway_config::traffic_shaping::TrafficShapingExecutorConfig;
+use router_config::traffic_shaping::TrafficShapingExecutorConfig;
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;

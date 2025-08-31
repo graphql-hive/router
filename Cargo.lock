@@ -866,7 +866,6 @@ dependencies = [
  "criterion",
  "dashmap",
  "futures",
- "gateway-config",
  "graphql-parser",
  "graphql-tools",
  "http",
@@ -876,6 +875,7 @@ dependencies = [
  "indexmap 2.11.0",
  "itoa",
  "query-planner",
+ "router-config",
  "ryu",
  "serde",
  "sonic-rs",
@@ -1042,47 +1042,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c31b6d751ae2c7f11320402d34e41349dd1016f8d5d45e48c4312bc8625af50c"
 dependencies = [
  "byteorder",
-]
-
-[[package]]
-name = "gateway"
-version = "0.0.1"
-dependencies = [
- "async-trait",
- "executor",
- "futures",
- "gateway-config",
- "graphql-parser",
- "graphql-tools",
- "http",
- "http-body-util",
- "hyper",
- "lazy_static",
- "mimalloc",
- "moka",
- "ntex",
- "query-planner",
- "rand",
- "serde",
- "sonic-rs",
- "thiserror 2.0.16",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "tracing-tree",
- "ulid",
- "xxhash-rust",
-]
-
-[[package]]
-name = "gateway-config"
-version = "0.0.1"
-dependencies = [
- "config",
- "schemars 1.0.4",
- "serde",
- "serde_json",
- "thiserror 2.0.16",
 ]
 
 [[package]]
@@ -2407,6 +2366,47 @@ dependencies = [
  "bitflags",
  "serde",
  "serde_derive",
+]
+
+[[package]]
+name = "router"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "executor",
+ "futures",
+ "graphql-parser",
+ "graphql-tools",
+ "http",
+ "http-body-util",
+ "hyper",
+ "lazy_static",
+ "mimalloc",
+ "moka",
+ "ntex",
+ "query-planner",
+ "rand",
+ "router-config",
+ "serde",
+ "sonic-rs",
+ "thiserror 2.0.16",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-tree",
+ "ulid",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "router-config"
+version = "0.0.1"
+dependencies = [
+ "config",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.16",
 ]
 
 [[package]]

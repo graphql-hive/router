@@ -1,6 +1,6 @@
-# Compiling and packaging the gateway
+# Compiling and packaging the router
 
-The following instructions will guide you through the process of compiling and packaging the gateway, **locally**.
+The following instructions will guide you through the process of compiling and packaging the router, **locally**.
 
 > This process is also automated using GitHub Actions, see [workflow file](../.github/workflows/build.yaml).
 

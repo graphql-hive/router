@@ -1,15 +1,15 @@
 [workspace]
 members = [
   "lib/query-planner",
-  "lib/gateway-config",
+  "lib/router-config",
   "lib/wasm-lib",
   "lib/executor",
   "bin/dev-cli",
-  "bin/gateway",
+  "bin/router",
   "bench/subgraphs",
 ]
 resolver = "2"
-default-members = ["bin/gateway"]
+default-members = ["bin/router"]
 
 [profile.dev]
 debug = 2
