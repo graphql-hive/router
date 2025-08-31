@@ -10,7 +10,15 @@ It can be run as a standalone binary or a Docker Image. Query planner can be use
 
 ## Try it out
 
-Start by creating a simple configuration file. You may use YAML or JSON formats.
+Download Hive Router using the following install script:
+
+```
+curl -o- https://raw.githubusercontent.com/graphql-hive/router/main/install.sh | sh
+```
+
+> At the moment, only Linux runtimes are supported using a binary, see Docker option below if you are using a different OS.
+
+Create a simple configuration file that points to your supergraph schema file:
 
 ```yaml
 # hive-router.config.yaml
@@ -26,17 +34,17 @@ HIVE_SUPERGRAPH_SOURCE=file
 HIVE_SUPERGRAPH_PATH=./supergraph.graphql
 ```
 
-Then, pick your preferred runtime:
-
-### Binary
-
-See [GitHub Releases](https://github.com/graphql-hive/router/releases) and use the artifacts published to each release.
+Then, run the router:
 
 ```bash
 # By default, "hive-router.config.yaml" is used for configuration. Override it by setting "HIVE_CONFIG_FILE_PATH=some-custom-file.yaml"
 # If you are using env vars, make sure to set the variables before running the router.
 ./hive_router
 ```
+
+### Binary
+
+See [GitHub Releases](https://github.com/graphql-hive/router/releases) to the full list of release and versions.
 
 ### Docker
 
