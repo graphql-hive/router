@@ -1,13 +1,17 @@
 use std::sync::Arc;
 
-use executor::{execution::error::PlanExecutionError, response::graphql_error::GraphQLError};
 use graphql_tools::validation::utils::ValidationError;
+use hive_router_plan_executor::{
+    execution::error::PlanExecutionError, response::graphql_error::GraphQLError,
+};
+use hive_router_query_planner::{
+    ast::normalization::error::NormalizationError, planner::PlannerError,
+};
 use http::{HeaderName, Method, StatusCode};
 use ntex::{
     http::ResponseBuilder,
     web::{self, error::QueryPayloadError, HttpRequest},
 };
-use query_planner::{ast::normalization::error::NormalizationError, planner::PlannerError};
 use serde::{Deserialize, Serialize};
 use sonic_rs::{object, Value};
 

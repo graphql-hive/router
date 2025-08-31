@@ -1,4 +1,4 @@
-use query_planner::ast::{
+use hive_router_query_planner::ast::{
     operation::OperationDefinition,
     selection_item::SelectionItem,
     selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},

@@ -8,7 +8,7 @@ name = "qp-dev-cli"
 path = "src/main.rs"
 
 [dependencies]
-query-planner = { path = "../../lib/query-planner" }
+hive-router-query-planner = { path = "../../lib/query-planner" }
 
 graphql-parser = { workspace = true }
 tracing-subscriber = { workspace = true }

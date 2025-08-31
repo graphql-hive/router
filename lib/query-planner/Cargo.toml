@@ -1,5 +1,5 @@
 [package]
-name = "query-planner"
+name = "hive-router-query-planner"
 version = "0.0.1"
 edition = "2021"
 

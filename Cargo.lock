@@ -856,37 +856,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "executor"
-version = "0.0.1"
-dependencies = [
- "ahash",
- "async-trait",
- "bumpalo",
- "bytes",
- "criterion",
- "dashmap",
- "futures",
- "graphql-parser",
- "graphql-tools",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "indexmap 2.11.0",
- "itoa",
- "query-planner",
- "router-config",
- "ryu",
- "serde",
- "sonic-rs",
- "subgraphs",
- "thiserror 2.0.16",
- "tokio",
- "tracing",
- "xxhash-rust",
-]
-
-[[package]]
 name = "fast_chemail"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1212,6 +1181,88 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "hive-router"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "graphql-parser",
+ "graphql-tools",
+ "hive-router-plan-executor",
+ "hive-router-query-planner",
+ "http",
+ "http-body-util",
+ "hyper",
+ "lazy_static",
+ "mimalloc",
+ "moka",
+ "ntex",
+ "rand",
+ "router-config",
+ "serde",
+ "sonic-rs",
+ "thiserror 2.0.16",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-tree",
+ "ulid",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "hive-router-plan-executor"
+version = "0.0.1"
+dependencies = [
+ "ahash",
+ "async-trait",
+ "bumpalo",
+ "bytes",
+ "criterion",
+ "dashmap",
+ "futures",
+ "graphql-parser",
+ "graphql-tools",
+ "hive-router-query-planner",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "indexmap 2.11.0",
+ "itoa",
+ "router-config",
+ "ryu",
+ "serde",
+ "sonic-rs",
+ "subgraphs",
+ "thiserror 2.0.16",
+ "tokio",
+ "tracing",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "hive-router-query-planner"
+version = "0.0.1"
+dependencies = [
+ "bitflags",
+ "criterion",
+ "graphql-parser",
+ "graphql-tools",
+ "insta",
+ "lazy-init",
+ "lazy_static",
+ "petgraph",
+ "rustc-hash",
+ "serde",
+ "sonic-rs",
+ "thiserror 2.0.16",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-tree",
+]
 
 [[package]]
 name = "http"
@@ -2152,29 +2203,8 @@ name = "qp-dev-cli"
 version = "0.0.1"
 dependencies = [
  "graphql-parser",
- "query-planner",
+ "hive-router-query-planner",
  "serde_json",
- "tracing-subscriber",
- "tracing-tree",
-]
-
-[[package]]
-name = "query-planner"
-version = "0.0.1"
-dependencies = [
- "bitflags",
- "criterion",
- "graphql-parser",
- "graphql-tools",
- "insta",
- "lazy-init",
- "lazy_static",
- "petgraph",
- "rustc-hash",
- "serde",
- "sonic-rs",
- "thiserror 2.0.16",
- "tracing",
  "tracing-subscriber",
  "tracing-tree",
 ]
@@ -2184,7 +2214,7 @@ name = "query-planner-wasm"
 version = "0.0.1"
 dependencies = [
  "console_error_panic_hook",
- "query-planner",
+ "hive-router-query-planner",
  "wasm-bindgen",
  "wasm-bindgen-test",
  "web-sys",
@@ -2366,36 +2396,6 @@ dependencies = [
  "bitflags",
  "serde",
  "serde_derive",
-]
-
-[[package]]
-name = "router"
-version = "0.0.0"
-dependencies = [
- "async-trait",
- "executor",
- "futures",
- "graphql-parser",
- "graphql-tools",
- "http",
- "http-body-util",
- "hyper",
- "lazy_static",
- "mimalloc",
- "moka",
- "ntex",
- "query-planner",
- "rand",
- "router-config",
- "serde",
- "sonic-rs",
- "thiserror 2.0.16",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "tracing-tree",
- "ulid",
- "xxhash-rust",
 ]
 
 [[package]]

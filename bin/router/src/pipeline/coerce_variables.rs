@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use executor::variables::collect_variables;
+use hive_router_plan_executor::variables::collect_variables;
+use hive_router_query_planner::state::supergraph_state::OperationKind;
 use http::Method;
 use ntex::web::HttpRequest;
-use query_planner::state::supergraph_state::OperationKind;
 use sonic_rs::Value;
 use tracing::{error, trace, warn};
 

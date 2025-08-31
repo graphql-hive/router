@@ -1,14 +1,16 @@
 [package]
-name = "router"
+name = "hive-router"
 edition = "2021"
+
+[lib]
 
 [[bin]]
 name = "hive_router"
 path = "src/main.rs"
 
 [dependencies]
-query-planner = { path = "../../lib/query-planner" }
-executor = { path = "../../lib/executor" }
+hive-router-query-planner = { path = "../../lib/query-planner" }
+hive-router-plan-executor = { path = "../../lib/executor" }
 router-config = { path = "../../lib/router-config" }
 
 tokio = { workspace = true }

@@ -1,16 +1,16 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use graphql_parser::query::Document;
-use query_planner::ast::minification::minify_operation;
-use query_planner::ast::normalization::normalize_operation;
-use query_planner::ast::operation::OperationDefinition;
-use query_planner::graph::Graph;
-use query_planner::graph::PlannerOverrideContext;
-use query_planner::planner::best::find_best_combination;
-use query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
-use query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
-use query_planner::planner::walker::walk_operation;
-use query_planner::state::supergraph_state::SupergraphState;
-use query_planner::utils::parsing::{parse_operation, parse_schema};
+use hive_router_query_planner::ast::minification::minify_operation;
+use hive_router_query_planner::ast::normalization::normalize_operation;
+use hive_router_query_planner::ast::operation::OperationDefinition;
+use hive_router_query_planner::graph::Graph;
+use hive_router_query_planner::graph::PlannerOverrideContext;
+use hive_router_query_planner::planner::best::find_best_combination;
+use hive_router_query_planner::planner::fetch::fetch_graph::build_fetch_graph_from_query_tree;
+use hive_router_query_planner::planner::query_plan::build_query_plan_from_fetch_graph;
+use hive_router_query_planner::planner::walker::walk_operation;
+use hive_router_query_planner::state::supergraph_state::SupergraphState;
+use hive_router_query_planner::utils::parsing::{parse_operation, parse_schema};
 use std::hint::black_box;
 
 fn get_operation(operation_path: &str) -> Document<'static, String> {

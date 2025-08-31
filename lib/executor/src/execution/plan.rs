@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
-use query_planner::planner::plan_nodes::{
+use hive_router_query_planner::planner::plan_nodes::{
     ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
     QueryPlan, SequenceNode,
 };
