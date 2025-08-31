@@ -28,6 +28,20 @@ check_tool() {
     fi
 }
 
+banner() {
+  echo "       @@@@@@@@@@@@@                                                                                                            "
+  echo "     @@                                                                                                                         "
+  echo "   @@@   #++++#      +@@          @@@     @@@  @@                        @@@@@@@@@                       @@#                    "
+  echo "   @@@  @@@@@@@@@     @@@         @@@     =@@                            @@     =@@                      @@@                    "
+  echo "   @@@  @@@      @@   @@@         @@@      @@  @@ @@#   @@@ @@@@@@@      @@      @@  @@@@@@@   @@    @@ @@@@@+ @@@@@@@  @@#@@@  "
+  echo "   @@@  @@@      @@@  @@@         @@@@@@@@@@@  @@  @@   @@ @@     @@     @@@@@@@@@  @@#    @@  @@    @@  @@%  @@     @@ @@@     "
+  echo "   @@@   @@      @@@  @@@         @@@      @@  @@   @@ @@  @@@@@@@@@     @@+    @@@ @@      @@ @@    @@  @@@  @@@@@@@@@ @@      "
+  echo "   @@@     @@@@@@@@@  @@@         @@@     =@@  @@   @@ @@  @@     @@     @@*     @@ @@@    @@  @@    @@  @@%  @@     @@ @@      "
+  echo "     @                @@          @@@     @@@  @@    @@@    @@@@@@@      @@@     @@  :@@@@@@   @@@@@@@@   @@@* #@@@@@@  @@=     "
+  echo "       @@@@@@@@@@@@@@@                                                                                                          "
+  echo "        @@@@@@@@@@@@                                                                                                            "
+}
+
 detect_arch() {
     OS_TYPE=$(uname -s)
     ARCH=$(uname -m)
@@ -82,7 +96,7 @@ get_version() {
 }
 
 download_and_install() {
-    ASSET_NAME="${BINARY_NAME}-${OS}-${ARCH}"
+    ASSET_NAME="${BINARY_NAME}_${OS}_${ARCH}"
     DOWNLOAD_URL="https://github.com/${GH_OWNER}/${GH_REPO}/releases/download/${VERSION}/${ASSET_NAME}"
 
     info "Downloading binary from: ${DOWNLOAD_URL}"
@@ -113,6 +127,8 @@ main() {
     check_tool "grep"
     check_tool "sed"
     check_tool "uname"
+
+    banner
 
     if [ -n "$GITHUB_TOKEN" ]; then
         info "GITHUB_TOKEN is set. Using it for GitHub requests."
