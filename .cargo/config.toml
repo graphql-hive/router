@@ -1,6 +1,6 @@
 # The following are aliases you can use with "cargo command_name"
 [alias]
-router = "run --package router"
+router = "run --package hive-router"
 dev = "run --package qp-dev-cli"
 subgraphs = "run --package subgraphs"
 test_all = "test --workspace"
