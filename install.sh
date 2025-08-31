@@ -67,7 +67,12 @@ get_version() {
     else
         info "No version specified. Fetching the latest release from GitHub..."
         LATEST_RELEASE_URL="https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/releases/latest"
-        VERSION=$(curl -sL "$LATEST_RELEASE_URL" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+
+        if [ -n "$GITHUB_TOKEN" ]; then
+            VERSION=$(curl -sL -H "Authorization: token $GITHUB_TOKEN" "$LATEST_RELEASE_URL" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        else
+            VERSION=$(curl -sL "$LATEST_RELEASE_URL" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        fi
 
         if [ -z "$VERSION" ]; then
             error "Could not determine the latest version. Please check the repository details."
@@ -85,9 +90,16 @@ download_and_install() {
     # Download the binary to the current directory with the desired name
     # -f: Fail silently on server errors (like 404)
     # -L: Follow redirects
-    if ! curl -fL -o "./${BINARY_NAME}" "${DOWNLOAD_URL}"; then
-        error "Download failed. Please check if the version '$VERSION' and architecture '$ARCH' exist for this release."
-    fi
+    if [ -n "$GITHUB_TOKEN" ]; then
+         # For downloading assets from private repos, an Accept header is also required.
+         if ! curl -fL -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/octet-stream" -o "./${BINARY_NAME}" "${DOWNLOAD_URL}"; then
+             error "Download failed. Please check if the version '$VERSION' and architecture '$ARCH' exist for this release. If this is a private repository, ensure your GITHUB_TOKEN has read access."
+         fi
+     else
+         if ! curl -fL -o "./${BINARY_NAME}" "${DOWNLOAD_URL}"; then
+             error "Download failed. Please check if the version '$VERSION' and architecture '$ARCH' exist for this release."
+         fi
+     fi
 
     # Make the downloaded binary executable
     chmod +x "./${BINARY_NAME}"
@@ -101,6 +113,10 @@ main() {
     check_tool "grep"
     check_tool "sed"
     check_tool "uname"
+
+    if [ -n "$GITHUB_TOKEN" ]; then
+        info "GITHUB_TOKEN is set. Using it for GitHub requests."
+    fi
 
     detect_arch
     get_version "$1"
