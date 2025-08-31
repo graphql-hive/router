@@ -70,15 +70,15 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all
 
-  unit-benchmark:
+  benchmark:
     strategy:
       matrix:
         include:
-          - name: "Query Planner"
+          - name: "query-planner"
             package: "./lib/query-planner"
-          - name: "Executor"
+          - name: "executor"
             package: "./lib/executor"
-    name: ${{ matrix.name }} Benchmark
+    name: benchmark / ${{ matrix.name }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
@@ -99,8 +99,8 @@ jobs:
           name: ${{matrix.package}}-benchmark-results
           path: ${{matrix.package}}/target/criterion
 
-  k6-benchmark:
-    name: Overall K6 Benchmark
+  router-benchmark:
+    name: benchmark / router
     runs-on: ubuntu-latest
     env:
       NODE_NO_WARNINGS: true
