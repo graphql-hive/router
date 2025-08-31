@@ -78,12 +78,7 @@ get_version() {
     else
         info "No version specified. Fetching the latest release from GitHub..."
         LATEST_RELEASE_URL="https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/releases/latest"
-
-        if [ -n "$GITHUB_TOKEN" ]; then
-            VERSION=$(curl -sL -H "Authorization: token $GITHUB_TOKEN" "$LATEST_RELEASE_URL" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-        else
-            VERSION=$(curl -sL "$LATEST_RELEASE_URL" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-        fi
+        VERSION=$(curl -sL "$LATEST_RELEASE_URL" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
         if [ -z "$VERSION" ]; then
             error "Could not determine the latest version. Please check the repository details."
@@ -120,10 +115,6 @@ main() {
     check_tool "uname"
 
     banner
-
-    if [ -n "$GITHUB_TOKEN" ]; then
-        info "GITHUB_TOKEN is set. Using it for GitHub requests."
-    fi
 
     detect_arch
     get_version "$1"
