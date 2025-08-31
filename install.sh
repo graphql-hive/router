@@ -11,7 +11,7 @@ set -e
 
 GH_OWNER="graphql-hive"
 GH_REPO="router"
-BINARY_NAME="router"
+BINARY_NAME="hive_router"
 
 info() {
     echo "\033[34m[INFO]\033[0m $1"

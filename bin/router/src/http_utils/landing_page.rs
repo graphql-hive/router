@@ -10,7 +10,7 @@ pub async fn landing_page_handler() -> impl Responder {
         .replace("__PRODUCT_NAME__", "Hive Router")
         .replace(
             "__PRODUCT_DESCRIPTION__",
-            "A GraphQL Gateway written in Rust",
+            "A GraphQL Router written in Rust",
         )
         .replace("__PRODUCT_PACKAGE_NAME__", "router")
         .replace("__PRODUCT_LINK__", "https://github.com/graphql-hive/router")

@@ -34,7 +34,7 @@ See [GitHub Releases](https://github.com/graphql-hive/router/releases) and use t
 
 ```bash
 # By default, "hive-router.config.yaml" is used for configuration. Override it by setting "HIVE_CONFIG_FILE_PATH=some-custom-file.yaml"
-# If you are using env vars, make sure to set the variables before running the gateway.
+# If you are using env vars, make sure to set the variables before running the router.
 ./hive_router
 ```
 

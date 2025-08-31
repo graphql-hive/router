@@ -5,6 +5,9 @@ ARG TARGETARCH
 
 WORKDIR /app
 COPY --chmod=755 ./target/linux/${TARGETARCH}/hive_router ./
+COPY --chmod=755 ./docker/entrypoint.sh ./
 EXPOSE 4000
 
-CMD ["./hive_router", "/app/config/supergraph.graphql"]
+ENV HIVE_ROUTER_CONFIG=/app/config/supergraph.graphql
+
+CMD ["./entrypoint.sh"]
