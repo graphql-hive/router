@@ -121,7 +121,7 @@ jobs:
       - name: Run subgraphs
         run: ./target/release/subgraphs & sleep 5
       - name: Build router
-        run: cargo build --release -p router
+        run: cargo build --release -p hive-router
       - name: Run router
         run: ./target/release/hive_router & sleep 5
         env:
