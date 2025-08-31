@@ -52,11 +52,8 @@ detect_arch() {
         Linux)
             OS="linux"
             ;;
-        Darwin)
-            error "Unsupported operating system: 'macOS'. This tool is currently only available for Linux."
-            ;;
         *)
-            error "Unsupported operating system: '$OS_TYPE'. This tool is currently only available for Linux."
+            error "Unsupported operating system: '$OS_TYPE'. You may use Hive Router using Docker by following the instructions at https://github.com/graphql-hive/router#docker"
             ;;
     esac
 
@@ -68,7 +65,7 @@ detect_arch() {
             ARCH="arm64"
             ;;
         *)
-            error "Unsupported architecture: '$ARCH'. This script only supports linux_amd64 and linux_arm64."
+            error "Unsupported architecture: '$ARCH'. You may use Hive Router using Docker by following the instructions at https://github.com/graphql-hive/router#docker"
             ;;
     esac
     info "System detected: ${OS}-${ARCH}"
@@ -101,25 +98,19 @@ download_and_install() {
 
     info "Downloading binary from: ${DOWNLOAD_URL}"
 
-    # Download the binary to the current directory with the desired name
     # -f: Fail silently on server errors (like 404)
     # -L: Follow redirects
-    if [ -n "$GITHUB_TOKEN" ]; then
-         # For downloading assets from private repos, an Accept header is also required.
-         if ! curl -fL -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/octet-stream" -o "./${BINARY_NAME}" "${DOWNLOAD_URL}"; then
-             error "Download failed. Please check if the version '$VERSION' and architecture '$ARCH' exist for this release. If this is a private repository, ensure your GITHUB_TOKEN has read access."
-         fi
-     else
-         if ! curl -fL -o "./${BINARY_NAME}" "${DOWNLOAD_URL}"; then
-             error "Download failed. Please check if the version '$VERSION' and architecture '$ARCH' exist for this release."
-         fi
-     fi
+    if ! curl -fL -o "./${BINARY_NAME}" "${DOWNLOAD_URL}"; then
+        error "Download failed. Please check if the version '$VERSION' and architecture '$ARCH' exist for this release."
+    fi
 
-    # Make the downloaded binary executable
     chmod +x "./${BINARY_NAME}"
 
     info "✅ Successfully installed '${BINARY_NAME}' to the current directory."
     info "You can now run it with: ./${BINARY_NAME}"
+    info ""
+    info "Getting started instructions: https://github.com/graphql-hive/router#try-it-out"
+    info "Config file reference: https://github.com/graphql-hive/router/blob/main/docs/README.md"
 }
 
 main() {
