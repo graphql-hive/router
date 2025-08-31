@@ -15,8 +15,6 @@ hive-router-plan-executor = "<...>"
 
 Start by either producing a plan (using [Hive Router query-planner](../query-planner)), or by loading it from a file or any other source.
 
-Once a plan is available, it can be executed and using [the `hive-router-plan-executor` crate](../executor).
-
 For usage example, please follow [the `router` binary hotpath](../../bin/router/src/pipeline/mod.rs). The step involved parsing, processing, planning and preparing the incoming operation.
 
 Once all information is collected, you can use it as follows:
