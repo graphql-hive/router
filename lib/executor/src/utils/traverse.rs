@@ -1,4 +1,4 @@
-use query_planner::planner::plan_nodes::FlattenNodePathSegment;
+use hive_router_query_planner::planner::plan_nodes::FlattenNodePathSegment;
 
 use crate::{
     introspection::schema::SchemaMetadata, response::value::Value,

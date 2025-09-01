@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use query_planner::planner::plan_nodes::{FetchNode, FetchRewrite, QueryPlan};
+use hive_router_query_planner::planner::plan_nodes::{FetchNode, FetchRewrite, QueryPlan};
 
 use crate::response::{graphql_error::GraphQLError, storage::ResponsesStorage, value::Value};
 

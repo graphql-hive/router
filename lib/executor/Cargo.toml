@@ -1,12 +1,12 @@
 [package]
-name = "executor"
+name = "hive-router-plan-executor"
 version = "0.0.1"
 edition = "2021"
 
 [lib]
 
 [dependencies]
-query-planner = { path = "../query-planner" }
+hive-router-query-planner = { path = "../query-planner" }
 router-config = { path = "../router-config" }
 
 graphql-parser = { workspace = true }

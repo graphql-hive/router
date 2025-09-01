@@ -1,5 +1,5 @@
 use core::fmt;
-use query_planner::ast::selection_item::SelectionItem;
+use hive_router_query_planner::ast::selection_item::SelectionItem;
 use serde::{
     de::{self, Deserializer, MapAccess, SeqAccess, Visitor},
     ser::{SerializeMap, SerializeSeq},

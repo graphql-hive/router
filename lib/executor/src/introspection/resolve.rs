@@ -6,13 +6,13 @@ use graphql_parser::schema::{
     TypeDefinition,
 };
 
-use query_planner::ast::{
+use hive_router_query_planner::ast::{
     operation::OperationDefinition,
     selection_item::SelectionItem,
     selection_set::{FieldSelection, SelectionSet},
     value::Value as AstValue,
 };
-use query_planner::state::supergraph_state::OperationKind;
+use hive_router_query_planner::state::supergraph_state::OperationKind;
 
 use crate::introspection::schema::SchemaMetadata;
 use crate::response::value::Value;

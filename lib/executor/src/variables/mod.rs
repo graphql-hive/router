@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
-use query_planner::state::supergraph_state::TypeNode;
+use hive_router_query_planner::state::supergraph_state::TypeNode;
 use sonic_rs::{JsonNumberTrait, Value, ValueRef};
 
 use crate::introspection::schema::SchemaMetadata;
 
 #[inline]
 pub fn collect_variables(
-    operation: &query_planner::ast::operation::OperationDefinition,
+    operation: &hive_router_query_planner::ast::operation::OperationDefinition,
     mut variables: Option<HashMap<String, Value>>,
     schema_metadata: &SchemaMetadata,
 ) -> Result<Option<HashMap<String, Value>>, String> {

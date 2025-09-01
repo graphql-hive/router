@@ -1,11 +1,11 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use executor::introspection::partition::partition_operation;
-use executor::projection::plan::FieldProjectionPlan;
+use hive_router_plan_executor::introspection::partition::partition_operation;
+use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
+use hive_router_query_planner::ast::normalization::normalize_operation;
+use hive_router_query_planner::ast::operation::OperationDefinition;
 use ntex::web::HttpRequest;
-use query_planner::ast::normalization::normalize_operation;
-use query_planner::ast::operation::OperationDefinition;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};

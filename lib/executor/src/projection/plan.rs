@@ -2,7 +2,7 @@ use indexmap::IndexMap;
 use std::collections::HashSet;
 use tracing::warn;
 
-use query_planner::{
+use hive_router_query_planner::{
     ast::{
         operation::OperationDefinition,
         selection_item::SelectionItem,

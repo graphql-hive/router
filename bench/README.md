@@ -12,7 +12,7 @@ cargo router
 
 ```
 cargo build --release -p subgraphs
-cargo build --release -p router
+cargo build --release -p hive-router
 
 ./target/release/subgraphs
 ./target/release/hive_router bench/supergraph.graphql

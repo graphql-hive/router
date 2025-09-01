@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
-use executor::{
+use graphql_parser::schema::Document;
+use graphql_tools::validation::{utils::ValidationError, validate::ValidationPlan};
+use hive_router_plan_executor::{
     introspection::schema::{SchemaMetadata, SchemaWithMetadata},
     SubgraphExecutorMap,
 };
-use graphql_parser::schema::Document;
-use graphql_tools::validation::{utils::ValidationError, validate::ValidationPlan};
-use moka::future::Cache;
-use query_planner::{
+use hive_router_query_planner::{
     planner::{plan_nodes::QueryPlan, Planner},
     state::supergraph_state::SupergraphState,
 };
+use moka::future::Cache;
 use router_config::HiveRouterConfig;
 
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
