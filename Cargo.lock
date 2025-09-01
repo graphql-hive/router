@@ -2200,7 +2200,7 @@ dependencies = [
 
 [[package]]
 name = "qp-dev-cli"
-version = "0.0.1"
+version = "0.0.0"
 dependencies = [
  "graphql-parser",
  "hive-router-query-planner",
@@ -2400,7 +2400,7 @@ dependencies = [
 
 [[package]]
 name = "router-config"
-version = "0.0.1"
+version = "0.0.0"
 dependencies = [
  "config",
  "schemars 1.0.4",
