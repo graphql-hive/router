@@ -1,6 +1,7 @@
 [package]
 name = "qp-dev-cli"
 edition = "2021"
+publish = false
 
 [[bin]]
 name = "qp-dev-cli"
