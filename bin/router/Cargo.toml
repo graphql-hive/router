@@ -3,6 +3,8 @@ name = "hive-router"
 version = "0.0.0"
 edition = "2021"
 publish = true
+description = "GraphQL router/gateway for Federation"
+license = "MIT"
 
 [lib]
 
