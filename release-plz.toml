@@ -8,15 +8,19 @@ git_tag_enable = true
 [[package]]
 name = "qp-dev-cli"
 release = false
+publish = false
 
 [[package]]
 name = "router-config"
 release = false
+publish = false
 
 [[package]]
 name = "query-planner-wasm"
 release = false
+publish = false
 
 [[package]]
 name = "subgraphs"
 release = false
+publish = false
