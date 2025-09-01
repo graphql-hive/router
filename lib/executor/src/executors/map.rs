@@ -2,12 +2,12 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use dashmap::DashMap;
+use hive_router_config::traffic_shaping::TrafficShapingExecutorConfig;
 use http::Uri;
 use hyper_util::{
     client::legacy::Client,
     rt::{TokioExecutor, TokioTimer},
 };
-use router_config::traffic_shaping::TrafficShapingExecutorConfig;
 use tokio::sync::{OnceCell, Semaphore};
 
 use crate::{

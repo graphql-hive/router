@@ -2,12 +2,18 @@
 name = "hive-router-plan-executor"
 version = "0.0.1"
 edition = "2021"
+description = "GraphQL query planner executor for Federation specification"
+license = "MIT"
+publish = true
+repository = "https://github.com/graphql-hive/router"
+homepage = "https://github.com/graphql-hive/router"
+authors = ["The Guild"]
 
 [lib]
 
 [dependencies]
-hive-router-query-planner = { path = "../query-planner" }
-router-config = { path = "../router-config" }
+hive-router-query-planner = { path = "../query-planner", version = "0" }
+hive-router-config = { path = "../router-config", version = "0" }
 
 graphql-parser = { workspace = true }
 graphql-tools = { workspace = true }

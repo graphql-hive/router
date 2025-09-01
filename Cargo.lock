@@ -1190,6 +1190,7 @@ dependencies = [
  "futures",
  "graphql-parser",
  "graphql-tools",
+ "hive-router-config",
  "hive-router-plan-executor",
  "hive-router-query-planner",
  "http",
@@ -1200,7 +1201,6 @@ dependencies = [
  "moka",
  "ntex",
  "rand",
- "router-config",
  "serde",
  "sonic-rs",
  "thiserror 2.0.16",
@@ -1210,6 +1210,17 @@ dependencies = [
  "tracing-tree",
  "ulid",
  "xxhash-rust",
+]
+
+[[package]]
+name = "hive-router-config"
+version = "0.0.1"
+dependencies = [
+ "config",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.16",
 ]
 
 [[package]]
@@ -1225,6 +1236,7 @@ dependencies = [
  "futures",
  "graphql-parser",
  "graphql-tools",
+ "hive-router-config",
  "hive-router-query-planner",
  "http",
  "http-body-util",
@@ -1232,7 +1244,6 @@ dependencies = [
  "hyper-util",
  "indexmap 2.11.0",
  "itoa",
- "router-config",
  "ryu",
  "serde",
  "sonic-rs",
@@ -2396,17 +2407,6 @@ dependencies = [
  "bitflags",
  "serde",
  "serde_derive",
-]
-
-[[package]]
-name = "router-config"
-version = "0.0.0"
-dependencies = [
- "config",
- "schemars 1.0.4",
- "serde",
- "serde_json",
- "thiserror 2.0.16",
 ]
 
 [[package]]

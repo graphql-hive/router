@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use graphql_parser::schema::Document;
 use graphql_tools::validation::{utils::ValidationError, validate::ValidationPlan};
+use hive_router_config::HiveRouterConfig;
 use hive_router_plan_executor::{
     introspection::schema::{SchemaMetadata, SchemaWithMetadata},
     SubgraphExecutorMap,
@@ -11,7 +12,6 @@ use hive_router_query_planner::{
     state::supergraph_state::SupergraphState,
 };
 use moka::future::Cache;
-use router_config::HiveRouterConfig;
 
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 
