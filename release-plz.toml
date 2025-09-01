@@ -16,3 +16,7 @@ release = false
 [[package]]
 name = "query-planner-wasm"
 release = false
+
+[[package]]
+name = "subgraphs"
+release = false

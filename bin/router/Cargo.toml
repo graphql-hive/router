@@ -1,6 +1,7 @@
 [package]
 name = "hive-router"
 edition = "2021"
+publish = true
 
 [lib]
 

@@ -1,6 +1,7 @@
 [package]
 name = "router-config"
 edition = "2021"
+publish = false
 
 [[bin]]
 name = "config_schema_generator"
