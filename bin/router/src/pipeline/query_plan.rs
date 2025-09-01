@@ -5,8 +5,8 @@ use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, Pipel
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
 use crate::shared_state::RouterSharedState;
+use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use ntex::web::HttpRequest;
-use query_planner::planner::plan_nodes::QueryPlan;
 use tracing::debug;
 use xxhash_rust::xxh3::Xxh3;
 

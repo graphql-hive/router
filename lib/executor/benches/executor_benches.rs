@@ -1,11 +1,11 @@
 use criterion::Criterion;
 use criterion::{criterion_group, criterion_main};
-use executor::introspection::schema::SchemaWithMetadata;
-use executor::projection::plan::FieldProjectionPlan;
-use executor::projection::response::project_by_operation;
-use executor::response::value::Value;
-use query_planner::ast::normalization::normalize_operation;
-use query_planner::utils::parsing::{parse_operation, parse_schema};
+use hive_router_plan_executor::introspection::schema::SchemaWithMetadata;
+use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
+use hive_router_plan_executor::projection::response::project_by_operation;
+use hive_router_plan_executor::response::value::Value;
+use hive_router_query_planner::ast::normalization::normalize_operation;
+use hive_router_query_planner::utils::parsing::{parse_operation, parse_schema};
 use std::hint::black_box;
 pub mod raw_result;
 
@@ -15,7 +15,7 @@ fn project_data_by_operation_test(c: &mut Criterion) {
         .expect("Unable to read input file");
     let parsed_schema = parse_schema(&supergraph_sdl);
     let planner = Box::leak(Box::new(
-        query_planner::planner::Planner::new_from_supergraph(&parsed_schema)
+        hive_router_query_planner::planner::Planner::new_from_supergraph(&parsed_schema)
             .expect("Failed to create planner from supergraph"),
     ));
     let parsed_document = parse_operation(

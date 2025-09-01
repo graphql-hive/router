@@ -1,15 +1,24 @@
 [package]
-name = "router"
+name = "hive-router"
+version = "0.0.3"
 edition = "2021"
+description = "GraphQL router/gateway for Federation"
+license = "MIT"
+publish = true
+authors = ["The Guild"]
+repository = "https://github.com/graphql-hive/router"
+homepage = "https://github.com/graphql-hive/router"
+
+[lib]
 
 [[bin]]
 name = "hive_router"
 path = "src/main.rs"
 
 [dependencies]
-query-planner = { path = "../../lib/query-planner" }
-executor = { path = "../../lib/executor" }
-router-config = { path = "../../lib/router-config" }
+hive-router-query-planner = { path = "../../lib/query-planner", version = "0.0.1" }
+hive-router-plan-executor = { path = "../../lib/executor", version = "0.0.1" }
+hive-router-config = { path = "../../lib/router-config", version = "0.0.1" }
 
 tokio = { workspace = true }
 futures = { workspace = true }

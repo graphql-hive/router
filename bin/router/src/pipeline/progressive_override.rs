@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 
-use query_planner::{
+use hive_router_query_planner::{
     graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
     state::supergraph_state::SupergraphState,
 };

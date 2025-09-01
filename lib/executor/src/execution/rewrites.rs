@@ -1,4 +1,4 @@
-use query_planner::planner::plan_nodes::{
+use hive_router_query_planner::planner::plan_nodes::{
     FetchNodePathSegment, FetchRewrite, KeyRenamer, ValueSetter,
 };
 

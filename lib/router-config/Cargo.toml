@@ -1,7 +1,13 @@
 [package]
-name = "router-config"
+name = "hive-router-config"
 version = "0.0.1"
 edition = "2021"
+publish = true
+license = "MIT"
+description = "This is an internal crate used for managing the Hive Router configuration"
+repository = "https://github.com/graphql-hive/router"
+homepage = "https://github.com/graphql-hive/router"
+authors = ["The Guild"]
 
 [[bin]]
 name = "config_schema_generator"
