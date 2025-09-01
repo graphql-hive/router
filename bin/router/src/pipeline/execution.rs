@@ -5,13 +5,13 @@ use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::shared_state::RouterSharedState;
-use executor::execute_query_plan;
-use executor::execution::plan::QueryPlanExecutionContext;
-use executor::introspection::resolve::IntrospectionContext;
+use hive_router_plan_executor::execute_query_plan;
+use hive_router_plan_executor::execution::plan::QueryPlanExecutionContext;
+use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
+use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
 use ntex::util::Bytes;
 use ntex::web::HttpRequest;
-use query_planner::planner::plan_nodes::QueryPlan;
 
 static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
 

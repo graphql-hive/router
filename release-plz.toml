@@ -1,0 +1,20 @@
+[workspace]
+allow_dirty = true
+changelog_update = true
+git_release_enable = true
+git_tag_enable = true
+
+[[package]]
+name = "qp-dev-cli"
+release = false
+publish = false
+
+[[package]]
+name = "query-planner-wasm"
+release = false
+publish = false
+
+[[package]]
+name = "subgraphs"
+release = false
+publish = false

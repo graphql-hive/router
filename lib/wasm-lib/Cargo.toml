@@ -1,8 +1,7 @@
 [package]
 name = "query-planner-wasm"
-version = "0.0.1"
-authors = ["Dotan Simha <dotansimha@gmail.com>"]
 edition = "2018"
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -12,7 +11,7 @@ default = ["console_error_panic_hook"]
 
 [dependencies]
 wasm-bindgen = "0.2.100"
-query-planner = { path = "../query-planner" }
+hive-router-query-planner = { path = "../query-planner" }
 # The `console_error_panic_hook` crate provides better debugging of panics by
 # logging them with `console.error`. This is great for development, but requires
 # all the `std::fmt` and `std::panicking` infrastructure, so isn't great for

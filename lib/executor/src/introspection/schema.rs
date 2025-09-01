@@ -4,7 +4,7 @@ use graphql_parser::{
     query::Type,
     schema::{Definition, TypeDefinition},
 };
-use query_planner::consumer_schema::ConsumerSchema;
+use hive_router_query_planner::consumer_schema::ConsumerSchema;
 
 #[derive(Debug, Default)]
 pub struct SchemaMetadata {

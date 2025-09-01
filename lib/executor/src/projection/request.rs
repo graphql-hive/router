@@ -1,5 +1,5 @@
 use bytes::BufMut;
-use query_planner::ast::selection_item::SelectionItem;
+use hive_router_query_planner::ast::selection_item::SelectionItem;
 
 use crate::{
     introspection::schema::PossibleTypes,

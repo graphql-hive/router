@@ -1,7 +1,13 @@
 [package]
-name = "query-planner"
+name = "hive-router-query-planner"
 version = "0.0.1"
 edition = "2021"
+description = "GraphQL query planner for Federation specification"
+license = "MIT"
+publish = true
+repository = "https://github.com/graphql-hive/router"
+homepage = "https://github.com/graphql-hive/router"
+authors = ["The Guild"]
 
 [lib]
 
