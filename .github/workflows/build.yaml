@@ -125,6 +125,7 @@ jobs:
           tags: |
             type=ref,event=pr
             type=semver,pattern={{version}},value=${{ github.event.release.name }},enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=match,pattern=hive-router-v(.*),value=${{ github.event.release.name }},enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
             type=sha
             type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
       - name: download binary artifacts
