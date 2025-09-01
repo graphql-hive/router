@@ -12,11 +12,11 @@ use crate::{
     shared_state::RouterSharedState,
 };
 
+use hive_router_config::load_config;
 use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
 };
-use router_config::load_config;
 
 use hive_router_query_planner::utils::parsing::parse_schema;
 

@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use router_config::log::{LogFormat, LoggingConfig};
+use hive_router_config::log::{LogFormat, LoggingConfig};
 use tracing_subscriber::{
     fmt::{self, format::FmtSpan, time::UtcTime},
     layer::SubscriberExt,

@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use router_config::HiveRouterConfig;
+use hive_router_config::HiveRouterConfig;
 use schemars::generate::SchemaSettings;
 
 pub fn main() {
