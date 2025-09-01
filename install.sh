@@ -73,7 +73,7 @@ detect_arch() {
 
 get_version() {
     if [ -n "$1" ]; then
-        VERSION="$1"
+        VERSION="hive-router-$1"
         info "Installing specified version: $VERSION"
     else
         info "No version specified. Fetching the latest release from GitHub..."
