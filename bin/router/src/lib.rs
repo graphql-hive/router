@@ -4,6 +4,8 @@ mod jwt;
 mod logger;
 mod pipeline;
 mod shared_state;
+mod supergraph;
+mod supergraph_mgr;
 
 use std::sync::Arc;
 
@@ -14,6 +16,7 @@ use crate::{
     logger::configure_logging,
     pipeline::graphql_request_handler,
     shared_state::RouterSharedState,
+    supergraph_mgr::SupergraphManager,
 };
 
 use hive_router_config::{load_config, HiveRouterConfig};
@@ -21,13 +24,12 @@ use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
 };
-
-use hive_router_query_planner::utils::parsing::parse_schema;
 use tracing::info;
 
 async fn graphql_endpoint_handler(
     mut request: HttpRequest,
     body_bytes: Bytes,
+    supergraph_manager: web::types::State<Arc<SupergraphManager>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> impl web::Responder {
     // If an early CORS response is needed, return it immediately.
@@ -39,7 +41,9 @@ async fn graphql_endpoint_handler(
         return Some(early_response);
     }
 
-    let mut res = graphql_request_handler(&mut request, body_bytes, app_state.get_ref()).await;
+    let supergraph = supergraph_manager.current();
+    let mut res =
+        graphql_request_handler(&mut request, body_bytes, &supergraph, app_state.get_ref()).await;
 
     // Apply CORS headers to the final response if CORS is configured.
     if let Some(cors) = app_state.cors.as_ref() {
@@ -55,11 +59,13 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
     configure_logging(&router_config.log);
     let addr = router_config.http.address();
     let mut bg_tasks_manager = BackgroundTasksManager::new();
-    let shared_state = configure_app_from_config(router_config, &mut bg_tasks_manager).await?;
+    let (shared_state, supergraph_manager) =
+        configure_app_from_config(router_config, &mut bg_tasks_manager).await?;
 
     let maybe_error = web::HttpServer::new(move || {
         web::App::new()
             .state(shared_state.clone())
+            .state(supergraph_manager.clone())
             .configure(configure_ntex_app)
             .default_service(web::to(landing_page_handler))
     })
@@ -77,18 +83,16 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
 pub async fn configure_app_from_config(
     router_config: HiveRouterConfig,
     bg_tasks_manager: &mut BackgroundTasksManager,
-) -> Result<Arc<RouterSharedState>, Box<dyn std::error::Error>> {
-    let supergraph_sdl = router_config.supergraph.load().await?;
-    let parsed_schema = parse_schema(&supergraph_sdl);
-
+) -> Result<(Arc<RouterSharedState>, Arc<SupergraphManager>), Box<dyn std::error::Error>> {
     let jwt_runtime = match &router_config.jwt {
         Some(jwt_config) => Some(JwtAuthRuntime::init(bg_tasks_manager, jwt_config).await?),
         None => None,
     };
 
-    let shared_state = RouterSharedState::new(parsed_schema, router_config, jwt_runtime)?;
+    let supergraph_manager = Arc::new(SupergraphManager::new_from_config(&router_config).await?);
+    let shared_state = Arc::new(RouterSharedState::new(router_config, jwt_runtime)?);
 
-    Ok(shared_state)
+    Ok((shared_state, supergraph_manager))
 }
 
 pub fn configure_ntex_app(cfg: &mut web::ServiceConfig) {

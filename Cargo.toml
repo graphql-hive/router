@@ -54,3 +54,4 @@ tokio-util = { version = "0.7.16" }
 rand = "0.9.2"
 jsonwebtoken = "9.3.1"
 ntex = { version = "2", features = ["tokio"] }
+reqwest = "0.12.23"
