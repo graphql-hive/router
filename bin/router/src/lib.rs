@@ -2,6 +2,7 @@ mod http_utils;
 mod logger;
 mod pipeline;
 mod shared_state;
+mod supergraph;
 
 use std::sync::Arc;
 
@@ -18,8 +19,6 @@ use ntex::{
     web::{self, HttpRequest},
 };
 
-use hive_router_query_planner::utils::parsing::parse_schema;
-
 async fn graphql_endpoint_handler(
     mut request: HttpRequest,
     body_bytes: Bytes,
@@ -33,10 +32,8 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
     let router_config = load_config(config_path)?;
     configure_logging(&router_config.log);
 
-    let supergraph_sdl = router_config.supergraph.load().await?;
-    let parsed_schema = parse_schema(&supergraph_sdl);
     let addr = router_config.http.address();
-    let shared_state = RouterSharedState::new(parsed_schema, router_config);
+    let shared_state = RouterSharedState::new(router_config).await?;
 
     web::HttpServer::new(move || {
         web::App::new()

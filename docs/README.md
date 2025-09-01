@@ -124,6 +124,20 @@ The path can be either absolute or relative to the router's working directory.
 |**source**|`string`|Constant Value: `"file"`<br/>|yes|
 
 
+   
+**Option 2 (alternative):** 
+Loads a supergraph from Hive Console CDN.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**endpoint**|`string`||yes|
+|**key**|`string`||yes|
+|**source**|`string`|Constant Value: `"hive"`<br/>|yes|
+
+
 **Example**
 
 ```yaml
