@@ -16,9 +16,9 @@ name = "hive_router"
 path = "src/main.rs"
 
 [dependencies]
-hive-router-query-planner = { path = "../../lib/query-planner", version = "0" }
-hive-router-plan-executor = { path = "../../lib/executor", version = "0" }
-hive-router-config = { path = "../../lib/router-config", version = "0" }
+hive-router-query-planner = { path = "../../lib/query-planner", version = "0.0.1" }
+hive-router-plan-executor = { path = "../../lib/executor", version = "0.0.1" }
+hive-router-config = { path = "../../lib/router-config", version = "0.0.1" }
 
 tokio = { workspace = true }
 futures = { workspace = true }
