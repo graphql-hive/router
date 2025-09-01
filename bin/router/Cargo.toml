@@ -1,6 +1,6 @@
 [package]
 name = "hive-router"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 description = "GraphQL router/gateway for Federation"
 license = "MIT"
@@ -16,9 +16,15 @@ name = "hive_router"
 path = "src/main.rs"
 
 [dependencies]
+<<<<<<< Updated upstream
 hive-router-query-planner = { path = "../../lib/query-planner", version = "0" }
 hive-router-plan-executor = { path = "../../lib/executor", version = "0" }
 hive-router-config = { path = "../../lib/router-config", version = "0" }
+=======
+hive-router-query-planner = { path = "../../lib/query-planner", version = "0.0.2" }
+hive-router-plan-executor = { path = "../../lib/executor", version = "0.0.2" }
+hive-router-config = { path = "../../lib/router-config", version = "0.0.1" }
+>>>>>>> Stashed changes
 
 tokio = { workspace = true }
 futures = { workspace = true }
