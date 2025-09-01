@@ -6,7 +6,9 @@ mod jwt_e2e_tests {
     use sonic_rs::{from_slice, json, JsonValueTrait, Value};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::testkit::{init_graphql_request, init_router_from_config_file, SubgraphsServer};
+    use crate::testkit::{
+        init_graphql_request, init_router_from_config_file, wait_for_readiness, SubgraphsServer,
+    };
 
     fn generate_jwt(payload: &Value) -> String {
         let pem = include_str!("../jwks.rsa512.pem");
@@ -28,7 +30,7 @@ mod jwt_e2e_tests {
         let app = init_router_from_config_file("configs/jwt_auth_forward.router.yaml")
             .await
             .unwrap();
-
+        wait_for_readiness(&app.app).await;
         let exp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -45,7 +47,7 @@ mod jwt_e2e_tests {
             header::AUTHORIZATION,
             header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
         );
-        let resp = test::call_service(&app, req.to_request()).await;
+        let resp = test::call_service(&app.app, req.to_request()).await;
 
         assert!(resp.status().is_success(), "Expected 200 OK");
 
@@ -69,9 +71,9 @@ mod jwt_e2e_tests {
         let app = init_router_from_config_file("configs/jwt_auth.router.yaml")
             .await
             .unwrap();
-
+        wait_for_readiness(&app.app).await;
         let req = init_graphql_request("{ __typename }", None).to_request();
-        let resp = test::call_service(&app, req).await;
+        let resp = test::call_service(&app.app, req).await;
 
         assert_eq!(
             resp.status(),
@@ -96,13 +98,13 @@ mod jwt_e2e_tests {
         let app = init_router_from_config_file("configs/jwt_auth.router.yaml")
             .await
             .unwrap();
-
+        wait_for_readiness(&app.app).await;
         let req = init_graphql_request("{ __typename }", None).header(
             header::AUTHORIZATION,
             header::HeaderValue::from_static("Bearer not-a-valid-jwt"),
         );
 
-        let resp = test::call_service(&app, req.to_request()).await;
+        let resp = test::call_service(&app.app, req.to_request()).await;
 
         assert_eq!(
             resp.status(),
@@ -127,7 +129,7 @@ mod jwt_e2e_tests {
         let app = init_router_from_config_file("configs/jwt_auth.router.yaml")
             .await
             .unwrap();
-
+        wait_for_readiness(&app.app).await;
         // This token is valid but signed with a different, unknown key.
         let token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
 
@@ -136,7 +138,7 @@ mod jwt_e2e_tests {
             header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
         );
 
-        let resp = test::call_service(&app, req.to_request()).await;
+        let resp = test::call_service(&app.app, req.to_request()).await;
 
         assert_eq!(
             resp.status(),
@@ -150,7 +152,7 @@ mod jwt_e2e_tests {
         let app = init_router_from_config_file("configs/jwt_auth.router.yaml")
             .await
             .unwrap();
-
+        wait_for_readiness(&app.app).await;
         let exp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -168,7 +170,7 @@ mod jwt_e2e_tests {
             header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
         );
 
-        let resp = test::call_service(&app, req.to_request()).await;
+        let resp = test::call_service(&app.app, req.to_request()).await;
 
         assert!(
             resp.status().is_success(),
@@ -184,6 +186,8 @@ mod jwt_e2e_tests {
         let app = init_router_from_config_file("configs/jwt_auth.router.yaml")
             .await
             .unwrap();
+
+        wait_for_readiness(&app.app).await;
 
         let exp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -202,7 +206,7 @@ mod jwt_e2e_tests {
             header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
         );
 
-        let resp = test::call_service(&app, req.to_request()).await;
+        let resp = test::call_service(&app.app, req.to_request()).await;
         assert_eq!(
             resp.status(),
             ntex::http::StatusCode::FORBIDDEN,
@@ -215,7 +219,7 @@ mod jwt_e2e_tests {
         let app = init_router_from_config_file("configs/jwt_auth_issuer.router.yaml")
             .await
             .unwrap();
-
+        wait_for_readiness(&app.app).await;
         let claims = json!({ "iss": "wrong-issuer", "exp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600 });
         let token = generate_jwt(&claims);
 
@@ -224,7 +228,7 @@ mod jwt_e2e_tests {
             header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
         );
 
-        let resp = test::call_service(&app, req.to_request()).await;
+        let resp = test::call_service(&app.app, req.to_request()).await;
         assert_eq!(
             resp.status(),
             ntex::http::StatusCode::FORBIDDEN,
@@ -237,7 +241,7 @@ mod jwt_e2e_tests {
         let app = init_router_from_config_file("configs/jwt_auth_audience.router.yaml")
             .await
             .unwrap();
-
+        wait_for_readiness(&app.app).await;
         let claims = json!({ "aud": "wrong-audience", "exp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600 });
         let token = generate_jwt(&claims);
 
@@ -246,7 +250,7 @@ mod jwt_e2e_tests {
             header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
         );
 
-        let resp = test::call_service(&app, req.to_request()).await;
+        let resp = test::call_service(&app.app, req.to_request()).await;
         assert_eq!(
             resp.status(),
             ntex::http::StatusCode::FORBIDDEN,

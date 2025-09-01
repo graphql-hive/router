@@ -1594,9 +1594,127 @@ The path can be either absolute or relative to the router's working directory.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**path**|`string`|Format: `"path"`<br/>|yes|
+|[**poll\_interval**](#option1poll_interval)|`object`, `null`|Optional interval at which the file should be polled for changes.<br/>|yes|
 |**source**|`string`|Constant Value: `"file"`<br/>|yes|
 
 **Additional Properties:** not allowed  
+**Example**
+
+```yaml
+poll_interval: null
+
+```
+
+
+   
+**Option 2 (alternative):** 
+Loads a supergraph from Hive Console CDN.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**endpoint**|`string`|The CDN endpoint from Hive Console target.<br/>|yes|
+|**key**|`string`|The CDN Access Token with from the Hive Console target.<br/>|yes|
+|[**poll\_interval**](#option2poll_interval)|`object`|Interval at which the Hive Console should be polled for changes.<br/>Default: `"10s"`<br/>|yes|
+|[**retry\_policy**](#option2retry_policy)|`object`|Interval at which the Hive Console should be polled for changes.<br/>Default: `{"max_retries":10}`<br/>|yes|
+|**source**|`string`|Constant Value: `"hive"`<br/>|yes|
+|[**timeout**](#option2timeout)|`object`|Request timeout for the Hive Console CDN requests.<br/>Default: `"1m"`<br/>|yes|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+poll_interval: 10s
+retry_policy:
+  max_retries: 10
+timeout: 1m
+
+```
+
+
+<a name="option1poll_interval"></a>
+## Option 1: poll\_interval: object,null
+
+Optional interval at which the file should be polled for changes.
+If not provided, the file will only be loaded once when the router starts.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**nanos**|`integer`|Format: `"uint32"`<br/>Minimum: `0`<br/>|yes|
+|**secs**|`integer`|Format: `"uint64"`<br/>Minimum: `0`<br/>|yes|
+
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="option2poll_interval"></a>
+## Option 2: poll\_interval: object
+
+Interval at which the Hive Console should be polled for changes.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**nanos**|`integer`|Format: `"uint32"`<br/>Minimum: `0`<br/>|yes|
+|**secs**|`integer`|Format: `"uint64"`<br/>Minimum: `0`<br/>|yes|
+
+**Example**
+
+```yaml
+10s
+
+```
+
+<a name="option2retry_policy"></a>
+## Option 2: retry\_policy: object
+
+Interval at which the Hive Console should be polled for changes.
+
+By default, an exponential backoff retry policy is used, with 10 attempts.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**max\_retries**|`integer`|The maximum number of retries to attempt.<br/><br/>Retry mechanism is based on exponential backoff, see https://docs.rs/retry-policies/latest/retry_policies/policies/struct.ExponentialBackoff.html for additional details.<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>|yes|
+
+**Example**
+
+```yaml
+max_retries: 10
+
+```
+
+<a name="option2timeout"></a>
+## Option 2: timeout: object
+
+Request timeout for the Hive Console CDN requests.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**nanos**|`integer`|Format: `"uint32"`<br/>Minimum: `0`<br/>|yes|
+|**secs**|`integer`|Format: `"uint64"`<br/>Minimum: `0`<br/>|yes|
+
+**Example**
+
+```yaml
+1m
+
+```
 
 <a name="traffic_shaping"></a>
 ## traffic\_shaping: object

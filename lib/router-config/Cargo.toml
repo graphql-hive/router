@@ -21,6 +21,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 http = { workspace = true }
 jsonwebtoken = { workspace = true }
+retry-policies = { workspace = true}
 
 schemars = "1.0.4"
 humantime-serde = "1.1.1"

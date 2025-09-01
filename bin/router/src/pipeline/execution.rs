@@ -6,6 +6,7 @@ use crate::jwt::context::JwtRequestContext;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
+use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
@@ -31,6 +32,7 @@ enum ExposeQueryPlanMode {
 pub async fn execute_plan<'a>(
     req: &mut HttpRequest,
     query: Cow<'a, str>,
+    supergraph: &SupergraphData,
     app_state: &Arc<RouterSharedState>,
     normalized_payload: &Arc<GraphQLNormalizationPayload>,
     query_plan_payload: &Arc<QueryPlan>,
@@ -63,8 +65,8 @@ pub async fn execute_plan<'a>(
 
     let introspection_context = IntrospectionContext {
         query: normalized_payload.operation_for_introspection.as_ref(),
-        schema: &app_state.planner.consumer_schema.document,
-        metadata: &app_state.schema_metadata,
+        schema: &supergraph.planner.consumer_schema.document,
+        metadata: &supergraph.metadata,
     };
 
     let jwt_context = {
@@ -101,8 +103,8 @@ pub async fn execute_plan<'a>(
         },
         introspection_context: &introspection_context,
         operation_type_name: normalized_payload.root_type_name,
-        executors: &app_state.subgraph_executor_map,
         jwt_auth_forwarding: &jwt_forward_plan,
+        executors: &supergraph.subgraph_executor_map,
     })
     .await
     .map_err(|err| {

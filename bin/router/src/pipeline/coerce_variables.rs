@@ -11,7 +11,7 @@ use tracing::{error, trace, warn};
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::execution_request::ExecutionRequest;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
-use crate::shared_state::RouterSharedState;
+use crate::schema_state::SupergraphData;
 
 #[derive(Clone, Debug)]
 pub struct CoerceVariablesPayload {
@@ -21,7 +21,7 @@ pub struct CoerceVariablesPayload {
 #[inline]
 pub fn coerce_request_variables(
     req: &HttpRequest,
-    app_state: &Arc<RouterSharedState>,
+    supergraph: &SupergraphData,
     execution_params: ExecutionRequest,
     normalized_operation: &Arc<GraphQLNormalizationPayload>,
 ) -> Result<CoerceVariablesPayload, PipelineError> {
@@ -38,7 +38,7 @@ pub fn coerce_request_variables(
     match collect_variables(
         &normalized_operation.operation_for_plan,
         execution_params.variables,
-        &app_state.schema_metadata,
+        &supergraph.metadata,
     ) {
         Ok(values) => {
             trace!(

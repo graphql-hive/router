@@ -1,7 +1,9 @@
+use std::time::Duration;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::primitives::file_path::FilePath;
+use crate::primitives::{file_path::FilePath, retry_policy::RetryPolicyConfig};
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, tag = "source")]
@@ -9,7 +11,69 @@ pub enum SupergraphSource {
     /// Loads a supergraph from the filesystem.
     /// The path can be either absolute or relative to the router's working directory.
     #[serde(rename = "file")]
-    File { path: FilePath },
+    File {
+        path: FilePath,
+        /// Optional interval at which the file should be polled for changes.
+        /// If not provided, the file will only be loaded once when the router starts.
+        #[serde(
+            default = "default_file_poll_interval",
+            deserialize_with = "humantime_serde::deserialize",
+            serialize_with = "humantime_serde::serialize"
+        )]
+        poll_interval: Option<Duration>,
+    },
+    /// Loads a supergraph from Hive Console CDN.
+    #[serde(rename = "hive")]
+    HiveConsole {
+        /// The CDN endpoint from Hive Console target.
+        endpoint: String,
+        /// The CDN Access Token with from the Hive Console target.
+        key: String,
+        /// Interval at which the Hive Console should be polled for changes.
+        #[serde(
+            default = "default_hive_poll_interval",
+            deserialize_with = "humantime_serde::deserialize",
+            serialize_with = "humantime_serde::serialize"
+        )]
+        poll_interval: Duration,
+        /// Request timeout for the Hive Console CDN requests.
+        #[serde(
+            default = "default_hive_timeout",
+            deserialize_with = "humantime_serde::deserialize",
+            serialize_with = "humantime_serde::serialize"
+        )]
+        timeout: Duration,
+        /// Interval at which the Hive Console should be polled for changes.
+        ///
+        /// By default, an exponential backoff retry policy is used, with 10 attempts.
+        #[serde(default = "default_hive_retry_policy")]
+        retry_policy: RetryPolicyConfig,
+    },
+}
+
+fn default_hive_timeout() -> Duration {
+    Duration::from_secs(60)
+}
+
+fn default_hive_retry_policy() -> RetryPolicyConfig {
+    RetryPolicyConfig { max_retries: 10 }
+}
+
+impl SupergraphSource {
+    pub fn source_name(&self) -> &str {
+        match self {
+            SupergraphSource::File { .. } => "file",
+            SupergraphSource::HiveConsole { .. } => "hive",
+        }
+    }
+}
+
+fn default_hive_poll_interval() -> Duration {
+    Duration::from_secs(10)
+}
+
+fn default_file_poll_interval() -> Option<Duration> {
+    None
 }
 
 impl Default for SupergraphSource {
@@ -17,22 +81,7 @@ impl Default for SupergraphSource {
         SupergraphSource::File {
             path: FilePath::new_from_relative("supergraph.graphql")
                 .expect("failed to resolve local path for supergraph file source"),
-        }
-    }
-}
-
-impl SupergraphSource {
-    pub async fn load(&self) -> Result<String, Box<dyn std::error::Error>> {
-        match self {
-            SupergraphSource::File { path } => {
-                let supergraph_sdl = std::fs::read_to_string(&path.absolute).map_err(|e| {
-                    std::io::Error::new(
-                        e.kind(),
-                        format!("Failed to read supergraph file '{}': {}", path.absolute, e),
-                    )
-                })?;
-                Ok(supergraph_sdl)
-            }
+            poll_interval: default_file_poll_interval(),
         }
     }
 }

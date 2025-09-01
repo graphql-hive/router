@@ -123,8 +123,13 @@ pub fn load_config(
 }
 
 pub fn parse_yaml_config(config_raw: String) -> Result<HiveRouterConfig, config::ConfigError> {
-    Config::builder()
-        .add_source(File::from_str(&config_raw, FileFormat::Yaml))
-        .build()?
-        .try_deserialize::<HiveRouterConfig>()
+    let config_root_path = std::env::current_dir().expect("failed to get current directory");
+    let config = Config::builder();
+
+    with_start_path(&config_root_path, || {
+        config
+            .add_source(File::from_str(&config_raw, FileFormat::Yaml))
+            .build()?
+            .try_deserialize::<HiveRouterConfig>()
+    })
 }

@@ -25,6 +25,7 @@ use crate::{
         query_plan::plan_operation_with_cache,
         validation::validate_operation_with_cache,
     },
+    schema_state::{SchemaState, SupergraphData},
     shared_state::RouterSharedState,
 };
 
@@ -47,7 +48,9 @@ static GRAPHIQL_HTML: &str = include_str!("../../static/graphiql.html");
 pub async fn graphql_request_handler(
     req: &mut HttpRequest,
     body_bytes: Bytes,
-    state: &Arc<RouterSharedState>,
+    supergraph: &SupergraphData,
+    shared_state: &Arc<RouterSharedState>,
+    schema_state: &Arc<SchemaState>,
 ) -> web::HttpResponse {
     if req.method() == Method::GET && req.accepts_content_type(*TEXT_HTML_CONTENT_TYPE) {
         return web::HttpResponse::Ok()
@@ -55,14 +58,14 @@ pub async fn graphql_request_handler(
             .body(GRAPHIQL_HTML);
     }
 
-    if let Some(jwt) = &state.jwt_auth_runtime {
+    if let Some(jwt) = &shared_state.jwt_auth_runtime {
         match jwt.validate_request(req) {
             Ok(_) => (),
             Err(err) => return err.make_response(),
         }
     }
 
-    match execute_pipeline(req, body_bytes, state).await {
+    match execute_pipeline(req, body_bytes, supergraph, shared_state, schema_state).await {
         Ok(response) => {
             let response_bytes = Bytes::from(response.body);
             let response_headers = response.headers;
@@ -93,27 +96,37 @@ pub async fn graphql_request_handler(
 pub async fn execute_pipeline(
     req: &mut HttpRequest,
     body_bytes: Bytes,
-    state: &Arc<RouterSharedState>,
+    supergraph: &SupergraphData,
+    shared_state: &Arc<RouterSharedState>,
+    schema_state: &Arc<SchemaState>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
-    perform_csrf_prevention(req, &state.router_config.csrf)?;
+    perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
     let execution_request = get_execution_request(req, body_bytes).await?;
-    let parser_payload = parse_operation_with_cache(req, state, &execution_request).await?;
-    validate_operation_with_cache(req, state, &parser_payload).await?;
+    let parser_payload = parse_operation_with_cache(req, shared_state, &execution_request).await?;
+    validate_operation_with_cache(req, supergraph, schema_state, shared_state, &parser_payload)
+        .await?;
 
     let progressive_override_ctx = request_override_context()?;
-    let normalize_payload =
-        normalize_request_with_cache(req, state, &execution_request, &parser_payload).await?;
+    let normalize_payload = normalize_request_with_cache(
+        req,
+        supergraph,
+        schema_state,
+        &execution_request,
+        &parser_payload,
+    )
+    .await?;
     let query = Cow::Owned(execution_request.query.clone());
     let variable_payload =
-        coerce_request_variables(req, state, execution_request, &normalize_payload)?;
+        coerce_request_variables(req, supergraph, execution_request, &normalize_payload)?;
 
     let query_plan_cancellation_token =
-        CancellationToken::with_timeout(state.router_config.query_planner.timeout);
+        CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
     let query_plan_payload = plan_operation_with_cache(
         req,
-        state,
+        supergraph,
+        schema_state,
         &normalize_payload,
         &progressive_override_ctx,
         &query_plan_cancellation_token,
@@ -123,7 +136,8 @@ pub async fn execute_pipeline(
     let execution_result = execute_plan(
         req,
         query,
-        state,
+        supergraph,
+        shared_state,
         &normalize_payload,
         &query_plan_payload,
         &variable_payload,
