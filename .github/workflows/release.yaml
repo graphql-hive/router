@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
       - uses: actions-rust-lang/setup-rust-toolchain@ac90e63697ac2784f4ecfe2964e1a285c304003a # v1
       - name: release-plz release
-        uses: release-plz/action@v0.5.112
+        uses: release-plz/action@f9715bc3b46e211f764f4440a221ddb89ae8abb3 # v0.5.112
         with:
           command: release
         env:
@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
       - uses: actions-rust-lang/setup-rust-toolchain@ac90e63697ac2784f4ecfe2964e1a285c304003a # v1
       - name: release-plz release-pr
-        uses: release-plz/action@v0.5.112
+        uses: release-plz/action@f9715bc3b46e211f764f4440a221ddb89ae8abb3 # v0.5.112
         with:
           command: release-pr
         env:
