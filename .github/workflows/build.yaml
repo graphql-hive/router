@@ -196,8 +196,18 @@ jobs:
         run: |
           echo "Docker image: ${{ env.DOCKER_IMAGE_NAME }}@${{ needs.docker.outputs.docker_image_digest }}"
 
-          docker run -d -p 4000:4000 \
+          docker run -d --name router -p 4000:4000 \
           -e HIVE_SUPERGRAPH_SOURCE="file" \
           -e HIVE_SUPERGRAPH_PATH="/app/supergraph.graphql" \
           -v ./bench/supergraph.graphql:/app/supergraph.graphql \
             ${{ env.DOCKER_IMAGE_NAME }}@${{ needs.docker.outputs.docker_image_digest }}
+
+          sleep 5
+      - name: dump router logs
+        run: |
+          docker logs router
+      - name: test dummy request
+        run: |
+          TEST_RESPONSE=$(curl --fail -v -X POST -H "Content-Type: application/json" -d '{"query": "{ __typename }"}' http://localhost:4000)
+
+          echo $TEST_RESPONSE
