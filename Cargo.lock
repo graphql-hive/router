@@ -1184,7 +1184,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hive-router"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "async-trait",
  "futures",
@@ -1214,7 +1214,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-config"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "config",
  "schemars 1.0.4",
@@ -1225,7 +1225,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-plan-executor"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "ahash",
  "async-trait",
