@@ -88,23 +88,25 @@ jobs:
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         name: checkout
-      - uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f # v2
-        name: setup zig
-        if: ${{ matrix.zigbuild }}
-        with:
-          version: ${{ env.ZIG_VERSION }}
       - uses: actions-rust-lang/setup-rust-toolchain@ac90e63697ac2784f4ecfe2964e1a285c304003a # v1
         name: rust toolchain (${{ matrix.rust_target }})
         with:
           target: ${{ matrix.rust_target }}
           cache-key: ${{ matrix.name }}
+      # Only if using Zigbuild
+      - uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f # v2
+        name: setup zig
+        if: ${{ matrix.zigbuild }}
+        with:
+          version: ${{ env.ZIG_VERSION }}
       - run: cargo install cargo-zigbuild
         name: install zigbuild
         if: ${{ matrix.zigbuild }}
       - name: zigbuild (${{ matrix.zigbuild_target }})
         if: ${{ matrix.zigbuild }}
         run: cargo zigbuild --release --target ${{ matrix.zigbuild_target }}
-      - name: cargo build (${{ matrix.zigbuild_target }})
+      # Only if NOT using Zigbuild
+      - name: cargo build (${{ matrix.rust_target }})
         run: cargo build --release --target ${{ matrix.rust_target }}
         if: ${{ !matrix.zigbuild }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
