@@ -25,7 +25,7 @@ env:
   DOCKER_LICENSE: MIT
   DOCKER_VENDOR: theguild
   DOCKER_PLATFORMS: linux/amd64,linux/arm64
-  ZIG_VERSION: 0.14.1
+  ZIG_VERSION: 0.15.1
   BINARY_NAME: hive_router
 
 jobs:
@@ -76,6 +76,10 @@ jobs:
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         name: checkout
+      - uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f # v2
+        name: setup zig
+        with:
+          version: ${{ env.ZIG_VERSION }}
       - uses: actions-rust-lang/setup-rust-toolchain@ac90e63697ac2784f4ecfe2964e1a285c304003a # v1
         name: rust toolchain (${{ matrix.rust_target }})
         with:
@@ -83,10 +87,6 @@ jobs:
           cache-key: ${{ matrix.name }}
       - run: cargo install cargo-zigbuild
         name: install zigbuild
-      - uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f # v2
-        name: setup zig
-        with:
-          version: ${{ env.ZIG_VERSION }}
       - name: compile (${{ matrix.zigbuild_target }})
         run: cargo zigbuild --release --target ${{ matrix.zigbuild_target }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

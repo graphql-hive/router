@@ -13,7 +13,7 @@ brew install zig
 cargo install --locked cargo-zigbuild
 ```
 
-From the root of the project, run:
+From the root of the project, run the following to build the `router` binaries (cross-build):
 
 ```bash
 ./docker/build-binary.sh
