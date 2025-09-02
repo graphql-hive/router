@@ -1,6 +1,6 @@
 [package]
 name = "hive-router-plan-executor"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 description = "GraphQL query planner executor for Federation specification"
 license = "MIT"
