@@ -40,7 +40,7 @@ HIVE_SUPERGRAPH_PATH=./supergraph.graphql
 Then, run the router:
 
 ```bash
-# By default, "hive-router.config.yaml" is used for configuration. Override it by setting "HIVE_CONFIG_FILE_PATH=some-custom-file.yaml"
+# By default, "hive-router.config.yaml" is used for configuration. Override it by setting "ROUTER_CONFIG_FILE_PATH=some-custom-file.yaml"
 # If you are using env vars, make sure to set the variables before running the router.
 ./hive_router
 ```
