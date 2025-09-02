@@ -93,6 +93,7 @@ jobs:
         with:
           target: ${{ matrix.rust_target }}
           cache-key: ${{ matrix.name }}
+
       # Only if using Zigbuild
       - uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f # v2
         name: setup zig
@@ -109,6 +110,7 @@ jobs:
       - name: cargo build (${{ matrix.rust_target }})
         run: cargo build --release --target ${{ matrix.rust_target }}
         if: ${{ !matrix.zigbuild }}
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         name: upload build artifact
         with:
