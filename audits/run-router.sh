@@ -11,6 +11,6 @@ echo "running router..."
 
 cd ..
 
-export HIVE_SUPERGRAPH_SOURCE="file"
-export HIVE_SUPERGRAPH_PATH="audits/fed-audit-supergraph.graphql"
+export HIVE__SUPERGRAPH__SOURCE="file"
+export HIVE__SUPERGRAPH__PATH="audits/fed-audit-supergraph.graphql"
 cargo router
