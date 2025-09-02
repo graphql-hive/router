@@ -52,6 +52,9 @@ detect_arch() {
         Linux)
             OS="linux"
             ;;
+        Darwin)
+            OS="macos"
+            ;;
         *)
             error "Unsupported operating system: '$OS_TYPE'. You may use Hive Router using Docker by following the instructions at https://github.com/graphql-hive/router#docker"
             ;;
@@ -96,7 +99,7 @@ download_and_install() {
     # -f: Fail silently on server errors (like 404)
     # -L: Follow redirects
     if ! curl -fL -o "./${BINARY_NAME}" "${DOWNLOAD_URL}"; then
-        error "Download failed. Please check if the version '$VERSION' and architecture '$ARCH' exist for this release."
+        error "Download failed. Please check if the version '$VERSION' and architecture '$OS_TYPE/$ARCH' exist for this release."
     fi
 
     chmod +x "./${BINARY_NAME}"
