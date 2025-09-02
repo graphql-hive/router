@@ -109,7 +109,7 @@ jobs:
     needs:
       - binary
     outputs:
-      docker_metadata: ${{ steps.docker.outputs.metadata }}
+      docker_image_digest: ${{ steps.docker.outputs.digest }}
     steps:
       - name: checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
@@ -194,10 +194,10 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@ac90e63697ac2784f4ecfe2964e1a285c304003a # v1
       - name: run router image in background
         run: |
-          echo "running docker image: ${{ env.DOCKER_IMAGE_NAME }}:${{ needs.docker.outputs.docker_metadata['containerimage.digest'] }}"
+          echo "Docker image: ${{ env.DOCKER_IMAGE_NAME }}:${{ needs.docker.outputs.docker_image_digest }}"
 
           docker run -d -p 4000:4000 \
           -e HIVE_SUPERGRAPH_SOURCE="file" \
           -e HIVE_SUPERGRAPH_PATH="/app/supergraph.graphql" \
           -v ./bench/supergraph.graphql:/app/supergraph.graphql \
-            ${{ env.DOCKER_IMAGE_NAME }}:${{ needs.docker.outputs.docker_metadata['containerimage.digest'] }}
+            ${{ env.DOCKER_IMAGE_NAME }}:${{ needs.docker.outputs.docker_image_digest }}
