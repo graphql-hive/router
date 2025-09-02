@@ -3,8 +3,8 @@
 ```
 cargo subgraphs
 
-export HIVE_SUPERGRAPH_SOURCE="file"
-export HIVE_SUPERGRAPH_PATH="bench/supergraph.graphql"
+export HIVE__SUPERGRAPH__SOURCE="file"
+export HIVE__SUPERGRAPH__PATH="bench/supergraph.graphql"
 cargo router
 ```
 

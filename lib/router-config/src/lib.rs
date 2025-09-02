@@ -69,7 +69,11 @@ pub fn load_config(
     }
 
     config
-        .add_source(Environment::with_prefix("HIVE").separator("_"))
+        .add_source(
+            Environment::with_prefix("HIVE")
+                .separator("__")
+                .prefix_separator("__"),
+        )
         .build()?
         .try_deserialize::<HiveRouterConfig>()
 }

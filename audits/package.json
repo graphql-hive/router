@@ -5,7 +5,7 @@
   "scripts": {
     "test:federation-all": "graphql-federation-audit test --run-script=\"./run-router.sh\" --graphql=\"http://localhost:4000/graphql\" --healthcheck=\"http://localhost:4000/health\" --junit",
     "test:federation-single": "graphql-federation-audit test-suite --run-script=\"./run-router.sh\" --graphql=\"http://localhost:4000/graphql\" --healthcheck=\"http://localhost:4000/health\" --write=\"federation-audit-results.txt\"",
-    "start:test-router": "cd .. && HIVE_SUPERGRAPH_SOURCE=file HIVE_SUPERGRAPH_PATH=lib/query-planner/fixture/spotify-supergraph.graphql cargo router",
+    "start:test-router": "cd .. && HIVE__SUPERGRAPH__SOURCE=file HIVE__SUPERGRAPH__PATH=lib/query-planner/fixture/spotify-supergraph.graphql cargo router",
     "test:graphql-over-http": "node --test graphql-over-http.test.js",
     "test-junit:graphql-over-http": "node --test --test-reporter=junit --test-reporter-destination=\"./reports/graphql-over-http.xml\" graphql-over-http.test.js",
     "ci:test:graphql-over-http": "start-server-and-test start:test-router http://localhost:4000 test-junit:graphql-over-http"
