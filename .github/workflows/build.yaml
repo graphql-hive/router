@@ -90,6 +90,7 @@ jobs:
         name: checkout
       - uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f # v2
         name: setup zig
+        if: ${{ matrix.zigbuild }}
         with:
           version: ${{ env.ZIG_VERSION }}
       - uses: actions-rust-lang/setup-rust-toolchain@ac90e63697ac2784f4ecfe2964e1a285c304003a # v1
@@ -99,6 +100,7 @@ jobs:
           cache-key: ${{ matrix.name }}
       - run: cargo install cargo-zigbuild
         name: install zigbuild
+        if: ${{ matrix.zigbuild }}
       - name: zigbuild (${{ matrix.zigbuild_target }})
         if: ${{ matrix.zigbuild }}
         run: cargo zigbuild --release --target ${{ matrix.zigbuild_target }}
