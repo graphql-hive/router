@@ -24,8 +24,12 @@ impl SupergraphSource {
     pub async fn load(&self) -> Result<String, Box<dyn std::error::Error>> {
         match self {
             SupergraphSource::File { path } => {
-                let supergraph_sdl = std::fs::read_to_string(&path.0)
-                    .map_err(|e| format!("Failed to read supergraph file '{}': {}", path.0, e))?;
+                let supergraph_sdl = std::fs::read_to_string(&path.0).map_err(|e| {
+                    std::io::Error::new(
+                        e.kind(),
+                        format!("Failed to read supergraph file '{}': {}", path.0, e),
+                    )
+                })?;
                 Ok(supergraph_sdl)
             }
         }
