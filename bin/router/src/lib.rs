@@ -29,7 +29,7 @@ async fn graphql_endpoint_handler(
 }
 
 pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
-    let config_path = std::env::var("HIVE_CONFIG_FILE_PATH").ok();
+    let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
     configure_logging(&router_config.log);
 
