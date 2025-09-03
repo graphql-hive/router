@@ -5,6 +5,8 @@
 A fully open-source MIT-licensed GraphQL API router that can act as a [GraphQL federation](https://the-guild.dev/graphql/hive/federation) Router, built with Rust for maximum performance and robustness.
 
 > [!TIP]
+> 🚀 [Blog post: Welcome Hive Router](https://the-guild.dev/graphql/hive/blog/welcome-hive-router) 
+> 
 > Interested in the benchmark results? Check out the [Federation Gateway Performance comparison](https://the-guild.dev/graphql/hive/federation-gateway-performance)
 
 It can be run as a standalone binary or a Docker Image. Query planner can be used as a standalone Crate library.
