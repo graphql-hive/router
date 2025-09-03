@@ -4,6 +4,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use dashmap::DashMap;
 use hive_router_config::traffic_shaping::TrafficShapingExecutorConfig;
 use http::Uri;
+use hyper_tls::HttpsConnector;
 use hyper_util::{
     client::legacy::Client,
     rt::{TokioExecutor, TokioTimer},
@@ -69,11 +70,12 @@ impl SubgraphExecutorMap {
         subgraph_endpoint_map: HashMap<String, String>,
         config: TrafficShapingExecutorConfig,
     ) -> Result<Self, SubgraphExecutorError> {
+        let https = HttpsConnector::new();
         let client = Client::builder(TokioExecutor::new())
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(Duration::from_secs(config.pool_idle_timeout_seconds))
             .pool_max_idle_per_host(config.max_connections_per_host)
-            .build_http();
+            .build(https);
 
         let client_arc = Arc::new(client);
         let semaphores_by_origin: DashMap<String, Arc<Semaphore>> = DashMap::new();
