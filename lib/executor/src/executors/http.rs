@@ -13,6 +13,7 @@ use http::HeaderValue;
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::Version;
+use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
 
@@ -28,7 +29,7 @@ use crate::{executors::common::SubgraphExecutor, json_writer::write_and_escape_s
 #[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
     pub endpoint: http::Uri,
-    pub http_client: Arc<Client<HttpConnector, Full<Bytes>>>,
+    pub http_client: Arc<Client<HttpsConnector<HttpConnector>, Full<Bytes>>>,
     pub header_map: HeaderMap,
     pub semaphore: Arc<Semaphore>,
     pub config: Arc<TrafficShapingExecutorConfig>,
@@ -42,7 +43,7 @@ const FIRST_QUOTE_STR: &[u8] = b"{\"query\":";
 impl HTTPSubgraphExecutor {
     pub fn new(
         endpoint: http::Uri,
-        http_client: Arc<Client<HttpConnector, Full<Bytes>>>,
+        http_client: Arc<Client<HttpsConnector<HttpConnector>, Full<Bytes>>>,
         semaphore: Arc<Semaphore>,
         config: Arc<TrafficShapingExecutorConfig>,
         in_flight_requests: Arc<
@@ -58,6 +59,7 @@ impl HTTPSubgraphExecutor {
             http::header::CONNECTION,
             HeaderValue::from_static("keep-alive"),
         );
+
         Self {
             endpoint,
             http_client,

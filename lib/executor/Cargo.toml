@@ -31,6 +31,7 @@ tokio = { workspace = true, features = ["sync"] }
 dashmap = "6.0.0"
 ahash = "0.8.12"
 
+hyper-tls = { version = "0.6.0", features = ["vendored"] }
 hyper-util = { version = "0.1.16", features = [
   "client",
   "client-legacy",
