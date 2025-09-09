@@ -69,8 +69,18 @@ fn resolve_input_value<'exec, 'schema: 'exec>(
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext<'exec, 'schema>,
 ) -> Value<'exec> {
-    let mut iv_data = Vec::with_capacity(selections.items.len());
-    for item in &selections.items {
+    let mut iv_data = resolve_input_value_selections(iv, &selections.items, ctx);
+    iv_data.sort_by_key(|(k, _)| *k);
+    Value::Object(iv_data)
+}
+
+fn resolve_input_value_selections<'exec, 'schema: 'exec>(
+    iv: &'exec InputValue<'schema, String>,
+    selection_items: &'exec Vec<SelectionItem>,
+    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+) -> Vec<(&'exec str, Value<'exec>)> {
+    let mut iv_data: Vec<(&str, Value<'_>)> = Vec::with_capacity(selection_items.len());
+    for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
                 "name" => Value::String(&iv.name),
@@ -84,10 +94,15 @@ fn resolve_input_value<'exec, 'schema: 'exec>(
                 _ => Value::Null,
             };
             iv_data.push((field.selection_identifier(), value));
+        } else if let SelectionItem::InlineFragment(_) = item {
+            let selection_items = item.selections();
+            if let Some(selection_items) = selection_items {
+                let new_data = resolve_input_value_selections(iv, selection_items, ctx);
+                iv_data.extend(new_data);
+            }
         }
     }
-    iv_data.sort_by_key(|(k, _)| *k);
-    Value::Object(iv_data)
+    iv_data
 }
 
 fn resolve_field<'exec, 'schema: 'exec>(
@@ -95,9 +110,18 @@ fn resolve_field<'exec, 'schema: 'exec>(
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext<'exec, 'schema>,
 ) -> Value<'exec> {
-    let mut field_data = Vec::with_capacity(selections.items.len());
+    let mut field_data = resolve_field_selections(f, &selections.items, ctx);
+    field_data.sort_by_key(|(k, _)| *k);
+    Value::Object(field_data)
+}
 
-    for item in &selections.items {
+fn resolve_field_selections<'exec, 'schema: 'exec>(
+    f: &'exec Field<'schema, String>,
+    selection_items: &'exec Vec<SelectionItem>,
+    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+) -> Vec<(&'exec str, Value<'exec>)> {
+    let mut field_data = Vec::with_capacity(selection_items.len());
+    for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
                 "name" => Value::String(&f.name),
@@ -122,19 +146,32 @@ fn resolve_field<'exec, 'schema: 'exec>(
                 _ => Value::Null,
             };
             field_data.push((field.selection_identifier(), value));
+        } else if let SelectionItem::InlineFragment(_) = item {
+            let selection_items = item.selections();
+            if let Some(selection_items) = selection_items {
+                let new_data = resolve_field_selections(f, selection_items, ctx);
+                field_data.extend(new_data);
+            }
         }
     }
-    field_data.sort_by_key(|(k, _)| *k);
-    Value::Object(field_data)
+    field_data
 }
 
 fn resolve_enum_value<'exec, 'schema: 'exec>(
     ev: &'exec EnumValue<'schema, String>,
     selections: &'exec SelectionSet,
 ) -> Value<'exec> {
-    let mut ev_data = Vec::with_capacity(selections.items.len());
+    let mut ev_data = resolve_enum_value_selections(ev, &selections.items);
+    ev_data.sort_by_key(|(k, _)| *k);
+    Value::Object(ev_data)
+}
 
-    for item in &selections.items {
+fn resolve_enum_value_selections<'exec, 'schema: 'exec>(
+    ev: &'exec EnumValue<'schema, String>,
+    selection_items: &'exec Vec<SelectionItem>,
+) -> Vec<(&'exec str, Value<'exec>)> {
+    let mut ev_data = Vec::with_capacity(selection_items.len());
+    for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
                 "name" => Value::String(&ev.name),
@@ -150,10 +187,15 @@ fn resolve_enum_value<'exec, 'schema: 'exec>(
                 _ => Value::Null,
             };
             ev_data.push((field.selection_identifier(), value));
+        } else if let SelectionItem::InlineFragment(_) = item {
+            let selection_items = item.selections();
+            if let Some(selection_items) = selection_items {
+                let new_data = resolve_enum_value_selections(ev, selection_items);
+                ev_data.extend(new_data);
+            }
         }
     }
-    ev_data.sort_by_key(|(k, _)| *k);
-    Value::Object(ev_data)
+    ev_data
 }
 
 fn resolve_type_definition<'exec, 'schema: 'exec>(
@@ -161,9 +203,19 @@ fn resolve_type_definition<'exec, 'schema: 'exec>(
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext<'exec, 'schema>,
 ) -> Value<'exec> {
-    let mut type_data = Vec::with_capacity(selections.items.len());
+    let mut type_data = resolve_type_definition_selections(type_def, &selections.items, ctx);
+    type_data.sort_by_key(|(k, _)| *k);
+    Value::Object(type_data)
+}
 
-    for item in &selections.items {
+fn resolve_type_definition_selections<'exec, 'schema: 'exec>(
+    type_def: &'exec TypeDefinition<'schema, String>,
+    selection_items: &'exec Vec<SelectionItem>,
+    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+) -> Vec<(&'exec str, Value<'exec>)> {
+    let mut type_data = Vec::with_capacity(selection_items.len());
+
+    for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
                 "kind" => Value::String(kind_to_str(type_def)),
@@ -208,7 +260,10 @@ fn resolve_type_definition<'exec, 'schema: 'exec>(
 
                         let fields_values: Vec<Value<'exec>> = fields
                             .iter()
-                            .filter(|f| include_deprecated || !is_deprecated(&f.directives))
+                            .filter(|f| {
+                                !f.name.starts_with("__")
+                                    && (include_deprecated || !is_deprecated(&f.directives))
+                            })
                             .map(|f| resolve_field(f, &field.selections, ctx))
                             .collect();
                         Value::Array(fields_values)
@@ -286,21 +341,35 @@ fn resolve_type_definition<'exec, 'schema: 'exec>(
                 _ => Value::Null,
             };
             type_data.push((field.selection_identifier(), value));
+        } else if let SelectionItem::InlineFragment(_) = item {
+            let selection_items = item.selections();
+            if let Some(selection_items) = selection_items {
+                let new_data = resolve_type_definition_selections(type_def, selection_items, ctx);
+                type_data.extend(new_data);
+            }
         }
     }
-
-    type_data.sort_by_key(|(k, _)| *k);
-    Value::Object(type_data)
+    type_data
 }
-
 fn resolve_wrapper_type<'exec, 'schema: 'exec>(
     kind: &'exec str,
     inner_type: &'exec Type<'schema, String>,
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext<'exec, 'schema>,
 ) -> Value<'exec> {
-    let mut type_data = Vec::with_capacity(selections.items.len());
-    for item in &selections.items {
+    let mut type_data = resolve_wrapper_type_selections(kind, inner_type, &selections.items, ctx);
+    type_data.sort_by_key(|(k, _)| *k);
+    Value::Object(type_data)
+}
+
+fn resolve_wrapper_type_selections<'exec, 'schema: 'exec>(
+    kind: &'exec str,
+    inner_type: &'exec Type<'schema, String>,
+    selection_items: &'exec Vec<SelectionItem>,
+    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+) -> Vec<(&'exec str, Value<'exec>)> {
+    let mut type_data = Vec::with_capacity(selection_items.len());
+    for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
                 "kind" => Value::String(kind),
@@ -310,10 +379,16 @@ fn resolve_wrapper_type<'exec, 'schema: 'exec>(
                 _ => Value::Null,
             };
             type_data.push((field.selection_identifier(), value));
+        } else if let SelectionItem::InlineFragment(_) = item {
+            let selection_items = item.selections();
+            if let Some(selection_items) = selection_items {
+                let new_data =
+                    resolve_wrapper_type_selections(kind, inner_type, selection_items, ctx);
+                type_data.extend(new_data);
+            }
         }
     }
-    type_data.sort_by_key(|(k, _)| *k);
-    Value::Object(type_data)
+    type_data
 }
 
 fn resolve_type<'exec, 'schema: 'exec>(
@@ -336,8 +411,18 @@ fn resolve_directive<'exec, 'schema: 'exec>(
     selections: &'exec SelectionSet,
     ctx: &'exec IntrospectionContext<'exec, 'schema>,
 ) -> Value<'exec> {
-    let mut directive_data = Vec::with_capacity(selections.items.len());
-    for item in &selections.items {
+    let mut directive_data = resolve_directive_selections(d, &selections.items, ctx);
+    directive_data.sort_by_key(|(k, _)| *k);
+    Value::Object(directive_data)
+}
+
+fn resolve_directive_selections<'exec, 'schema: 'exec>(
+    d: &'exec DirectiveDefinition<'schema, String>,
+    selection_items: &'exec Vec<SelectionItem>,
+    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+) -> Vec<(&'exec str, Value<'exec>)> {
+    let mut directive_data = Vec::with_capacity(selection_items.len());
+    for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
                 "name" => Value::String(&d.name),
@@ -366,19 +451,34 @@ fn resolve_directive<'exec, 'schema: 'exec>(
                 _ => Value::Null,
             };
             directive_data.push((field.selection_identifier(), value));
+        } else if let SelectionItem::InlineFragment(_) = item {
+            let selection_items = item.selections();
+            if let Some(selection_items) = selection_items {
+                let new_data = resolve_directive_selections(d, selection_items, ctx);
+                directive_data.extend(new_data);
+            }
         }
     }
-    directive_data.sort_by_key(|(k, _)| *k);
-    Value::Object(directive_data)
+    directive_data
 }
 
 fn resolve_schema_field<'exec, 'schema: 'exec>(
     field: &'exec FieldSelection,
     ctx: &'exec IntrospectionContext<'exec, 'schema>,
 ) -> Value<'exec> {
-    let mut schema_data = Vec::with_capacity(field.selections.items.len());
+    let mut schema_data = resolve_schema_selections(&field.selections.items, ctx);
 
-    for item in &field.selections.items {
+    schema_data.sort_by_key(|(k, _)| *k);
+    Value::Object(schema_data)
+}
+
+fn resolve_schema_selections<'exec, 'schema: 'exec>(
+    items: &'exec Vec<SelectionItem>,
+    ctx: &'exec IntrospectionContext<'exec, 'schema>,
+) -> Vec<(&'exec str, Value<'exec>)> {
+    let mut schema_data = Vec::with_capacity(items.len());
+
+    for item in items {
         if let SelectionItem::Field(inner_field) = item {
             let value = match inner_field.name.as_str() {
                 "description" => Value::Null,
@@ -429,10 +529,15 @@ fn resolve_schema_field<'exec, 'schema: 'exec>(
                 _ => Value::Null,
             };
             schema_data.push((inner_field.selection_identifier(), value));
+        } else if let SelectionItem::FragmentSpread(_) = item {
+            let selection_items = item.selections();
+            if let Some(selection_items) = selection_items {
+                let new_data = resolve_schema_selections(selection_items, ctx);
+                schema_data.extend(new_data);
+            }
         }
     }
-    schema_data.sort_by_key(|(k, _)| *k);
-    Value::Object(schema_data)
+    schema_data
 }
 
 pub fn resolve_introspection<'exec, 'schema: 'exec>(
@@ -454,9 +559,20 @@ pub fn resolve_introspection<'exec, 'schema: 'exec>(
         })
         .unwrap_or_else(|| ctx.schema.query_type_name());
 
-    let mut data = Vec::with_capacity(root_selection_set.items.len());
+    let mut data =
+        resolve_root_introspection_selections(root_type_name, &root_selection_set.items, ctx);
 
-    for item in &root_selection_set.items {
+    data.sort_by_key(|(k, _)| *k);
+    Value::Object(data)
+}
+
+fn resolve_root_introspection_selections<'exec, 'schema: 'exec>(
+    root_type_name: &'schema str,
+    items: &'exec Vec<SelectionItem>,
+    ctx: &'exec IntrospectionContext,
+) -> Vec<(&'exec str, Value<'exec>)> {
+    let mut data = Vec::with_capacity(items.len());
+    for item in items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
                 "__schema" => resolve_schema_field(field, ctx),
@@ -477,10 +593,16 @@ pub fn resolve_introspection<'exec, 'schema: 'exec>(
                 _ => Value::Null,
             };
             data.push((field.selection_identifier(), value));
+        } else if let SelectionItem::InlineFragment(_) = item {
+            let selection_items = item.selections();
+            if let Some(selection_items) = selection_items {
+                let new_data =
+                    resolve_root_introspection_selections(root_type_name, selection_items, ctx);
+                data.extend(new_data);
+            }
         }
     }
-    data.sort_by_key(|(k, _)| *k);
-    Value::Object(data)
+    data
 }
 
 trait TypeDefinitionExtension {
