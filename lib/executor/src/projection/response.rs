@@ -53,7 +53,6 @@ pub fn project_by_operation(
             buffer.put(EMPTY_OBJECT);
         }
     } else {
-        warn!("The root data is not an object. Returning null for data field.");
         buffer.put(NULL);
     }
 
