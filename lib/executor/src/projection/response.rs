@@ -52,6 +52,8 @@ pub fn project_by_operation(
             // If no selections were made, we should return an empty object
             buffer.put(EMPTY_OBJECT);
         }
+    } else {
+        buffer.put(NULL);
     }
 
     if !errors.is_empty() {
