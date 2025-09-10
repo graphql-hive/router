@@ -6,6 +6,7 @@ use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
 use crate::shared_state::RouterSharedState;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
+use hive_router_query_planner::planner::PlannerError;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
 use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
@@ -22,36 +23,36 @@ pub async fn plan_operation_with_cache(
         StableOverrideContext::new(&app_state.planner.supergraph, request_override_context);
 
     let filtered_operation_for_plan = &normalized_operation.operation_for_plan;
-    let plan_cache_key =
-        calculate_cache_key(filtered_operation_for_plan.hash(), &stable_override_context);
-    let is_pure_introspection = filtered_operation_for_plan.selection_set.is_empty()
-        && normalized_operation.operation_for_introspection.is_some();
 
-    let plan_result = app_state
-        .plan_cache
-        .try_get_with(plan_cache_key, async move {
-            if is_pure_introspection {
-                return Ok(Arc::new(QueryPlan {
-                    kind: "QueryPlan".to_string(),
-                    node: None,
-                }));
-            }
+    if !app_state.router_config.query_planner.cache.enabled {
+        get_plan(
+            app_state,
+            filtered_operation_for_plan,
+            normalized_operation,
+            request_override_context,
+            cancellation_token,
+        )
+        .map(Arc::new)
+        .map_err(Arc::new)
+    } else {
+        let plan_cache_key =
+            calculate_cache_key(filtered_operation_for_plan.hash(), &stable_override_context);
 
-            app_state
-                .planner
-                .plan_from_normalized_operation(
+        app_state
+            .plan_cache
+            .try_get_with(plan_cache_key, async move {
+                get_plan(
+                    app_state,
                     filtered_operation_for_plan,
-                    (&request_override_context.clone()).into(),
+                    normalized_operation,
+                    request_override_context,
                     cancellation_token,
                 )
                 .map(Arc::new)
-        })
-        .await;
-
-    match plan_result {
-        Ok(plan) => Ok(plan),
-        Err(e) => Err(req.new_pipeline_error(PipelineErrorVariant::PlannerError(e.clone()))),
+            })
+            .await
     }
+    .map_err(|err| req.new_pipeline_error(PipelineErrorVariant::PlannerError(err)))
 }
 
 #[inline]
@@ -60,4 +61,28 @@ fn calculate_cache_key(operation_hash: u64, context: &StableOverrideContext) -> 
     operation_hash.hash(&mut hasher);
     context.hash(&mut hasher);
     hasher.finish()
+}
+
+#[inline]
+fn get_plan(
+    app_state: &Arc<RouterSharedState>,
+    filtered_operation_for_plan: &hive_router_query_planner::ast::operation::OperationDefinition,
+    normalized_operation: &Arc<GraphQLNormalizationPayload>,
+    request_override_context: &RequestOverrideContext,
+    cancellation_token: &CancellationToken,
+) -> Result<QueryPlan, PlannerError> {
+    let is_pure_introspection = filtered_operation_for_plan.selection_set.is_empty()
+        && normalized_operation.operation_for_introspection.is_some();
+    if is_pure_introspection {
+        return Ok(QueryPlan {
+            kind: "QueryPlan".to_string(),
+            node: None,
+        });
+    }
+
+    app_state.planner.plan_from_normalized_operation(
+        filtered_operation_for_plan,
+        (&request_override_context.clone()).into(),
+        cancellation_token,
+    )
 }
