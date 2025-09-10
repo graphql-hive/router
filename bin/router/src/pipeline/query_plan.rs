@@ -9,6 +9,7 @@ use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::planner::PlannerError;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
 use ntex::web::HttpRequest;
+use tracing::debug;
 use xxhash_rust::xxh3::Xxh3;
 
 #[inline]
@@ -74,6 +75,7 @@ fn get_plan(
     let is_pure_introspection = filtered_operation_for_plan.selection_set.is_empty()
         && normalized_operation.operation_for_introspection.is_some();
     if is_pure_introspection {
+        debug!("No need for a plan, as the incoming query only involves introspection fields");
         return Ok(QueryPlan {
             kind: "QueryPlan".to_string(),
             node: None,
