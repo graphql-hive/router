@@ -1284,6 +1284,7 @@ dependencies = [
  "hyper-util",
  "indexmap 2.11.0",
  "itoa",
+ "ntex-http",
  "ryu",
  "serde",
  "sonic-rs",
@@ -1837,12 +1838,12 @@ dependencies = [
 
 [[package]]
 name = "ntex-http"
-version = "0.1.14"
+version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3102673534f57dbc7fc9e7f1aac4126f353366c67518eac0a7763bb2515f0a7a"
+checksum = "61da3d6c8bec83c5481d7e36ed4cf1a8cd0edee3e2fa411290932b17549d5cf2"
 dependencies = [
+ "ahash",
  "futures-core",
- "fxhash",
  "http",
  "itoa",
  "log",
