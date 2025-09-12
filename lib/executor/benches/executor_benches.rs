@@ -28,8 +28,9 @@ fn project_data_by_operation_test(c: &mut Criterion) {
         normalized_operation,
         &planner.consumer_schema.schema_metadata(),
     );
+    let result_as_string = raw_result::get_result_as_string();
     let projected_data_as_json: sonic_rs::Value =
-        sonic_rs::from_slice(raw_result::get_result_as_string().as_bytes()).unwrap();
+        sonic_rs::from_slice(result_as_string.as_bytes()).unwrap();
     c.bench_function("project_data_by_operation", |b| {
         b.iter_batched(
             || {
@@ -46,6 +47,7 @@ fn project_data_by_operation_test(c: &mut Criterion) {
                     bb_root_type_name,
                     &bb_projection_plan,
                     &None,
+                    result_as_string.len(),
                 )
                 .unwrap();
                 black_box(result);
