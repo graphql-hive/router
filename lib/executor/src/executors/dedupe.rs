@@ -1,6 +1,7 @@
 use ahash::AHasher;
 use bytes::Bytes;
 use http::{HeaderMap, Method, StatusCode, Uri};
+use ntex_http::HeaderMap as NtexHeaderMap;
 use std::collections::BTreeMap;
 use std::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher};
 
@@ -15,6 +16,7 @@ pub fn request_fingerprint(
     method: &Method,
     url: &Uri,
     req_headers: &HeaderMap,
+    upstream_headers: &NtexHeaderMap,
     body_bytes: &[u8],
     fingerprint_headers: &[String],
 ) -> u64 {
@@ -25,7 +27,13 @@ pub fn request_fingerprint(
     let mut headers = BTreeMap::new();
     if fingerprint_headers.is_empty() {
         // fingerprint all headers
+
         for (key, value) in req_headers.iter() {
+            if let Ok(value_str) = value.to_str() {
+                headers.insert(key.as_str(), value_str);
+            }
+        }
+        for (key, value) in upstream_headers.iter() {
             if let Ok(value_str) = value.to_str() {
                 headers.insert(key.as_str(), value_str);
             }
@@ -33,6 +41,10 @@ pub fn request_fingerprint(
     } else {
         for header_name in fingerprint_headers.iter() {
             if let Some(value) = req_headers.get(header_name) {
+                if let Ok(value_str) = value.to_str() {
+                    headers.insert(header_name, value_str);
+                }
+            } else if let Some(value) = upstream_headers.get(header_name) {
                 if let Ok(value_str) = value.to_str() {
                     headers.insert(header_name, value_str);
                 }
