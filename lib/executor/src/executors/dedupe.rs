@@ -21,7 +21,7 @@ pub fn request_fingerprint(
     let build_hasher = ABuildHasher::default();
     let mut hasher = build_hasher.build_hasher();
 
-    /// BTreeMap to ensure case-insensitivity and consistent order for hashing
+    // BTreeMap to ensure case-insensitivity and consistent order for hashing
     let mut headers = BTreeMap::new();
     if fingerprint_headers.is_empty() {
         // fingerprint all headers
