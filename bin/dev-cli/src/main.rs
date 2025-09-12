@@ -21,6 +21,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 fn main() {
     let tree_layer = tracing_tree::HierarchicalLayer::new(2)
+        .with_writer(std::io::stdout)
         .with_bracketed_fields(true)
         .with_deferred_spans(false)
         .with_wraparound(25)
