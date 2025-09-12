@@ -21,7 +21,10 @@ pub struct TrafficShapingExecutorConfig {
     /// A list of headers that should be used to fingerprint requests for deduplication.
     ///
     /// If not provided, the default is to use the "authorization" header only.
-    #[serde(default = "default_dedupe_fingerprint_headers")]
+    #[serde(
+        default = "default_dedupe_fingerprint_headers",
+        deserialize_with = "deserialize_and_normalize_dedupe_fingerprint_headers"
+    )]
     pub dedupe_fingerprint_headers: Vec<String>,
 }
 
@@ -50,4 +53,18 @@ fn default_dedupe_enabled() -> bool {
 
 fn default_dedupe_fingerprint_headers() -> Vec<String> {
     vec!["authorization".to_string()]
+}
+
+fn deserialize_and_normalize_dedupe_fingerprint_headers<'de, D>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let headers: Vec<String> = Deserialize::deserialize(deserializer)?;
+    Ok(normalize_dedupe_fingerprint_headers(headers))
+}
+
+fn normalize_dedupe_fingerprint_headers(headers: Vec<String>) -> Vec<String> {
+    headers.into_iter().map(|h| h.to_lowercase()).collect()
 }
