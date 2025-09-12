@@ -6,6 +6,7 @@ use hive_router_query_planner::planner::plan_nodes::{
     ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
     QueryPlan, SequenceNode,
 };
+use ntex_http::HeaderMap;
 use serde::Deserialize;
 use sonic_rs::ValueRef;
 
@@ -36,6 +37,7 @@ pub struct QueryPlanExecutionContext<'exec> {
     pub query_plan: &'exec QueryPlan,
     pub projection_plan: &'exec Vec<FieldProjectionPlan>,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
+    pub upstream_headers: &'exec HeaderMap,
     pub extensions: Option<HashMap<String, sonic_rs::Value>>,
     pub introspection_context: &'exec IntrospectionContext<'exec, 'static>,
     pub operation_type_name: &'exec str,
@@ -60,6 +62,7 @@ pub async fn execute_query_plan<'exec>(
             ctx.introspection_context.metadata,
             // Deduplicate subgraph requests only if the operation type is a query
             ctx.operation_type_name == "Query",
+            ctx.upstream_headers,
         );
         executor
             .execute(&mut exec_ctx, ctx.query_plan.node.as_ref())
@@ -83,6 +86,7 @@ pub struct Executor<'exec> {
     schema_metadata: &'exec SchemaMetadata,
     executors: &'exec SubgraphExecutorMap,
     dedupe_subgraph_requests: bool,
+    upstream_headers: &'exec HeaderMap,
 }
 
 struct ConcurrencyScope<'exec, T> {
@@ -150,12 +154,14 @@ impl<'exec> Executor<'exec> {
         executors: &'exec SubgraphExecutorMap,
         schema_metadata: &'exec SchemaMetadata,
         dedupe_subgraph_requests: bool,
+        upstream_headers: &'exec HeaderMap,
     ) -> Self {
         Executor {
             variable_values,
             executors,
             schema_metadata,
             dedupe_subgraph_requests,
+            upstream_headers,
         }
     }
 
@@ -533,6 +539,7 @@ impl<'exec> Executor<'exec> {
                         operation_name: node.operation_name.as_deref(),
                         variables: None,
                         representations,
+                        upstream_headers: self.upstream_headers,
                     },
                 )
                 .await,
