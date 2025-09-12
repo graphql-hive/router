@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use crate::executors::dedupe::{ABuildHasher, RequestFingerprint, SharedResponse};
+use crate::executors::dedupe::request_fingerprint;
+use crate::executors::dedupe::{ABuildHasher, SharedResponse};
 use dashmap::DashMap;
 use hive_router_config::traffic_shaping::TrafficShapingExecutorConfig;
 use tokio::sync::OnceCell;
@@ -33,8 +34,7 @@ pub struct HTTPSubgraphExecutor {
     pub header_map: HeaderMap,
     pub semaphore: Arc<Semaphore>,
     pub config: Arc<TrafficShapingExecutorConfig>,
-    pub in_flight_requests:
-        Arc<DashMap<RequestFingerprint, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -46,9 +46,7 @@ impl HTTPSubgraphExecutor {
         http_client: Arc<Client<HttpsConnector<HttpConnector>, Full<Bytes>>>,
         semaphore: Arc<Semaphore>,
         config: Arc<TrafficShapingExecutorConfig>,
-        in_flight_requests: Arc<
-            DashMap<RequestFingerprint, Arc<OnceCell<SharedResponse>>, ABuildHasher>,
-        >,
+        in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -184,7 +182,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             };
         }
 
-        let fingerprint = RequestFingerprint::new(
+        let fingerprint = request_fingerprint(
             &http::Method::POST,
             &self.endpoint,
             &self.header_map,
