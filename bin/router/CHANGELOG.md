@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10](https://github.com/graphql-hive/router/compare/hive-router-v0.0.9...hive-router-v0.0.10) - 2025-09-14
+
+### Fixed
+
+- *(executor)* if `data` is empty, add `null` to the serialized response instead of leaving it empty ([#413](https://github.com/graphql-hive/router/pull/413))
+
 ## [0.0.9](https://github.com/graphql-hive/router/compare/hive-router-v0.0.8...hive-router-v0.0.9) - 2025-09-09
 
 ### Fixed
