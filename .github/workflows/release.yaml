@@ -24,7 +24,7 @@ jobs:
         uses: rust-lang/crates-io-auth-action@v1
         id: auth
       - name: release-plz release
-        uses: release-plz/action@d15ad33e74a427cbd6f5be06f1bec07c1a73a227 # v0.5.114
+        uses: release-plz/action@acb9246af4d59a270d1d4058a8b9af8c3f3a2559 # v0.5.117
         with:
           command: release
         env:
@@ -47,7 +47,7 @@ jobs:
         uses: rust-lang/crates-io-auth-action@v1
         id: auth
       - name: release-plz release-pr
-        uses: release-plz/action@d15ad33e74a427cbd6f5be06f1bec07c1a73a227 # v0.5.114
+        uses: release-plz/action@acb9246af4d59a270d1d4058a8b9af8c3f3a2559 # v0.5.117
         with:
           command: release-pr
         env:
