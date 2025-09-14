@@ -291,6 +291,7 @@ fn resolve_type_definition_selections<'exec, 'schema: 'exec>(
                             .possible_types
                             .get_possible_types(type_def.name())
                             .into_iter()
+                            .filter(|v| v != type_def.name())
                             .filter_map(|name| ctx.schema.type_by_name(name.as_str()))
                             .map(|t| resolve_type_definition(t, &field.selections, ctx))
                             .collect();
