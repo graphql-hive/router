@@ -186,7 +186,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             &http::Method::POST,
             &self.endpoint,
             &self.header_map,
-            &execution_request.upstream_headers,
+            execution_request.upstream_headers,
             &body,
             &self.config.dedupe_fingerprint_headers,
         );
@@ -195,7 +195,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         // Prevents any deadlocks.
         let cell = self
             .in_flight_requests
-            .entry(fingerprint.clone())
+            .entry(fingerprint)
             .or_default()
             .value()
             .clone();
