@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10](https://github.com/graphql-hive/router/compare/hive-router-v0.0.9...hive-router-v0.0.10) - 2025-09-16
+
+### Fixed
+
+- *(executor)* optimize response buffer sizing ([#423](https://github.com/graphql-hive/router/pull/423))
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [0.0.9](https://github.com/graphql-hive/router/compare/hive-router-v0.0.8...hive-router-v0.0.9) - 2025-09-09
 
 ### Fixed
