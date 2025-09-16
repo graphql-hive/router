@@ -74,6 +74,7 @@ pub async fn execute_query_plan<'exec>(
         ctx.operation_type_name,
         ctx.projection_plan,
         ctx.variable_values,
+        exec_ctx.response_storage.estimate_final_response_size(),
     )
     .map_err(|e| e.into())
 }

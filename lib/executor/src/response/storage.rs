@@ -29,4 +29,8 @@ impl ResponsesStorage {
     pub fn get_bytes(&self, index: usize) -> &[u8] {
         &self.responses[index]
     }
+
+    pub fn estimate_final_response_size(&self) -> usize {
+        self.responses.iter().map(|r| r.len()).sum()
+    }
 }

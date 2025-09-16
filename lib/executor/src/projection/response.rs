@@ -24,8 +24,9 @@ pub fn project_by_operation(
     operation_type_name: &str,
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+    response_size_estimate: usize,
 ) -> Result<Vec<u8>, ProjectionError> {
-    let mut buffer = Vec::with_capacity(data.estimate_size() + 9 /* {"data":} */);
+    let mut buffer = Vec::with_capacity(response_size_estimate);
     buffer.put(OPEN_BRACE);
     buffer.put(QUOTE);
     buffer.put("data".as_bytes());
