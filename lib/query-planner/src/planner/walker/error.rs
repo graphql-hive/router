@@ -1,8 +1,11 @@
 use petgraph::graph::NodeIndex;
 
-use crate::{graph::error::GraphError, state::supergraph_state::OperationKind};
+use crate::{
+    graph::error::GraphError, state::supergraph_state::OperationKind,
+    utils::cancellation::CancellationError,
+};
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum WalkOperationError {
     #[error("Root type of {0} not found")]
     MissingRootType(OperationKind),
@@ -16,6 +19,8 @@ pub enum WalkOperationError {
     FieldNotFound(String, String),
     #[error("No paths found for selection item: {0}")]
     NoPathsFound(String),
+    #[error(transparent)]
+    CancellationError(#[from] CancellationError),
     /// In case of a shareable field resolving an interface, all object types implementing the interface
     /// must resolve the field in the same way.
     ///

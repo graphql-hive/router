@@ -2,9 +2,10 @@ use crate::{
     ast::type_aware_selection::TypeAwareSelectionError,
     graph::{error::GraphError, node::Node},
     planner::walker::error::WalkOperationError,
+    utils::cancellation::CancellationError,
 };
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum FetchGraphError {
     #[error("Internal Error: {0}")]
     Internal(String),
@@ -48,6 +49,8 @@ pub enum FetchGraphError {
     MissingRequires,
     #[error(transparent)]
     SelectionSetManipulationError(#[from] TypeAwareSelectionError),
+    #[error(transparent)]
+    CancellationError(#[from] CancellationError),
 }
 
 impl From<GraphError> for FetchGraphError {

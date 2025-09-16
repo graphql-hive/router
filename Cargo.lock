@@ -1289,6 +1289,7 @@ dependencies = [
  "serde",
  "sonic-rs",
  "thiserror 2.0.16",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "tracing-tree",

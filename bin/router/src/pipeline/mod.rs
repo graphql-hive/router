@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
+use hive_router_query_planner::utils::cancellation::CancellationToken;
 use http::{header::CONTENT_TYPE, HeaderValue, Method};
 use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
 };
+use tokio::time::Duration;
 
 use crate::{
     pipeline::{
@@ -82,9 +84,19 @@ pub async fn execute_pipeline(
         normalize_request_with_cache(req, state, &execution_request, &parser_payload).await?;
     let variable_payload =
         coerce_request_variables(req, state, execution_request, &normalize_payload)?;
-    let query_plan_payload =
-        plan_operation_with_cache(req, state, &normalize_payload, &progressive_override_ctx)
-            .await?;
+
+    let query_plan_cancellation_token = CancellationToken::with_timeout(Duration::from_millis(
+        state.router_config.query_planner.timeout_ms,
+    ));
+
+    let query_plan_payload = plan_operation_with_cache(
+        req,
+        state,
+        &normalize_payload,
+        &progressive_override_ctx,
+        &query_plan_cancellation_token,
+    )
+    .await?;
 
     let execution_result = execute_plan(
         req,

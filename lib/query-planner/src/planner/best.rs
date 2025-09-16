@@ -59,6 +59,7 @@ use crate::{
         walker::{path::OperationPath, ResolvedOperation},
     },
     state::supergraph_state::OperationKind,
+    utils::cancellation::CancellationToken,
 };
 
 type PathAndPosition = (OperationPath, MutationFieldPosition);
@@ -182,6 +183,7 @@ fn sort_candidates_by_cost(graph: &Graph, per_leaf_alternatives_asc: &mut [Alter
 pub fn find_best_combination(
     graph: &Graph,
     operation: ResolvedOperation,
+    cancellation_token: &CancellationToken,
 ) -> Result<QueryTree, QueryPlanError> {
     if operation.root_field_groups.is_empty()
         || operation
@@ -225,6 +227,7 @@ pub fn find_best_combination(
         None,
         0,
         &min_remaining_costs,
+        cancellation_token,
         &mut state,
     )?;
 
@@ -282,6 +285,7 @@ struct ExplorationState {
     best_tree: Option<QueryTree>,
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Performs branch-and-bound (to prune early) depth-first search to find the best combination
 fn explore_plan_combinations(
     graph: &Graph,
@@ -290,8 +294,11 @@ fn explore_plan_combinations(
     tree_so_far: Option<QueryTree>,
     cost_so_far: u64,
     min_remaining_costs: &[u64],
+    cancellation_token: &CancellationToken,
     state: &mut ExplorationState,
 ) -> Result<(), QueryPlanError> {
+    cancellation_token.bail_if_cancelled()?;
+
     // This is the most critical optimization.
     // If the current path's cost + the absolute best-case cost
     // for all remaining choices is already worse than our
@@ -336,6 +343,7 @@ fn explore_plan_combinations(
             Some(next_tree),
             next_cost,
             min_remaining_costs,
+            cancellation_token,
             state,
         )?;
     }
