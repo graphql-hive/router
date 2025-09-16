@@ -31,12 +31,6 @@ impl ResponsesStorage {
     }
 
     pub fn estimate_final_response_size(&self) -> usize {
-        let mut size = 0;
-
-        for response in &self.responses {
-            size += response.len();
-        }
-
-        size
+        self.responses.iter().map(|r| r.len()).sum()
     }
 }
