@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10](https://github.com/graphql-hive/router/compare/hive-router-v0.0.9...hive-router-v0.0.10) - 2025-09-17
+
+### Other
+
+- update Cargo.lock dependencies
+- *(deps)* update dependency start-server-and-test to v2.1.1 ([#428](https://github.com/graphql-hive/router/pull/428))
+
 ## [0.0.9](https://github.com/graphql-hive/router/compare/hive-router-v0.0.8...hive-router-v0.0.9) - 2025-09-09
 
 ### Fixed
