@@ -459,34 +459,37 @@ fn validate_field_requirement(
     excluded: &ExcludedFromLookup,
     use_only_direct_edges: bool,
 ) -> Result<FieldRequirementsResult, WalkOperationError> {
-    // Collect all Vec<OperationPath> results from find_direct_paths
     let mut direct_path_results: Vec<Vec<OperationPath>> =
         Vec::with_capacity(move_requirement.paths.len());
+    let mut indirect_path_results: Vec<Vec<OperationPath>> =
+        Vec::with_capacity(move_requirement.paths.len());
+
     for path in move_requirement.paths.iter() {
-        direct_path_results.push(find_direct_paths(
+        let direct_paths = find_direct_paths(
             graph,
             override_context,
             path,
             &NavigationTarget::Field(field),
-        )?);
-    }
+        )?;
+        // Skip looking for indirect paths if we already found direct paths to a leaf
+        let found_direct_paths_to_leaf = !direct_paths.is_empty() && field.is_leaf();
+        direct_path_results.push(direct_paths);
 
-    // Collect all Vec<OperationPath> results from find_indirect_paths, if needed
-    let indirect_path_results: Vec<Vec<OperationPath>> = if !use_only_direct_edges {
-        let mut temp_indirect_results = Vec::with_capacity(move_requirement.paths.len());
-        for path_from_rc in move_requirement.paths.iter() {
-            temp_indirect_results.push(find_indirect_paths(
+        let needs_indirect = !use_only_direct_edges && !found_direct_paths_to_leaf;
+        let indirect_paths = if needs_indirect {
+            find_indirect_paths(
                 graph,
                 override_context,
-                path_from_rc,
+                path,
                 &NavigationTarget::Field(field),
                 excluded,
-            )?);
-        }
-        temp_indirect_results
-    } else {
-        Vec::new()
-    };
+            )?
+        } else {
+            Vec::new()
+        };
+
+        indirect_path_results.push(indirect_paths);
+    }
 
     // sum of direct and indirect
     let total_capacity: usize = direct_path_results.iter().map(|v| v.len()).sum::<usize>()
