@@ -1,6 +1,7 @@
-use std::sync::Arc;
+use std::{cell::OnceCell, collections::HashMap, sync::Arc};
 
 use lazy_init::LazyTransform;
+use xxhash_rust::xxh3::Xxh3;
 
 use crate::{
     graph::{edge::Edge, error::GraphError, Graph},
@@ -18,12 +19,56 @@ use crate::{
 type PathAndPosition = (OperationPath, MutationFieldPosition);
 type QueryTreeResult = Result<QueryTree, GraphError>;
 type LazyQueryTree = LazyTransform<PathAndPosition, QueryTreeResult>;
-type LazyQueryTreeList = Vec<LazyQueryTree>;
-type BestLazyTreesPerLeaf = Vec<LazyQueryTreeList>;
+type Group = Vec<Candidate>;
 
-/// Finds the best combination of paths to leafs.
-/// It compares all possible paths to one leaf, with all possible paths to another leaf.
-/// It does not compare all, it tries to be smart, we will see in practice if it really is :)
+#[derive(Clone)]
+struct Candidate {
+    tree_lazy: LazyQueryTree,
+
+    standalone_cost: OnceCell<u64>,
+    expensive_units: OnceCell<u64>,
+}
+
+impl Candidate {
+    fn new(path: OperationPath, mutation_pos: MutationFieldPosition) -> Self {
+        Self {
+            tree_lazy: LazyTransform::new((path, mutation_pos)),
+            standalone_cost: OnceCell::new(),
+            expensive_units: OnceCell::new(),
+        }
+    }
+
+    #[inline]
+    fn get_tree<'g>(&self, graph: &Graph) -> Result<QueryTree, QueryPlanError> {
+        self.tree_lazy
+            .get_or_create(|(p, mp)| QueryTree::from_path(graph, &p, mp))
+            .clone()
+            .map_err(Into::into)
+    }
+
+    #[inline]
+    fn cost_standalone(&self, graph: &Graph) -> Result<u64, QueryPlanError> {
+        if let Some(v) = self.standalone_cost.get() {
+            return Ok(*v);
+        }
+        let tree = self.get_tree(graph)?;
+        let cost = calculate_cost_of_tree(graph, &tree.root);
+        let _ = self.standalone_cost.set(cost);
+        Ok(cost)
+    }
+
+    #[inline]
+    fn units_1000(&self, graph: &Graph) -> Result<u64, QueryPlanError> {
+        if let Some(v) = self.expensive_units.get() {
+            return Ok(*v);
+        }
+        let tree = self.get_tree(graph)?;
+        let units = count_expensive_units(graph, &tree.root);
+        let _ = self.expensive_units.set(units);
+        Ok(units)
+    }
+}
+
 pub fn find_best_combination(
     graph: &Graph,
     operation: ResolvedOperation,
@@ -39,110 +84,230 @@ pub fn find_best_combination(
 
     let is_mutation = matches!(operation.operation_kind, OperationKind::Mutation);
 
-    let mut best_trees_per_leaf: BestLazyTreesPerLeaf = Vec::new();
-
+    let mut groups: Vec<Group> = Vec::new();
     for (index, root_field_options) in operation.root_field_groups.into_iter().enumerate() {
         let mut mutation_field_position: MutationFieldPosition = None;
         if is_mutation {
             mutation_field_position = Some(index);
         }
 
-        let leafs: BestLazyTreesPerLeaf = root_field_options
+        let leaf_groups: Vec<Group> = root_field_options
             .into_iter()
             .map(|paths_to_leaf| {
                 paths_to_leaf
                     .into_iter()
-                    .map(|op| LazyTransform::new((op, mutation_field_position)))
-                    .collect()
+                    .map(|op| Candidate::new(op, mutation_field_position))
+                    .collect::<Group>()
             })
             .collect();
 
-        best_trees_per_leaf.extend(leafs);
+        groups.extend(leaf_groups);
     }
 
-    // Sorts the groups of paths by how many alternative paths they have.
-    // We process leafs with fewer alternatives first. This can help speed up
-    // finding the best overall combination.
-    // It can help find a good candidate faster, which then
-    // allows the algorithm to more effectively
-    // prune away more complex options later in the search.
-    best_trees_per_leaf.sort_by_key(|paths| paths.len());
+    groups.sort_by_key(|g| g.len());
 
-    let mut min_overall_cost = u64::MAX;
-    let mut final_best_tree: Option<QueryTree> = None;
+    if groups.is_empty() {
+        return Err(QueryPlanError::EmptyPlan);
+    }
 
-    // Start from the first leaf with the least amount of possible paths
-    explore_tree_combinations(
+    let mut min_units_per_group: Vec<u64> = Vec::with_capacity(groups.len());
+    for g in &groups {
+        let mut best = u64::MAX;
+        for c in g {
+            let u = c.units_1000(graph)?;
+            if u < best {
+                best = u;
+                if best == 0 {
+                    break;
+                }
+            }
+        }
+        min_units_per_group.push(best);
+    }
+    let mut suffix_lb: Vec<u64> = vec![0; groups.len() + 1];
+    for i in (0..groups.len()).rev() {
+        suffix_lb[i] = suffix_lb[i + 1] + 1000 * min_units_per_group[i];
+    }
+
+    for g in &mut groups {
+        g.sort_by(|a, b| {
+            let ua = a.units_1000(graph).unwrap_or(u64::MAX);
+            let ub = b.units_1000(graph).unwrap_or(u64::MAX);
+            if ua != ub {
+                return ua.cmp(&ub);
+            }
+            let ca = a.cost_standalone(graph).unwrap_or(u64::MAX);
+            let cb = b.cost_standalone(graph).unwrap_or(u64::MAX);
+            ca.cmp(&cb)
+        });
+    }
+
+    let mut best_cost = u64::MAX;
+    let mut best_tree: Option<QueryTree> = None;
+
+    if let Some((c, t)) = greedy_seed(graph, &groups) {
+        best_cost = c;
+        best_tree = Some(t);
+    }
+
+    let mut rev_groups = groups.clone();
+    rev_groups.reverse();
+    if let Some((c, t)) = greedy_seed(graph, &rev_groups) {
+        if c < best_cost {
+            best_cost = c;
+            best_tree = Some(t);
+        }
+    }
+
+    let mut inter_groups = Vec::with_capacity(groups.len());
+    let (mut l, mut r) = (0usize, groups.len().saturating_sub(1));
+    while l <= r {
+        if l == r {
+            inter_groups.push(groups[l].clone());
+            break;
+        }
+        inter_groups.push(groups[l].clone());
+        inter_groups.push(groups[r].clone());
+        l += 1;
+        if r == 0 {
+            break;
+        }
+        r -= 1;
+    }
+    if let Some((c, t)) = greedy_seed(graph, &inter_groups) {
+        if c < best_cost {
+            best_cost = c;
+            best_tree = Some(t);
+        }
+    }
+
+    let mut tt: HashMap<(usize, u64), u64> = HashMap::new();
+
+    dfs_search(
         graph,
-        &best_trees_per_leaf,
+        &groups,
         0,
         None,
-        &mut min_overall_cost,
-        &mut final_best_tree,
+        0,
+        &suffix_lb,
+        &mut best_cost,
+        &mut best_tree,
+        0,
+        &mut tt,
     )?;
 
-    final_best_tree.ok_or(QueryPlanError::EmptyPlan)
+    best_tree.ok_or(QueryPlanError::EmptyPlan)
 }
 
-fn explore_tree_combinations(
-    graph: &Graph,
-    best_trees_per_leaf: &BestLazyTreesPerLeaf,
-    // Index of the outer vec of best_trees_per_leaf
-    current_leaf_index: usize,
-    tree_so_far: Option<QueryTree>,
-    min_cost_so_far: &mut u64,
-    best_tree_so_far: &mut Option<QueryTree>,
-) -> Result<(), QueryPlanError> {
-    // Looks like all leafs has been processed
-    if current_leaf_index == best_trees_per_leaf.len() {
-        if let Some(final_tree) = tree_so_far {
-            // Calculates the final cost of the full tree
-            let cost = calculate_cost_of_tree(graph, &final_tree.root);
-            if &cost < min_cost_so_far {
-                *min_cost_so_far = cost;
-                *best_tree_so_far = Some(final_tree);
+fn greedy_seed(graph: &Graph, groups: &[Group]) -> Option<(u64, QueryTree)> {
+    let mut current_tree: Option<QueryTree> = None;
+    let mut current_cost: u64 = 0;
+
+    for g in groups {
+        let mut best_delta = u64::MAX;
+        let mut best_next: Option<(u64, QueryTree)> = None;
+
+        for c in g {
+            let cand_tree = match c.get_tree(graph) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            let next_tree = match current_tree.as_ref() {
+                Some(t) => {
+                    let mut merged = t.clone();
+                    Arc::make_mut(&mut merged.root).merge_nodes(&cand_tree.root);
+                    merged
+                }
+                None => cand_tree.clone(),
+            };
+            let next_cost = calculate_cost_of_tree(graph, &next_tree.root);
+            let delta = next_cost.saturating_sub(current_cost);
+            if delta < best_delta {
+                best_delta = delta;
+                best_next = Some((next_cost, next_tree));
             }
+        }
+
+        if let Some((nc, nt)) = best_next {
+            current_cost = nc;
+            current_tree = Some(nt);
+        } else {
+            return None;
+        }
+    }
+
+    current_tree.map(|t| (current_cost, t))
+}
+
+fn dfs_search(
+    graph: &Graph,
+    groups: &[Group],
+    idx: usize,
+    tree_so_far: Option<QueryTree>,
+    cost_so_far: u64,
+    suffix_lb: &[u64],
+    best_cost: &mut u64,
+    best_tree: &mut Option<QueryTree>,
+    sig: u64,
+    tt: &mut HashMap<(usize, u64), u64>,
+) -> Result<(), QueryPlanError> {
+    if cost_so_far + suffix_lb[idx] >= *best_cost {
+        return Ok(());
+    }
+
+    if idx == groups.len() {
+        if cost_so_far < *best_cost {
+            *best_cost = cost_so_far;
+            *best_tree = tree_so_far;
         }
         return Ok(());
     }
 
-    best_trees_per_leaf[current_leaf_index]
-        .iter()
-        .try_fold((), |(), tree_candidate| {
-            let current_tree = tree_candidate
-                .get_or_create(|(path, mutation_index)| {
-                    QueryTree::from_path(graph, &path, mutation_index)
-                })
-                .clone()?;
+    if let Some(&seen) = tt.get(&(idx, sig)) {
+        if cost_so_far >= seen {
+            return Ok(());
+        }
+    }
+    tt.insert((idx, sig), cost_so_far);
 
-            // Merges the current tree with the tree we built so far
-            let next_tree = match tree_so_far {
-                Some(ref tree) => {
-                    let mut new_tree = tree.clone();
-                    // `root` is Arc<QueryTreeNode`.
-                    // We perform clone-on-write here
-                    Arc::make_mut(&mut new_tree.root).merge_nodes(&current_tree.root);
-                    new_tree
-                }
-                None => current_tree.clone(),
-            };
+    for (cand_idx, cand) in groups[idx].iter().enumerate() {
+        let cand_tree = cand.get_tree(graph)?;
 
-            // If the cost of the tree so far is already greater than or equal to
-            // the minimum cost found, skip exploring
-            if &calculate_cost_of_tree(graph, &next_tree.root) >= min_cost_so_far {
-                return Ok(());
+        let next_tree = match tree_so_far.as_ref() {
+            Some(t) => {
+                let mut merged = t.clone();
+                Arc::make_mut(&mut merged.root).merge_nodes(&cand_tree.root);
+                merged
             }
+            None => cand_tree.clone(),
+        };
 
-            // Go to the next leaf
-            explore_tree_combinations(
-                graph,
-                best_trees_per_leaf,
-                current_leaf_index + 1,
-                Some(next_tree),
-                min_cost_so_far,
-                best_tree_so_far,
-            )
-        })
+        let next_cost = calculate_cost_of_tree(graph, &next_tree.root);
+        if next_cost >= *best_cost {
+            continue;
+        }
+
+        let mut hasher = Xxh3::new();
+        hasher.update(&sig.to_le_bytes());
+        hasher.update(&(idx as u64).to_le_bytes());
+        hasher.update(&(cand_idx as u64).to_le_bytes());
+        let next_sig = hasher.digest();
+
+        dfs_search(
+            graph,
+            groups,
+            idx + 1,
+            Some(next_tree),
+            next_cost,
+            suffix_lb,
+            best_cost,
+            best_tree,
+            next_sig,
+            tt,
+        )?;
+    }
+
+    Ok(())
 }
 
 fn calculate_cost_of_tree(graph: &Graph, node: &QueryTreeNode) -> u64 {
@@ -155,8 +320,6 @@ fn calculate_cost_of_tree(graph: &Graph, node: &QueryTreeNode) -> u64 {
                 Edge::SubgraphEntrypoint { .. }
             )
         }) {
-            // We do this to make sure two subgraph entries result in the same cost as two entity moves.
-            // SubgraphEntrypoint is not part of `node.requirements` meaning we would treat it as +1.
             current_cost += 1000;
         }
 
@@ -169,4 +332,27 @@ fn calculate_cost_of_tree(graph: &Graph, node: &QueryTreeNode) -> u64 {
     }
 
     current_cost
+}
+
+fn count_expensive_units(graph: &Graph, node: &QueryTreeNode) -> u64 {
+    let mut units: u64 = 0;
+
+    for child in &node.children {
+        if child.edge_from_parent.is_some_and(|edge_index| {
+            matches!(
+                graph.edge(edge_index).expect("to find an edge"),
+                Edge::SubgraphEntrypoint { .. }
+            )
+        }) {
+            units += 1;
+        }
+        units += count_expensive_units(graph, child);
+    }
+
+    for req in &node.requirements {
+        units += 1;
+        units += count_expensive_units(graph, req);
+    }
+
+    units
 }

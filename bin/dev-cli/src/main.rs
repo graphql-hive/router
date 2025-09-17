@@ -21,6 +21,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 fn main() {
     let tree_layer = tracing_tree::HierarchicalLayer::new(2)
+        .with_writer(std::io::stdout)
         .with_bracketed_fields(true)
         .with_deferred_spans(false)
         .with_wraparound(25)
@@ -131,6 +132,7 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
     let graph = Graph::graph_from_supergraph_state(&supergraph).expect("failed to create graph");
     let operation = get_operation(operation_path, &supergraph);
     let override_context = PlannerOverrideContext::default();
+
     let best_paths_per_leaf =
         walk_operation(&graph, &supergraph, &override_context, &operation).unwrap();
     let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
