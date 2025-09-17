@@ -148,7 +148,7 @@ jobs:
         with:
           check_name: graphql-over-http
           comment_title: GraphQL over HTTP Audit Results
-          comment_mode: changes
+          comment_mode: off
           files: |
             audits/reports/*.xml
       - name: Publish Test Results for details
@@ -167,8 +167,7 @@ jobs:
           include_time_in_summary: true
           simplified_summary: true
           group_suite: true
-          comment: true
-          updateComment: true
+          comment: false
           exclude_sources: /lib/,/audits/node_modules/
 
   federation-audit:
@@ -199,7 +198,7 @@ jobs:
           fail_on: "nothing"
           check_name: federation-audit
           comment_title: Federation Audit Results
-          comment_mode: changes
+          comment_mode: off
           files: |
             audits/reports/*.xml
       - name: Publish Test Results for details
@@ -221,6 +220,5 @@ jobs:
           include_time_in_summary: true
           simplified_summary: true
           group_suite: true
-          comment: true
-          updateComment: true
+          comment: false
           exclude_sources: /lib/,/audits/node_modules/
