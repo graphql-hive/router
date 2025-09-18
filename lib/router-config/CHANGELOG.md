@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.5](https://github.com/graphql-hive/router/compare/hive-router-config-v0.0.4...hive-router-config-v0.0.5) - 2025-09-18
+
+### Other
+
+- Add cancellation and deduplication to the query planner ([#427](https://github.com/graphql-hive/router/pull/427))
+
 ## [0.0.4](https://github.com/graphql-hive/router/compare/hive-router-config-v0.0.3...hive-router-config-v0.0.4) - 2025-09-09
 
 ### Other
