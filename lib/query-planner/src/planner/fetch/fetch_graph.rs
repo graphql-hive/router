@@ -12,6 +12,7 @@ use crate::planner::tree::query_tree_node::{MutationFieldPosition, QueryTreeNode
 use crate::planner::walker::path::OperationPath;
 use crate::planner::walker::pathfinder::can_satisfy_edge;
 use crate::state::supergraph_state::{SubgraphName, SupergraphState};
+use crate::utils::cancellation::CancellationToken;
 use petgraph::algo::has_path_connecting;
 use petgraph::graph::EdgeReference;
 use petgraph::stable_graph::{EdgeIndex, NodeIndex, NodeIndices, NodeReferences, StableDiGraph};
@@ -1490,6 +1491,10 @@ fn find_satisfiable_key<'a>(
             },
             &Default::default(),
             true,
+            // It's safe to use a noop CancellationToken here,
+            // as the result of this function is guaranteed to be successful,
+            // and fast.
+            &CancellationToken::new(),
         )
         .map_err(|err| FetchGraphError::SatisfiableKeyFailure(Box::new(err)))?
         .is_some()
@@ -1660,6 +1665,7 @@ pub fn build_fetch_graph_from_query_tree(
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     query_tree: QueryTree,
+    cancellation_token: &CancellationToken,
 ) -> Result<FetchGraph, FetchGraphError> {
     let mut fetch_graph = FetchGraph::new();
 
@@ -1695,7 +1701,7 @@ pub fn build_fetch_graph_from_query_tree(
 
     // fine to unwrap as we have already checked the length
     fetch_graph.root_index = Some(*root_indexes.first().unwrap());
-    fetch_graph.optimize(supergraph)?;
+    fetch_graph.optimize(supergraph, cancellation_token)?;
     fetch_graph.collect_variable_usages()?;
 
     trace!("fetch graph after optimizations:");

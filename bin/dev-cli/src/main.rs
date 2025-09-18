@@ -15,6 +15,7 @@ use hive_router_query_planner::planner::tree::query_tree::QueryTree;
 use hive_router_query_planner::planner::walker::walk_operation;
 use hive_router_query_planner::planner::walker::ResolvedOperation;
 use hive_router_query_planner::state::supergraph_state::SupergraphState;
+use hive_router_query_planner::utils::cancellation::CancellationToken;
 use hive_router_query_planner::utils::parsing::parse_operation;
 use hive_router_query_planner::utils::parsing::parse_schema;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -120,8 +121,15 @@ fn process_fetch_graph(supergraph_path: &str, operation_path: &str) -> FetchGrap
         process_merged_tree(supergraph_path, operation_path);
 
     let override_context = PlannerOverrideContext::default();
-    build_fetch_graph_from_query_tree(&graph, &supergraph_state, &override_context, query_tree)
-        .expect("failed to build fetch graph")
+    let cancellation_token = CancellationToken::new();
+    build_fetch_graph_from_query_tree(
+        &graph,
+        &supergraph_state,
+        &override_context,
+        query_tree,
+        &cancellation_token,
+    )
+    .expect("failed to build fetch graph")
 }
 
 fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
@@ -132,15 +140,29 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
     let graph = Graph::graph_from_supergraph_state(&supergraph).expect("failed to create graph");
     let operation = get_operation(operation_path, &supergraph);
     let override_context = PlannerOverrideContext::default();
+    let cancellation_token = CancellationToken::new();
 
-    let best_paths_per_leaf =
-        walk_operation(&graph, &supergraph, &override_context, &operation).unwrap();
-    let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
-    let fetch_graph =
-        build_fetch_graph_from_query_tree(&graph, &supergraph, &override_context, query_tree)
-            .expect("failed to build fetch graph");
+    let best_paths_per_leaf = walk_operation(
+        &graph,
+        &supergraph,
+        &override_context,
+        &operation,
+        &cancellation_token,
+    )
+    .unwrap();
+    let query_tree =
+        find_best_combination(&graph, best_paths_per_leaf, &cancellation_token).unwrap();
+    let fetch_graph = build_fetch_graph_from_query_tree(
+        &graph,
+        &supergraph,
+        &override_context,
+        query_tree,
+        &cancellation_token,
+    )
+    .expect("failed to build fetch graph");
 
-    build_query_plan_from_fetch_graph(fetch_graph, &supergraph).expect("failed to build query plan")
+    build_query_plan_from_fetch_graph(fetch_graph, &supergraph, &cancellation_token)
+        .expect("failed to build query plan")
 }
 
 fn process_merged_tree(
@@ -149,7 +171,9 @@ fn process_merged_tree(
 ) -> (Graph, QueryTree, SupergraphState) {
     let (graph, best_paths_per_leaf, _operation, supergraph_state) =
         process_paths(supergraph_path, operation_path);
-    let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
+    let cancellation_token = CancellationToken::new();
+    let query_tree =
+        find_best_combination(&graph, best_paths_per_leaf, &cancellation_token).unwrap();
 
     (graph, query_tree, supergraph_state)
 }
@@ -179,8 +203,15 @@ fn process_paths(
     let graph = Graph::graph_from_supergraph_state(&supergraph).expect("failed to create graph");
     let operation = get_operation(operation_path, &supergraph);
     let override_context = PlannerOverrideContext::default();
-    let best_paths_per_leaf =
-        walk_operation(&graph, &supergraph, &override_context, &operation).unwrap();
+    let cancellation_token = CancellationToken::new();
+    let best_paths_per_leaf = walk_operation(
+        &graph,
+        &supergraph,
+        &override_context,
+        &operation,
+        &cancellation_token,
+    )
+    .unwrap();
 
     (graph, best_paths_per_leaf, operation, supergraph)
 }

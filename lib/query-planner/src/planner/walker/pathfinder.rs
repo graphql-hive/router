@@ -7,6 +7,7 @@ use tracing::{instrument, trace};
 use crate::ast::merge_path::Condition;
 use crate::ast::selection_set::InlineFragmentSelection;
 use crate::graph::edge::PlannerOverrideContext;
+use crate::utils::cancellation::CancellationToken;
 use crate::{
     ast::{
         selection_item::SelectionItem, selection_set::FieldSelection,
@@ -65,7 +66,7 @@ pub enum NavigationTarget<'a> {
     ConcreteType(&'a str, Option<Condition>),
 }
 
-#[instrument(level = "trace",skip(graph, override_context, excluded, target), fields(
+#[instrument(level = "trace", skip_all, fields(
   path = path.pretty_print(graph),
   current_cost = path.cost
 ))]
@@ -75,6 +76,7 @@ pub fn find_indirect_paths(
     path: &OperationPath,
     target: &NavigationTarget,
     excluded: &ExcludedFromLookup,
+    cancellation_token: &CancellationToken,
 ) -> Result<Vec<OperationPath>, WalkOperationError> {
     let mut tracker = BestPathTracker::new(graph);
     let tail_node_index = path.tail();
@@ -86,6 +88,7 @@ pub fn find_indirect_paths(
     let mut queue = IndirectPathsLookupQueue::new_from_excluded(excluded, path);
 
     while let Some(item) = queue.pop() {
+        cancellation_token.bail_if_cancelled()?;
         let (visited_graphs, visited_key_fields, path) = item;
 
         let relevant_edges = graph.edges_from(path.tail()).filter(|e| {
@@ -154,6 +157,7 @@ pub fn find_indirect_paths(
                 &path,
                 &new_excluded,
                 false,
+                cancellation_token,
             )?;
 
             match can_be_satisfied {
@@ -173,8 +177,13 @@ pub fn find_indirect_paths(
                         target,
                     );
 
-                    let direct_paths =
-                        find_direct_paths(graph, override_context, &next_resolution_path, target)?;
+                    let direct_paths = find_direct_paths(
+                        graph,
+                        override_context,
+                        &next_resolution_path,
+                        target,
+                        cancellation_token,
+                    )?;
 
                     if !direct_paths.is_empty() {
                         trace!(
@@ -231,6 +240,7 @@ fn try_advance_direct_path<'a>(
     override_context: &PlannerOverrideContext,
     edge_ref: &EdgeReference,
     target: &NavigationTarget<'a>,
+    cancellation_token: &CancellationToken,
 ) -> Result<Option<OperationPath>, WalkOperationError> {
     trace!(
         "Checking edge {}",
@@ -244,6 +254,7 @@ fn try_advance_direct_path<'a>(
         path,
         &ExcludedFromLookup::new(),
         false,
+        cancellation_token,
     )?;
 
     match can_be_satisfied {
@@ -269,7 +280,7 @@ fn try_advance_direct_path<'a>(
     }
 }
 
-#[instrument(level = "trace",skip(graph, target, override_context), fields(
+#[instrument(level = "trace", skip_all, fields(
     path = path.pretty_print(graph),
     current_cost = path.cost,
 ))]
@@ -278,6 +289,7 @@ pub fn find_direct_paths(
     override_context: &PlannerOverrideContext,
     path: &OperationPath,
     target: &NavigationTarget,
+    cancellation_token: &CancellationToken,
 ) -> Result<Vec<OperationPath>, WalkOperationError> {
     let mut result: Vec<OperationPath> = vec![];
     let path_tail_index = path.tail();
@@ -300,9 +312,14 @@ pub fn find_direct_paths(
     };
 
     for edge_ref in edges_iter {
-        if let Some(new_path) =
-            try_advance_direct_path(graph, path, override_context, &edge_ref, target)?
-        {
+        if let Some(new_path) = try_advance_direct_path(
+            graph,
+            path,
+            override_context,
+            &edge_ref,
+            target,
+            cancellation_token,
+        )? {
             result.push(new_path);
         }
     }
@@ -315,7 +332,7 @@ pub fn find_direct_paths(
     Ok(result)
 }
 
-#[instrument(level = "trace",skip_all, fields(
+#[instrument(level = "trace", skip_all, fields(
   path = path.pretty_print(graph),
   edge = edge_ref.weight().display_name(),
 ))]
@@ -326,6 +343,7 @@ pub fn can_satisfy_edge(
     path: &OperationPath,
     excluded: &ExcludedFromLookup,
     use_only_direct_edges: bool,
+    cancellation_token: &CancellationToken,
 ) -> Result<Option<Vec<OperationPath>>, WalkOperationError> {
     let edge = edge_ref.weight();
 
@@ -358,6 +376,7 @@ pub fn can_satisfy_edge(
 
             // it's important to pop from the end as we want to process the last added requirement first
             while let Some(requirement) = requirements.pop_back() {
+                cancellation_token.bail_if_cancelled()?;
                 match &requirement.selection {
                     SelectionItem::Field(selection_field_requirement) => {
                         let result = validate_field_requirement(
@@ -367,6 +386,7 @@ pub fn can_satisfy_edge(
                             selection_field_requirement,
                             excluded,
                             use_only_direct_edges,
+                            cancellation_token,
                         )?;
 
                         match result {
@@ -407,6 +427,7 @@ pub fn can_satisfy_edge(
                             &requirement,
                             fragment_selection,
                             excluded,
+                            cancellation_token,
                         )?;
 
                         match fragment_requirements {
@@ -458,6 +479,7 @@ fn validate_field_requirement(
     field: &FieldSelection,
     excluded: &ExcludedFromLookup,
     use_only_direct_edges: bool,
+    cancellation_token: &CancellationToken,
 ) -> Result<FieldRequirementsResult, WalkOperationError> {
     let mut direct_path_results: Vec<Vec<OperationPath>> =
         Vec::with_capacity(move_requirement.paths.len());
@@ -470,6 +492,7 @@ fn validate_field_requirement(
             override_context,
             path,
             &NavigationTarget::Field(field),
+            cancellation_token,
         )?;
         // Skip looking for indirect paths if we already found direct paths to a leaf
         let found_direct_paths_to_leaf = !direct_paths.is_empty() && field.is_leaf();
@@ -483,6 +506,7 @@ fn validate_field_requirement(
                 path,
                 &NavigationTarget::Field(field),
                 excluded,
+                cancellation_token,
             )?
         } else {
             Vec::new()
@@ -542,6 +566,7 @@ fn validate_fragment_requirement(
     requirement: &MoveRequirement,
     fragment_selection: &InlineFragmentSelection,
     excluded: &ExcludedFromLookup,
+    cancellation_token: &CancellationToken,
 ) -> Result<FragmentRequirementsResult, WalkOperationError> {
     let type_name = &fragment_selection.type_condition;
     // Collect all Vec<OperationPath> results from find_direct_paths
@@ -555,6 +580,7 @@ fn validate_fragment_requirement(
             // @skip/@include can't be used in @requires and @provides,
             // that's why we pass no condition
             &NavigationTarget::ConcreteType(type_name, None),
+            cancellation_token,
         )?);
     }
 
@@ -570,6 +596,7 @@ fn validate_fragment_requirement(
             // that's why we pass no condition
             &NavigationTarget::ConcreteType(type_name, None),
             excluded,
+            cancellation_token,
         )?);
     }
 

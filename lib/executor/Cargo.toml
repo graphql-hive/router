@@ -28,7 +28,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 xxhash-rust = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
-dashmap = "6.0.0"
+dashmap = { workspace = true }
 ahash = "0.8.12"
 
 hyper-tls = { version = "0.6.0", features = ["vendored"] }

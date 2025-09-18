@@ -12,6 +12,7 @@ use crate::{
     graph::{edge::PlannerOverrideContext, error::GraphError, Graph},
     planner::{best::find_best_combination, fetch::fetch_graph::FetchGraph},
     state::supergraph_state::SupergraphState,
+    utils::cancellation::{CancellationError, CancellationToken},
 };
 
 pub mod best;
@@ -28,7 +29,7 @@ pub struct Planner {
     pub consumer_schema: ConsumerSchema,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum PlannerError {
     #[error("failed to initalize relations graph: {0}")]
     GraphInitError(Box<GraphError>),
@@ -40,6 +41,10 @@ pub enum PlannerError {
     FailedToConstructFetchGraph(Box<FetchGraphError>),
     #[error("failed to build plan: {0}")]
     QueryPlanBuildFailed(Box<QueryPlanError>),
+    #[error("cancelled")]
+    Cancelled,
+    #[error("timedout")]
+    Timedout,
 }
 
 impl From<GraphError> for PlannerError {
@@ -63,6 +68,15 @@ impl From<FetchGraphError> for PlannerError {
 impl From<QueryPlanError> for PlannerError {
     fn from(value: QueryPlanError) -> Self {
         PlannerError::QueryPlanBuildFailed(Box::new(value))
+    }
+}
+
+impl From<CancellationError> for PlannerError {
+    fn from(value: CancellationError) -> Self {
+        match value {
+            CancellationError::Cancelled => PlannerError::Cancelled,
+            CancellationError::TimedOut => PlannerError::Timedout,
+        }
     }
 }
 
@@ -93,22 +107,27 @@ impl Planner {
         &self,
         normalized_operation: &OperationDefinition,
         override_context: PlannerOverrideContext,
+        cancellation_token: &CancellationToken,
     ) -> Result<QueryPlan, PlannerError> {
         let best_paths_per_leaf = walk_operation(
             &self.graph,
             &self.supergraph,
             &override_context,
             normalized_operation,
+            cancellation_token,
         )?;
-        let query_tree = find_best_combination(&self.graph, best_paths_per_leaf).unwrap();
+        let query_tree =
+            find_best_combination(&self.graph, best_paths_per_leaf, cancellation_token).unwrap();
         let mut fetch_graph = build_fetch_graph_from_query_tree(
             &self.graph,
             &self.supergraph,
             &override_context,
             query_tree,
+            cancellation_token,
         )?;
         add_variables_to_fetch_steps(&mut fetch_graph, &normalized_operation.variable_definitions)?;
-        let query_plan = build_query_plan_from_fetch_graph(fetch_graph, &self.supergraph)?;
+        let query_plan =
+            build_query_plan_from_fetch_graph(fetch_graph, &self.supergraph, cancellation_token)?;
 
         Ok(query_plan)
     }

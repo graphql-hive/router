@@ -6,7 +6,7 @@
 |----|----|-----------|--------|
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"host":"0.0.0.0","port":4000}`<br/>||
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
-|[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false}`<br/>||
+|[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>Default: `{"path":"supergraph.graphql","source":"file"}`<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaper executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"dedupe_enabled":true,"dedupe_fingerprint_headers":["authorization"],"max_connections_per_host":100,"pool_idle_timeout_seconds":50}`<br/>||
 
@@ -23,6 +23,7 @@ log:
   level: info
 query_planner:
   allow_expose: false
+  timeout: 10s
 supergraph:
   path: supergraph.graphql
   source: file
@@ -92,11 +93,13 @@ Query planning configuration.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**allow\_expose**|`boolean`|A flag to allow exposing the query plan in the response.<br/>When set to `true` and an incoming request has a `hive-expose-query-plan: true` header, the query plan will be exposed in the response, as part of `extensions`.<br/>Default: `false`<br/>||
+|**timeout**|`string`|The maximum time for the query planner to create an execution plan.<br/>This acts as a safeguard against overly complex or malicious queries that could degrade server performance.<br/>When the timeout is reached, the planning process is cancelled.<br/><br/>Default: 10s.<br/>Default: `"10s"`<br/>||
 
 **Example**
 
 ```yaml
 allow_expose: false
+timeout: 10s
 
 ```
 

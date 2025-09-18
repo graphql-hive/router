@@ -1,8 +1,8 @@
-use crate::graph::error::GraphError;
+use crate::{graph::error::GraphError, utils::cancellation::CancellationError};
 
 use super::fetch::error::FetchGraphError;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum QueryPlanError {
     #[error("FetchGraph error: {0}")]
     FetchGraphFailure(Box<FetchGraphError>),
@@ -16,6 +16,8 @@ pub enum QueryPlanError {
     UnexpectedPendingState,
     #[error("Internal Error: {0}")]
     Internal(String),
+    #[error(transparent)]
+    CancellationError(#[from] CancellationError),
 }
 
 impl From<FetchGraphError> for QueryPlanError {

@@ -13,14 +13,20 @@ use tracing::instrument;
 use crate::{
     planner::fetch::{error::FetchGraphError, fetch_graph::FetchGraph},
     state::supergraph_state::SupergraphState,
+    utils::cancellation::CancellationToken,
 };
 
 impl FetchGraph {
     #[instrument(level = "trace", skip_all)]
-    pub fn optimize(&mut self, supergraph_state: &SupergraphState) -> Result<(), FetchGraphError> {
+    pub fn optimize(
+        &mut self,
+        supergraph_state: &SupergraphState,
+        cancellation_token: &CancellationToken,
+    ) -> Result<(), FetchGraphError> {
         // Run optimization passes repeatedly until the graph stabilizes, as one optimization can create
         // opportunities for others.
         loop {
+            cancellation_token.bail_if_cancelled()?;
             let node_count_before = self.graph.node_count();
             let edge_count_before = self.graph.edge_count();
 

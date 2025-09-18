@@ -20,6 +20,7 @@ use crate::{
     },
     planner::walker::pathfinder::NavigationTarget,
     state::supergraph_state::{OperationKind, SupergraphState},
+    utils::cancellation::CancellationToken,
 };
 use best_path::{find_best_paths, BestPathTracker};
 use error::WalkOperationError;
@@ -49,6 +50,7 @@ pub fn walk_operation(
     supergraph: &SupergraphState,
     override_context: &PlannerOverrideContext,
     operation: &OperationDefinition,
+    cancellation_token: &CancellationToken,
 ) -> Result<ResolvedOperation, WalkOperationError> {
     let operation_kind = operation
         .operation_kind
@@ -75,6 +77,7 @@ pub fn walk_operation(
         let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
 
         while let Some((selection_item, paths)) = stack_to_resolve.pop_front() {
+            cancellation_token.bail_if_cancelled()?;
             let (next_stack_to_resolve, new_paths_per_leaf) = process_selection(
                 graph,
                 supergraph,
@@ -82,6 +85,7 @@ pub fn walk_operation(
                 selection_item,
                 &paths,
                 &vec![],
+                cancellation_token,
             )?;
 
             paths_per_leaf.extend(new_paths_per_leaf);
@@ -106,6 +110,7 @@ fn process_selection<'a>(
     selection_item: &'a SelectionItem,
     paths: &Vec<OperationPath>,
     fields_to_resolve_locally: &Vec<String>,
+    cancellation_token: &CancellationToken,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
     let mut stack_to_resolve: ResolutionStack = vec![];
     let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
@@ -119,6 +124,7 @@ fn process_selection<'a>(
                 fragment,
                 paths,
                 fields_to_resolve_locally,
+                cancellation_token,
             )?;
             paths_per_leaf.extend(new_paths_per_leaf);
             stack_to_resolve.extend(next_selection_items);
@@ -131,6 +137,7 @@ fn process_selection<'a>(
                 field,
                 paths,
                 fields_to_resolve_locally,
+                cancellation_token,
             )?;
             paths_per_leaf.extend(new_paths_per_leaf);
             stack_to_resolve.extend(next_selection_items);
@@ -151,6 +158,7 @@ fn process_selection_set<'a>(
     selection_set: &'a SelectionSet,
     paths: &Vec<OperationPath>,
     fields_to_resolve_locally: &Vec<String>,
+    cancellation_token: &CancellationToken,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
     let mut stack_to_resolve: ResolutionStack = vec![];
     let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
@@ -163,6 +171,7 @@ fn process_selection_set<'a>(
             item,
             paths,
             fields_to_resolve_locally,
+            cancellation_token,
         )?;
         paths_per_leaf.extend(new_paths_per_leaf);
         stack_to_resolve.extend(next_stack_to_resolve);
@@ -181,6 +190,7 @@ fn process_inline_fragment<'a>(
     fragment: &'a InlineFragmentSelection,
     paths: &Vec<OperationPath>,
     fields_to_resolve_locally: &Vec<String>,
+    cancellation_token: &CancellationToken,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
     trace!(
         "Processing inline fragment '{}' on type '{}' (skip: {:?}, include: {:?}) through {} possible paths",
@@ -190,6 +200,8 @@ fn process_inline_fragment<'a>(
         fragment.skip_if,
         paths.len()
     );
+
+    cancellation_token.bail_if_cancelled()?;
 
     // if the current type is an object type we ignore an abstract move
     // but if it's a union, we need to find an abstract move to the target type
@@ -224,6 +236,7 @@ fn process_inline_fragment<'a>(
             &fragment.selections,
             paths,
             fields_to_resolve_locally,
+            cancellation_token,
         );
     }
 
@@ -247,6 +260,7 @@ fn process_inline_fragment<'a>(
             override_context,
             path,
             &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
+            cancellation_token,
         )?;
 
         trace!("Direct paths found: {}", direct_paths.len());
@@ -262,6 +276,7 @@ fn process_inline_fragment<'a>(
                 path,
                 &NavigationTarget::ConcreteType(&fragment.type_condition, fragment.into()),
                 &ExcludedFromLookup::new(),
+                cancellation_token,
             )?;
 
             if !indirect_paths.is_empty() {
@@ -298,6 +313,7 @@ fn process_inline_fragment<'a>(
                 override_context,
                 path,
                 &NavigationTarget::Field(&FieldSelection::new_typename()),
+                cancellation_token,
             )?;
 
             trace!("Direct paths found: {}", direct_paths.len());
@@ -327,10 +343,11 @@ fn process_inline_fragment<'a>(
         &fragment.selections,
         &next_paths,
         fields_to_resolve_locally,
+        cancellation_token,
     )
 }
 
-#[instrument(level = "trace", skip(graph, supergraph, override_context, field, paths), fields(
+#[instrument(level = "trace", skip_all, fields(
   field_name = &field.name,
   leaf = field.is_leaf()
 ))]
@@ -340,7 +357,8 @@ fn process_field<'a>(
     override_context: &'a PlannerOverrideContext,
     field: &'a FieldSelection,
     paths: &[OperationPath],
-    fields_to_resolve_locally: &Vec<String>,
+    fields_to_resolve_locally: &[String],
+    cancellation_token: &CancellationToken,
 ) -> Result<(ResolutionStack<'a>, Vec<Vec<OperationPath>>), WalkOperationError> {
     let mut next_stack_to_resolve: ResolutionStack = vec![];
     let mut paths_per_leaf: Vec<Vec<OperationPath>> = vec![];
@@ -351,6 +369,8 @@ fn process_field<'a>(
         field,
         paths.len()
     );
+
+    cancellation_token.bail_if_cancelled()?;
 
     for path in paths {
         let path_span = span!(
@@ -368,6 +388,7 @@ fn process_field<'a>(
             override_context,
             path,
             &NavigationTarget::Field(field),
+            cancellation_token,
         )?;
         trace!("Direct paths found: {}", direct_paths.len());
 
@@ -385,6 +406,7 @@ fn process_field<'a>(
                 path,
                 &NavigationTarget::Field(field),
                 &excluded,
+                cancellation_token,
             )?;
             trace!("Indirect paths found: {}", indirect_paths.len());
 
@@ -492,6 +514,7 @@ fn process_field<'a>(
                     child_selection,
                     &vec![candidate_path.clone()],
                     &fields_to_resolve_locally,
+                    cancellation_token,
                 );
 
                 match finding {

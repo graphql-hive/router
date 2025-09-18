@@ -6,8 +6,8 @@ use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
 use crate::shared_state::RouterSharedState;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
+use hive_router_query_planner::utils::cancellation::CancellationToken;
 use ntex::web::HttpRequest;
-use tracing::debug;
 use xxhash_rust::xxh3::Xxh3;
 
 #[inline]
@@ -16,6 +16,7 @@ pub async fn plan_operation_with_cache(
     app_state: &Arc<RouterSharedState>,
     normalized_operation: &Arc<GraphQLNormalizationPayload>,
     request_override_context: &RequestOverrideContext,
+    cancellation_token: &CancellationToken,
 ) -> Result<Arc<QueryPlan>, PipelineError> {
     let stable_override_context =
         StableOverrideContext::new(&app_state.planner.supergraph, request_override_context);
@@ -23,44 +24,34 @@ pub async fn plan_operation_with_cache(
     let filtered_operation_for_plan = &normalized_operation.operation_for_plan;
     let plan_cache_key =
         calculate_cache_key(filtered_operation_for_plan.hash(), &stable_override_context);
+    let is_pure_introspection = filtered_operation_for_plan.selection_set.is_empty()
+        && normalized_operation.operation_for_introspection.is_some();
 
-    let query_plan_arc = match app_state.plan_cache.get(&plan_cache_key).await {
-        Some(plan) => plan,
-        None => {
-            let plan = if filtered_operation_for_plan.selection_set.is_empty()
-                && normalized_operation.operation_for_introspection.is_some()
-            {
-                debug!(
-                    "No need for a plan, as the incoming query only involves introspection fields"
-                );
-
-                QueryPlan {
+    let plan_result = app_state
+        .plan_cache
+        .try_get_with(plan_cache_key, async move {
+            if is_pure_introspection {
+                return Ok(Arc::new(QueryPlan {
                     kind: "QueryPlan".to_string(),
                     node: None,
-                }
-            } else {
-                app_state
-                    .planner
-                    .plan_from_normalized_operation(
-                        filtered_operation_for_plan,
-                        request_override_context.into(),
-                    )
-                    .map_err(|err| {
-                        req.new_pipeline_error(PipelineErrorVariant::PlannerError(err))
-                    })?
-            };
+                }));
+            }
 
-            let arc_plan = Arc::new(plan);
             app_state
-                .plan_cache
-                .insert(plan_cache_key, arc_plan.clone())
-                .await;
+                .planner
+                .plan_from_normalized_operation(
+                    filtered_operation_for_plan,
+                    (&request_override_context.clone()).into(),
+                    cancellation_token,
+                )
+                .map(Arc::new)
+        })
+        .await;
 
-            arc_plan
-        }
-    };
-
-    Ok(query_plan_arc)
+    match plan_result {
+        Ok(plan) => Ok(plan),
+        Err(e) => Err(req.new_pipeline_error(PipelineErrorVariant::PlannerError(e.clone()))),
+    }
 }
 
 #[inline]

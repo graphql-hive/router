@@ -2,7 +2,10 @@ use std::collections::{HashMap, VecDeque};
 
 use petgraph::{graph::NodeIndex, visit::EdgeRef};
 
-use crate::{planner::plan_nodes::ConditionNode, state::supergraph_state::SupergraphState};
+use crate::{
+    planner::plan_nodes::ConditionNode, state::supergraph_state::SupergraphState,
+    utils::cancellation::CancellationToken,
+};
 
 use super::{
     error::QueryPlanError,
@@ -73,6 +76,7 @@ impl<'a> InDegree<'a> {
 pub fn build_query_plan_from_fetch_graph(
     fetch_graph: FetchGraph,
     supergraph: &SupergraphState,
+    cancellation_token: &CancellationToken,
 ) -> Result<QueryPlan, QueryPlanError> {
     let root_index = fetch_graph.root_index.ok_or(QueryPlanError::NoRoot)?;
 
@@ -113,6 +117,7 @@ pub fn build_query_plan_from_fetch_graph(
             in_degrees.mark_as_processed(step_index);
 
             for child_edge in fetch_graph.children_of(step_index) {
+                cancellation_token.bail_if_cancelled()?;
                 let child_index = child_edge.target();
                 if child_index == root_index {
                     return Err(QueryPlanError::Internal(String::from(
