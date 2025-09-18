@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -11,16 +13,20 @@ pub struct QueryPlannerConfig {
     /// This acts as a safeguard against overly complex or malicious queries that could degrade server performance.
     /// When the timeout is reached, the planning process is cancelled.
     ///
-    /// Default: 10000 (10 seconds).
-    #[serde(default = "default_query_planning_timeout_ms")]
-    pub timeout_ms: u64,
+    /// Default: 10s.
+    #[serde(
+        default = "default_query_planning_timeout",
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    pub timeout: Duration,
 }
 
 impl Default for QueryPlannerConfig {
     fn default() -> Self {
         Self {
             allow_expose: default_query_planning_allow_expose(),
-            timeout_ms: default_query_planning_timeout_ms(),
+            timeout: default_query_planning_timeout(),
         }
     }
 }
@@ -29,6 +35,6 @@ fn default_query_planning_allow_expose() -> bool {
     false
 }
 
-fn default_query_planning_timeout_ms() -> u64 {
-    10_000
+fn default_query_planning_timeout() -> Duration {
+    Duration::from_secs(10)
 }

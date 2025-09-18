@@ -6,7 +6,6 @@ use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
 };
-use tokio::time::Duration;
 
 use crate::{
     pipeline::{
@@ -85,9 +84,8 @@ pub async fn execute_pipeline(
     let variable_payload =
         coerce_request_variables(req, state, execution_request, &normalize_payload)?;
 
-    let query_plan_cancellation_token = CancellationToken::with_timeout(Duration::from_millis(
-        state.router_config.query_planner.timeout_ms,
-    ));
+    let query_plan_cancellation_token =
+        CancellationToken::with_timeout(state.router_config.query_planner.timeout);
 
     let query_plan_payload = plan_operation_with_cache(
         req,
