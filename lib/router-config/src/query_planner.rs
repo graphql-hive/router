@@ -9,7 +9,7 @@ pub struct QueryPlannerConfig {
     /// When set to `true` and an incoming request has a `hive-expose-query-plan: true` header, the query plan will be exposed in the response, as part of `extensions`.
     #[serde(default = "default_query_planning_allow_expose")]
     pub allow_expose: bool,
-    /// The maximum time in milliseconds for the query planner to create an execution plan.
+    /// The maximum time for the query planner to create an execution plan.
     /// This acts as a safeguard against overly complex or malicious queries that could degrade server performance.
     /// When the timeout is reached, the planning process is cancelled.
     ///
