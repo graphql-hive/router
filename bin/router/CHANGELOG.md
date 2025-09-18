@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10](https://github.com/graphql-hive/router/compare/hive-router-v0.0.9...hive-router-v0.0.10) - 2025-09-18
+
+### Other
+
+- update Cargo.lock dependencies
+- *(query-planner)* speed up query planning by implementing better algorithm for finding best path ([#430](https://github.com/graphql-hive/router/pull/430))
+
 ## [0.0.9](https://github.com/graphql-hive/router/compare/hive-router-v0.0.8...hive-router-v0.0.9) - 2025-09-09
 
 ### Fixed
