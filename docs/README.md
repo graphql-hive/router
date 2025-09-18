@@ -93,37 +93,13 @@ Query planning configuration.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**allow\_expose**|`boolean`|A flag to allow exposing the query plan in the response.<br/>When set to `true` and an incoming request has a `hive-expose-query-plan: true` header, the query plan will be exposed in the response, as part of `extensions`.<br/>Default: `false`<br/>||
-|[**timeout**](#query_plannertimeout)|`object`|The maximum time in milliseconds for the query planner to create an execution plan.<br/>Default: `"10s"`<br/>|yes|
+|**timeout**|`string`|The maximum time in milliseconds for the query planner to create an execution plan.<br/>This acts as a safeguard against overly complex or malicious queries that could degrade server performance.<br/>When the timeout is reached, the planning process is cancelled.<br/><br/>Default: 10s.<br/>Default: `"10s"`<br/>||
 
 **Example**
 
 ```yaml
 allow_expose: false
 timeout: 10s
-
-```
-
-<a name="query_plannertimeout"></a>
-### query\_planner\.timeout: object
-
-The maximum time in milliseconds for the query planner to create an execution plan.
-This acts as a safeguard against overly complex or malicious queries that could degrade server performance.
-When the timeout is reached, the planning process is cancelled.
-
-Default: 10s.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**nanos**|`integer`|Format: `"uint32"`<br/>Minimum: `0`<br/>|yes|
-|**secs**|`integer`|Format: `"uint64"`<br/>Minimum: `0`<br/>|yes|
-
-**Example**
-
-```yaml
-10s
 
 ```
 

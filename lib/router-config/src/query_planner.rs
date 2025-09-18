@@ -19,6 +19,7 @@ pub struct QueryPlannerConfig {
         deserialize_with = "humantime_serde::deserialize",
         serialize_with = "humantime_serde::serialize"
     )]
+    #[schemars(with = "String")]
     pub timeout: Duration,
 }
 
