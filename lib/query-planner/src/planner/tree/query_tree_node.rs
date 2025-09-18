@@ -1,5 +1,5 @@
 use petgraph::graph::{EdgeIndex, NodeIndex};
-use std::sync::Arc;
+use std::rc::Rc;
 use tracing::{instrument, trace};
 
 use crate::{
@@ -21,8 +21,8 @@ pub struct QueryTreeNode {
     /// The edge from the parent QueryTreeNode that led to this node (null for root)
     pub edge_from_parent: Option<EdgeIndex>,
     /// Nodes required to execute the move
-    pub requirements: Vec<Arc<QueryTreeNode>>,
-    pub children: Vec<Arc<QueryTreeNode>>,
+    pub requirements: Vec<Rc<QueryTreeNode>>,
+    pub children: Vec<Rc<QueryTreeNode>>,
     pub selection_attributes: Option<SelectionAttributes>,
     pub condition: Option<Condition>,
     /// Distinguishes nodes originating from different top-level mutation fields.
@@ -43,8 +43,8 @@ impl PartialEq for QueryTreeNode {
 }
 
 fn merge_query_tree_node_list(
-    target_list: &mut Vec<Arc<QueryTreeNode>>,
-    source_list: &[Arc<QueryTreeNode>],
+    target_list: &mut Vec<Rc<QueryTreeNode>>,
+    source_list: &[Rc<QueryTreeNode>],
 ) {
     if source_list.is_empty() {
         return; // nothing to merge from the source
@@ -57,12 +57,12 @@ fn merge_query_tree_node_list(
 
         match matching_target_node {
             Some(target_node) => {
-                let target_node_mut = Arc::make_mut(target_node);
+                let target_node_mut = Rc::make_mut(target_node);
                 target_node_mut.merge_nodes(source_node.as_ref());
             }
             None => {
-                // No match found, add a clone of the source Arc to the target list.
-                target_list.push(Arc::clone(source_node));
+                // No match found, add a clone of the source Rc to the target list.
+                target_list.push(Rc::clone(source_node));
             }
         }
     }
@@ -111,7 +111,7 @@ impl QueryTreeNode {
         graph: &Graph,
         paths: &[OperationPath],
         mutation_field_position: MutationFieldPosition,
-    ) -> Result<Option<Arc<Self>>, GraphError> {
+    ) -> Result<Option<Rc<Self>>, GraphError> {
         if paths.is_empty() {
             return Ok(None);
         }
@@ -137,15 +137,15 @@ impl QueryTreeNode {
     ))]
     fn from_path_segment_sequences(
         graph: &Graph,
-        segments: &[Arc<PathSegment>],
+        segments: &[Rc<PathSegment>],
         current_index: usize,
         mutation_field_position: MutationFieldPosition,
-    ) -> Result<Option<Arc<Self>>, GraphError> {
+    ) -> Result<Option<Rc<Self>>, GraphError> {
         if current_index >= segments.len() {
             return Ok(None);
         }
 
-        let segment_at_index: &Arc<PathSegment> = &segments[current_index];
+        let segment_at_index: &Rc<PathSegment> = &segments[current_index];
         let edge_at_index = &segment_at_index.edge_index;
         let requirements_tree_at_index = &segment_at_index.requirement_tree;
         let selection_attributes_at_index = &segment_at_index.selection_attributes;
@@ -172,7 +172,7 @@ impl QueryTreeNode {
         if let Some(requirements_tree_arc) = requirements_tree_at_index {
             tree_node
                 .requirements
-                .push(Arc::clone(requirements_tree_arc));
+                .push(Rc::clone(requirements_tree_arc));
         }
 
         let subsequent_query_tree_node =
@@ -187,7 +187,7 @@ impl QueryTreeNode {
                 trace!("No subsequent steps (leaf or end of path)");
             }
         }
-        Ok(Some(Arc::new(tree_node)))
+        Ok(Some(Rc::new(tree_node)))
     }
 
     #[instrument(level = "trace",skip_all, fields(
@@ -197,7 +197,7 @@ impl QueryTreeNode {
     pub fn create_root_for_path_sequences(
         graph: &Graph,
         root_node_index: &NodeIndex,
-        segments: &Vec<Arc<PathSegment>>,
+        segments: &Vec<Rc<PathSegment>>,
         mutation_field_position: MutationFieldPosition,
     ) -> Result<QueryTreeNode, GraphError> {
         trace!(

@@ -437,7 +437,6 @@ impl PlanNode {
             PlanNode::Fetch(FetchNode::from_fetch_step(step, supergraph))
         } else {
             PlanNode::Flatten(FlattenNode {
-                // it's cheaper to clone response_path (Arc etc), rather then cloning the step
                 path: step.response_path.clone().into(),
                 node: Box::new(PlanNode::Fetch(FetchNode::from_fetch_step(
                     step, supergraph,
