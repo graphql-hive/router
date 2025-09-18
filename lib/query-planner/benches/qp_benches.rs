@@ -103,18 +103,25 @@ fn query_plan_pipeline(c: &mut Criterion) {
                 bb_supergraph_state,
                 bb_override_context,
                 bb_operation,
+                &cancellation_token,
             )
             .expect("walk_operation failed during benchmark");
-            let query_tree = find_best_combination(bb_graph, best_paths_per_leaf).unwrap();
+            let query_tree =
+                find_best_combination(bb_graph, best_paths_per_leaf, &cancellation_token).unwrap();
             let fetch_graph = build_fetch_graph_from_query_tree(
                 bb_graph,
                 bb_supergraph_state,
                 bb_override_context,
                 query_tree,
+                &cancellation_token,
             )
             .unwrap();
-            let query_plan =
-                build_query_plan_from_fetch_graph(fetch_graph, bb_supergraph_state).unwrap();
+            let query_plan = build_query_plan_from_fetch_graph(
+                fetch_graph,
+                bb_supergraph_state,
+                &cancellation_token,
+            )
+            .unwrap();
             black_box(query_plan);
         })
     });
