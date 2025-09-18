@@ -1,6 +1,5 @@
 use std::env;
 use std::process;
-use std::time::Instant;
 
 use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::ast::operation::OperationDefinition;
@@ -82,11 +81,11 @@ fn main() {
         }
         "plan" => {
             let plan = process_plan(&args[2], &args[3]);
-            // if args.contains(&"--json".into()) {
-            //     println!("{}", serde_json::to_string_pretty(&plan).unwrap());
-            // } else {
-            //     println!("{}", plan);
-            // }
+            if args.contains(&"--json".into()) {
+                println!("{}", serde_json::to_string_pretty(&plan).unwrap());
+            } else {
+                println!("{}", plan);
+            }
         }
         "normalize" => {
             let supergraph_sdl =
@@ -134,13 +133,9 @@ fn process_plan(supergraph_path: &str, operation_path: &str) -> QueryPlan {
     let operation = get_operation(operation_path, &supergraph);
     let override_context = PlannerOverrideContext::default();
 
-    let started_at = Instant::now();
     let best_paths_per_leaf =
         walk_operation(&graph, &supergraph, &override_context, &operation).unwrap();
-    println!("walked in {:?}", started_at.elapsed());
-    let started_at = Instant::now();
     let query_tree = find_best_combination(&graph, best_paths_per_leaf).unwrap();
-    println!("found best in {:?}", started_at.elapsed());
     let fetch_graph =
         build_fetch_graph_from_query_tree(&graph, &supergraph, &override_context, query_tree)
             .expect("failed to build fetch graph");
