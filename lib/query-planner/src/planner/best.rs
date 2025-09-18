@@ -212,6 +212,11 @@ pub fn find_best_combination(
         }
     }
 
+    let mut state = ExplorationState {
+        best_cost,
+        best_tree,
+    };
+
     // Performs the search for the optimal solution
     explore_plan_combinations(
         graph,
@@ -220,11 +225,10 @@ pub fn find_best_combination(
         None,
         0,
         &min_remaining_costs,
-        &mut best_cost,
-        &mut best_tree,
+        &mut state,
     )?;
 
-    best_tree.ok_or(QueryPlanError::EmptyPlan)
+    state.best_tree.ok_or(QueryPlanError::EmptyPlan)
 }
 
 /// A fast search that finds a good, but not best plan.
@@ -273,6 +277,11 @@ fn find_initial_plan(
     current_tree.map(|t| (current_cost, t))
 }
 
+struct ExplorationState {
+    best_cost: u64,
+    best_tree: Option<QueryTree>,
+}
+
 /// Performs branch-and-bound (to prune early) depth-first search to find the best combination
 fn explore_plan_combinations(
     graph: &Graph,
@@ -281,14 +290,13 @@ fn explore_plan_combinations(
     tree_so_far: Option<QueryTree>,
     cost_so_far: u64,
     min_remaining_costs: &[u64],
-    best_cost: &mut u64,
-    best_tree: &mut Option<QueryTree>,
+    state: &mut ExplorationState,
 ) -> Result<(), QueryPlanError> {
     // This is the most critical optimization.
     // If the current path's cost + the absolute best-case cost
     // for all remaining choices is already worse than our
     // best solution, we can abandon this entire search branch.
-    if cost_so_far + min_remaining_costs[group_index] >= *best_cost {
+    if cost_so_far + min_remaining_costs[group_index] >= state.best_cost {
         return Ok(());
     }
 
@@ -296,9 +304,9 @@ fn explore_plan_combinations(
     // we have a complete plan.
     // If it's the best one we've seen, we save it.
     if group_index == groups.len() {
-        if cost_so_far < *best_cost {
-            *best_cost = cost_so_far;
-            *best_tree = tree_so_far;
+        if cost_so_far < state.best_cost {
+            state.best_cost = cost_so_far;
+            state.best_tree = tree_so_far;
         }
         return Ok(());
     }
@@ -317,7 +325,7 @@ fn explore_plan_combinations(
 
         let next_cost = calculate_cost_of_tree(graph, &next_tree.root);
         // If the next step alone is too expensive, skip it.
-        if next_cost >= *best_cost {
+        if next_cost >= state.best_cost {
             continue;
         }
 
@@ -328,8 +336,7 @@ fn explore_plan_combinations(
             Some(next_tree),
             next_cost,
             min_remaining_costs,
-            best_cost,
-            best_tree,
+            state,
         )?;
     }
 
