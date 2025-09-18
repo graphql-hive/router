@@ -21,9 +21,29 @@ pub async fn plan_operation_with_cache(
         StableOverrideContext::new(&app_state.planner.supergraph, request_override_context);
 
     let filtered_operation_for_plan = &normalized_operation.operation_for_plan;
+
+    if app_state.router_config.query_planner.no_plan_cache {
+        if filtered_operation_for_plan.selection_set.is_empty()
+            && normalized_operation.operation_for_introspection.is_some()
+        {
+            debug!("No need for a plan, as the incoming query only involves introspection fields");
+
+            return Ok(Arc::new(QueryPlan {
+                kind: "QueryPlan".to_string(),
+                node: None,
+            }));
+        }
+        let plan = app_state
+            .planner
+            .plan_from_normalized_operation(
+                filtered_operation_for_plan,
+                request_override_context.into(),
+            )
+            .map_err(|err| req.new_pipeline_error(PipelineErrorVariant::PlannerError(err)))?;
+        return Ok(Arc::new(plan));
+    }
     let plan_cache_key =
         calculate_cache_key(filtered_operation_for_plan.hash(), &stable_override_context);
-
     let query_plan_arc = match app_state.plan_cache.get(&plan_cache_key).await {
         Some(plan) => plan,
         None => {
