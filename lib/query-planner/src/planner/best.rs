@@ -133,6 +133,9 @@ fn prepare_alternatives(operation: ResolvedOperation) -> Vec<Alternatives> {
         per_leaf_alternatives_asc.extend(leaf_alternatives);
     }
 
+    // Sort alternatives by length in ascending order.
+    per_leaf_alternatives_asc.sort_by_key(|alternatives| alternatives.len());
+
     per_leaf_alternatives_asc
 }
 
