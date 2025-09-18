@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
-use std::{cmp, collections::HashSet, fmt::Debug, sync::Arc};
+use std::rc::Rc;
+use std::{cmp, collections::HashSet, fmt::Debug};
 
 use petgraph::{
     graph::{EdgeIndex, NodeIndex},
@@ -31,11 +32,11 @@ impl PartialEq for SelectionAttributes {
 #[derive(Debug, Clone)]
 pub struct PathSegment {
     // Link to the previous step, null for the first segment originating from rootNode
-    prev: Option<Arc<PathSegment>>,
+    prev: Option<Rc<PathSegment>>,
     pub edge_index: EdgeIndex,
     tail_node: NodeIndex,
     cumulative_cost: u64,
-    pub requirement_tree: Option<Arc<QueryTreeNode>>,
+    pub requirement_tree: Option<Rc<QueryTreeNode>>,
     pub selection_attributes: Option<SelectionAttributes>,
     pub condition: Option<Condition>,
 }
@@ -57,8 +58,8 @@ impl PathSegment {
 #[derive(Clone)]
 pub struct OperationPath {
     pub root_node: NodeIndex,
-    pub last_segment: Option<Arc<PathSegment>>,
-    pub visited_edge_indices: Arc<HashSet<EdgeIndex>>,
+    pub last_segment: Option<Rc<PathSegment>>,
+    pub visited_edge_indices: Rc<HashSet<EdgeIndex>>,
     pub cost: u64,
 }
 
@@ -87,8 +88,8 @@ impl Debug for OperationPath {
 impl OperationPath {
     pub fn new(
         root_node_index: NodeIndex,
-        last_segment: Option<Arc<PathSegment>>,
-        visited_edge_indices: Arc<HashSet<EdgeIndex>>,
+        last_segment: Option<Rc<PathSegment>>,
+        visited_edge_indices: Rc<HashSet<EdgeIndex>>,
     ) -> Self {
         Self {
             root_node: root_node_index,
@@ -103,8 +104,8 @@ impl OperationPath {
     pub fn new_entrypoint(edge: &EdgeReference<'_>) -> Self {
         // The first "segment" conceptually starts after the first edge from root
         let path_segment = PathSegment::new_root(edge);
-        let arc_path_segment = Arc::new(path_segment);
-        let visited_set: Arc<HashSet<EdgeIndex>> = Arc::new([edge.id()].into_iter().collect());
+        let arc_path_segment = Rc::new(path_segment);
+        let visited_set: Rc<HashSet<EdgeIndex>> = Rc::new([edge.id()].into_iter().collect());
 
         OperationPath::new(edge.source(), Some(arc_path_segment), visited_set)
     }
@@ -112,14 +113,14 @@ impl OperationPath {
     pub fn advance(
         &self,
         edge_ref: &EdgeReference<'_>,
-        requirement: Option<Arc<QueryTreeNode>>,
+        requirement: Option<Rc<QueryTreeNode>>,
         target: &NavigationTarget,
     ) -> OperationPath {
         let prev_cost = self.cost;
         let edge_cost = edge_ref.weight().cost();
         let new_cost = prev_cost + edge_cost;
         let mut new_visited = self.visited_edge_indices.clone();
-        Arc::make_mut(&mut new_visited).insert(edge_ref.id());
+        Rc::make_mut(&mut new_visited).insert(edge_ref.id());
 
         let new_segment_data = PathSegment {
             prev: self.last_segment.clone(),
@@ -139,7 +140,7 @@ impl OperationPath {
                 NavigationTarget::ConcreteType(_, condition) => condition.clone(),
             },
         };
-        let new_segment = Arc::new(new_segment_data);
+        let new_segment = Rc::new(new_segment_data);
 
         OperationPath::new(self.root_node, Some(new_segment), new_visited)
     }
@@ -154,9 +155,9 @@ impl OperationPath {
         self.visited_edge_indices.contains(edge_index)
     }
 
-    pub fn get_segments(&self) -> Vec<Arc<PathSegment>> {
-        let mut segments: VecDeque<Arc<PathSegment>> = VecDeque::new();
-        let mut current: Option<Arc<PathSegment>> = self.last_segment.clone();
+    pub fn get_segments(&self) -> Vec<Rc<PathSegment>> {
+        let mut segments: VecDeque<Rc<PathSegment>> = VecDeque::new();
+        let mut current: Option<Rc<PathSegment>> = self.last_segment.clone();
 
         while let Some(segment) = current {
             segments.push_front(segment.clone());
@@ -168,7 +169,7 @@ impl OperationPath {
 
     pub fn get_edges(&self) -> Vec<EdgeIndex> {
         let mut edges: VecDeque<EdgeIndex> = VecDeque::new();
-        let mut current: Option<Arc<PathSegment>> = self.last_segment.clone();
+        let mut current: Option<Rc<PathSegment>> = self.last_segment.clone();
 
         while let Some(segment) = current {
             edges.push_front(segment.edge_index);
@@ -178,9 +179,9 @@ impl OperationPath {
         edges.into_iter().collect()
     }
 
-    pub fn get_requirement_tree(&self) -> Vec<Option<Arc<QueryTreeNode>>> {
-        let mut requirement_tree_vec: VecDeque<Option<Arc<QueryTreeNode>>> = VecDeque::new();
-        let mut current: Option<Arc<PathSegment>> = self.last_segment.clone();
+    pub fn get_requirement_tree(&self) -> Vec<Option<Rc<QueryTreeNode>>> {
+        let mut requirement_tree_vec: VecDeque<Option<Rc<QueryTreeNode>>> = VecDeque::new();
+        let mut current: Option<Rc<PathSegment>> = self.last_segment.clone();
 
         while let Some(segment) = current {
             requirement_tree_vec.push_front(segment.requirement_tree.clone());
@@ -216,8 +217,8 @@ impl OperationPath {
      * other: The path found that satisfies (part of) the requirement.
      */
     pub fn build_requirement_continuation_path(&self, other: &Self) -> Self {
-        let source_segments: Vec<Arc<PathSegment>> = self.get_segments();
-        let target_segments: Vec<Arc<PathSegment>> = other.get_segments();
+        let source_segments: Vec<Rc<PathSegment>> = self.get_segments();
+        let target_segments: Vec<Rc<PathSegment>> = other.get_segments();
 
         // Index of the last common segment in the sequence
         let mut common_index: Option<usize> = None;
@@ -251,7 +252,7 @@ impl OperationPath {
         }
 
         // Rebuild the suffix segments list from the target path
-        let mut previous_new_segment: Option<Arc<PathSegment>> = None;
+        let mut previous_new_segment: Option<Rc<PathSegment>> = None;
 
         for original_segment in target_segments
             .iter()
@@ -270,7 +271,7 @@ impl OperationPath {
                 condition: original_segment.condition.clone(),
             };
 
-            previous_new_segment = Some(Arc::new(new_segment_data));
+            previous_new_segment = Some(Rc::new(new_segment_data));
         }
 
         OperationPath::new(

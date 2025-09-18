@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::{Debug, Display, Write},
-    sync::Arc,
-};
+use std::fmt::{Debug, Display, Write};
+use std::rc::Rc;
 
 use crate::ast::selection_set::{FieldSelection, InlineFragmentSelection};
 
@@ -93,9 +91,9 @@ impl Display for Segment {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)] // Clone is cheap with Arc inside
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct MergePath {
-    pub inner: Arc<[Segment]>,
+    pub inner: Rc<[Segment]>,
 }
 
 impl MergePath {
@@ -105,7 +103,7 @@ impl MergePath {
 
     pub fn slice_from(&self, start: usize) -> Self {
         Self {
-            inner: Arc::from(&self.inner[start..]),
+            inner: Rc::from(&self.inner[start..]),
         }
     }
 
@@ -115,7 +113,7 @@ impl MergePath {
 
     pub fn without_last(&self) -> Self {
         Self {
-            inner: Arc::from(&self.inner[..self.inner.len() - 1]),
+            inner: Rc::from(&self.inner[..self.inner.len() - 1]),
         }
     }
 

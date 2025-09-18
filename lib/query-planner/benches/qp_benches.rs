@@ -69,6 +69,47 @@ fn query_plan_pipeline(c: &mut Criterion) {
         })
     });
 
+    c.bench_function("query_plan_grafbase_many_plans", |b| {
+        let supergraph_sdl =
+            std::fs::read_to_string("./fixture/grafbase-many-plans/supergraph.graphql")
+                .expect("Unable to read input file");
+        let parsed_schema = parse_schema(&supergraph_sdl);
+        let supergraph_state = SupergraphState::new(&parsed_schema);
+        let graph =
+            Graph::graph_from_supergraph_state(&supergraph_state).expect("failed to create graph");
+
+        let parsed_document = get_operation("./fixture/grafbase-many-plans/operation.graphql");
+        let operation =
+            get_executable_operation(&parsed_document, &supergraph_state, Some("ManyPlansQuery"));
+        let override_context = PlannerOverrideContext::default();
+
+        b.iter(|| {
+            let bb_graph = black_box(&graph);
+            let bb_operation = black_box(&operation);
+            let bb_supergraph_state = black_box(&supergraph_state);
+            let bb_override_context = black_box(&override_context);
+
+            let best_paths_per_leaf = walk_operation(
+                bb_graph,
+                bb_supergraph_state,
+                bb_override_context,
+                bb_operation,
+            )
+            .expect("walk_operation failed during benchmark");
+            let query_tree = find_best_combination(bb_graph, best_paths_per_leaf).unwrap();
+            let fetch_graph = build_fetch_graph_from_query_tree(
+                bb_graph,
+                bb_supergraph_state,
+                bb_override_context,
+                query_tree,
+            )
+            .unwrap();
+            let query_plan =
+                build_query_plan_from_fetch_graph(fetch_graph, bb_supergraph_state).unwrap();
+            black_box(query_plan);
+        })
+    });
+
     c.bench_function("normalization", |b| {
         b.iter(|| {
             let op = get_executable_operation(
