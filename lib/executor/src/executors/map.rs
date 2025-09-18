@@ -14,7 +14,7 @@ use tokio::sync::{OnceCell, Semaphore};
 use crate::{
     executors::{
         common::{HttpExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
-        dedupe::{ABuildHasher, RequestFingerprint, SharedResponse},
+        dedupe::{ABuildHasher, SharedResponse},
         error::SubgraphExecutorError,
         http::HTTPSubgraphExecutor,
     },
@@ -81,9 +81,8 @@ impl SubgraphExecutorMap {
         let semaphores_by_origin: DashMap<String, Arc<Semaphore>> = DashMap::new();
         let max_connections_per_host = config.max_connections_per_host;
         let config_arc = Arc::new(config);
-        let in_flight_requests: Arc<
-            DashMap<RequestFingerprint, Arc<OnceCell<SharedResponse>>, ABuildHasher>,
-        > = Arc::new(DashMap::with_hasher(ABuildHasher::default()));
+        let in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>> =
+            Arc::new(DashMap::with_hasher(ABuildHasher::default()));
 
         let executor_map = subgraph_endpoint_map
             .into_iter()

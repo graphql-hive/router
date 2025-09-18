@@ -1264,6 +1264,7 @@ dependencies = [
  "hyper-util",
  "indexmap 2.11.1",
  "itoa",
+ "ntex-http",
  "ryu",
  "serde",
  "sonic-rs",
