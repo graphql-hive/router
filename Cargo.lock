@@ -1276,6 +1276,7 @@ name = "hive-router-config"
 version = "0.0.4"
 dependencies = [
  "config",
+ "http",
  "humantime-serde",
  "schemars 1.0.4",
  "serde",
@@ -1304,7 +1305,10 @@ dependencies = [
  "hyper-tls",
  "hyper-util",
  "indexmap 2.11.4",
+ "insta",
  "itoa",
+ "ntex-http",
+ "regex-automata",
  "ryu",
  "serde",
  "sonic-rs",

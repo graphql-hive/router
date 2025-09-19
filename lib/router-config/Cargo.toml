@@ -19,6 +19,7 @@ path = "src/config_schema_generator.rs"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+http = { workspace = true }
 schemars = "1.0.4"
 humantime-serde = "1.1.1"
 config = { version = "0.15.14", features = ["yaml", "json", "json5"] }

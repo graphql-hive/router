@@ -6,6 +6,8 @@ use hive_router_query_planner::planner::plan_nodes::{
     ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
     QueryPlan, SequenceNode,
 };
+use http::HeaderMap;
+use ntex_http::HeaderMap as NtexHeaderMap;
 use serde::Deserialize;
 use sonic_rs::ValueRef;
 
@@ -13,6 +15,7 @@ use crate::{
     context::ExecutionContext,
     execution::{error::PlanExecutionError, rewrites::FetchRewriteExt},
     executors::{common::HttpExecutionRequest, map::SubgraphExecutorMap},
+    headers::{plan::HeaderRulesPlan, request::modify_subgraph_request_headers},
     introspection::{
         resolve::{resolve_introspection, IntrospectionContext},
         schema::SchemaMetadata,
@@ -35,8 +38,10 @@ use crate::{
 pub struct QueryPlanExecutionContext<'exec> {
     pub query_plan: &'exec QueryPlan,
     pub projection_plan: &'exec Vec<FieldProjectionPlan>,
+    pub headers_plan: &'exec HeaderRulesPlan,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     pub extensions: Option<HashMap<String, sonic_rs::Value>>,
+    pub upstream_headers: &'exec NtexHeaderMap,
     pub introspection_context: &'exec IntrospectionContext<'exec, 'static>,
     pub operation_type_name: &'exec str,
     pub executors: &'exec SubgraphExecutorMap,
@@ -59,6 +64,8 @@ pub async fn execute_query_plan<'exec>(
             ctx.executors,
             ctx.introspection_context.metadata,
             // Deduplicate subgraph requests only if the operation type is a query
+            ctx.upstream_headers,
+            ctx.headers_plan,
             ctx.operation_type_name == "Query",
         );
         executor
@@ -83,6 +90,8 @@ pub struct Executor<'exec> {
     variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     schema_metadata: &'exec SchemaMetadata,
     executors: &'exec SubgraphExecutorMap,
+    upstream_headers: &'exec NtexHeaderMap,
+    headers_plan: &'exec HeaderRulesPlan,
     dedupe_subgraph_requests: bool,
 }
 
@@ -150,12 +159,16 @@ impl<'exec> Executor<'exec> {
         variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
         executors: &'exec SubgraphExecutorMap,
         schema_metadata: &'exec SchemaMetadata,
+        upstream_headers: &'exec NtexHeaderMap,
+        headers_plan: &'exec HeaderRulesPlan,
         dedupe_subgraph_requests: bool,
     ) -> Self {
         Executor {
             variable_values,
             executors,
             schema_metadata,
+            upstream_headers,
+            headers_plan,
             dedupe_subgraph_requests,
         }
     }
@@ -522,6 +535,15 @@ impl<'exec> Executor<'exec> {
         node: &FetchNode,
         representations: Option<Vec<u8>>,
     ) -> Result<ExecutionJob, PlanExecutionError> {
+        // TODO: We could optimize header map creation by caching them per service name
+        let mut headers_map = HeaderMap::new();
+        modify_subgraph_request_headers(
+            self.headers_plan,
+            &node.service_name,
+            self.upstream_headers,
+            &mut headers_map,
+        );
+
         Ok(ExecutionJob::Fetch(FetchJob {
             fetch_node_id: node.id,
             response: self
@@ -534,6 +556,7 @@ impl<'exec> Executor<'exec> {
                         operation_name: node.operation_name.as_deref(),
                         variables: None,
                         representations,
+                        headers: headers_map,
                     },
                 )
                 .await,

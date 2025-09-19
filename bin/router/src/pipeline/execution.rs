@@ -64,8 +64,10 @@ pub async fn execute_plan(
     execute_query_plan(QueryPlanExecutionContext {
         query_plan: query_plan_payload,
         projection_plan: &normalized_payload.projection_plan,
+        headers_plan: &app_state.headers_plan,
         variable_values: &variable_payload.variables_map,
         extensions,
+        upstream_headers: req.headers(),
         introspection_context: &introspection_context,
         operation_type_name: normalized_payload.root_type_name,
         executors: &app_state.subgraph_executor_map,
