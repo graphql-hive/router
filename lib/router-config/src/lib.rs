@@ -1,3 +1,4 @@
+pub mod headers;
 pub mod http_server;
 pub mod log;
 pub mod primitives;
@@ -40,6 +41,10 @@ pub struct HiveRouterConfig {
     /// Configuration for the traffic-shaper executor. Use these configurations to control how requests are being executed to subgraphs.
     #[serde(default)]
     pub traffic_shaping: TrafficShapingExecutorConfig,
+
+    /// Configuration for the headers.
+    #[serde(default)]
+    pub headers: headers::HeadersConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
