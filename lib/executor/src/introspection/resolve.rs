@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use graphql_parser::query::Value as QueryValue;
@@ -53,15 +54,16 @@ fn is_deprecated_enum<'exec, 'schema: 'exec>(enum_val: &'exec EnumValue<'schema,
 
 fn kind_to_str<'exec, 'schema: 'exec>(
     type_def: &'exec TypeDefinition<'schema, String>,
-) -> &'exec str {
-    match type_def {
+) -> Cow<'exec, str> {
+    (match type_def {
         TypeDefinition::Scalar(_) => "SCALAR",
         TypeDefinition::Object(_) => "OBJECT",
         TypeDefinition::Interface(_) => "INTERFACE",
         TypeDefinition::Union(_) => "UNION",
         TypeDefinition::Enum(_) => "ENUM",
         TypeDefinition::InputObject(_) => "INPUT_OBJECT",
-    }
+    })
+    .into()
 }
 
 fn resolve_input_value<'exec, 'schema: 'exec>(
@@ -83,14 +85,14 @@ fn resolve_input_value_selections<'exec, 'schema: 'exec>(
     for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
-                "name" => Value::String(&iv.name),
+                "name" => Value::String(iv.name.as_str().into()),
                 "description" => iv
                     .description
                     .as_ref()
-                    .map_or(Value::Null, |s| Value::String(s)),
+                    .map_or(Value::Null, |s| Value::String(s.into())),
                 "type" => resolve_type(&iv.value_type, &field.selections, ctx),
                 "defaultValue" => Value::Null, // TODO: support default values
-                "__typename" => Value::String("__InputValue"),
+                "__typename" => Value::String("__InputValue".into()),
                 _ => Value::Null,
             };
             iv_data.push((field.selection_identifier(), value));
@@ -124,11 +126,11 @@ fn resolve_field_selections<'exec, 'schema: 'exec>(
     for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
-                "name" => Value::String(&f.name),
+                "name" => Value::String(f.name.as_str().into()),
                 "description" => f
                     .description
                     .as_ref()
-                    .map_or(Value::Null, |s| Value::String(s)),
+                    .map_or(Value::Null, |s| Value::String(s.into())),
                 "args" => {
                     let args: Vec<_> = f
                         .arguments
@@ -139,10 +141,9 @@ fn resolve_field_selections<'exec, 'schema: 'exec>(
                 }
                 "type" => resolve_type(&f.field_type, &field.selections, ctx),
                 "isDeprecated" => Value::Bool(is_deprecated(&f.directives)),
-                "deprecationReason" => {
-                    get_deprecation_reason(&f.directives).map_or(Value::Null, Value::String)
-                }
-                "__typename" => Value::String("__Field"),
+                "deprecationReason" => get_deprecation_reason(&f.directives)
+                    .map_or(Value::Null, |s| Value::String(s.into())),
+                "__typename" => Value::String("__Field".into()),
                 _ => Value::Null,
             };
             field_data.push((field.selection_identifier(), value));
@@ -174,16 +175,15 @@ fn resolve_enum_value_selections<'exec, 'schema: 'exec>(
     for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
-                "name" => Value::String(&ev.name),
+                "name" => Value::String(ev.name.as_str().into()),
                 "description" => ev
                     .description
                     .as_ref()
-                    .map_or(Value::Null, |s| Value::String(s)),
+                    .map_or(Value::Null, |s| Value::String(s.into())),
                 "isDeprecated" => Value::Bool(is_deprecated_enum(ev)),
-                "deprecationReason" => {
-                    get_deprecation_reason(&ev.directives).map_or(Value::Null, Value::String)
-                }
-                "__typename" => Value::String("__EnumValue"),
+                "deprecationReason" => get_deprecation_reason(&ev.directives)
+                    .map_or(Value::Null, |s| Value::String(s.into())),
+                "__typename" => Value::String("__EnumValue".into()),
                 _ => Value::Null,
             };
             ev_data.push((field.selection_identifier(), value));
@@ -227,7 +227,7 @@ fn resolve_type_definition_selections<'exec, 'schema: 'exec>(
                     TypeDefinition::Enum(e) => Some(&e.name),
                     TypeDefinition::InputObject(io) => Some(&io.name),
                 }
-                .map(|s| Value::String(s))
+                .map(|s| Value::String(s.into()))
                 .unwrap_or(Value::Null),
                 "description" => match type_def {
                     TypeDefinition::Scalar(s) => s.description.as_ref(),
@@ -237,7 +237,7 @@ fn resolve_type_definition_selections<'exec, 'schema: 'exec>(
                     TypeDefinition::Enum(e) => e.description.as_ref(),
                     TypeDefinition::InputObject(io) => io.description.as_ref(),
                 }
-                .map_or(Value::Null, |s| Value::String(s)),
+                .map_or(Value::Null, |s| Value::String(s.into())),
                 "fields" => {
                     let fields = match type_def {
                         TypeDefinition::Object(o) => Some(&o.fields),
@@ -338,7 +338,7 @@ fn resolve_type_definition_selections<'exec, 'schema: 'exec>(
                     _ => Value::Null,
                 },
                 "ofType" => Value::Null,
-                "__typename" => Value::String("__Type"),
+                "__typename" => Value::String("__Type".into()),
                 _ => Value::Null,
             };
             type_data.push((field.selection_identifier(), value));
@@ -373,10 +373,10 @@ fn resolve_wrapper_type_selections<'exec, 'schema: 'exec>(
     for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
-                "kind" => Value::String(kind),
+                "kind" => Value::String(kind.into()),
                 "name" => Value::Null,
                 "ofType" => resolve_type(inner_type, &field.selections, ctx),
-                "__typename" => Value::String("__Type"),
+                "__typename" => Value::String("__Type".into()),
                 _ => Value::Null,
             };
             type_data.push((field.selection_identifier(), value));
@@ -426,16 +426,16 @@ fn resolve_directive_selections<'exec, 'schema: 'exec>(
     for item in selection_items {
         if let SelectionItem::Field(field) = item {
             let value = match field.name.as_str() {
-                "name" => Value::String(&d.name),
+                "name" => Value::String(d.name.as_str().into()),
                 "description" => d
                     .description
                     .as_ref()
-                    .map_or(Value::Null, |s| Value::String(s)),
+                    .map_or(Value::Null, |s| Value::String(s.into())),
                 "locations" => {
                     let locs: Vec<_> = d
                         .locations
                         .iter()
-                        .map(|l| Value::String(l.as_str()))
+                        .map(|l| Value::String(l.as_str().into()))
                         .collect();
                     Value::Array(locs)
                 }
@@ -448,7 +448,7 @@ fn resolve_directive_selections<'exec, 'schema: 'exec>(
                     Value::Array(args)
                 }
                 "isRepeatable" => Value::Bool(d.repeatable),
-                "__typename" => Value::String("__Directive"),
+                "__typename" => Value::String("__Directive".into()),
                 _ => Value::Null,
             };
             directive_data.push((field.selection_identifier(), value));
@@ -526,7 +526,7 @@ fn resolve_schema_selections<'exec, 'schema: 'exec>(
                         .collect();
                     Value::Array(directives)
                 }
-                "__typename" => Value::String("__Schema"),
+                "__typename" => Value::String("__Schema".into()),
                 _ => Value::Null,
             };
             schema_data.push((inner_field.selection_identifier(), value));
@@ -590,7 +590,7 @@ fn resolve_root_introspection_selections<'exec, 'schema: 'exec>(
                         Value::Null
                     }
                 }
-                "__typename" => Value::String(root_type_name),
+                "__typename" => Value::String(root_type_name.into()),
                 _ => Value::Null,
             };
             data.push((field.selection_identifier(), value));
