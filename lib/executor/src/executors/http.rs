@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::executors::dedupe::{ABuildHasher, RequestFingerprint, SharedResponse};
+use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
 use dashmap::DashMap;
 use hive_router_config::traffic_shaping::TrafficShapingExecutorConfig;
 use tokio::sync::OnceCell;
@@ -33,8 +33,7 @@ pub struct HTTPSubgraphExecutor {
     pub header_map: HeaderMap,
     pub semaphore: Arc<Semaphore>,
     pub config: Arc<TrafficShapingExecutorConfig>,
-    pub in_flight_requests:
-        Arc<DashMap<RequestFingerprint, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -46,13 +45,11 @@ impl HTTPSubgraphExecutor {
         http_client: Arc<Client<HttpsConnector<HttpConnector>, Full<Bytes>>>,
         semaphore: Arc<Semaphore>,
         config: Arc<TrafficShapingExecutorConfig>,
-        in_flight_requests: Arc<
-            DashMap<RequestFingerprint, Arc<OnceCell<SharedResponse>>, ABuildHasher>,
-        >,
+        in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
-            "Content-Type",
+            http::header::CONTENT_TYPE,
             HeaderValue::from_static("application/json; charset=utf-8"),
         );
         header_map.insert(
@@ -118,7 +115,11 @@ impl HTTPSubgraphExecutor {
         Ok(body)
     }
 
-    async fn _send_request(&self, body: Vec<u8>) -> Result<SharedResponse, SubgraphExecutorError> {
+    async fn _send_request(
+        &self,
+        body: Vec<u8>,
+        headers: HeaderMap,
+    ) -> Result<SharedResponse, SubgraphExecutorError> {
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
             .uri(&self.endpoint)
@@ -128,7 +129,7 @@ impl HTTPSubgraphExecutor {
                 SubgraphExecutorError::RequestBuildFailure(self.endpoint.to_string(), e.to_string())
             })?;
 
-        *req.headers_mut() = self.header_map.clone();
+        *req.headers_mut() = headers;
 
         let res = self.http_client.request(req).await.map_err(|e| {
             SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
@@ -174,29 +175,28 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             Err(e) => return self.error_to_graphql_bytes(e),
         };
 
+        let mut headers = execution_request.headers;
+        self.header_map.iter().for_each(|(key, value)| {
+            headers.insert(key, value.clone());
+        });
+
         if !self.config.dedupe_enabled || !execution_request.dedupe {
             // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
-            return match self._send_request(body).await {
+            return match self._send_request(body, headers).await {
                 Ok(shared_response) => shared_response.body,
                 Err(e) => self.error_to_graphql_bytes(e),
             };
         }
 
-        let fingerprint = RequestFingerprint::new(
-            &http::Method::POST,
-            &self.endpoint,
-            &self.header_map,
-            &body,
-            &self.config.dedupe_fingerprint_headers,
-        );
+        let fingerprint = request_fingerprint(&http::Method::POST, &self.endpoint, &headers, &body);
 
         // Clone the cell from the map, dropping the lock from the DashMap immediately.
         // Prevents any deadlocks.
         let cell = self
             .in_flight_requests
-            .entry(fingerprint.clone())
+            .entry(fingerprint)
             .or_default()
             .value()
             .clone();
@@ -207,7 +207,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
                     let _permit = self.semaphore.acquire().await.unwrap();
-                    self._send_request(body).await
+                    self._send_request(body, headers).await
                 };
                 // It's important to remove the entry from the map before returning the result.
                 // This ensures that once the OnceCell is set, no future requests can join it.

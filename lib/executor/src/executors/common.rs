@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use http::HeaderMap;
 
 #[async_trait]
 pub trait SubgraphExecutor {
@@ -24,5 +25,6 @@ pub struct HttpExecutionRequest<'a> {
     pub operation_name: Option<&'a str>,
     // TODO: variables could be stringified before even executing the request
     pub variables: Option<HashMap<&'a str, &'a sonic_rs::Value>>,
+    pub headers: HeaderMap,
     pub representations: Option<Vec<u8>>,
 }
