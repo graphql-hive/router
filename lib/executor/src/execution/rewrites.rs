@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use hive_router_query_planner::planner::plan_nodes::{
     FetchNodePathSegment, FetchRewrite, KeyRenamer, ValueSetter,
 };
@@ -93,7 +91,7 @@ impl RewriteApplier for ValueSetter {
         path: &'a [FetchNodePathSegment],
     ) {
         if path.is_empty() {
-            *data = Value::String(Cow::Borrowed(self.set_value_to.as_str()));
+            *data = Value::String(self.set_value_to.as_str().into());
             return;
         }
 
