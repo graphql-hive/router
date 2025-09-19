@@ -95,7 +95,7 @@ Forward headers from the client request into subgraph requests.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**propagate**](#option1propagate)|`object`||yes|
+|[**propagate**](#option1propagate)|`object`|Match spec for header rules.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -103,6 +103,9 @@ Forward headers from the client request into subgraph requests.
 ```yaml
 propagate:
   default: null
+  exclude: null
+  matching: null
+  named: null
   rename: null
 
 ```
@@ -117,13 +120,16 @@ Remove headers before sending the request to a subgraph.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**remove**](#option2remove)|`object`||yes|
+|[**remove**](#option2remove)|`object`|Match spec for header rules.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
-remove: {}
+remove:
+  exclude: null
+  matching: null
+  named: null
 
 ```
 
@@ -158,154 +164,99 @@ set: {}
 <a name="option1propagate"></a>
 ## Option 1: propagate: object
 
+Match spec for header rules.
+
+- `named`: one or more exact header names (OR semantics).
+- `matching`: one or more regex patterns (OR semantics).
+- `exclude`: optional list of regex patterns to subtract.
+
+Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
+even if they match the patterns.
+
+
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**default**|`string`, `null`|If the header is missing, set a default value.<br/>||
+|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `named`/`matching`.<br/>||
+|**matching**||Match headers by regex pattern(s).<br/>||
+|**named**||Match headers by exact name.<br/>||
 |**rename**|`string`, `null`|Optionally rename the header when forwarding.<br/>||
-
-   
-**Option 1 (alternative):** 
-Match a single header by its exact name (header names are normalized to lowercase).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**named**|`string`||yes|
-
-
-   
-**Option 2 (alternative):** 
-Match all headers whose names match the given regular expression.
-**Important:** hop-by-hop headers (e.g. `Connection`, `Content-Length` and others)
-are **never propagated**, even if the regex matches them.
-These headers are stripped automatically by the router for protocol correctness.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**matching**|`string`||yes|
-
-
-   
-**Option 3 (alternative):** 
-Match all headers whose names match any of the given regular expressions.
-Think of it as OR-ing the regexes (union).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**matching\_any**](#option3matching_any)|`string[]`||yes|
-
-
-   
-**Option 4 (alternative):** 
-Match all headers whose names match all of the given regular expressions.
-Think of it as AND-ing the regexes (intersection).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**matching\_all**](#option4matching_all)|`string[]`||yes|
-
 
 **Example**
 
 ```yaml
 default: null
+exclude: null
+matching: null
+named: null
 rename: null
 
 ```
 
-<a name="option3matching_any"></a>
-## Option 3: matching\_any\[\]: array
+<a name="option1propagateexclude"></a>
+### Option 1: propagate\.exclude\[\]: array,null
+
+Exclude headers matching these regexes, applied after `named`/`matching`.
+
 
 **Items**
 
 **Item Type:** `string`  
-<a name="option4matching_all"></a>
-## Option 4: matching\_all\[\]: array
+**Example**
 
-**Items**
+```yaml
+{}
 
-**Item Type:** `string`  
+```
+
 <a name="option2remove"></a>
 ## Option 2: remove: object
 
-   
-**Option 1 (alternative):** 
-Match a single header by its exact name (header names are normalized to lowercase).
+Match spec for header rules.
+
+- `named`: one or more exact header names (OR semantics).
+- `matching`: one or more regex patterns (OR semantics).
+- `exclude`: optional list of regex patterns to subtract.
+
+Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
+even if they match the patterns.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**named**|`string`||yes|
+|[**exclude**](#option2removeexclude)|`string[]`|Exclude headers matching these regexes, applied after `named`/`matching`.<br/>||
+|**matching**||Match headers by regex pattern(s).<br/>||
+|**named**||Match headers by exact name.<br/>||
 
+**Example**
 
-   
-**Option 2 (alternative):** 
-Match all headers whose names match the given regular expression.
-**Important:** hop-by-hop headers (e.g. `Connection`, `Content-Length` and others)
-are **never propagated**, even if the regex matches them.
-These headers are stripped automatically by the router for protocol correctness.
+```yaml
+exclude: null
+matching: null
+named: null
 
+```
 
-**Properties**
+<a name="option2removeexclude"></a>
+### Option 2: remove\.exclude\[\]: array,null
 
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**matching**|`string`||yes|
+Exclude headers matching these regexes, applied after `named`/`matching`.
 
-
-   
-**Option 3 (alternative):** 
-Match all headers whose names match any of the given regular expressions.
-Think of it as OR-ing the regexes (union).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**matching\_any**](#option3matching_any)|`string[]`||yes|
-
-
-   
-**Option 4 (alternative):** 
-Match all headers whose names match all of the given regular expressions.
-Think of it as AND-ing the regexes (intersection).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**matching\_all**](#option4matching_all)|`string[]`||yes|
-
-
-<a name="option3matching_any"></a>
-## Option 3: matching\_any\[\]: array
 
 **Items**
 
 **Item Type:** `string`  
-<a name="option4matching_all"></a>
-## Option 4: matching\_all\[\]: array
+**Example**
 
-**Items**
+```yaml
+{}
 
-**Item Type:** `string`  
+```
+
 <a name="option3set"></a>
 ## Option 3: set: object
 
@@ -341,7 +292,7 @@ Forward headers from subgraph responses into the final client response.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**propagate**](#option1propagate)|`object`||yes|
+|[**propagate**](#option1propagate)|`object`|Match spec for header rules.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -350,6 +301,9 @@ Forward headers from subgraph responses into the final client response.
 propagate:
   algorithm: null
   default: null
+  exclude: null
+  matching: null
+  named: null
   rename: null
 
 ```
@@ -364,13 +318,16 @@ Remove headers before sending the response to the client.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**remove**](#option2remove)|`object`||yes|
+|[**remove**](#option2remove)|`object`|Match spec for header rules.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
-remove: {}
+remove:
+  exclude: null
+  matching: null
+  named: null
 
 ```
 
@@ -405,156 +362,101 @@ set: {}
 <a name="option1propagate"></a>
 ## Option 1: propagate: object
 
+Match spec for header rules.
+
+- `named`: one or more exact header names (OR semantics).
+- `matching`: one or more regex patterns (OR semantics).
+- `exclude`: optional list of regex patterns to subtract.
+
+Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
+even if they match the patterns.
+
+
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**algorithm**||How to merge values across multiple subgraph responses.<br/>||
 |**default**|`string`, `null`|If no subgraph returns the header, set this default value.<br/>||
+|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `named`/`matching`.<br/>||
+|**matching**||Match headers by regex pattern(s).<br/>||
+|**named**||Match headers by exact name.<br/>||
 |**rename**|`string`, `null`|Optionally rename the header when returning it to the client.<br/>||
-
-   
-**Option 1 (alternative):** 
-Match a single header by its exact name (header names are normalized to lowercase).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**named**|`string`||yes|
-
-
-   
-**Option 2 (alternative):** 
-Match all headers whose names match the given regular expression.
-**Important:** hop-by-hop headers (e.g. `Connection`, `Content-Length` and others)
-are **never propagated**, even if the regex matches them.
-These headers are stripped automatically by the router for protocol correctness.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**matching**|`string`||yes|
-
-
-   
-**Option 3 (alternative):** 
-Match all headers whose names match any of the given regular expressions.
-Think of it as OR-ing the regexes (union).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**matching\_any**](#option3matching_any)|`string[]`||yes|
-
-
-   
-**Option 4 (alternative):** 
-Match all headers whose names match all of the given regular expressions.
-Think of it as AND-ing the regexes (intersection).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**matching\_all**](#option4matching_all)|`string[]`||yes|
-
 
 **Example**
 
 ```yaml
 algorithm: null
 default: null
+exclude: null
+matching: null
+named: null
 rename: null
 
 ```
 
-<a name="option3matching_any"></a>
-## Option 3: matching\_any\[\]: array
+<a name="option1propagateexclude"></a>
+### Option 1: propagate\.exclude\[\]: array,null
+
+Exclude headers matching these regexes, applied after `named`/`matching`.
+
 
 **Items**
 
 **Item Type:** `string`  
-<a name="option4matching_all"></a>
-## Option 4: matching\_all\[\]: array
+**Example**
 
-**Items**
+```yaml
+{}
 
-**Item Type:** `string`  
+```
+
 <a name="option2remove"></a>
 ## Option 2: remove: object
 
-   
-**Option 1 (alternative):** 
-Match a single header by its exact name (header names are normalized to lowercase).
+Match spec for header rules.
+
+- `named`: one or more exact header names (OR semantics).
+- `matching`: one or more regex patterns (OR semantics).
+- `exclude`: optional list of regex patterns to subtract.
+
+Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
+even if they match the patterns.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**named**|`string`||yes|
+|[**exclude**](#option2removeexclude)|`string[]`|Exclude headers matching these regexes, applied after `named`/`matching`.<br/>||
+|**matching**||Match headers by regex pattern(s).<br/>||
+|**named**||Match headers by exact name.<br/>||
 
+**Example**
 
-   
-**Option 2 (alternative):** 
-Match all headers whose names match the given regular expression.
-**Important:** hop-by-hop headers (e.g. `Connection`, `Content-Length` and others)
-are **never propagated**, even if the regex matches them.
-These headers are stripped automatically by the router for protocol correctness.
+```yaml
+exclude: null
+matching: null
+named: null
 
+```
 
-**Properties**
+<a name="option2removeexclude"></a>
+### Option 2: remove\.exclude\[\]: array,null
 
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**matching**|`string`||yes|
+Exclude headers matching these regexes, applied after `named`/`matching`.
 
-
-   
-**Option 3 (alternative):** 
-Match all headers whose names match any of the given regular expressions.
-Think of it as OR-ing the regexes (union).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**matching\_any**](#option3matching_any)|`string[]`||yes|
-
-
-   
-**Option 4 (alternative):** 
-Match all headers whose names match all of the given regular expressions.
-Think of it as AND-ing the regexes (intersection).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**matching\_all**](#option4matching_all)|`string[]`||yes|
-
-
-<a name="option3matching_any"></a>
-## Option 3: matching\_any\[\]: array
 
 **Items**
 
 **Item Type:** `string`  
-<a name="option4matching_all"></a>
-## Option 4: matching\_all\[\]: array
+**Example**
 
-**Items**
+```yaml
+{}
 
-**Item Type:** `string`  
+```
+
 <a name="option3set"></a>
 ## Option 3: set: object
 
@@ -631,7 +533,7 @@ Forward headers from the client request into subgraph requests.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**propagate**](#option1propagate)|`object`||yes|
+|[**propagate**](#option1propagate)|`object`|Match spec for header rules.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -639,6 +541,9 @@ Forward headers from the client request into subgraph requests.
 ```yaml
 propagate:
   default: null
+  exclude: null
+  matching: null
+  named: null
   rename: null
 
 ```
@@ -653,13 +558,16 @@ Remove headers before sending the request to a subgraph.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**remove**](#option2remove)|`object`||yes|
+|[**remove**](#option2remove)|`object`|Match spec for header rules.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
-remove: {}
+remove:
+  exclude: null
+  matching: null
+  named: null
 
 ```
 
@@ -694,154 +602,99 @@ set: {}
 <a name="option1propagate"></a>
 ## Option 1: propagate: object
 
+Match spec for header rules.
+
+- `named`: one or more exact header names (OR semantics).
+- `matching`: one or more regex patterns (OR semantics).
+- `exclude`: optional list of regex patterns to subtract.
+
+Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
+even if they match the patterns.
+
+
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**default**|`string`, `null`|If the header is missing, set a default value.<br/>||
+|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `named`/`matching`.<br/>||
+|**matching**||Match headers by regex pattern(s).<br/>||
+|**named**||Match headers by exact name.<br/>||
 |**rename**|`string`, `null`|Optionally rename the header when forwarding.<br/>||
-
-   
-**Option 1 (alternative):** 
-Match a single header by its exact name (header names are normalized to lowercase).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**named**|`string`||yes|
-
-
-   
-**Option 2 (alternative):** 
-Match all headers whose names match the given regular expression.
-**Important:** hop-by-hop headers (e.g. `Connection`, `Content-Length` and others)
-are **never propagated**, even if the regex matches them.
-These headers are stripped automatically by the router for protocol correctness.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**matching**|`string`||yes|
-
-
-   
-**Option 3 (alternative):** 
-Match all headers whose names match any of the given regular expressions.
-Think of it as OR-ing the regexes (union).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**matching\_any**](#option3matching_any)|`string[]`||yes|
-
-
-   
-**Option 4 (alternative):** 
-Match all headers whose names match all of the given regular expressions.
-Think of it as AND-ing the regexes (intersection).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**matching\_all**](#option4matching_all)|`string[]`||yes|
-
 
 **Example**
 
 ```yaml
 default: null
+exclude: null
+matching: null
+named: null
 rename: null
 
 ```
 
-<a name="option3matching_any"></a>
-## Option 3: matching\_any\[\]: array
+<a name="option1propagateexclude"></a>
+### Option 1: propagate\.exclude\[\]: array,null
+
+Exclude headers matching these regexes, applied after `named`/`matching`.
+
 
 **Items**
 
 **Item Type:** `string`  
-<a name="option4matching_all"></a>
-## Option 4: matching\_all\[\]: array
+**Example**
 
-**Items**
+```yaml
+{}
 
-**Item Type:** `string`  
+```
+
 <a name="option2remove"></a>
 ## Option 2: remove: object
 
-   
-**Option 1 (alternative):** 
-Match a single header by its exact name (header names are normalized to lowercase).
+Match spec for header rules.
+
+- `named`: one or more exact header names (OR semantics).
+- `matching`: one or more regex patterns (OR semantics).
+- `exclude`: optional list of regex patterns to subtract.
+
+Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
+even if they match the patterns.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**named**|`string`||yes|
+|[**exclude**](#option2removeexclude)|`string[]`|Exclude headers matching these regexes, applied after `named`/`matching`.<br/>||
+|**matching**||Match headers by regex pattern(s).<br/>||
+|**named**||Match headers by exact name.<br/>||
 
+**Example**
 
-   
-**Option 2 (alternative):** 
-Match all headers whose names match the given regular expression.
-**Important:** hop-by-hop headers (e.g. `Connection`, `Content-Length` and others)
-are **never propagated**, even if the regex matches them.
-These headers are stripped automatically by the router for protocol correctness.
+```yaml
+exclude: null
+matching: null
+named: null
 
+```
 
-**Properties**
+<a name="option2removeexclude"></a>
+### Option 2: remove\.exclude\[\]: array,null
 
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**matching**|`string`||yes|
+Exclude headers matching these regexes, applied after `named`/`matching`.
 
-
-   
-**Option 3 (alternative):** 
-Match all headers whose names match any of the given regular expressions.
-Think of it as OR-ing the regexes (union).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**matching\_any**](#option3matching_any)|`string[]`||yes|
-
-
-   
-**Option 4 (alternative):** 
-Match all headers whose names match all of the given regular expressions.
-Think of it as AND-ing the regexes (intersection).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**matching\_all**](#option4matching_all)|`string[]`||yes|
-
-
-<a name="option3matching_any"></a>
-## Option 3: matching\_any\[\]: array
 
 **Items**
 
 **Item Type:** `string`  
-<a name="option4matching_all"></a>
-## Option 4: matching\_all\[\]: array
+**Example**
 
-**Items**
+```yaml
+{}
 
-**Item Type:** `string`  
+```
+
 <a name="option3set"></a>
 ## Option 3: set: object
 
@@ -877,7 +730,7 @@ Forward headers from subgraph responses into the final client response.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**propagate**](#option1propagate)|`object`||yes|
+|[**propagate**](#option1propagate)|`object`|Match spec for header rules.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -886,6 +739,9 @@ Forward headers from subgraph responses into the final client response.
 propagate:
   algorithm: null
   default: null
+  exclude: null
+  matching: null
+  named: null
   rename: null
 
 ```
@@ -900,13 +756,16 @@ Remove headers before sending the response to the client.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**remove**](#option2remove)|`object`||yes|
+|[**remove**](#option2remove)|`object`|Match spec for header rules.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
-remove: {}
+remove:
+  exclude: null
+  matching: null
+  named: null
 
 ```
 
@@ -941,156 +800,101 @@ set: {}
 <a name="option1propagate"></a>
 ## Option 1: propagate: object
 
+Match spec for header rules.
+
+- `named`: one or more exact header names (OR semantics).
+- `matching`: one or more regex patterns (OR semantics).
+- `exclude`: optional list of regex patterns to subtract.
+
+Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
+even if they match the patterns.
+
+
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**algorithm**||How to merge values across multiple subgraph responses.<br/>||
 |**default**|`string`, `null`|If no subgraph returns the header, set this default value.<br/>||
+|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `named`/`matching`.<br/>||
+|**matching**||Match headers by regex pattern(s).<br/>||
+|**named**||Match headers by exact name.<br/>||
 |**rename**|`string`, `null`|Optionally rename the header when returning it to the client.<br/>||
-
-   
-**Option 1 (alternative):** 
-Match a single header by its exact name (header names are normalized to lowercase).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**named**|`string`||yes|
-
-
-   
-**Option 2 (alternative):** 
-Match all headers whose names match the given regular expression.
-**Important:** hop-by-hop headers (e.g. `Connection`, `Content-Length` and others)
-are **never propagated**, even if the regex matches them.
-These headers are stripped automatically by the router for protocol correctness.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**matching**|`string`||yes|
-
-
-   
-**Option 3 (alternative):** 
-Match all headers whose names match any of the given regular expressions.
-Think of it as OR-ing the regexes (union).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**matching\_any**](#option3matching_any)|`string[]`||yes|
-
-
-   
-**Option 4 (alternative):** 
-Match all headers whose names match all of the given regular expressions.
-Think of it as AND-ing the regexes (intersection).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**matching\_all**](#option4matching_all)|`string[]`||yes|
-
 
 **Example**
 
 ```yaml
 algorithm: null
 default: null
+exclude: null
+matching: null
+named: null
 rename: null
 
 ```
 
-<a name="option3matching_any"></a>
-## Option 3: matching\_any\[\]: array
+<a name="option1propagateexclude"></a>
+### Option 1: propagate\.exclude\[\]: array,null
+
+Exclude headers matching these regexes, applied after `named`/`matching`.
+
 
 **Items**
 
 **Item Type:** `string`  
-<a name="option4matching_all"></a>
-## Option 4: matching\_all\[\]: array
+**Example**
 
-**Items**
+```yaml
+{}
 
-**Item Type:** `string`  
+```
+
 <a name="option2remove"></a>
 ## Option 2: remove: object
 
-   
-**Option 1 (alternative):** 
-Match a single header by its exact name (header names are normalized to lowercase).
+Match spec for header rules.
+
+- `named`: one or more exact header names (OR semantics).
+- `matching`: one or more regex patterns (OR semantics).
+- `exclude`: optional list of regex patterns to subtract.
+
+Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
+even if they match the patterns.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**named**|`string`||yes|
+|[**exclude**](#option2removeexclude)|`string[]`|Exclude headers matching these regexes, applied after `named`/`matching`.<br/>||
+|**matching**||Match headers by regex pattern(s).<br/>||
+|**named**||Match headers by exact name.<br/>||
 
+**Example**
 
-   
-**Option 2 (alternative):** 
-Match all headers whose names match the given regular expression.
-**Important:** hop-by-hop headers (e.g. `Connection`, `Content-Length` and others)
-are **never propagated**, even if the regex matches them.
-These headers are stripped automatically by the router for protocol correctness.
+```yaml
+exclude: null
+matching: null
+named: null
 
+```
 
-**Properties**
+<a name="option2removeexclude"></a>
+### Option 2: remove\.exclude\[\]: array,null
 
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**matching**|`string`||yes|
+Exclude headers matching these regexes, applied after `named`/`matching`.
 
-
-   
-**Option 3 (alternative):** 
-Match all headers whose names match any of the given regular expressions.
-Think of it as OR-ing the regexes (union).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**matching\_any**](#option3matching_any)|`string[]`||yes|
-
-
-   
-**Option 4 (alternative):** 
-Match all headers whose names match all of the given regular expressions.
-Think of it as AND-ing the regexes (intersection).
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|[**matching\_all**](#option4matching_all)|`string[]`||yes|
-
-
-<a name="option3matching_any"></a>
-## Option 3: matching\_any\[\]: array
 
 **Items**
 
 **Item Type:** `string`  
-<a name="option4matching_all"></a>
-## Option 4: matching\_all\[\]: array
+**Example**
 
-**Items**
+```yaml
+{}
 
-**Item Type:** `string`  
+```
+
 <a name="option3set"></a>
 ## Option 3: set: object
 

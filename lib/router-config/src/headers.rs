@@ -100,21 +100,33 @@ pub enum SetSource {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(rename_all = "snake_case")]
-pub enum MatchSpec {
-    /// Match a single header by its exact name (header names are normalized to lowercase).
-    Named(HeaderName),
-    /// Match all headers whose names match the given regular expression.
-    /// **Important:** hop-by-hop headers (e.g. `Connection`, `Content-Length` and others)
-    /// are **never propagated**, even if the regex matches them.
-    /// These headers are stripped automatically by the router for protocol correctness.
-    Matching(RegExp),
-    /// Match all headers whose names match any of the given regular expressions.
-    /// Think of it as OR-ing the regexes (union).
-    MatchingAny(Vec<RegExp>),
-    /// Match all headers whose names match all of the given regular expressions.
-    /// Think of it as AND-ing the regexes (intersection).
-    MatchingAll(Vec<RegExp>),
+#[serde(untagged)]
+pub enum OneOrMany<T> {
+    One(T),
+    Many(Vec<T>),
+}
+
+/// Match spec for header rules.
+///
+/// - `named`: one or more exact header names (OR semantics).
+/// - `matching`: one or more regex patterns (OR semantics).
+/// - `exclude`: optional list of regex patterns to subtract.
+///
+/// Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
+/// even if they match the patterns.
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
+pub struct MatchSpec {
+    /// Match headers by exact name.
+    #[serde(default)]
+    pub named: Option<OneOrMany<HeaderName>>,
+
+    /// Match headers by regex pattern(s).
+    #[serde(default)]
+    pub matching: Option<OneOrMany<RegExp>>,
+
+    /// Exclude headers matching these regexes, applied after `named`/`matching`.
+    #[serde(default)]
+    pub exclude: Option<Vec<RegExp>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -135,9 +147,9 @@ pub struct RequestPropagateRule {
 #[serde(rename_all = "snake_case")]
 pub enum AggregationAlgo {
     /// Take the first value encountered and ignore later ones.
-    FirstWrite,
+    First,
     /// Overwrite with the last value encountered (default behavior).
-    LastWrite,
+    Last,
     /// Append all values, into a comma-separated string.
     Append,
 }
