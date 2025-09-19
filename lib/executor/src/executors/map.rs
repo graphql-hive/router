@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, BytesMut};
 use dashmap::DashMap;
 use hive_router_config::traffic_shaping::TrafficShapingExecutorConfig;
 use http::Uri;
@@ -13,8 +13,10 @@ use tokio::sync::{OnceCell, Semaphore};
 
 use crate::{
     executors::{
-        common::{HttpExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
-        dedupe::{ABuildHasher, RequestFingerprint, SharedResponse},
+        common::{
+            HttpExecutionRequest, HttpExecutionResponse, SubgraphExecutor, SubgraphExecutorBoxedArc,
+        },
+        dedupe::{ABuildHasher, SharedResponse},
         error::SubgraphExecutorError,
         http::HTTPSubgraphExecutor,
     },
@@ -42,7 +44,7 @@ impl SubgraphExecutorMap {
         &self,
         subgraph_name: &str,
         execution_request: HttpExecutionRequest<'a>,
-    ) -> Bytes {
+    ) -> HttpExecutionResponse {
         match self.inner.get(subgraph_name) {
             Some(executor) => executor.execute(execution_request).await,
             None => {
@@ -57,7 +59,11 @@ impl SubgraphExecutorMap {
                 buffer.put_slice(b"{\"errors\":");
                 buffer.put_slice(&errors_bytes);
                 buffer.put_slice(b"}");
-                buffer.freeze()
+
+                HttpExecutionResponse {
+                    body: buffer.freeze(),
+                    headers: Default::default(),
+                }
             }
         }
     }
@@ -81,9 +87,8 @@ impl SubgraphExecutorMap {
         let semaphores_by_origin: DashMap<String, Arc<Semaphore>> = DashMap::new();
         let max_connections_per_host = config.max_connections_per_host;
         let config_arc = Arc::new(config);
-        let in_flight_requests: Arc<
-            DashMap<RequestFingerprint, Arc<OnceCell<SharedResponse>>, ABuildHasher>,
-        > = Arc::new(DashMap::with_hasher(ABuildHasher::default()));
+        let in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>> =
+            Arc::new(DashMap::with_hasher(ABuildHasher::default()));
 
         let executor_map = subgraph_endpoint_map
             .into_iter()

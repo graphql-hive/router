@@ -1,3 +1,4 @@
+pub mod headers;
 pub mod http_server;
 pub mod log;
 pub mod primitives;
@@ -5,7 +6,7 @@ pub mod query_planner;
 pub mod supergraph;
 pub mod traffic_shaping;
 
-use config::{Config, Environment, File, FileSourceFile};
+use config::{Config, Environment, File, FileFormat, FileSourceFile};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +41,10 @@ pub struct HiveRouterConfig {
     /// Configuration for the traffic-shaper executor. Use these configurations to control how requests are being executed to subgraphs.
     #[serde(default)]
     pub traffic_shaping: TrafficShapingExecutorConfig,
+
+    /// Configuration for the headers.
+    #[serde(default)]
+    pub headers: headers::HeadersConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -74,6 +79,13 @@ pub fn load_config(
                 .separator("__")
                 .prefix_separator("__"),
         )
+        .build()?
+        .try_deserialize::<HiveRouterConfig>()
+}
+
+pub fn parse_yaml_config(config_raw: String) -> Result<HiveRouterConfig, config::ConfigError> {
+    Config::builder()
+        .add_source(File::from_str(&config_raw, FileFormat::Yaml))
         .build()?
         .try_deserialize::<HiveRouterConfig>()
 }

@@ -4,6 +4,9 @@ use graphql_parser::schema::Document;
 use graphql_tools::validation::{utils::ValidationError, validate::ValidationPlan};
 use hive_router_config::HiveRouterConfig;
 use hive_router_plan_executor::{
+    headers::{
+        compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
+    },
     introspection::schema::{SchemaMetadata, SchemaWithMetadata},
     SubgraphExecutorMap,
 };
@@ -25,13 +28,14 @@ pub struct RouterSharedState {
     pub parse_cache: Cache<u64, Arc<graphql_parser::query::Document<'static, String>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
     pub router_config: HiveRouterConfig,
+    pub headers_plan: HeaderRulesPlan,
 }
 
 impl RouterSharedState {
     pub fn new(
         parsed_supergraph_sdl: Document<'static, String>,
         router_config: HiveRouterConfig,
-    ) -> Arc<Self> {
+    ) -> Result<Arc<Self>, SharedStateError> {
         let supergraph_state = SupergraphState::new(&parsed_supergraph_sdl);
         let planner =
             Planner::new_from_supergraph(&parsed_supergraph_sdl).expect("failed to create planner");
@@ -43,16 +47,23 @@ impl RouterSharedState {
         )
         .expect("Failed to create subgraph executor map");
 
-        Arc::new(Self {
+        Ok(Arc::new(Self {
             schema_metadata,
             planner,
             validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
+            headers_plan: compile_headers_plan(&router_config.headers).map_err(Box::new)?,
             subgraph_executor_map,
             plan_cache: moka::future::Cache::new(1000),
             validate_cache: moka::future::Cache::new(1000),
             parse_cache: moka::future::Cache::new(1000),
             normalize_cache: moka::future::Cache::new(1000),
             router_config,
-        })
+        }))
     }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum SharedStateError {
+    #[error("invalid headers config: {0}")]
+    HeaderRuleCompileError(#[from] Box<HeaderRuleCompileError>),
 }
