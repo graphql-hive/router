@@ -6,6 +6,7 @@ use serde::{
 };
 use sonic_rs::{JsonNumberTrait, ValueRef};
 use std::{
+    borrow::Cow,
     fmt::Display,
     hash::{Hash, Hasher},
 };
@@ -20,7 +21,7 @@ pub enum Value<'a> {
     I64(i64),
     U64(u64),
     Bool(bool),
-    String(&'a str),
+    String(Cow<'a, str>),
     Array(Vec<Value<'a>>),
     Object(Vec<(&'a str, Value<'a>)>),
 }
@@ -139,7 +140,7 @@ impl<'a> Value<'a> {
         match json {
             ValueRef::Null => Value::Null,
             ValueRef::Bool(b) => Value::Bool(b),
-            ValueRef::String(s) => Value::String(s),
+            ValueRef::String(s) => Value::String(s.into()),
             ValueRef::Number(num) => {
                 if let Some(num) = num.as_f64() {
                     return Value::F64(num);
@@ -295,7 +296,21 @@ impl<'de> Visitor<'de> for ValueVisitor<'de> {
     where
         E: de::Error,
     {
-        Ok(Value::String(value))
+        Ok(Value::String(value.into()))
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::String(v.to_owned().into()))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::String(value.into()))
     }
 
     fn visit_unit<E>(self) -> Result<Self::Value, E> {
@@ -355,6 +370,64 @@ impl serde::Serialize for Value<'_> {
                 }
                 map.end()
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Value;
+    use serde::Deserialize;
+    use std::borrow::Cow;
+
+    #[test]
+    fn deserializes_escaped_string_as_owned() {
+        let bytes = br#"{"message": "hello\nworld"}"#;
+        let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
+
+        let value = Value::deserialize(&mut deserializer).unwrap();
+
+        let obj = match value {
+            Value::Object(obj) => obj,
+            _ => panic!("Expected Value::Object"),
+        };
+
+        let message_value = &obj.iter().find(|(k, _)| *k == "message").unwrap().1;
+
+        match message_value {
+            Value::String(value) => {
+                assert_eq!(value, "hello\nworld");
+                assert!(
+                    matches!(value, Cow::Owned(_)),
+                    "Expected Cow::Owned for escaped string"
+                );
+            }
+            _ => panic!("Expected Value::String"),
+        }
+    }
+
+    #[test]
+    fn deserializes_simple_string_as_borrowed() {
+        let bytes = br#"{"message": "hello world"}"#;
+        let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
+        let value = Value::deserialize(&mut deserializer).unwrap();
+
+        let obj = match value {
+            Value::Object(obj) => obj,
+            _ => panic!("Expected Value::Object"),
+        };
+
+        let message_value = &obj.iter().find(|(k, _)| *k == "message").unwrap().1;
+
+        match message_value {
+            Value::String(value) => {
+                assert_eq!(value, "hello world");
+                assert!(
+                    matches!(value, Cow::Borrowed(_)),
+                    "Expected Cow::Borrowed for simple string"
+                );
+            }
+            _ => panic!("Expected Value::String"),
         }
     }
 }
