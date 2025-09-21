@@ -3,6 +3,7 @@ mod logger;
 mod pipeline;
 mod shared_state;
 mod supergraph;
+mod supergraph_mgr;
 
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use crate::{
     logger::configure_logging,
     pipeline::graphql_request_handler,
     shared_state::RouterSharedState,
+    supergraph_mgr::SupergraphManager,
 };
 
 use hive_router_config::load_config;
@@ -22,9 +24,12 @@ use ntex::{
 async fn graphql_endpoint_handler(
     mut request: HttpRequest,
     body_bytes: Bytes,
+    supergraph_manager: web::types::State<Arc<SupergraphManager>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> impl web::Responder {
-    graphql_request_handler(&mut request, body_bytes, app_state.get_ref()).await
+    let supergraph = supergraph_manager.current();
+
+    graphql_request_handler(&mut request, body_bytes, &supergraph, app_state.get_ref()).await
 }
 
 pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
@@ -33,11 +38,14 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
     configure_logging(&router_config.log);
 
     let addr = router_config.http.address();
-    let shared_state = RouterSharedState::new(router_config).await?;
+
+    let supergraph_manager = Arc::new(SupergraphManager::new_from_config(&router_config).await?);
+    let shared_state = Arc::new(RouterSharedState::new(router_config));
 
     web::HttpServer::new(move || {
         web::App::new()
             .state(shared_state.clone())
+            .state(supergraph_manager.clone())
             .route("/graphql", web::to(graphql_endpoint_handler))
             .route("/health", web::to(health_check_handler))
             .default_service(web::to(landing_page_handler))

@@ -5,6 +5,7 @@ use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::shared_state::RouterSharedState;
+use crate::supergraph_mgr::SupergraphData;
 use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::plan::QueryPlanExecutionContext;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
@@ -25,6 +26,7 @@ enum ExposeQueryPlanMode {
 #[inline]
 pub async fn execute_plan(
     req: &mut HttpRequest,
+    supergraph: &Arc<SupergraphData>,
     app_state: &Arc<RouterSharedState>,
     normalized_payload: &Arc<GraphQLNormalizationPayload>,
     query_plan_payload: &Arc<QueryPlan>,
@@ -57,8 +59,8 @@ pub async fn execute_plan(
 
     let introspection_context = IntrospectionContext {
         query: normalized_payload.operation_for_introspection.as_ref(),
-        schema: &app_state.planner.consumer_schema.document,
-        metadata: &app_state.schema_metadata,
+        schema: &supergraph.planner.consumer_schema.document,
+        metadata: &supergraph.metadata,
     };
 
     execute_query_plan(QueryPlanExecutionContext {
@@ -68,7 +70,7 @@ pub async fn execute_plan(
         extensions,
         introspection_context: &introspection_context,
         operation_type_name: normalized_payload.root_type_name,
-        executors: &app_state.subgraph_executor_map,
+        executors: &supergraph.subgraph_executor_map,
     })
     .await
     .map(Bytes::from)

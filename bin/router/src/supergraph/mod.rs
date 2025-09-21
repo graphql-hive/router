@@ -13,7 +13,7 @@ pub mod hive;
 
 pub async fn resolve_from_config(
     config: &SupergraphSource,
-) -> Result<Box<dyn SupergraphLoader>, LoadSupergraphError> {
+) -> Result<Box<dyn SupergraphLoader + Send + Sync>, LoadSupergraphError> {
     debug!("Resolving supergraph from config: {:?}", config);
 
     match config {
