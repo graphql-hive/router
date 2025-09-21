@@ -37,6 +37,8 @@ pub enum SupergraphManagerError {
     PlannerBuilderError(#[from] PlannerError),
     #[error("Failed to init executor: {0}")]
     ExecutorInitError(#[from] SubgraphExecutorError),
+    #[error("Unexpected: failed to load initial supergraph")]
+    FailedToLoadInitialSupergraph,
 }
 
 impl SupergraphManager {
@@ -47,7 +49,7 @@ impl SupergraphManager {
         loader.reload().await?;
         let supergraph_sdl = loader
             .current()
-            .expect("supergraph should be available after a successful reload");
+            .ok_or_else(|| SupergraphManagerError::FailedToLoadInitialSupergraph)?;
         let current_data = Self::build_data(router_config, supergraph_sdl)?;
         let swappable_data = ArcSwap::from(Arc::new(current_data));
 
