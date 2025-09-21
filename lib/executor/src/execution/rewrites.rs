@@ -91,7 +91,7 @@ impl RewriteApplier for ValueSetter {
         path: &'a [FetchNodePathSegment],
     ) {
         if path.is_empty() {
-            *data = Value::String(self.set_value_to.as_str());
+            *data = Value::String(self.set_value_to.as_str().into());
             return;
         }
 
