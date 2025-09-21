@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0](https://github.com/graphql-hive/router/compare/hive-router-query-planner-v1.0.0...hive-router-query-planner-v2.0.0) - 2025-09-21
+
+### Fixed
+
+- *(executor)* fix escaped strings in subgraph responses ([#436](https://github.com/graphql-hive/router/pull/436))
+
 ## [1.0.0](https://github.com/graphql-hive/router/compare/hive-router-query-planner-v0.0.1...hive-router-query-planner-v1.0.0) - 2025-09-01
 
 ### Other
