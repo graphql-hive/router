@@ -20,6 +20,7 @@ use crate::supergraph::{
 
 pub struct SupergraphManager {
     current: ArcSwap<SupergraphData>,
+    #[allow(dead_code)]
     loader: Box<dyn SupergraphLoader + Send + Sync>,
 }
 
