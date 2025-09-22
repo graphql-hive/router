@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.5](https://github.com/graphql-hive/router/compare/hive-router-config-v0.0.4...hive-router-config-v0.0.5) - 2025-09-22
+
+### Other
+
+- *(deps)* lock file maintenance ([#442](https://github.com/graphql-hive/router/pull/442))
+
 ## [0.0.4](https://github.com/graphql-hive/router/compare/hive-router-config-v0.0.3...hive-router-config-v0.0.4) - 2025-09-09
 
 ### Other
