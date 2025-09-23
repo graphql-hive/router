@@ -1,0 +1,19 @@
+
+[tasks.config]
+description = "Generate router-config schema + docs"
+dependencies = ["config-schema", "config-docs"]
+
+[tasks.config-schema]
+command = "cargo"
+args = ["run", "--release", "-p", "hive-router-config", "router-config.schema.json"]
+
+[tasks.config-docs]
+cwd = "docs/generator"
+command = "npm"
+args = ["run", "generate"]
+dependencies = ["config-docs-install"]
+
+[tasks.config-docs-install]
+cwd = "docs/generator"
+command = "npm"
+args = ["install"]

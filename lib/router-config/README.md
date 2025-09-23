@@ -10,7 +10,7 @@ The following are supported:
 
 ## JSON Schema
 
-TL;DR: Use `cargo router-config` to re-generate the config file.
+TL;DR: Use `cargo make config` to re-generate the config file.
 
 To view the JSON schema of the configuration, use the following command:
 
@@ -21,5 +21,5 @@ cargo run --release -p hive-router-config
 To generate a JSON schema file, use the following command:
 
 ```
-cargo run --release -p hive-router-config <output_file>
+cargo make config
 ```
