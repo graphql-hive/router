@@ -12,6 +12,8 @@ The following are supported:
 
 TL;DR: Use `cargo make config` to re-generate the config file.
 
+> Install `cargo-make` by running `cargo install cargo-make`.
+
 To view the JSON schema of the configuration, use the following command:
 
 ```
