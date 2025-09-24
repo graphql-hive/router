@@ -14,8 +14,15 @@ use sonic_rs::ValueRef;
 use crate::{
     context::ExecutionContext,
     execution::{error::PlanExecutionError, rewrites::FetchRewriteExt},
-    executors::{common::HttpExecutionRequest, map::SubgraphExecutorMap},
-    headers::{plan::HeaderRulesPlan, request::modify_subgraph_request_headers},
+    executors::{
+        common::{HttpExecutionRequest, HttpExecutionResponse},
+        map::SubgraphExecutorMap,
+    },
+    headers::{
+        plan::HeaderRulesPlan,
+        request::modify_subgraph_request_headers,
+        response::{apply_subgraph_response_headers, modify_client_response_headers},
+    },
     introspection::{
         resolve::{resolve_introspection, IntrospectionContext},
         schema::SchemaMetadata,
@@ -47,9 +54,14 @@ pub struct QueryPlanExecutionContext<'exec> {
     pub executors: &'exec SubgraphExecutorMap,
 }
 
+pub struct PlanExecutionOutput {
+    pub body: Vec<u8>,
+    pub headers: HeaderMap,
+}
+
 pub async fn execute_query_plan<'exec>(
     ctx: QueryPlanExecutionContext<'exec>,
-) -> Result<Vec<u8>, PlanExecutionError> {
+) -> Result<PlanExecutionOutput, PlanExecutionError> {
     let init_value = if let Some(introspection_query) = ctx.introspection_context.query {
         resolve_introspection(introspection_query, ctx.introspection_context)
     } else {
@@ -57,24 +69,27 @@ pub async fn execute_query_plan<'exec>(
     };
 
     let mut exec_ctx = ExecutionContext::new(ctx.query_plan, init_value);
+    let executor = Executor::new(
+        ctx.variable_values,
+        ctx.executors,
+        ctx.introspection_context.metadata,
+        // Deduplicate subgraph requests only if the operation type is a query
+        ctx.upstream_headers,
+        ctx.headers_plan,
+        ctx.operation_type_name == "Query",
+    );
 
     if ctx.query_plan.node.is_some() {
-        let executor = Executor::new(
-            ctx.variable_values,
-            ctx.executors,
-            ctx.introspection_context.metadata,
-            // Deduplicate subgraph requests only if the operation type is a query
-            ctx.upstream_headers,
-            ctx.headers_plan,
-            ctx.operation_type_name == "Query",
-        );
         executor
             .execute(&mut exec_ctx, ctx.query_plan.node.as_ref())
             .await;
     }
 
+    let mut response_headers = HeaderMap::new();
+    modify_client_response_headers(exec_ctx.response_headers_aggregator, &mut response_headers);
+
     let final_response = &exec_ctx.final_response;
-    project_by_operation(
+    let body = project_by_operation(
         final_response,
         exec_ctx.errors,
         &ctx.extensions,
@@ -82,8 +97,12 @@ pub async fn execute_query_plan<'exec>(
         ctx.projection_plan,
         ctx.variable_values,
         exec_ctx.response_storage.estimate_final_response_size(),
-    )
-    .map_err(|e| e.into())
+    )?;
+
+    Ok(PlanExecutionOutput {
+        body,
+        headers: response_headers,
+    })
 }
 
 pub struct Executor<'exec> {
@@ -119,15 +138,22 @@ impl<'exec, T> ConcurrencyScope<'exec, T> {
     }
 }
 
+struct SubgraphOutput {
+    body: Bytes,
+    headers: HeaderMap,
+}
+
 struct FetchJob {
     fetch_node_id: i64,
-    response: Bytes,
+    subgraph_name: String,
+    response: SubgraphOutput,
 }
 
 struct FlattenFetchJob {
     flatten_node_path: FlattenNodePath,
-    response: Bytes,
+    response: SubgraphOutput,
     fetch_node_id: i64,
+    subgraph_name: String,
     representation_hashes: Vec<u64>,
     representation_hash_to_index: HashMap<u64, usize>,
 }
@@ -138,12 +164,30 @@ enum ExecutionJob {
     None,
 }
 
-impl From<ExecutionJob> for Bytes {
+impl From<ExecutionJob> for SubgraphOutput {
     fn from(value: ExecutionJob) -> Self {
         match value {
-            ExecutionJob::Fetch(j) => j.response,
-            ExecutionJob::FlattenFetch(j) => j.response,
-            ExecutionJob::None => Bytes::new(),
+            ExecutionJob::Fetch(j) => Self {
+                body: j.response.body,
+                headers: j.response.headers,
+            },
+            ExecutionJob::FlattenFetch(j) => Self {
+                body: j.response.body,
+                headers: j.response.headers,
+            },
+            ExecutionJob::None => Self {
+                body: Bytes::new(),
+                headers: HeaderMap::new(),
+            },
+        }
+    }
+}
+
+impl From<HttpExecutionResponse> for SubgraphOutput {
+    fn from(res: HttpExecutionResponse) -> Self {
+        Self {
+            body: res.body,
+            headers: res.headers,
         }
     }
 }
@@ -371,8 +415,15 @@ impl<'exec> Executor<'exec> {
     fn process_job_result(&self, ctx: &mut ExecutionContext<'exec>, job: ExecutionJob) {
         match job {
             ExecutionJob::Fetch(job) => {
+                apply_subgraph_response_headers(
+                    self.headers_plan,
+                    &job.subgraph_name,
+                    &job.response.headers,
+                    &mut ctx.response_headers_aggregator,
+                );
+
                 if let Some((mut data, output_rewrites)) =
-                    self.process_subgraph_response(ctx, job.response, job.fetch_node_id)
+                    self.process_subgraph_response(ctx, job.response.body, job.fetch_node_id)
                 {
                     if let Some(output_rewrites) = output_rewrites {
                         for output_rewrite in output_rewrites {
@@ -384,8 +435,15 @@ impl<'exec> Executor<'exec> {
                 }
             }
             ExecutionJob::FlattenFetch(job) => {
+                apply_subgraph_response_headers(
+                    self.headers_plan,
+                    &job.subgraph_name,
+                    &job.response.headers,
+                    &mut ctx.response_headers_aggregator,
+                );
+
                 if let Some((mut data, output_rewrites)) =
-                    self.process_subgraph_response(ctx, job.response, job.fetch_node_id)
+                    self.process_subgraph_response(ctx, job.response.body, job.fetch_node_id)
                 {
                     if let Some(mut entities) = data.take_entities() {
                         if let Some(output_rewrites) = output_rewrites {
@@ -523,6 +581,7 @@ impl<'exec> Executor<'exec> {
                     .await?
                     .into(),
                 fetch_node_id: fetch_node.id,
+                subgraph_name: fetch_node.service_name.clone(),
                 representation_hashes: representation_hashes.unwrap_or_default(),
                 representation_hash_to_index: filtered_representations_hashes.unwrap_or_default(),
             }),
@@ -546,6 +605,7 @@ impl<'exec> Executor<'exec> {
 
         Ok(ExecutionJob::Fetch(FetchJob {
             fetch_node_id: node.id,
+            subgraph_name: node.service_name.clone(),
             response: self
                 .executors
                 .execute(
@@ -559,7 +619,8 @@ impl<'exec> Executor<'exec> {
                         headers: headers_map,
                     },
                 )
-                .await,
+                .await
+                .into(),
         }))
     }
 }

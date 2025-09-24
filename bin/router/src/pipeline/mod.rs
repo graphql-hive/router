@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
 use http::{header::CONTENT_TYPE, HeaderValue, Method};
 use ntex::{
@@ -52,7 +53,10 @@ pub async fn graphql_request_handler(
     }
 
     match execute_pipeline(req, body_bytes, state).await {
-        Ok(response_bytes) => {
+        Ok(response) => {
+            let response_bytes = Bytes::from(response.body);
+            let response_headers = response.headers;
+
             let response_content_type: &'static HeaderValue =
                 if req.accepts_content_type(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR) {
                     &APPLICATION_GRAPHQL_RESPONSE_JSON
@@ -60,7 +64,14 @@ pub async fn graphql_request_handler(
                     &APPLICATION_JSON
                 };
 
-            web::HttpResponse::Ok()
+            let mut response_builder = web::HttpResponse::Ok();
+            for (header_name, header_value) in response_headers {
+                if let Some(header_name) = header_name {
+                    response_builder.header(header_name, header_value);
+                }
+            }
+
+            response_builder
                 .header(http::header::CONTENT_TYPE, response_content_type)
                 .body(response_bytes)
         }
@@ -73,7 +84,7 @@ pub async fn execute_pipeline(
     req: &mut HttpRequest,
     body_bytes: Bytes,
     state: &Arc<RouterSharedState>,
-) -> Result<Bytes, PipelineError> {
+) -> Result<PlanExecutionOutput, PipelineError> {
     let execution_request = get_execution_request(req, body_bytes).await?;
     let parser_payload = parse_operation_with_cache(req, state, &execution_request).await?;
     validate_operation_with_cache(req, state, &parser_payload).await?;
