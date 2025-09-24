@@ -26,15 +26,6 @@ pub fn modify_subgraph_request_headers(
     }
 }
 
-// type HeaderMapIterator<'a> = impl Iterator<Item = (&'a HeaderName, &'a HeaderValue)>;
-
-// struct Filtered<'a>(&'a NtexHeaderMap);
-//     impl<'a> Filtered<'a> {
-//         fn iter(&self) -> impl Iterator<Item=(&'a HeaderName, &'a ntex_http::HeaderValue)> {
-//             self.0.iter().filter(|(n, _)| !is_denied_header(n))
-//         }
-//     }
-
 trait ApplyRequestHeader {
     fn apply_request_headers(&self, client_headers: &NtexHeaderMap, output_headers: &mut HeaderMap);
 }

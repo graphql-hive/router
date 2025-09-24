@@ -80,7 +80,7 @@ impl ApplyResponseHeader for ResponsePropagateNamed {
                 matched = true;
                 write_agg(
                     accumulator,
-                    self.rename.as_ref().unwrap_or_else(|| header_name),
+                    self.rename.as_ref().unwrap_or(header_name),
                     header_value,
                     self.strategy,
                 );
@@ -89,13 +89,13 @@ impl ApplyResponseHeader for ResponsePropagateNamed {
 
         if !matched {
             if let (Some(default_value), Some(first_name)) = (&self.default, self.names.first()) {
-                let destination_name = self.rename.as_ref().unwrap_or_else(|| &first_name);
+                let destination_name = self.rename.as_ref().unwrap_or(first_name);
 
-                if is_denied_header(&destination_name) {
+                if is_denied_header(destination_name) {
                     return;
                 }
 
-                write_agg(accumulator, destination_name, &default_value, self.strategy);
+                write_agg(accumulator, destination_name, default_value, self.strategy);
             }
         }
     }
@@ -195,7 +195,7 @@ fn write_agg(
     value: &HeaderValue,
     strategy: HeaderAggregationStrategy,
 ) {
-    let strategy = if is_never_join_header(&name) {
+    let strategy = if is_never_join_header(name) {
         HeaderAggregationStrategy::Append
     } else {
         strategy
