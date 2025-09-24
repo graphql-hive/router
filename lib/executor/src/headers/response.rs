@@ -1,3 +1,5 @@
+use std::iter::once;
+
 use crate::headers::{
     plan::{
         HeaderAggregationStrategy, HeaderRulesPlan, ResponseHeaderAggregator, ResponseHeaderRule,
@@ -78,8 +80,8 @@ impl ApplyResponseHeader for ResponsePropagateNamed {
                 matched = true;
                 write_agg(
                     accumulator,
-                    self.rename.clone().unwrap_or_else(|| header_name.clone()),
-                    header_value.clone(),
+                    self.rename.as_ref().unwrap_or_else(|| header_name),
+                    header_value,
                     self.strategy,
                 );
             }
@@ -87,18 +89,13 @@ impl ApplyResponseHeader for ResponsePropagateNamed {
 
         if !matched {
             if let (Some(default_value), Some(first_name)) = (&self.default, self.names.first()) {
-                let destination_name = self.rename.clone().unwrap_or_else(|| first_name.clone());
+                let destination_name = self.rename.as_ref().unwrap_or_else(|| &first_name);
 
                 if is_denied_header(&destination_name) {
                     return;
                 }
 
-                write_agg(
-                    accumulator,
-                    destination_name,
-                    default_value.clone(),
-                    self.strategy,
-                );
+                write_agg(accumulator, destination_name, &default_value, self.strategy);
             }
         }
     }
@@ -133,12 +130,7 @@ impl ApplyResponseHeader for ResponsePropagateRegex {
                 continue;
             }
 
-            write_agg(
-                accumulator,
-                header_name.clone(),
-                header_value.clone(),
-                self.strategy,
-            );
+            write_agg(accumulator, header_name, header_value, self.strategy);
         }
     }
 }
@@ -159,7 +151,7 @@ impl ApplyResponseHeader for ResponseInsertStatic {
             HeaderAggregationStrategy::Last
         };
 
-        write_agg(accumulator, self.name.clone(), self.value.clone(), strategy);
+        write_agg(accumulator, &self.name, &self.value, strategy);
     }
 }
 
@@ -184,7 +176,6 @@ impl ApplyResponseHeader for ResponseRemoveRegex {
         _input_headers: &HeaderMap,
         accumulator: &mut ResponseHeaderAggregator,
     ) {
-        let regex = &self.regex;
         accumulator.entries.retain(|name, _| {
             if is_denied_header(name) {
                 // Denied headers (hop-by–hop) are never inserted in the first place
@@ -192,64 +183,71 @@ impl ApplyResponseHeader for ResponseRemoveRegex {
                 return true;
             }
 
-            !regex.is_match(name.as_str().as_bytes())
+            !self.regex.is_match(name.as_str().as_bytes())
         });
     }
 }
 
+/// Write a header to the aggregator according to the specified strategy.
 fn write_agg(
     agg: &mut ResponseHeaderAggregator,
-    name: HeaderName,
-    value: HeaderValue,
+    name: &HeaderName,
+    value: &HeaderValue,
     strategy: HeaderAggregationStrategy,
 ) {
-    let effective_strategy = if is_never_join_header(&name) {
+    let strategy = if is_never_join_header(&name) {
         HeaderAggregationStrategy::Append
     } else {
         strategy
     };
 
-    let entry = agg
-        .entries
-        .entry(name)
-        .or_insert((effective_strategy, Vec::new()));
-    match entry.0 {
-        HeaderAggregationStrategy::First => {
-            if entry.1.is_empty() {
-                entry.1.push(value)
-            }
+    if !agg.entries.contains_key(name) {
+        agg.entries
+            .insert(name.clone(), (strategy, once(value.clone()).collect()));
+        return;
+    }
+
+    // The `expect` is safe because we just inserted the entry if it didn't exist
+    let (strategy, values) = agg.entries.get_mut(name).expect("Expected entry to exist");
+
+    match (strategy, values.len()) {
+        (HeaderAggregationStrategy::First, 0) => {
+            values.push(value.clone());
         }
-        HeaderAggregationStrategy::Last => {
-            entry.1.clear();
-            entry.1.push(value)
+        (HeaderAggregationStrategy::Last, _) => {
+            values.clear();
+            values.push(value.clone());
         }
-        HeaderAggregationStrategy::Append => entry.1.push(value),
+        (HeaderAggregationStrategy::Append, _) => {
+            values.push(value.clone());
+        }
+        (_, _) => {}
     }
 }
 
+/// Modify the outgoing client response headers based on the aggregated headers from subgraphs.
 pub fn modify_client_response_headers(agg: ResponseHeaderAggregator, out: &mut HeaderMap) {
-    for (name, (agg_strategy, values)) in agg.entries {
+    for (name, (agg_strategy, mut values)) in agg.entries {
+        if values.is_empty() {
+            continue;
+        }
+
         if is_never_join_header(&name) {
             // never-join headers must be emitted as multiple header fields
-            for v in values {
-                out.append(name.clone(), v);
+            for value in values {
+                out.append(name.clone(), value);
             }
             continue;
         }
 
-        match (values.len(), agg_strategy) {
-            (0, _) => {}
-            (1, _) => {
-                out.insert(name, values[0].clone());
-            }
-            (_, HeaderAggregationStrategy::Append) => {
-                let joined = join_with_comma(&values);
-                out.insert(name, joined);
-            }
-            _ => {
-                // conservative fallback = Last
-                out.insert(name, values.last().unwrap().clone());
-            }
+        if values.len() == 1 {
+            out.insert(name, values.pop().unwrap());
+            continue;
+        }
+
+        if matches!(agg_strategy, HeaderAggregationStrategy::Append) {
+            let joined = join_with_comma(&values);
+            out.insert(name, joined);
         }
     }
 }
@@ -258,9 +256,11 @@ pub fn modify_client_response_headers(agg: ResponseHeaderAggregator, out: &mut H
 fn join_with_comma(values: &[HeaderValue]) -> HeaderValue {
     // Compute capacity: sum of lengths + ", ".len() * (n-1)
     let mut cap = 0usize;
+
     for value in values {
         cap += value.as_bytes().len();
     }
+
     if values.len() > 1 {
         cap += 2 * (values.len() - 1);
     }
