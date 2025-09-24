@@ -69,8 +69,8 @@ Rules applied to all subgraphs (global defaults).
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**request**](#headersallrequest)|`array`|||
-|[**response**](#headersallresponse)|`array`|||
+|[**request**](#headersallrequest)|`array`|Rules that shape the **request** sent from the router to subgraphs.<br/>||
+|[**response**](#headersallresponse)|`array`|Rules that shape the **response** sent from the router back to the client.<br/>||
 
 **Example**
 
@@ -82,18 +82,30 @@ Rules applied to all subgraphs (global defaults).
 <a name="headersallrequest"></a>
 #### headers\.all\.request\[\]: array,null
 
+Rules that shape the **request** sent from the router to subgraphs.
+
+
 **Items**
+
+
+Request-header rules (applied before sending to a subgraph).
 
    
 **Option 1 (alternative):** 
-Forward headers from the client request into subgraph requests.
+Forward headers from the client request into the subgraph request.
+
+- If `rename` is set, the header is forwarded under the new name.
+- If **none** of the matched headers exist, `default` is used (when provided).
+
+**Order matters:** You can propagate first and then `remove` or `insert`
+to refine the final output.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**propagate**](#option1propagate)|`object`|Match spec for header rules.<br/>|yes|
+|[**propagate**](#option1propagate)|`object`|Propagate headers from the client request to subgraph requests.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -113,12 +125,15 @@ propagate:
 **Option 2 (alternative):** 
 Remove headers before sending the request to a subgraph.
 
+Useful to drop sensitive or irrelevant headers, or to undo a previous
+`propagate`/`insert`.
+
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**remove**](#option2remove)|`object`|Match spec for header rules.<br/>|yes|
+|[**remove**](#option2remove)|`object`|Remove headers matched by the specification.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -134,14 +149,18 @@ remove:
 
    
 **Option 3 (alternative):** 
-Add or overwrite a header with a static or dynamic value.
+Add or overwrite a header with a static value.
+
+- For **normal** headers: replaces any existing value.
+- For **never-join** headers (e.g. `set-cookie`): **appends** another
+  occurrence (multiple lines), never comma-joins.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**insert**](#option3insert)|`object`||yes|
+|[**insert**](#option3insert)|`object`|Insert a header with a static value.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -162,24 +181,40 @@ insert: {}
 <a name="option1propagate"></a>
 ## Option 1: propagate: object
 
-Match spec for header rules.
+Propagate headers from the client request to subgraph requests.
 
-- `named`: one or more exact header names (OR semantics).
-- `matching`: one or more regex patterns (OR semantics).
-- `exclude`: optional list of regex patterns to subtract.
+**Behavior**
+- If `rename` is provided, forwarded under that name.
+- If **none** of the matched headers are present, `default` (when present)
+  is used under `rename` (if set) or the **first** `named` header.
 
-Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
-even if they match the patterns.
+### Examples
+```yaml
+# Forward a specific header, but rename it per subgraph
+propagate:
+  named: x-tenant-id
+  rename: x-acct-tenant
+
+# Forward all x- headers except legacy ones
+propagate:
+  matching: "^x-.*"
+  exclude: ["^x-legacy-.*"]
+
+# If Authorization is missing, inject a default token for this subgraph
+propagate:
+  named: Authorization
+  default: "Bearer test-token"
+```
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**default**|`string`, `null`|If the header is missing, set a default value.<br/>||
-|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `named`/`matching`.<br/>||
-|**matching**||Match headers by regex pattern(s).<br/>||
-|**named**||Match headers by exact name.<br/>||
+|**default**|`string`, `null`|If the header is missing, set a default value.<br/>Applied only when **none** of the matched headers exist.<br/>||
+|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
+|**matching**||Match headers by regex pattern(s) (OR).<br/>||
+|**named**||Match headers by exact name (OR).<br/>||
 |**rename**|`string`, `null`|Optionally rename the header when forwarding.<br/>||
 
 **Example**
@@ -196,7 +231,7 @@ rename: null
 <a name="option1propagateexclude"></a>
 ### Option 1: propagate\.exclude\[\]: array,null
 
-Exclude headers matching these regexes, applied after `named`/`matching`.
+Exclude headers matching these regexes, applied after `matching`.
 
 
 **Items**
@@ -212,23 +247,16 @@ Exclude headers matching these regexes, applied after `named`/`matching`.
 <a name="option2remove"></a>
 ## Option 2: remove: object
 
-Match spec for header rules.
-
-- `named`: one or more exact header names (OR semantics).
-- `matching`: one or more regex patterns (OR semantics).
-- `exclude`: optional list of regex patterns to subtract.
-
-Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
-even if they match the patterns.
+Remove headers matched by the specification.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**exclude**](#option2removeexclude)|`string[]`|Exclude headers matching these regexes, applied after `named`/`matching`.<br/>||
-|**matching**||Match headers by regex pattern(s).<br/>||
-|**named**||Match headers by exact name.<br/>||
+|[**exclude**](#option2removeexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
+|**matching**||Match headers by regex pattern(s) (OR).<br/>||
+|**named**||Match headers by exact name (OR).<br/>||
 
 **Example**
 
@@ -242,7 +270,7 @@ named: null
 <a name="option2removeexclude"></a>
 ### Option 2: remove\.exclude\[\]: array,null
 
-Exclude headers matching these regexes, applied after `named`/`matching`.
+Exclude headers matching these regexes, applied after `matching`.
 
 
 **Items**
@@ -258,11 +286,28 @@ Exclude headers matching these regexes, applied after `named`/`matching`.
 <a name="option3insert"></a>
 ## Option 3: insert: object
 
+Insert a header with a static value.
+
+### Examples
+```yaml
+- insert:
+    name: x-env
+    value: prod
+```
+
+```yaml
+- insert:
+    name: set-cookie
+    value: "a=1; Path=/"
+# If another Set-Cookie exists, this creates another header line (never joined)
+```
+
+
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**name**|`string`||yes|
+|**name**|`string`|Header name to insert or overwrite (case-insensitive).<br/>|yes|
 
    
 **Option 1 (optional):** 
@@ -279,18 +324,32 @@ Static value provided in the config.
 <a name="headersallresponse"></a>
 #### headers\.all\.response\[\]: array,null
 
+Rules that shape the **response** sent from the router back to the client.
+
+
 **Items**
+
+
+Response-header rules (applied before sending back to the client).
 
    
 **Option 1 (alternative):** 
 Forward headers from subgraph responses into the final client response.
+
+- If multiple subgraphs provide the same header, `algorithm` controls
+  how values are merged.
+- If **no** subgraph provides a matching header, `default` is used (when provided).
+- If `rename` is set, the header is returned under the new name.
+
+**Never-join headers** (e.g. `set-cookie`) are never comma-joined:
+multiple values are returned as separate header fields regardless of `algorithm`.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**propagate**](#option1propagate)|`object`|Match spec for header rules.<br/>|yes|
+|[**propagate**](#option1propagate)|`object`|Propagate headers from subgraph responses to the final client response.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -316,7 +375,7 @@ Remove headers before sending the response to the client.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**remove**](#option2remove)|`object`|Match spec for header rules.<br/>|yes|
+|[**remove**](#option2remove)|`object`|Remove headers matched by the specification.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -334,12 +393,14 @@ remove:
 **Option 3 (alternative):** 
 Add or overwrite a header in the response to the client.
 
+For never-join headers, appends another occurrence (multiple lines).
+
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**insert**](#option3insert)|`object`||yes|
+|[**insert**](#option3insert)|`object`|Insert a header with a static value.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -360,14 +421,30 @@ insert: {}
 <a name="option1propagate"></a>
 ## Option 1: propagate: object
 
-Match spec for header rules.
+Propagate headers from subgraph responses to the final client response.
 
-- `named`: one or more exact header names (OR semantics).
-- `matching`: one or more regex patterns (OR semantics).
-- `exclude`: optional list of regex patterns to subtract.
+**Behavior**
+- If multiple subgraphs return the header, values are merged using `algorithm`
+  (default `Last`). Never-join headers are **never** comma-joined.
+- If **no** subgraph returns a match, `default` (if set) is emitted.
+- If `rename` is set, the outgoing header uses the new name.
 
-Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
-even if they match the patterns.
+### Examples
+```yaml
+# Forward Cache-Control from whichever subgraph supplies it (last wins)
+propagate:
+  named: Cache-Control
+
+# Combine list-valued headers
+propagate:
+  named: vary
+  algorithm: append
+
+# Ensure a fallback header is always present
+propagate:
+  named: x-backend
+  default: unknown
+```
 
 
 **Properties**
@@ -376,9 +453,9 @@ even if they match the patterns.
 |----|----|-----------|--------|
 |**algorithm**||How to merge values across multiple subgraph responses.<br/>||
 |**default**|`string`, `null`|If no subgraph returns the header, set this default value.<br/>||
-|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `named`/`matching`.<br/>||
-|**matching**||Match headers by regex pattern(s).<br/>||
-|**named**||Match headers by exact name.<br/>||
+|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
+|**matching**||Match headers by regex pattern(s) (OR).<br/>||
+|**named**||Match headers by exact name (OR).<br/>||
 |**rename**|`string`, `null`|Optionally rename the header when returning it to the client.<br/>||
 
 **Example**
@@ -396,7 +473,7 @@ rename: null
 <a name="option1propagateexclude"></a>
 ### Option 1: propagate\.exclude\[\]: array,null
 
-Exclude headers matching these regexes, applied after `named`/`matching`.
+Exclude headers matching these regexes, applied after `matching`.
 
 
 **Items**
@@ -412,23 +489,16 @@ Exclude headers matching these regexes, applied after `named`/`matching`.
 <a name="option2remove"></a>
 ## Option 2: remove: object
 
-Match spec for header rules.
-
-- `named`: one or more exact header names (OR semantics).
-- `matching`: one or more regex patterns (OR semantics).
-- `exclude`: optional list of regex patterns to subtract.
-
-Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
-even if they match the patterns.
+Remove headers matched by the specification.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**exclude**](#option2removeexclude)|`string[]`|Exclude headers matching these regexes, applied after `named`/`matching`.<br/>||
-|**matching**||Match headers by regex pattern(s).<br/>||
-|**named**||Match headers by exact name.<br/>||
+|[**exclude**](#option2removeexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
+|**matching**||Match headers by regex pattern(s) (OR).<br/>||
+|**named**||Match headers by exact name (OR).<br/>||
 
 **Example**
 
@@ -442,7 +512,7 @@ named: null
 <a name="option2removeexclude"></a>
 ### Option 2: remove\.exclude\[\]: array,null
 
-Exclude headers matching these regexes, applied after `named`/`matching`.
+Exclude headers matching these regexes, applied after `matching`.
 
 
 **Items**
@@ -458,11 +528,28 @@ Exclude headers matching these regexes, applied after `named`/`matching`.
 <a name="option3insert"></a>
 ## Option 3: insert: object
 
+Insert a header with a static value.
+
+### Examples
+```yaml
+- insert:
+    name: x-env
+    value: prod
+```
+
+```yaml
+- insert:
+    name: set-cookie
+    value: "a=1; Path=/"
+# If another Set-Cookie exists, this creates another header line (never joined)
+```
+
+
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**name**|`string`||yes|
+|**name**|`string`|Header name to insert or overwrite (case-insensitive).<br/>|yes|
 
    
 **Option 1 (optional):** 
@@ -482,12 +569,15 @@ Static value provided in the config.
 Rules applied to individual subgraphs.
 Keys are subgraph names as defined in the supergraph schema.
 
+**Precedence:** These are applied **after** `all`, and therefore can
+override the result of global rules for that subgraph.
+
 
 **Additional Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**Additional Properties**](#headerssubgraphsadditionalproperties)|`object`|Rules for a single scope (global or per subgraph).<br/>||
+|[**Additional Properties**](#headerssubgraphsadditionalproperties)|`object`|Rules for a single scope (global or per-subgraph).<br/>||
 
 **Example**
 
@@ -499,15 +589,18 @@ Keys are subgraph names as defined in the supergraph schema.
 <a name="headerssubgraphsadditionalproperties"></a>
 #### headers\.subgraphs\.additionalProperties: object
 
-Rules for a single scope (global or per subgraph).
+Rules for a single scope (global or per-subgraph).
+
+You can specify independent rule lists for **request** (to subgraphs)
+and **response** (to clients). Within each list, rules are applied in order.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**request**](#headerssubgraphsadditionalpropertiesrequest)|`array`|||
-|[**response**](#headerssubgraphsadditionalpropertiesresponse)|`array`|||
+|[**request**](#headerssubgraphsadditionalpropertiesrequest)|`array`|Rules that shape the **request** sent from the router to subgraphs.<br/>||
+|[**response**](#headerssubgraphsadditionalpropertiesresponse)|`array`|Rules that shape the **response** sent from the router back to the client.<br/>||
 
 **Example**
 
@@ -520,18 +613,30 @@ response: null
 <a name="headerssubgraphsadditionalpropertiesrequest"></a>
 ##### headers\.subgraphs\.additionalProperties\.request\[\]: array,null
 
+Rules that shape the **request** sent from the router to subgraphs.
+
+
 **Items**
+
+
+Request-header rules (applied before sending to a subgraph).
 
    
 **Option 1 (alternative):** 
-Forward headers from the client request into subgraph requests.
+Forward headers from the client request into the subgraph request.
+
+- If `rename` is set, the header is forwarded under the new name.
+- If **none** of the matched headers exist, `default` is used (when provided).
+
+**Order matters:** You can propagate first and then `remove` or `insert`
+to refine the final output.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**propagate**](#option1propagate)|`object`|Match spec for header rules.<br/>|yes|
+|[**propagate**](#option1propagate)|`object`|Propagate headers from the client request to subgraph requests.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -551,12 +656,15 @@ propagate:
 **Option 2 (alternative):** 
 Remove headers before sending the request to a subgraph.
 
+Useful to drop sensitive or irrelevant headers, or to undo a previous
+`propagate`/`insert`.
+
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**remove**](#option2remove)|`object`|Match spec for header rules.<br/>|yes|
+|[**remove**](#option2remove)|`object`|Remove headers matched by the specification.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -572,14 +680,18 @@ remove:
 
    
 **Option 3 (alternative):** 
-Add or overwrite a header with a static or dynamic value.
+Add or overwrite a header with a static value.
+
+- For **normal** headers: replaces any existing value.
+- For **never-join** headers (e.g. `set-cookie`): **appends** another
+  occurrence (multiple lines), never comma-joins.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**insert**](#option3insert)|`object`||yes|
+|[**insert**](#option3insert)|`object`|Insert a header with a static value.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -600,24 +712,40 @@ insert: {}
 <a name="option1propagate"></a>
 ## Option 1: propagate: object
 
-Match spec for header rules.
+Propagate headers from the client request to subgraph requests.
 
-- `named`: one or more exact header names (OR semantics).
-- `matching`: one or more regex patterns (OR semantics).
-- `exclude`: optional list of regex patterns to subtract.
+**Behavior**
+- If `rename` is provided, forwarded under that name.
+- If **none** of the matched headers are present, `default` (when present)
+  is used under `rename` (if set) or the **first** `named` header.
 
-Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
-even if they match the patterns.
+### Examples
+```yaml
+# Forward a specific header, but rename it per subgraph
+propagate:
+  named: x-tenant-id
+  rename: x-acct-tenant
+
+# Forward all x- headers except legacy ones
+propagate:
+  matching: "^x-.*"
+  exclude: ["^x-legacy-.*"]
+
+# If Authorization is missing, inject a default token for this subgraph
+propagate:
+  named: Authorization
+  default: "Bearer test-token"
+```
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**default**|`string`, `null`|If the header is missing, set a default value.<br/>||
-|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `named`/`matching`.<br/>||
-|**matching**||Match headers by regex pattern(s).<br/>||
-|**named**||Match headers by exact name.<br/>||
+|**default**|`string`, `null`|If the header is missing, set a default value.<br/>Applied only when **none** of the matched headers exist.<br/>||
+|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
+|**matching**||Match headers by regex pattern(s) (OR).<br/>||
+|**named**||Match headers by exact name (OR).<br/>||
 |**rename**|`string`, `null`|Optionally rename the header when forwarding.<br/>||
 
 **Example**
@@ -634,7 +762,7 @@ rename: null
 <a name="option1propagateexclude"></a>
 ### Option 1: propagate\.exclude\[\]: array,null
 
-Exclude headers matching these regexes, applied after `named`/`matching`.
+Exclude headers matching these regexes, applied after `matching`.
 
 
 **Items**
@@ -650,23 +778,16 @@ Exclude headers matching these regexes, applied after `named`/`matching`.
 <a name="option2remove"></a>
 ## Option 2: remove: object
 
-Match spec for header rules.
-
-- `named`: one or more exact header names (OR semantics).
-- `matching`: one or more regex patterns (OR semantics).
-- `exclude`: optional list of regex patterns to subtract.
-
-Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
-even if they match the patterns.
+Remove headers matched by the specification.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**exclude**](#option2removeexclude)|`string[]`|Exclude headers matching these regexes, applied after `named`/`matching`.<br/>||
-|**matching**||Match headers by regex pattern(s).<br/>||
-|**named**||Match headers by exact name.<br/>||
+|[**exclude**](#option2removeexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
+|**matching**||Match headers by regex pattern(s) (OR).<br/>||
+|**named**||Match headers by exact name (OR).<br/>||
 
 **Example**
 
@@ -680,7 +801,7 @@ named: null
 <a name="option2removeexclude"></a>
 ### Option 2: remove\.exclude\[\]: array,null
 
-Exclude headers matching these regexes, applied after `named`/`matching`.
+Exclude headers matching these regexes, applied after `matching`.
 
 
 **Items**
@@ -696,11 +817,28 @@ Exclude headers matching these regexes, applied after `named`/`matching`.
 <a name="option3insert"></a>
 ## Option 3: insert: object
 
+Insert a header with a static value.
+
+### Examples
+```yaml
+- insert:
+    name: x-env
+    value: prod
+```
+
+```yaml
+- insert:
+    name: set-cookie
+    value: "a=1; Path=/"
+# If another Set-Cookie exists, this creates another header line (never joined)
+```
+
+
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**name**|`string`||yes|
+|**name**|`string`|Header name to insert or overwrite (case-insensitive).<br/>|yes|
 
    
 **Option 1 (optional):** 
@@ -717,18 +855,32 @@ Static value provided in the config.
 <a name="headerssubgraphsadditionalpropertiesresponse"></a>
 ##### headers\.subgraphs\.additionalProperties\.response\[\]: array,null
 
+Rules that shape the **response** sent from the router back to the client.
+
+
 **Items**
+
+
+Response-header rules (applied before sending back to the client).
 
    
 **Option 1 (alternative):** 
 Forward headers from subgraph responses into the final client response.
+
+- If multiple subgraphs provide the same header, `algorithm` controls
+  how values are merged.
+- If **no** subgraph provides a matching header, `default` is used (when provided).
+- If `rename` is set, the header is returned under the new name.
+
+**Never-join headers** (e.g. `set-cookie`) are never comma-joined:
+multiple values are returned as separate header fields regardless of `algorithm`.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**propagate**](#option1propagate)|`object`|Match spec for header rules.<br/>|yes|
+|[**propagate**](#option1propagate)|`object`|Propagate headers from subgraph responses to the final client response.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -754,7 +906,7 @@ Remove headers before sending the response to the client.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**remove**](#option2remove)|`object`|Match spec for header rules.<br/>|yes|
+|[**remove**](#option2remove)|`object`|Remove headers matched by the specification.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -772,12 +924,14 @@ remove:
 **Option 3 (alternative):** 
 Add or overwrite a header in the response to the client.
 
+For never-join headers, appends another occurrence (multiple lines).
+
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**insert**](#option3insert)|`object`||yes|
+|[**insert**](#option3insert)|`object`|Insert a header with a static value.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -798,14 +952,30 @@ insert: {}
 <a name="option1propagate"></a>
 ## Option 1: propagate: object
 
-Match spec for header rules.
+Propagate headers from subgraph responses to the final client response.
 
-- `named`: one or more exact header names (OR semantics).
-- `matching`: one or more regex patterns (OR semantics).
-- `exclude`: optional list of regex patterns to subtract.
+**Behavior**
+- If multiple subgraphs return the header, values are merged using `algorithm`
+  (default `Last`). Never-join headers are **never** comma-joined.
+- If **no** subgraph returns a match, `default` (if set) is emitted.
+- If `rename` is set, the outgoing header uses the new name.
 
-Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
-even if they match the patterns.
+### Examples
+```yaml
+# Forward Cache-Control from whichever subgraph supplies it (last wins)
+propagate:
+  named: Cache-Control
+
+# Combine list-valued headers
+propagate:
+  named: vary
+  algorithm: append
+
+# Ensure a fallback header is always present
+propagate:
+  named: x-backend
+  default: unknown
+```
 
 
 **Properties**
@@ -814,9 +984,9 @@ even if they match the patterns.
 |----|----|-----------|--------|
 |**algorithm**||How to merge values across multiple subgraph responses.<br/>||
 |**default**|`string`, `null`|If no subgraph returns the header, set this default value.<br/>||
-|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `named`/`matching`.<br/>||
-|**matching**||Match headers by regex pattern(s).<br/>||
-|**named**||Match headers by exact name.<br/>||
+|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
+|**matching**||Match headers by regex pattern(s) (OR).<br/>||
+|**named**||Match headers by exact name (OR).<br/>||
 |**rename**|`string`, `null`|Optionally rename the header when returning it to the client.<br/>||
 
 **Example**
@@ -834,7 +1004,7 @@ rename: null
 <a name="option1propagateexclude"></a>
 ### Option 1: propagate\.exclude\[\]: array,null
 
-Exclude headers matching these regexes, applied after `named`/`matching`.
+Exclude headers matching these regexes, applied after `matching`.
 
 
 **Items**
@@ -850,23 +1020,16 @@ Exclude headers matching these regexes, applied after `named`/`matching`.
 <a name="option2remove"></a>
 ## Option 2: remove: object
 
-Match spec for header rules.
-
-- `named`: one or more exact header names (OR semantics).
-- `matching`: one or more regex patterns (OR semantics).
-- `exclude`: optional list of regex patterns to subtract.
-
-Hop-by-hop headers (connection, content-length, etc.) are **never propagated**
-even if they match the patterns.
+Remove headers matched by the specification.
 
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**exclude**](#option2removeexclude)|`string[]`|Exclude headers matching these regexes, applied after `named`/`matching`.<br/>||
-|**matching**||Match headers by regex pattern(s).<br/>||
-|**named**||Match headers by exact name.<br/>||
+|[**exclude**](#option2removeexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
+|**matching**||Match headers by regex pattern(s) (OR).<br/>||
+|**named**||Match headers by exact name (OR).<br/>||
 
 **Example**
 
@@ -880,7 +1043,7 @@ named: null
 <a name="option2removeexclude"></a>
 ### Option 2: remove\.exclude\[\]: array,null
 
-Exclude headers matching these regexes, applied after `named`/`matching`.
+Exclude headers matching these regexes, applied after `matching`.
 
 
 **Items**
@@ -896,11 +1059,28 @@ Exclude headers matching these regexes, applied after `named`/`matching`.
 <a name="option3insert"></a>
 ## Option 3: insert: object
 
+Insert a header with a static value.
+
+### Examples
+```yaml
+- insert:
+    name: x-env
+    value: prod
+```
+
+```yaml
+- insert:
+    name: set-cookie
+    value: "a=1; Path=/"
+# If another Set-Cookie exists, this creates another header line (never joined)
+```
+
+
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**name**|`string`||yes|
+|**name**|`string`|Header name to insert or overwrite (case-insensitive).<br/>|yes|
 
    
 **Option 1 (optional):** 
