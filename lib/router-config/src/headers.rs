@@ -289,7 +289,7 @@ pub struct RequestPropagateRule {
 pub enum AggregationAlgo {
     /// Take the first value encountered and ignore later ones.
     First,
-    /// Overwrite with the last value encountered (default behavior).
+    /// Overwrite with the last value encountered.
     Last,
     /// Append all values into a comma-separated string (list-valued headers).
     Append,
@@ -298,8 +298,8 @@ pub enum AggregationAlgo {
 /// Propagate headers from subgraph responses to the final client response.
 ///
 /// **Behavior**
-/// - If multiple subgraphs return the header, values are merged using `algorithm`
-///   (default `Last`). Never-join headers are **never** comma-joined.
+/// - If multiple subgraphs return the header, values are merged using `algorithm`.
+///   Never-join headers are **never** comma-joined.
 /// - If **no** subgraph returns a match, `default` (if set) is emitted.
 /// - If `rename` is set, the outgoing header uses the new name.
 ///
@@ -308,6 +308,7 @@ pub enum AggregationAlgo {
 /// # Forward Cache-Control from whichever subgraph supplies it (last wins)
 /// propagate:
 ///   named: Cache-Control
+///   algorithm: last
 ///
 /// # Combine list-valued headers
 /// propagate:
@@ -317,6 +318,7 @@ pub enum AggregationAlgo {
 /// # Ensure a fallback header is always present
 /// propagate:
 ///   named: x-backend
+///   algorithm: append
 ///   default: unknown
 /// ```
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -333,6 +335,5 @@ pub struct ResponsePropagateRule {
     pub default: Option<String>,
 
     /// How to merge values across multiple subgraph responses.
-    #[serde(default)]
-    pub algorithm: Option<AggregationAlgo>,
+    pub algorithm: AggregationAlgo,
 }

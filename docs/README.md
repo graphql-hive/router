@@ -356,7 +356,6 @@ multiple values are returned as separate header fields regardless of `algorithm`
 
 ```yaml
 propagate:
-  algorithm: null
   default: null
   exclude: null
   matching: null
@@ -424,8 +423,8 @@ insert: {}
 Propagate headers from subgraph responses to the final client response.
 
 **Behavior**
-- If multiple subgraphs return the header, values are merged using `algorithm`
-  (default `Last`). Never-join headers are **never** comma-joined.
+- If multiple subgraphs return the header, values are merged using `algorithm`.
+  Never-join headers are **never** comma-joined.
 - If **no** subgraph returns a match, `default` (if set) is emitted.
 - If `rename` is set, the outgoing header uses the new name.
 
@@ -434,6 +433,7 @@ Propagate headers from subgraph responses to the final client response.
 # Forward Cache-Control from whichever subgraph supplies it (last wins)
 propagate:
   named: Cache-Control
+  algorithm: last
 
 # Combine list-valued headers
 propagate:
@@ -443,6 +443,7 @@ propagate:
 # Ensure a fallback header is always present
 propagate:
   named: x-backend
+  algorithm: append
   default: unknown
 ```
 
@@ -451,17 +452,16 @@ propagate:
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**algorithm**||How to merge values across multiple subgraph responses.<br/>||
-|**default**|`string`, `null`|If no subgraph returns the header, set this default value.<br/>||
-|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
-|**matching**||Match headers by regex pattern(s) (OR).<br/>||
-|**named**||Match headers by exact name (OR).<br/>||
-|**rename**|`string`, `null`|Optionally rename the header when returning it to the client.<br/>||
+|**algorithm**||How to merge values across multiple subgraph responses.<br/>|yes|
+|**default**|`string`, `null`|If no subgraph returns the header, set this default value.<br/>|no|
+|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>|no|
+|**matching**||Match headers by regex pattern(s) (OR).<br/>|no|
+|**named**||Match headers by exact name (OR).<br/>|no|
+|**rename**|`string`, `null`|Optionally rename the header when returning it to the client.<br/>|no|
 
 **Example**
 
 ```yaml
-algorithm: null
 default: null
 exclude: null
 matching: null
@@ -887,7 +887,6 @@ multiple values are returned as separate header fields regardless of `algorithm`
 
 ```yaml
 propagate:
-  algorithm: null
   default: null
   exclude: null
   matching: null
@@ -955,8 +954,8 @@ insert: {}
 Propagate headers from subgraph responses to the final client response.
 
 **Behavior**
-- If multiple subgraphs return the header, values are merged using `algorithm`
-  (default `Last`). Never-join headers are **never** comma-joined.
+- If multiple subgraphs return the header, values are merged using `algorithm`.
+  Never-join headers are **never** comma-joined.
 - If **no** subgraph returns a match, `default` (if set) is emitted.
 - If `rename` is set, the outgoing header uses the new name.
 
@@ -965,6 +964,7 @@ Propagate headers from subgraph responses to the final client response.
 # Forward Cache-Control from whichever subgraph supplies it (last wins)
 propagate:
   named: Cache-Control
+  algorithm: last
 
 # Combine list-valued headers
 propagate:
@@ -974,6 +974,7 @@ propagate:
 # Ensure a fallback header is always present
 propagate:
   named: x-backend
+  algorithm: append
   default: unknown
 ```
 
@@ -982,17 +983,16 @@ propagate:
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**algorithm**||How to merge values across multiple subgraph responses.<br/>||
-|**default**|`string`, `null`|If no subgraph returns the header, set this default value.<br/>||
-|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>||
-|**matching**||Match headers by regex pattern(s) (OR).<br/>||
-|**named**||Match headers by exact name (OR).<br/>||
-|**rename**|`string`, `null`|Optionally rename the header when returning it to the client.<br/>||
+|**algorithm**||How to merge values across multiple subgraph responses.<br/>|yes|
+|**default**|`string`, `null`|If no subgraph returns the header, set this default value.<br/>|no|
+|[**exclude**](#option1propagateexclude)|`string[]`|Exclude headers matching these regexes, applied after `matching`.<br/>|no|
+|**matching**||Match headers by regex pattern(s) (OR).<br/>|no|
+|**named**||Match headers by exact name (OR).<br/>|no|
+|**rename**|`string`, `null`|Optionally rename the header when returning it to the client.<br/>|no|
 
 **Example**
 
 ```yaml
-algorithm: null
 default: null
 exclude: null
 matching: null

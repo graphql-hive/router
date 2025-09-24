@@ -70,12 +70,11 @@ impl HeaderRuleCompiler<Vec<ResponseHeaderRule>> for config::ResponseHeaderRule 
     fn compile(&self, actions: &mut Vec<ResponseHeaderRule>) -> Result<(), HeaderRuleCompileError> {
         match self {
             config::ResponseHeaderRule::Propagate(rule) => {
-                let aggregation_strategy =
-                    match rule.algorithm.unwrap_or(config::AggregationAlgo::Last) {
-                        config::AggregationAlgo::First => HeaderAggregationStrategy::First,
-                        config::AggregationAlgo::Last => HeaderAggregationStrategy::Last,
-                        config::AggregationAlgo::Append => HeaderAggregationStrategy::Append,
-                    };
+                let aggregation_strategy = match rule.algorithm {
+                    config::AggregationAlgo::First => HeaderAggregationStrategy::First,
+                    config::AggregationAlgo::Last => HeaderAggregationStrategy::Last,
+                    config::AggregationAlgo::Append => HeaderAggregationStrategy::Append,
+                };
                 let spec = materialize_match_spec(
                     &rule.spec,
                     rule.rename.as_ref(),
@@ -371,7 +370,7 @@ mod tests {
             },
             rename: None,
             default: None,
-            algorithm: Some(config::AggregationAlgo::First),
+            algorithm: config::AggregationAlgo::First,
         });
         let mut actions = Vec::new();
         rule.compile(&mut actions).unwrap();
