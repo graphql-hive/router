@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
 use dashmap::DashMap;
 use hive_router_config::traffic_shaping::TrafficShapingExecutorConfig;
@@ -169,10 +170,18 @@ impl HTTPSubgraphExecutor {
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
-    async fn execute<'a>(&self, execution_request: HttpExecutionRequest<'a>) -> Bytes {
+    async fn execute<'a>(
+        &self,
+        execution_request: HttpExecutionRequest<'a>,
+    ) -> HttpExecutionResponse {
         let body = match self.build_request_body(&execution_request) {
             Ok(body) => body,
-            Err(e) => return self.error_to_graphql_bytes(e),
+            Err(e) => {
+                return HttpExecutionResponse {
+                    body: self.error_to_graphql_bytes(e),
+                    headers: Default::default(),
+                }
+            }
         };
 
         let mut headers = execution_request.headers;
@@ -185,8 +194,14 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
             return match self._send_request(body, headers).await {
-                Ok(shared_response) => shared_response.body,
-                Err(e) => self.error_to_graphql_bytes(e),
+                Ok(shared_response) => HttpExecutionResponse {
+                    body: shared_response.body,
+                    headers: shared_response.headers,
+                },
+                Err(e) => HttpExecutionResponse {
+                    body: self.error_to_graphql_bytes(e),
+                    headers: Default::default(),
+                },
             };
         }
 
@@ -218,8 +233,14 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             .await;
 
         match response_result {
-            Ok(shared_response) => shared_response.body.clone(),
-            Err(e) => self.error_to_graphql_bytes(e.clone()),
+            Ok(shared_response) => HttpExecutionResponse {
+                body: shared_response.body.clone(),
+                headers: shared_response.headers.clone(),
+            },
+            Err(e) => HttpExecutionResponse {
+                body: self.error_to_graphql_bytes(e.clone()),
+                headers: Default::default(),
+            },
         }
     }
 }
