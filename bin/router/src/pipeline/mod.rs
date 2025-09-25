@@ -24,6 +24,7 @@ use crate::{
         validation::validate_operation_with_cache,
     },
     shared_state::RouterSharedState,
+    supergraph_mgr::SupergraphData,
 };
 
 pub mod coerce_variables;
@@ -43,6 +44,7 @@ static GRAPHIQL_HTML: &str = include_str!("../../static/graphiql.html");
 pub async fn graphql_request_handler(
     req: &mut HttpRequest,
     body_bytes: Bytes,
+    supergraph: &Arc<SupergraphData>,
     state: &Arc<RouterSharedState>,
 ) -> impl web::Responder {
     if req.method() == Method::GET && req.accepts_content_type(*TEXT_HTML_CONTENT_TYPE) {
@@ -51,7 +53,7 @@ pub async fn graphql_request_handler(
             .body(GRAPHIQL_HTML);
     }
 
-    match execute_pipeline(req, body_bytes, state).await {
+    match execute_pipeline(req, body_bytes, supergraph, state).await {
         Ok(response_bytes) => {
             let response_content_type: &'static HeaderValue =
                 if req.accepts_content_type(*APPLICATION_GRAPHQL_RESPONSE_JSON_STR) {
@@ -72,23 +74,26 @@ pub async fn graphql_request_handler(
 pub async fn execute_pipeline(
     req: &mut HttpRequest,
     body_bytes: Bytes,
+    supergraph: &Arc<SupergraphData>,
     state: &Arc<RouterSharedState>,
 ) -> Result<Bytes, PipelineError> {
     let execution_request = get_execution_request(req, body_bytes).await?;
     let parser_payload = parse_operation_with_cache(req, state, &execution_request).await?;
-    validate_operation_with_cache(req, state, &parser_payload).await?;
+    validate_operation_with_cache(req, supergraph, state, &parser_payload).await?;
 
     let progressive_override_ctx = request_override_context()?;
     let normalize_payload =
-        normalize_request_with_cache(req, state, &execution_request, &parser_payload).await?;
+        normalize_request_with_cache(req, supergraph, state, &execution_request, &parser_payload)
+            .await?;
     let variable_payload =
-        coerce_request_variables(req, state, execution_request, &normalize_payload)?;
+        coerce_request_variables(req, supergraph, execution_request, &normalize_payload)?;
 
     let query_plan_cancellation_token =
         CancellationToken::with_timeout(state.router_config.query_planner.timeout);
 
     let query_plan_payload = plan_operation_with_cache(
         req,
+        supergraph,
         state,
         &normalize_payload,
         &progressive_override_ctx,
@@ -98,6 +103,7 @@ pub async fn execute_pipeline(
 
     let execution_result = execute_plan(
         req,
+        supergraph,
         state,
         &normalize_payload,
         &query_plan_payload,
