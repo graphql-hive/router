@@ -26,9 +26,13 @@ impl JwtAuthRuntime {
         config: &JwtAuthConfig,
     ) -> Result<Self, JwksSourceError> {
         let jwks = JwksManager::from_config(config);
+
         // If any of the sources needs to be prefetched (loaded when the server starts), then we'll
         // try to load it now, and fail if it fails.
         jwks.prefetch_sources().await?;
+
+        // Register background tasks for refreshing JWKS keys
+        jwks.register_background_tasks(background_tasks_mgr);
 
         let instance = JwtAuthRuntime {
             config: config.clone(),

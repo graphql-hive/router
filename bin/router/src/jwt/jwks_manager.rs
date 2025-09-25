@@ -2,8 +2,11 @@ use hive_router_config::jwt_auth::{JwksProviderSourceConfig, JwtAuthConfig};
 use sonic_rs::from_str;
 use std::sync::{Arc, RwLock};
 use tokio::fs::read_to_string;
+use tokio_util::sync::CancellationToken;
 
 use jsonwebtoken::jwk::JwkSet;
+
+use crate::background_tasks::{BackgroundTask, BackgroundTasksManager};
 
 pub struct JwksManager {
     sources: Vec<Arc<JwksSource>>,
@@ -32,12 +35,52 @@ impl JwksManager {
 
         Ok(())
     }
+
+    pub fn register_background_tasks(&self, background_tasks_mgr: &mut BackgroundTasksManager) {
+        for source in &self.sources {
+            if source.should_poll_in_background() {
+                background_tasks_mgr.register_task(source.clone());
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct JwksSource {
     config: JwksProviderSourceConfig,
     jwk: RwLock<Option<Arc<JwkSet>>>,
+}
+
+#[async_trait::async_trait]
+impl BackgroundTask for JwksSource {
+    fn id(&self) -> &str {
+        "jwt_auth_jwks"
+    }
+
+    async fn run(&self, token: CancellationToken) {
+        match &self.config {
+            JwksProviderSourceConfig::Remote {
+                polling_interval, ..
+            } => {
+                if let Some(interval) = polling_interval {
+                    let mut tokio_interval = tokio::time::interval(*interval);
+
+                    loop {
+                        tokio::select! {
+                            _ = tokio_interval.tick() => { match self.load_and_store_jwks().await {
+                                Ok(_) => {}
+                                Err(err) => {
+                                    tracing::error!("Failed to load remote jwks: {}", err);
+                                }
+                            } }
+                            _ = token.cancelled() => { println!("Shutting down."); return; }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -96,6 +139,13 @@ impl JwksSource {
         Self {
             config,
             jwk: RwLock::new(None),
+        }
+    }
+
+    pub fn should_poll_in_background(&self) -> bool {
+        match &self.config {
+            JwksProviderSourceConfig::Remote { .. } => true,
+            JwksProviderSourceConfig::File { .. } => false,
         }
     }
 
