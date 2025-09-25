@@ -1,3 +1,4 @@
+mod background_tasks;
 mod http_utils;
 mod logger;
 mod pipeline;
@@ -6,6 +7,7 @@ mod shared_state;
 use std::sync::Arc;
 
 use crate::{
+    background_tasks::BackgroundTasksManager,
     http_utils::{health::health_check_handler, landing_page::landing_page_handler},
     logger::configure_logging,
     pipeline::graphql_request_handler,
@@ -19,6 +21,7 @@ use ntex::{
 };
 
 use hive_router_query_planner::utils::parsing::parse_schema;
+use tracing::info;
 
 async fn graphql_endpoint_handler(
     mut request: HttpRequest,
@@ -37,8 +40,9 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
     let parsed_schema = parse_schema(&supergraph_sdl);
     let addr = router_config.http.address();
     let shared_state = RouterSharedState::new(parsed_schema, router_config);
+    let mut bg_tasks_manager = BackgroundTasksManager::new();
 
-    web::HttpServer::new(move || {
+    let maybe_error = web::HttpServer::new(move || {
         web::App::new()
             .state(shared_state.clone())
             .route("/graphql", web::to(graphql_endpoint_handler))
@@ -48,5 +52,10 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
     .bind(addr)?
     .run()
     .await
-    .map_err(|err| err.into())
+    .map_err(|err| err.into());
+
+    info!("server stopped, clearning background tasks");
+    bg_tasks_manager.shutdown().await;
+
+    maybe_error
 }
