@@ -24,16 +24,15 @@ impl BackgroundTasksManager {
         }
     }
 
-    pub fn register_task<T>(&mut self, task: T)
+    pub fn register_task<T>(&mut self, task: Arc<T>)
     where
         T: BackgroundTask + 'static,
     {
         info!("registering background task: {}", task.id());
         let child_token = self.cancellation_token.clone();
-        let task_arc = Arc::new(task);
 
         let handle = tokio::spawn(async move {
-            task_arc.run(child_token).await;
+            task.run(child_token).await;
         });
 
         self.task_handles.push(handle);

@@ -1,5 +1,7 @@
 mod background_tasks;
+mod context;
 mod http_utils;
+mod jwt;
 mod logger;
 mod pipeline;
 mod shared_state;
@@ -8,7 +10,9 @@ use std::sync::Arc;
 
 use crate::{
     background_tasks::BackgroundTasksManager,
+    context::RequestContext,
     http_utils::{health::health_check_handler, landing_page::landing_page_handler},
+    jwt::JwtAuthRuntime,
     logger::configure_logging,
     pipeline::graphql_request_handler,
     shared_state::RouterSharedState,
@@ -28,6 +32,7 @@ async fn graphql_endpoint_handler(
     body_bytes: Bytes,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> impl web::Responder {
+    request.extensions_mut().insert(RequestContext::new());
     graphql_request_handler(&mut request, body_bytes, app_state.get_ref()).await
 }
 
@@ -39,8 +44,15 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
     let supergraph_sdl = router_config.supergraph.load().await?;
     let parsed_schema = parse_schema(&supergraph_sdl);
     let addr = router_config.http.address();
-    let shared_state = RouterSharedState::new(parsed_schema, router_config);
     let mut bg_tasks_manager = BackgroundTasksManager::new();
+
+    let jwt_runtime = if let Some(jwt_config) = &router_config.jwt {
+        Some(JwtAuthRuntime::init(&mut bg_tasks_manager, jwt_config))
+    } else {
+        None
+    };
+
+    let shared_state = RouterSharedState::new(parsed_schema, router_config, jwt_runtime);
 
     let maybe_error = web::HttpServer::new(move || {
         web::App::new()

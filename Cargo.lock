@@ -1257,6 +1257,7 @@ dependencies = [
  "http",
  "http-body-util",
  "hyper",
+ "jsonwebtoken",
  "lazy_static",
  "mimalloc",
  "moka",
