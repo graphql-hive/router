@@ -21,6 +21,7 @@ pub struct QueryPlannerConfig {
     )]
     #[schemars(with = "String")]
     pub timeout: Duration,
+    pub cache: QueryPlannerCacheConfig,
 }
 
 impl Default for QueryPlannerConfig {
@@ -28,6 +29,7 @@ impl Default for QueryPlannerConfig {
         Self {
             allow_expose: default_query_planning_allow_expose(),
             timeout: default_query_planning_timeout(),
+            cache: QueryPlannerCacheConfig::default(),
         }
     }
 }
@@ -38,4 +40,15 @@ fn default_query_planning_allow_expose() -> bool {
 
 fn default_query_planning_timeout() -> Duration {
     Duration::from_secs(10)
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+pub struct QueryPlannerCacheConfig {
+    pub enabled: bool,
+}
+
+impl Default for QueryPlannerCacheConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
