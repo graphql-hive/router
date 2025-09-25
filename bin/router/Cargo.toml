@@ -42,3 +42,4 @@ mimalloc = { version = "0.1.47", features = ["override"] }
 moka = { version = "0.12.10", features = ["future"] }
 ulid = "1.2.1"
 ntex = { version = "2", features = ["tokio"] }
+tokio-util = "0.7.16"

@@ -1,0 +1,52 @@
+use async_trait::async_trait;
+use tokio_util::sync::CancellationToken;
+
+#[async_trait]
+pub trait BackgroundTask: Send + Sync {
+    fn id(&self) -> &str;
+    async fn run(&self, token: CancellationToken);
+}
+
+use futures::future::join_all;
+use std::sync::Arc;
+use tokio::task::JoinHandle;
+use tracing::info;
+
+pub struct BackgroundTasksManager {
+    cancellation_token: CancellationToken,
+    task_handles: Vec<JoinHandle<()>>,
+}
+
+impl BackgroundTasksManager {
+    pub fn new() -> Self {
+        Self {
+            cancellation_token: CancellationToken::new(),
+            task_handles: Vec::new(),
+        }
+    }
+
+    pub fn register_task<T>(&mut self, task: T)
+    where
+        T: BackgroundTask + 'static,
+    {
+        info!("Registering background task: {}", task.id());
+        let child_token = self.cancellation_token.clone();
+        let task_arc = Arc::new(task);
+
+        let handle = tokio::spawn(async move {
+            task_arc.run(child_token).await;
+        });
+
+        self.task_handles.push(handle);
+    }
+
+    pub async fn shutdown(self) {
+        info!("shutdown triggered, stopping all background tasks...");
+        self.cancellation_token.cancel();
+
+        info!("waiting for background tasks to finish...");
+        join_all(self.task_handles).await;
+
+        println!("all background tasks have been shut down gracefully.");
+    }
+}
