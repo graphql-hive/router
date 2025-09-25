@@ -1,5 +1,6 @@
 use http::header::{InvalidHeaderName, InvalidHeaderValue};
 use regex_automata::meta::BuildError;
+use vrl::diagnostic::DiagnosticList;
 
 #[derive(thiserror::Error, Debug)]
 pub enum HeaderRuleCompileError {
@@ -13,4 +14,20 @@ pub enum HeaderRuleCompileError {
     InvalidDefault,
     #[error("Failed to build regex for header matching. Please check your regex patterns for syntax errors. Reason: {0}")]
     RegexBuild(#[from] Box<BuildError>),
+    #[error("Failed to compile VRL expression for header '{0}'. Please check your VRL expression for syntax errors. Diagnostic: {1}")]
+    ExpressionBuild(String, String),
+}
+
+impl HeaderRuleCompileError {
+    pub fn new_expression_build(header_name: String, diagnostics: DiagnosticList) -> Self {
+        HeaderRuleCompileError::ExpressionBuild(
+            header_name,
+            diagnostics
+                .errors()
+                .into_iter()
+                .map(|d| d.message.clone())
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+    }
 }

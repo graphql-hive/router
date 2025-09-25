@@ -1,38 +1,63 @@
-use std::iter::once;
+use std::{collections::BTreeMap, iter::once};
 
-use crate::headers::{
-    plan::{
-        HeaderAggregationStrategy, HeaderRulesPlan, ResponseHeaderAggregator, ResponseHeaderRule,
-        ResponseInsertStatic, ResponsePropagateNamed, ResponsePropagateRegex, ResponseRemoveNamed,
-        ResponseRemoveRegex,
+use crate::{
+    execution::plan::ClientRequestDetails,
+    headers::{
+        plan::{
+            HeaderAggregationStrategy, HeaderRulesPlan, ResponseHeaderAggregator,
+            ResponseHeaderRule, ResponseInsertExpression, ResponseInsertStatic,
+            ResponsePropagateNamed, ResponsePropagateRegex, ResponseRemoveNamed,
+            ResponseRemoveRegex,
+        },
+        request::vrl_value_to_header_value,
+        sanitizer::is_denied_header,
     },
-    sanitizer::is_denied_header,
 };
 
 use super::sanitizer::is_never_join_header;
+use bytes::Bytes;
 use http::{HeaderMap, HeaderName, HeaderValue};
+use vrl::{
+    compiler::TargetValue as VrlTargetValue,
+    core::Value as VrlValue,
+    prelude::{state::RuntimeState as VrlState, Context as VrlContext, TimeZone as VrlTimeZone},
+    value::Secrets as VrlSecrets,
+};
 
 pub fn apply_subgraph_response_headers(
     header_rule_plan: &HeaderRulesPlan,
     subgraph_name: &str,
     subgraph_headers: &HeaderMap,
+    client_request_details: &ClientRequestDetails,
     accumulator: &mut ResponseHeaderAggregator,
 ) {
     let global_actions = &header_rule_plan.response.global;
     let subgraph_actions = header_rule_plan.response.by_subgraph.get(subgraph_name);
 
+    let ctx = ResponseExpressionContext {
+        subgraph_name,
+        subgraph_headers,
+        client_request: client_request_details,
+    };
+
     for action in global_actions
         .iter()
         .chain(subgraph_actions.into_iter().flatten())
     {
-        action.apply_response_headers(subgraph_headers, accumulator);
+        action.apply_response_headers(&ctx, accumulator);
     }
+}
+
+struct ResponseExpressionContext<'a> {
+    subgraph_name: &'a str,
+    client_request: &'a ClientRequestDetails<'a>,
+    subgraph_headers: &'a HeaderMap,
 }
 
 trait ApplyResponseHeader {
     fn apply_response_headers(
         &self,
-        input_headers: &HeaderMap,
+        ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
     );
 }
@@ -40,25 +65,22 @@ trait ApplyResponseHeader {
 impl ApplyResponseHeader for ResponseHeaderRule {
     fn apply_response_headers(
         &self,
-        input_headers: &HeaderMap,
+        ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
     ) {
         match self {
             ResponseHeaderRule::PropagateNamed(data) => {
-                data.apply_response_headers(input_headers, accumulator)
+                data.apply_response_headers(ctx, accumulator)
             }
             ResponseHeaderRule::PropagateRegex(data) => {
-                data.apply_response_headers(input_headers, accumulator)
+                data.apply_response_headers(ctx, accumulator)
             }
-            ResponseHeaderRule::InsertStatic(data) => {
-                data.apply_response_headers(input_headers, accumulator)
+            ResponseHeaderRule::InsertStatic(data) => data.apply_response_headers(ctx, accumulator),
+            ResponseHeaderRule::InsertExpression(data) => {
+                data.apply_response_headers(ctx, accumulator)
             }
-            ResponseHeaderRule::RemoveNamed(data) => {
-                data.apply_response_headers(input_headers, accumulator)
-            }
-            ResponseHeaderRule::RemoveRegex(data) => {
-                data.apply_response_headers(input_headers, accumulator)
-            }
+            ResponseHeaderRule::RemoveNamed(data) => data.apply_response_headers(ctx, accumulator),
+            ResponseHeaderRule::RemoveRegex(data) => data.apply_response_headers(ctx, accumulator),
         }
     }
 }
@@ -66,7 +88,7 @@ impl ApplyResponseHeader for ResponseHeaderRule {
 impl ApplyResponseHeader for ResponsePropagateNamed {
     fn apply_response_headers(
         &self,
-        input_headers: &HeaderMap,
+        ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
     ) {
         let mut matched = false;
@@ -76,7 +98,7 @@ impl ApplyResponseHeader for ResponsePropagateNamed {
                 continue;
             }
 
-            if let Some(header_value) = input_headers.get(header_name) {
+            if let Some(header_value) = ctx.subgraph_headers.get(header_name) {
                 matched = true;
                 write_agg(
                     accumulator,
@@ -104,10 +126,10 @@ impl ApplyResponseHeader for ResponsePropagateNamed {
 impl ApplyResponseHeader for ResponsePropagateRegex {
     fn apply_response_headers(
         &self,
-        input_headers: &HeaderMap,
+        ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
     ) {
-        for (header_name, header_value) in input_headers {
+        for (header_name, header_value) in ctx.subgraph_headers {
             if is_denied_header(header_name) {
                 continue;
             }
@@ -138,7 +160,7 @@ impl ApplyResponseHeader for ResponsePropagateRegex {
 impl ApplyResponseHeader for ResponseInsertStatic {
     fn apply_response_headers(
         &self,
-        _input_headers: &HeaderMap,
+        _ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
     ) {
         if is_denied_header(&self.name) {
@@ -148,17 +170,110 @@ impl ApplyResponseHeader for ResponseInsertStatic {
         let strategy = if is_never_join_header(&self.name) {
             HeaderAggregationStrategy::Append
         } else {
-            HeaderAggregationStrategy::Last
+            self.strategy
         };
 
         write_agg(accumulator, &self.name, &self.value, strategy);
     }
 }
 
+impl ApplyResponseHeader for ResponseInsertExpression {
+    fn apply_response_headers(
+        &self,
+        ctx: &ResponseExpressionContext,
+        accumulator: &mut ResponseHeaderAggregator,
+    ) {
+        if is_denied_header(&self.name) {
+            return;
+        }
+
+        let headers_value = {
+            let mut obj = BTreeMap::new();
+            for (header_name, header_value) in ctx.client_request.headers.iter() {
+                match header_value.to_str() {
+                    Ok(value) => {
+                        obj.insert(
+                            header_name.as_str().into(),
+                            VrlValue::Bytes(Bytes::from(value.to_owned())),
+                        );
+                    }
+                    Err(_) => continue,
+                }
+            }
+
+            VrlValue::Object(obj)
+        };
+
+        let url_value = VrlValue::Object(BTreeMap::from([
+            (
+                "host".into(),
+                ctx.client_request.url.host().unwrap_or("unknown").into(),
+            ),
+            ("path".into(), ctx.client_request.url.path().into()),
+            (
+                "port".into(),
+                ctx.client_request.url.port_u16().unwrap_or(80).into(),
+            ),
+        ]));
+
+        let operation_value = VrlValue::Object(BTreeMap::from([
+            (
+                "name".into(),
+                ctx.client_request.operation.name.clone().into(),
+            ),
+            ("type".into(), ctx.client_request.operation.kind.into()),
+        ]));
+
+        let request_value = VrlValue::Object(BTreeMap::from([
+            ("method".into(), ctx.client_request.method.as_str().into()),
+            ("headers".into(), headers_value),
+            ("url".into(), url_value),
+            ("operation".into(), operation_value),
+        ]));
+
+        let subgraph_value = VrlValue::Object(BTreeMap::from([(
+            "name".into(),
+            VrlValue::Bytes(Bytes::from(ctx.subgraph_name.to_owned())),
+        )]));
+
+        // TODO: implement
+        let response_value = vrl::value!({
+          "headers": {},
+        });
+
+        let value = VrlValue::Object(BTreeMap::from([
+            ("subgraph".into(), subgraph_value),
+            ("response".into(), response_value),
+            ("request".into(), request_value),
+        ]));
+
+        let mut target = VrlTargetValue {
+            value,
+            metadata: VrlValue::Object(BTreeMap::new()),
+            secrets: VrlSecrets::default(),
+        };
+
+        let mut state = VrlState::default();
+        let timezone = VrlTimeZone::default();
+        let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
+        let value = self.expression.resolve(&mut ctx).unwrap();
+
+        if let Some(header_value) = vrl_value_to_header_value(value) {
+            let strategy = if is_never_join_header(&self.name) {
+                HeaderAggregationStrategy::Append
+            } else {
+                self.strategy
+            };
+
+            write_agg(accumulator, &self.name, &header_value, strategy);
+        }
+    }
+}
+
 impl ApplyResponseHeader for ResponseRemoveNamed {
     fn apply_response_headers(
         &self,
-        _input_headers: &HeaderMap,
+        _ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
     ) {
         for header_name in &self.names {
@@ -173,7 +288,7 @@ impl ApplyResponseHeader for ResponseRemoveNamed {
 impl ApplyResponseHeader for ResponseRemoveRegex {
     fn apply_response_headers(
         &self,
-        _input_headers: &HeaderMap,
+        _ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
     ) {
         accumulator.entries.retain(|name, _| {

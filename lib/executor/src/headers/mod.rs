@@ -7,11 +7,14 @@ pub mod sanitizer;
 
 #[cfg(test)]
 mod tests {
-    use crate::headers::{
-        compile::compile_headers_plan,
-        plan::ResponseHeaderAggregator,
-        request::modify_subgraph_request_headers,
-        response::{apply_subgraph_response_headers, modify_client_response_headers},
+    use crate::{
+        execution::plan::{ClientRequestDetails, OperationDetails},
+        headers::{
+            compile::compile_headers_plan,
+            plan::ResponseHeaderAggregator,
+            request::modify_subgraph_request_headers,
+            response::{apply_subgraph_response_headers, modify_client_response_headers},
+        },
     };
     use hive_router_config::parse_yaml_config;
     use http::{HeaderMap, HeaderName, HeaderValue};
@@ -47,8 +50,19 @@ mod tests {
             header_value_owned("abc").into(),
         );
 
+        let client_details = ClientRequestDetails {
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: &client_headers,
+            operation: OperationDetails {
+                name: None,
+                query: "{ __typename }",
+                kind: "query",
+            },
+        };
+
         let mut out = HeaderMap::new();
-        modify_subgraph_request_headers(&plan, "any", &client_headers, &mut out);
+        modify_subgraph_request_headers(&plan, "any", &client_details, &mut out);
 
         assert_eq!(out.get("x-renamed").unwrap(), &header_value_owned("abc"));
         assert_eq!(out.get("x-set").unwrap(), &header_value_owned("set-value"));
@@ -67,8 +81,18 @@ mod tests {
         let config = parse_yaml_config(String::from(yaml_str)).unwrap();
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
+        let client_details = ClientRequestDetails {
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: &client_headers,
+            operation: OperationDetails {
+                name: None,
+                query: "{ __typename }",
+                kind: "query",
+            },
+        };
         let mut out = HeaderMap::new();
-        modify_subgraph_request_headers(&plan, "any", &client_headers, &mut out);
+        modify_subgraph_request_headers(&plan, "any", &client_details, &mut out);
 
         assert_eq!(
             out.get("x-missing").unwrap(),
@@ -88,6 +112,17 @@ mod tests {
         "#;
         let config = parse_yaml_config(String::from(yaml_str)).unwrap();
         let plan = compile_headers_plan(&config.headers).unwrap();
+        let client_headers = NtexHeaderMap::new();
+        let client_details = ClientRequestDetails {
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: &client_headers,
+            operation: OperationDetails {
+                name: None,
+                query: "{ __typename }",
+                kind: "query",
+            },
+        };
 
         let mut accumulator = ResponseHeaderAggregator::default();
 
@@ -96,7 +131,13 @@ mod tests {
             header_name_owned("x-resp"),
             header_value_owned("resp-value-1"),
         );
-        apply_subgraph_response_headers(&plan, "any", &subgraph_headers, &mut accumulator);
+        apply_subgraph_response_headers(
+            &plan,
+            "any",
+            &subgraph_headers,
+            &client_details,
+            &mut accumulator,
+        );
 
         let mut subgraph_headers = HeaderMap::new();
         subgraph_headers.insert(
@@ -104,7 +145,13 @@ mod tests {
             header_value_owned("resp-value-2"),
         );
 
-        apply_subgraph_response_headers(&plan, "any", &subgraph_headers, &mut accumulator);
+        apply_subgraph_response_headers(
+            &plan,
+            "any",
+            &subgraph_headers,
+            &client_details,
+            &mut accumulator,
+        );
 
         let mut final_headers = HeaderMap::new();
         modify_client_response_headers(accumulator, &mut final_headers);
@@ -130,14 +177,26 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
 
         let mut client_headers = NtexHeaderMap::new();
+
         client_headers.insert(
             header_name_owned("x-remove"),
             header_value_owned("bye").into(),
         );
         client_headers.insert(header_name_owned("x-keep"), header_value_owned("hi").into());
 
+        let client_details = ClientRequestDetails {
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: &client_headers,
+            operation: OperationDetails {
+                name: None,
+                query: "{ __typename }",
+                kind: "query",
+            },
+        };
+
         let mut out = HeaderMap::new();
-        modify_subgraph_request_headers(&plan, "any", &client_headers, &mut out);
+        modify_subgraph_request_headers(&plan, "any", &client_details, &mut out);
 
         assert!(out.get("x-remove").is_none());
         assert_eq!(out.get("x-keep").unwrap(), &header_value_owned("hi"));

@@ -2,15 +2,17 @@ use crate::headers::{
     errors::HeaderRuleCompileError,
     plan::{
         HeaderAggregationStrategy, HeaderRulesPlan, RequestHeaderRule, RequestHeaderRules,
-        RequestInsertStatic, RequestPropagateNamed, RequestPropagateRegex, RequestRemoveNamed,
-        RequestRemoveRegex, ResponseHeaderRule, ResponseHeaderRules, ResponseInsertStatic,
-        ResponsePropagateNamed, ResponsePropagateRegex, ResponseRemoveNamed, ResponseRemoveRegex,
+        RequestInsertExpression, RequestInsertStatic, RequestPropagateNamed, RequestPropagateRegex,
+        RequestRemoveNamed, RequestRemoveRegex, ResponseHeaderRule, ResponseHeaderRules,
+        ResponseInsertExpression, ResponseInsertStatic, ResponsePropagateNamed,
+        ResponsePropagateRegex, ResponseRemoveNamed, ResponseRemoveRegex,
     },
 };
 
 use hive_router_config::headers as config;
 use http::HeaderName;
 use regex_automata::{meta, util::syntax::Config as SyntaxConfig};
+use vrl::{compiler::compile as vrl_compile, stdlib::all as vrl_build_functions};
 
 pub trait HeaderRuleCompiler<A> {
     fn compile(&self, actions: &mut A) -> Result<(), HeaderRuleCompileError>;
@@ -18,6 +20,8 @@ pub trait HeaderRuleCompiler<A> {
 
 impl HeaderRuleCompiler<Vec<RequestHeaderRule>> for config::RequestHeaderRule {
     fn compile(&self, actions: &mut Vec<RequestHeaderRule>) -> Result<(), HeaderRuleCompileError> {
+        let vrl_functions = vrl_build_functions();
+
         match self {
             config::RequestHeaderRule::Propagate(rule) => {
                 let spec = materialize_match_spec(
@@ -40,13 +44,27 @@ impl HeaderRuleCompiler<Vec<RequestHeaderRule>> for config::RequestHeaderRule {
                     }));
                 }
             }
-            config::RequestHeaderRule::Insert(rule) => {
-                let config::InsertSource::Value { value } = &rule.source;
-                actions.push(RequestHeaderRule::InsertStatic(RequestInsertStatic {
-                    name: build_header_name(&rule.name)?,
-                    value: build_header_value(&rule.name, value)?,
-                }));
-            }
+            config::RequestHeaderRule::Insert(rule) => match &rule.source {
+                config::InsertSource::Value { value } => {
+                    actions.push(RequestHeaderRule::InsertStatic(RequestInsertStatic {
+                        name: build_header_name(&rule.name)?,
+                        value: build_header_value(&rule.name, value)?,
+                    }));
+                }
+                config::InsertSource::Expression { expression } => {
+                    let compilation_result =
+                        vrl_compile(expression, &vrl_functions).map_err(|e| {
+                            HeaderRuleCompileError::new_expression_build(rule.name.clone(), e)
+                        })?;
+
+                    actions.push(RequestHeaderRule::InsertExpression(
+                        RequestInsertExpression {
+                            name: build_header_name(&rule.name)?,
+                            expression: Box::new(compilation_result.program),
+                        },
+                    ));
+                }
+            },
             config::RequestHeaderRule::Remove(rule) => {
                 let spec = materialize_match_spec(&rule.spec, None, None)?;
                 if !spec.header_names.is_empty() {
@@ -68,6 +86,8 @@ impl HeaderRuleCompiler<Vec<RequestHeaderRule>> for config::RequestHeaderRule {
 
 impl HeaderRuleCompiler<Vec<ResponseHeaderRule>> for config::ResponseHeaderRule {
     fn compile(&self, actions: &mut Vec<ResponseHeaderRule>) -> Result<(), HeaderRuleCompileError> {
+        let vrl_functions = vrl_build_functions();
+
         match self {
             config::ResponseHeaderRule::Propagate(rule) => {
                 let aggregation_strategy = match rule.algorithm {
@@ -99,11 +119,41 @@ impl HeaderRuleCompiler<Vec<ResponseHeaderRule>> for config::ResponseHeaderRule 
                 }
             }
             config::ResponseHeaderRule::Insert(rule) => {
-                let config::InsertSource::Value { value } = &rule.source;
-                actions.push(ResponseHeaderRule::InsertStatic(ResponseInsertStatic {
-                    name: build_header_name(&rule.name)?,
-                    value: build_header_value(&rule.name, value)?,
-                }));
+                let aggregation_strategy = match rule.algorithm {
+                    Some(config::AggregationAlgo::First) => HeaderAggregationStrategy::First,
+                    Some(config::AggregationAlgo::Last) => HeaderAggregationStrategy::Last,
+                    Some(config::AggregationAlgo::Append) => HeaderAggregationStrategy::Append,
+                    None => HeaderAggregationStrategy::Last,
+                };
+
+                match &rule.source {
+                    config::InsertSource::Value { value } => {
+                        actions.push(ResponseHeaderRule::InsertStatic(ResponseInsertStatic {
+                            name: build_header_name(&rule.name)?,
+                            value: build_header_value(&rule.name, value)?,
+                            strategy: aggregation_strategy,
+                        }));
+                    }
+                    config::InsertSource::Expression { expression } => {
+                        // NOTE: In case we ever need to improve performance and not pass the whole context
+                        // to VRL expressions, we can use:
+                        // - compilation_result.program.info().target_assignments
+                        // - compilation_result.program.info().target_queries
+                        // to determine what parts of the context are actually needed by the expression
+                        let compilation_result =
+                            vrl_compile(expression, &vrl_functions).map_err(|e| {
+                                HeaderRuleCompileError::new_expression_build(rule.name.clone(), e)
+                            })?;
+
+                        actions.push(ResponseHeaderRule::InsertExpression(
+                            ResponseInsertExpression {
+                                name: build_header_name(&rule.name)?,
+                                expression: Box::new(compilation_result.program),
+                                strategy: aggregation_strategy,
+                            },
+                        ));
+                    }
+                }
             }
             config::ResponseHeaderRule::Remove(rule) => {
                 let spec = materialize_match_spec(&rule.spec, None, None)?;
@@ -300,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_set_request() {
-        let rule = config::RequestHeaderRule::Insert(config::InsertRule {
+        let rule = config::RequestHeaderRule::Insert(config::RequestInsertRule {
             name: "x-set".to_string(),
             source: config::InsertSource::Value {
                 value: "abc".to_string(),

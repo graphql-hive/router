@@ -6,7 +6,7 @@ use hive_router_query_planner::planner::plan_nodes::{
     ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
     QueryPlan, SequenceNode,
 };
-use http::HeaderMap;
+use http::{HeaderMap, Method};
 use ntex_http::HeaderMap as NtexHeaderMap;
 use serde::Deserialize;
 use sonic_rs::ValueRef;
@@ -42,13 +42,26 @@ use crate::{
     },
 };
 
+pub struct OperationDetails<'a> {
+    pub name: Option<String>,
+    pub query: &'a str,
+    pub kind: &'a str,
+}
+
+pub struct ClientRequestDetails<'a> {
+    pub method: Method,
+    pub url: http::Uri,
+    pub headers: &'a NtexHeaderMap,
+    pub operation: OperationDetails<'a>,
+}
+
 pub struct QueryPlanExecutionContext<'exec> {
     pub query_plan: &'exec QueryPlan,
     pub projection_plan: &'exec Vec<FieldProjectionPlan>,
     pub headers_plan: &'exec HeaderRulesPlan,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     pub extensions: Option<HashMap<String, sonic_rs::Value>>,
-    pub upstream_headers: &'exec NtexHeaderMap,
+    pub client_request: ClientRequestDetails<'exec>,
     pub introspection_context: &'exec IntrospectionContext<'exec, 'static>,
     pub operation_type_name: &'exec str,
     pub executors: &'exec SubgraphExecutorMap,
@@ -73,9 +86,9 @@ pub async fn execute_query_plan<'exec>(
         ctx.variable_values,
         ctx.executors,
         ctx.introspection_context.metadata,
-        // Deduplicate subgraph requests only if the operation type is a query
-        ctx.upstream_headers,
+        &ctx.client_request,
         ctx.headers_plan,
+        // Deduplicate subgraph requests only if the operation type is a query
         ctx.operation_type_name == "Query",
     );
 
@@ -109,7 +122,7 @@ pub struct Executor<'exec> {
     variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     schema_metadata: &'exec SchemaMetadata,
     executors: &'exec SubgraphExecutorMap,
-    upstream_headers: &'exec NtexHeaderMap,
+    client_request: &'exec ClientRequestDetails<'exec>,
     headers_plan: &'exec HeaderRulesPlan,
     dedupe_subgraph_requests: bool,
 }
@@ -203,7 +216,7 @@ impl<'exec> Executor<'exec> {
         variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
         executors: &'exec SubgraphExecutorMap,
         schema_metadata: &'exec SchemaMetadata,
-        upstream_headers: &'exec NtexHeaderMap,
+        client_request: &'exec ClientRequestDetails<'exec>,
         headers_plan: &'exec HeaderRulesPlan,
         dedupe_subgraph_requests: bool,
     ) -> Self {
@@ -211,7 +224,7 @@ impl<'exec> Executor<'exec> {
             variable_values,
             executors,
             schema_metadata,
-            upstream_headers,
+            client_request,
             headers_plan,
             dedupe_subgraph_requests,
         }
@@ -419,6 +432,7 @@ impl<'exec> Executor<'exec> {
                     self.headers_plan,
                     &job.subgraph_name,
                     &job.response.headers,
+                    self.client_request,
                     &mut ctx.response_headers_aggregator,
                 );
 
@@ -439,6 +453,7 @@ impl<'exec> Executor<'exec> {
                     self.headers_plan,
                     &job.subgraph_name,
                     &job.response.headers,
+                    self.client_request,
                     &mut ctx.response_headers_aggregator,
                 );
 
@@ -599,7 +614,7 @@ impl<'exec> Executor<'exec> {
         modify_subgraph_request_headers(
             self.headers_plan,
             &node.service_name,
-            self.upstream_headers,
+            self.client_request,
             &mut headers_map,
         );
 

@@ -321,6 +321,15 @@ Static value provided in the config.
 |**value**|`string`||yes|
 
 
+   
+**Option 2 (optional):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**expression**|`string`||yes|
+
+
 <a name="headersallresponse"></a>
 #### headers\.all\.response\[\]: array,null
 
@@ -561,6 +570,15 @@ Static value provided in the config.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**value**|`string`||yes|
+
+
+   
+**Option 2 (optional):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**expression**|`string`||yes|
 
 
 <a name="headerssubgraphs"></a>
@@ -852,6 +870,15 @@ Static value provided in the config.
 |**value**|`string`||yes|
 
 
+   
+**Option 2 (optional):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**expression**|`string`||yes|
+
+
 <a name="headerssubgraphsadditionalpropertiesresponse"></a>
 ##### headers\.subgraphs\.additionalProperties\.response\[\]: array,null
 
@@ -1092,6 +1119,15 @@ Static value provided in the config.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**value**|`string`||yes|
+
+
+   
+**Option 2 (optional):** 
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**expression**|`string`||yes|
 
 
 <a name="http"></a>

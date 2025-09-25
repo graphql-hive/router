@@ -117,7 +117,7 @@ pub enum RequestHeaderRule {
     /// - For **normal** headers: replaces any existing value.
     /// - For **never-join** headers (e.g. `set-cookie`): **appends** another
     ///   occurrence (multiple lines), never comma-joins.
-    Insert(InsertRule),
+    Insert(RequestInsertRule),
 }
 
 /// Response-header rules (applied before sending back to the client).
@@ -141,7 +141,7 @@ pub enum ResponseHeaderRule {
     /// Add or overwrite a header in the response to the client.
     ///
     /// For never-join headers, appends another occurrence (multiple lines).
-    Insert(InsertRule),
+    Insert(ResponseInsertRule),
 }
 
 /// Remove headers matched by the specification.
@@ -167,7 +167,7 @@ pub struct RemoveRule {
 /// # If another Set-Cookie exists, this creates another header line (never joined)
 /// ```
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-pub struct InsertRule {
+pub struct RequestInsertRule {
     /// Header name to insert or overwrite (case-insensitive).
     pub name: HeaderName,
     /// Where the value comes from (currently static only).
@@ -175,13 +175,46 @@ pub struct InsertRule {
     pub source: InsertSource,
 }
 
+/// Insert a header with a static value.
+///
+/// ### Examples
+/// ```yaml
+/// - insert:
+///     name: x-env
+///     value: prod
+/// ```
+///
+/// ```yaml
+/// - insert:
+///     name: set-cookie
+///     value: "a=1; Path=/"
+/// # If another Set-Cookie exists, this creates another header line (never joined)
+/// ```
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+pub struct ResponseInsertRule {
+    /// Header name to insert or overwrite (case-insensitive).
+    pub name: HeaderName,
+    /// Where the value comes from (currently static only).
+    #[serde(flatten)]
+    pub source: InsertSource,
+    /// How to merge values across multiple subgraph responses.
+    /// Default: `Last` (overwrite).
+    #[serde(default)]
+    pub algorithm: Option<AggregationAlgo>,
+}
+
 /// Source for an inserted header value.
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(untagged)]
 pub enum InsertSource {
     /// Static value provided in the config.
-    Value { value: String },
-    // Expression { expression: String },
+    Value {
+        value: String,
+    },
+    // TODO: cover it with description and examples
+    Expression {
+        expression: String,
+    },
 }
 
 /// Helper to allow `one` or `many` values for ergonomics (OR semantics).
