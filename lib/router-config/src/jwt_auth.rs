@@ -49,9 +49,9 @@ pub struct JwtAuthConfig {
 #[serde(tag = "source")]
 pub enum JwksProviderSourceConfig {
     /// A local file on the file-system. This file will be read once on startup and cached.
-    #[serde(rename = "local")]
-    #[schemars(title = "local")]
-    Local {
+    #[serde(rename = "file")]
+    #[schemars(title = "file")]
+    File {
         #[serde(rename = "path")]
         /// A path to a local file on the file-system. Relative to the location of the root configuration file.
         file: FilePath,
@@ -68,13 +68,14 @@ pub enum JwksProviderSourceConfig {
             default = "default_polling_interval"
         )]
         #[schemars(with = "String")]
-        /// Duration after which the cached JWKS should be expired. If not specified, the default value will be used.
-        cache_duration: Option<Duration>,
+        /// How often the JWKS should be polled for updates.
+        polling_interval: Option<Duration>,
         /// If set to `true`, the JWKS will be fetched on startup and cached. In case of invalid JWKS, the error will be ignored and the plugin will try to fetch again when server receives the first request.
         /// If set to `false`, the JWKS will be fetched on-demand, when the first request comes in.
         prefetch: Option<bool>,
     },
 }
+
 fn default_polling_interval() -> Option<Duration> {
     // Some providers like MS Azure have rate limit configured. So let's use 10 minutes, like Envoy does.
     // and allow users to adjust it if needed.

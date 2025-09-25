@@ -47,7 +47,7 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
     let mut bg_tasks_manager = BackgroundTasksManager::new();
 
     let jwt_runtime = if let Some(jwt_config) = &router_config.jwt {
-        Some(JwtAuthRuntime::init(&mut bg_tasks_manager, jwt_config))
+        Some(JwtAuthRuntime::init(&mut bg_tasks_manager, jwt_config).await?)
     } else {
         None
     };
