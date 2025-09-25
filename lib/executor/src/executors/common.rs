@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::HeaderMap;
+use sonic_rs::Value;
 
 #[async_trait]
 pub trait SubgraphExecutor {
@@ -22,6 +23,8 @@ pub type SubgraphExecutorType = dyn crate::executors::common::SubgraphExecutor +
 
 pub type SubgraphExecutorBoxedArc = Arc<Box<SubgraphExecutorType>>;
 
+pub type SubgraphRequestExtensions = HashMap<String, Value>;
+
 pub struct HttpExecutionRequest<'a> {
     pub query: &'a str,
     pub dedupe: bool,
@@ -30,6 +33,15 @@ pub struct HttpExecutionRequest<'a> {
     pub variables: Option<HashMap<&'a str, &'a sonic_rs::Value>>,
     pub headers: HeaderMap,
     pub representations: Option<Vec<u8>>,
+    pub extensions: Option<SubgraphRequestExtensions>,
+}
+
+impl HttpExecutionRequest<'_> {
+    pub fn add_request_extensions_field(&mut self, key: String, value: Value) {
+        self.extensions
+            .get_or_insert_with(HashMap::new)
+            .insert(key, value);
+    }
 }
 
 pub struct HttpExecutionResponse {

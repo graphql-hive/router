@@ -16,6 +16,7 @@ use hive_router_query_planner::{
 };
 use moka::future::Cache;
 
+use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::{
     cors::{CORSConfigError, Cors},
     normalize::GraphQLNormalizationPayload,
@@ -33,12 +34,14 @@ pub struct RouterSharedState {
     pub router_config: HiveRouterConfig,
     pub headers_plan: HeaderRulesPlan,
     pub cors: Option<Cors>,
+    pub jwt_auth_runtime: Option<JwtAuthRuntime>,
 }
 
 impl RouterSharedState {
     pub fn new(
         parsed_supergraph_sdl: Document<'static, String>,
         router_config: HiveRouterConfig,
+        jwt_auth_runtime: Option<JwtAuthRuntime>,
     ) -> Result<Arc<Self>, SharedStateError> {
         let supergraph_state = SupergraphState::new(&parsed_supergraph_sdl);
         let planner =
@@ -63,6 +66,7 @@ impl RouterSharedState {
             normalize_cache: moka::future::Cache::new(1000),
             cors: Cors::from_config(&router_config.cors).map_err(Box::new)?,
             router_config,
+            jwt_auth_runtime,
         }))
     }
 }
