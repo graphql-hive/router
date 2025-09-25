@@ -1,4 +1,5 @@
 pub mod http_server;
+pub mod jwt_auth;
 pub mod log;
 pub mod primitives;
 pub mod query_planner;
@@ -10,8 +11,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    http_server::HttpServerConfig, log::LoggingConfig, query_planner::QueryPlannerConfig,
-    supergraph::SupergraphSource, traffic_shaping::TrafficShapingExecutorConfig,
+    http_server::HttpServerConfig, jwt_auth::JwtAuthConfig, log::LoggingConfig,
+    query_planner::QueryPlannerConfig, supergraph::SupergraphSource,
+    traffic_shaping::TrafficShapingExecutorConfig,
 };
 
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -40,6 +42,10 @@ pub struct HiveRouterConfig {
     /// Configuration for the traffic-shaper executor. Use these configurations to control how requests are being executed to subgraphs.
     #[serde(default)]
     pub traffic_shaping: TrafficShapingExecutorConfig,
+
+    /// Configuration for JWT authentication plugin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jwt: Option<JwtAuthConfig>,
 }
 
 #[derive(Debug, thiserror::Error)]
