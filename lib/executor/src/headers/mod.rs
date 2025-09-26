@@ -28,6 +28,26 @@ mod tests {
         HeaderValue::from_str(s).unwrap()
     }
 
+    trait HeaderMapAsStringExt {
+        fn to_string(&self) -> String;
+    }
+
+    impl HeaderMapAsStringExt for HeaderMap {
+        fn to_string(&self) -> String {
+            let mut buffer = String::new();
+
+            for (name, value) in self.iter() {
+                buffer.push_str(&format!(
+                    "{}: {}\n",
+                    name.as_str(),
+                    value.to_str().unwrap_or("<invalid utf8>")
+                ));
+            }
+
+            buffer
+        }
+    }
+
     #[test]
     fn test_build_subgraph_headers_propagate_and_set() {
         let yaml_str = r#"
@@ -65,8 +85,10 @@ mod tests {
         let mut out = HeaderMap::new();
         modify_subgraph_request_headers(&plan, "any", &client_details, &mut out).unwrap();
 
-        assert_eq!(out.get("x-renamed").unwrap(), &header_value_owned("abc"));
-        assert_eq!(out.get("x-set").unwrap(), &header_value_owned("set-value"));
+        insta::assert_snapshot!(out.to_string(), @r#"
+          x-renamed: abc
+          x-set: set-value
+        "#);
     }
 
     #[test]
@@ -95,10 +117,9 @@ mod tests {
         let mut out = HeaderMap::new();
         modify_subgraph_request_headers(&plan, "any", &client_details, &mut out).unwrap();
 
-        assert_eq!(
-            out.get("x-missing").unwrap(),
-            &header_value_owned("default-value")
-        );
+        insta::assert_snapshot!(out.to_string(), @r#"
+          x-missing: default-value
+        "#);
     }
 
     // Tests that `matching` and `exclude` rules are correctly applied for propagation.
@@ -110,7 +131,7 @@ mod tests {
               request:
                 - propagate:
                     matching: "^x-.*"
-                    exclude: "^x-secret-.*"
+                    exclude: ["^x-secret-.*"]
         "#;
         let config = parse_yaml_config(String::from(yaml_str)).unwrap();
         let plan = compile_headers_plan(&config.headers).unwrap();
@@ -146,6 +167,10 @@ mod tests {
         assert_eq!(out.get("x-forward-this").unwrap(), "value1");
         assert!(out.get("x-secret-header").is_none());
         assert!(out.get("authorization").is_none());
+
+        insta::assert_snapshot!(out.to_string(), @r#"
+          x-forward-this: value1
+        "#);
     }
 
     // Tests inserting a header with a value from a VRL expression.
@@ -176,7 +201,9 @@ mod tests {
         let mut out = HeaderMap::new();
         modify_subgraph_request_headers(&plan, "any", &client_details, &mut out).unwrap();
 
-        assert_eq!(out.get("x-operation-name").unwrap(), "MyQuery");
+        insta::assert_snapshot!(out.to_string(), @r#"
+          x-operation-name: MyQuery
+        "#);
     }
 
     // Tests VRL expression fallback to a default value when a field is null.
@@ -207,7 +234,9 @@ mod tests {
         let mut out = HeaderMap::new();
         modify_subgraph_request_headers(&plan, "any", &client_details, &mut out).unwrap();
 
-        assert_eq!(out.get("x-operation-name").unwrap(), "unknown");
+        insta::assert_snapshot!(out.to_string(), @r#"
+          x-operation-name: unknown
+        "#);
     }
 
     // Tests that subgraph-specific rules override global `all` rules.
@@ -245,13 +274,19 @@ mod tests {
         let mut out_accounts = HeaderMap::new();
         modify_subgraph_request_headers(&plan, "accounts", &client_details, &mut out_accounts)
             .unwrap();
-        assert_eq!(out_accounts.get("x-scope").unwrap(), "accounts");
+
+        insta::assert_snapshot!(out_accounts.to_string(), @r#"
+          x-scope: accounts
+        "#);
 
         // For any other subgraph, the `all` rule should apply.
         let mut out_other = HeaderMap::new();
         modify_subgraph_request_headers(&plan, "products", &client_details, &mut out_other)
             .unwrap();
-        assert_eq!(out_other.get("x-scope").unwrap(), "all");
+
+        insta::assert_snapshot!(out_other.to_string(), @r#"
+          x-scope: all
+        "#);
     }
 
     #[test]
@@ -312,10 +347,9 @@ mod tests {
         let mut final_headers = HeaderMap::new();
         modify_client_response_headers(accumulator, &mut final_headers).unwrap();
 
-        assert_eq!(
-            final_headers.get("x-resp").unwrap(),
-            &header_value_owned("resp-value-2")
-        );
+        insta::assert_snapshot!(final_headers.to_string(), @r#"
+          x-resp: resp-value-2
+        "#);
     }
 
     // Tests the `first` algorithm for response header propagation.
@@ -376,10 +410,9 @@ mod tests {
         let mut final_headers = HeaderMap::new();
         modify_client_response_headers(accumulator, &mut final_headers).unwrap();
 
-        assert_eq!(
-            final_headers.get("x-resp").unwrap(),
-            &header_value_owned("resp-value-1")
-        );
+        insta::assert_snapshot!(final_headers.to_string(), @r#"
+          x-resp: resp-value-1
+        "#);
     }
 
     // Tests the `append` algorithm for response header propagation.
@@ -433,7 +466,9 @@ mod tests {
         let mut final_headers = HeaderMap::new();
         modify_client_response_headers(accumulator, &mut final_headers).unwrap();
 
-        assert_eq!(final_headers.get("x-stuff").unwrap(), "val1, val2");
+        insta::assert_snapshot!(final_headers.to_string(), @r#"
+          x-stuff: val1, val2
+        "#);
     }
 
     // Tests that "never-join" headers like set-cookie are appended as separate fields.
@@ -487,10 +522,10 @@ mod tests {
         let mut final_headers = HeaderMap::new();
         modify_client_response_headers(accumulator, &mut final_headers).unwrap();
 
-        let cookies: Vec<_> = final_headers.get_all("set-cookie").iter().collect();
-        assert_eq!(cookies.len(), 2);
-        assert_eq!(cookies[0], "a=1");
-        assert_eq!(cookies[1], "b=2");
+        insta::assert_snapshot!(final_headers.to_string(), @r#"
+          set-cookie: a=1
+          set-cookie: b=2
+        "#);
     }
 
     // Tests inserting a response header with a value from a VRL expression.
@@ -538,10 +573,9 @@ mod tests {
         let mut final_headers = HeaderMap::new();
         modify_client_response_headers(accumulator, &mut final_headers).unwrap();
 
-        assert_eq!(
-            final_headers.get("x-original-forwarded-for").unwrap(),
-            "1.2.3.4"
-        );
+        insta::assert_snapshot!(final_headers.to_string(), @r#"
+          x-original-forwarded-for: 1.2.3.4
+        "#);
     }
 
     #[test]
@@ -580,7 +614,8 @@ mod tests {
         let mut out = HeaderMap::new();
         modify_subgraph_request_headers(&plan, "any", &client_details, &mut out).unwrap();
 
-        assert!(out.get("x-remove").is_none());
-        assert_eq!(out.get("x-keep").unwrap(), &header_value_owned("hi"));
+        insta::assert_snapshot!(out.to_string(), @r#"
+          x-keep: hi
+        "#);
     }
 }
