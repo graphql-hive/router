@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -6,9 +7,12 @@ use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, Pipel
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::execute_query_plan;
-use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionContext};
+use hive_router_plan_executor::execution::plan::{
+    ClientRequestDetails, OperationDetails, PlanExecutionOutput, QueryPlanExecutionContext,
+};
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
+use hive_router_query_planner::state::supergraph_state::OperationKind;
 use http::HeaderName;
 use ntex::web::HttpRequest;
 
@@ -22,8 +26,9 @@ enum ExposeQueryPlanMode {
 }
 
 #[inline]
-pub async fn execute_plan(
+pub async fn execute_plan<'a>(
     req: &mut HttpRequest,
+    query: Cow<'a, str>,
     app_state: &Arc<RouterSharedState>,
     normalized_payload: &Arc<GraphQLNormalizationPayload>,
     query_plan_payload: &Arc<QueryPlan>,
@@ -66,7 +71,21 @@ pub async fn execute_plan(
         headers_plan: &app_state.headers_plan,
         variable_values: &variable_payload.variables_map,
         extensions,
-        upstream_headers: req.headers(),
+        client_request: ClientRequestDetails {
+            method: req.method().clone(),
+            url: req.uri().clone(),
+            headers: req.headers(),
+            operation: OperationDetails {
+                name: normalized_payload.operation_for_plan.name.clone(),
+                kind: match normalized_payload.operation_for_plan.operation_kind {
+                    Some(OperationKind::Query) => "query",
+                    Some(OperationKind::Mutation) => "mutation",
+                    Some(OperationKind::Subscription) => "subscription",
+                    None => "query",
+                },
+                query,
+            },
+        },
         introspection_context: &introspection_context,
         operation_type_name: normalized_payload.root_type_name,
         executors: &app_state.subgraph_executor_map,

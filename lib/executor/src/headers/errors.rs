@@ -1,5 +1,6 @@
 use http::header::{InvalidHeaderName, InvalidHeaderValue};
 use regex_automata::meta::BuildError;
+use vrl::{diagnostic::DiagnosticList, prelude::ExpressionError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum HeaderRuleCompileError {
@@ -13,4 +14,34 @@ pub enum HeaderRuleCompileError {
     InvalidDefault,
     #[error("Failed to build regex for header matching. Please check your regex patterns for syntax errors. Reason: {0}")]
     RegexBuild(#[from] Box<BuildError>),
+    #[error("Failed to compile VRL expression for header '{0}'. Please check your VRL expression for syntax errors. Diagnostic: {1}")]
+    ExpressionBuild(String, String),
+}
+
+#[derive(thiserror::Error, Debug, Clone)]
+pub enum HeaderRuleRuntimeError {
+    #[error("Failed to evaluate VRL expression for header '{0}'. Reason: {1}")]
+    ExpressionEvaluation(String, Box<ExpressionError>),
+    #[error("Invalid header value for header '{0}'.")]
+    BadHeaderValue(String),
+}
+
+impl HeaderRuleCompileError {
+    pub fn new_expression_build(header_name: String, diagnostics: DiagnosticList) -> Self {
+        HeaderRuleCompileError::ExpressionBuild(
+            header_name,
+            diagnostics
+                .errors()
+                .into_iter()
+                .map(|d| d.message.clone())
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+    }
+}
+
+impl HeaderRuleRuntimeError {
+    pub fn new_expression_evaluation(header_name: String, error: Box<ExpressionError>) -> Self {
+        HeaderRuleRuntimeError::ExpressionEvaluation(header_name, error)
+    }
 }

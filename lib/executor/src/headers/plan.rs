@@ -1,6 +1,7 @@
 use ahash::HashMap;
 use http::{HeaderName, HeaderValue};
 use regex_automata::meta::Regex;
+use vrl::compiler::Program as VrlProgram;
 
 #[derive(Clone)]
 pub struct HeaderRulesPlan {
@@ -27,6 +28,7 @@ pub enum RequestHeaderRule {
     PropagateNamed(RequestPropagateNamed),
     PropagateRegex(RequestPropagateRegex),
     InsertStatic(RequestInsertStatic),
+    InsertExpression(RequestInsertExpression),
     RemoveNamed(RequestRemoveNamed),
     RemoveRegex(RequestRemoveRegex),
 }
@@ -54,6 +56,20 @@ pub struct RequestInsertStatic {
 pub struct ResponseInsertStatic {
     pub name: HeaderName,
     pub value: HeaderValue,
+    pub strategy: HeaderAggregationStrategy,
+}
+
+#[derive(Clone)]
+pub struct RequestInsertExpression {
+    pub name: HeaderName,
+    pub expression: Box<VrlProgram>,
+}
+
+#[derive(Clone)]
+pub struct ResponseInsertExpression {
+    pub name: HeaderName,
+    pub expression: Box<VrlProgram>,
+    pub strategy: HeaderAggregationStrategy,
 }
 
 #[derive(Clone)]
@@ -81,6 +97,7 @@ pub enum ResponseHeaderRule {
     PropagateNamed(ResponsePropagateNamed),
     PropagateRegex(ResponsePropagateRegex),
     InsertStatic(ResponseInsertStatic),
+    InsertExpression(ResponseInsertExpression),
     RemoveNamed(ResponseRemoveNamed),
     RemoveRegex(ResponseRemoveRegex),
 }

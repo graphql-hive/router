@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
@@ -92,6 +92,7 @@ pub async fn execute_pipeline(
     let progressive_override_ctx = request_override_context()?;
     let normalize_payload =
         normalize_request_with_cache(req, state, &execution_request, &parser_payload).await?;
+    let query = Cow::Owned(execution_request.query.clone());
     let variable_payload =
         coerce_request_variables(req, state, execution_request, &normalize_payload)?;
 
@@ -109,6 +110,7 @@ pub async fn execute_pipeline(
 
     let execution_result = execute_plan(
         req,
+        query,
         state,
         &normalize_payload,
         &query_plan_payload,
