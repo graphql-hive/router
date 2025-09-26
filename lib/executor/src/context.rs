@@ -61,6 +61,13 @@ impl<'a> ExecutionContext<'a> {
                                     ..response_error.clone()
                                 });
                             }
+                        } else {
+                            // If we don't have the entity index in the map, just push the original error
+                            // without any path, because `_entities` is not a valid path in the final response.
+                            self.errors.push(GraphQLError {
+                                path: None,
+                                ..response_error
+                            });
                         }
                     }
                     _ => {

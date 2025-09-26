@@ -23,9 +23,7 @@ use crate::{
         response::project_by_operation,
     },
     response::{
-        graphql_error::{GraphQLError, GraphQLErrorPathSegment},
-        merge::deep_merge,
-        subgraph_response::SubgraphResponse,
+        graphql_error::GraphQLError, merge::deep_merge, subgraph_response::SubgraphResponse,
         value::Value,
     },
     utils::{
@@ -389,18 +387,15 @@ impl<'exec> Executor<'exec> {
                         let mut index = 0;
                         let normalized_path = job.flatten_node_path.as_slice();
                         // If there is an error in the response, then collect the paths for normalizing the error
-                        let initial_error_path_arr: Option<Vec<GraphQLErrorPathSegment>>;
-                        let mut entity_index_error_map: Option<
-                            HashMap<&usize, Vec<Vec<GraphQLErrorPathSegment>>>,
-                        >;
-                        if response.errors.is_some() {
-                            initial_error_path_arr =
-                                Some(Vec::with_capacity(normalized_path.len() + 2));
-                            entity_index_error_map = Some(HashMap::with_capacity(entities.len()));
-                        } else {
-                            initial_error_path_arr = None;
-                            entity_index_error_map = None;
-                        }
+                        let (initial_error_path_arr, mut entity_index_error_map) =
+                            if response.errors.is_some() {
+                                (
+                                    Some(Vec::with_capacity(normalized_path.len() + 2)),
+                                    Some(HashMap::with_capacity(entities.len())),
+                                )
+                            } else {
+                                (None, None)
+                            };
                         traverse_and_callback_mut(
                             &mut ctx.final_response,
                             normalized_path,
