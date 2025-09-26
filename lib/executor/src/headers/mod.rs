@@ -57,7 +57,7 @@ mod tests {
             headers: &client_headers,
             operation: OperationDetails {
                 name: None,
-                query: "{ __typename }",
+                query: "{ __typename }".to_string().into(),
                 kind: "query",
             },
         };
@@ -88,7 +88,7 @@ mod tests {
             headers: &client_headers,
             operation: OperationDetails {
                 name: None,
-                query: "{ __typename }",
+                query: "{ __typename }".to_string().into(),
                 kind: "query",
             },
         };
@@ -120,7 +120,7 @@ mod tests {
             headers: &client_headers,
             operation: OperationDetails {
                 name: None,
-                query: "{ __typename }",
+                query: "{ __typename }".to_string().into(),
                 kind: "query",
             },
         };
@@ -193,7 +193,7 @@ mod tests {
             headers: &client_headers,
             operation: OperationDetails {
                 name: None,
-                query: "{ __typename }",
+                query: "{ __typename }".to_string().into(),
                 kind: "query",
             },
         };

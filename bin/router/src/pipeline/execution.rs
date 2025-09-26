@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -25,8 +26,9 @@ enum ExposeQueryPlanMode {
 }
 
 #[inline]
-pub async fn execute_plan(
+pub async fn execute_plan<'a>(
     req: &mut HttpRequest,
+    query: Cow<'a, str>,
     app_state: &Arc<RouterSharedState>,
     normalized_payload: &Arc<GraphQLNormalizationPayload>,
     query_plan_payload: &Arc<QueryPlan>,
@@ -81,8 +83,7 @@ pub async fn execute_plan(
                     Some(OperationKind::Subscription) => "subscription",
                     None => "query",
                 },
-                // TODO: pass the actual query string
-                query: "todo",
+                query,
             },
         },
         introspection_context: &introspection_context,

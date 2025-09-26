@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
@@ -44,7 +44,7 @@ use crate::{
 
 pub struct OperationDetails<'a> {
     pub name: Option<String>,
-    pub query: &'a str,
+    pub query: Cow<'a, str>,
     pub kind: &'a str,
 }
 
