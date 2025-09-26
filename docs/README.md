@@ -323,6 +323,25 @@ Static value provided in the config.
 
    
 **Option 2 (optional):** 
+A dynamic value computed by a VRL expression.
+
+This allows you to generate header values based on the incoming request,
+subgraph name, and (for response rules) subgraph response headers.
+The expression has access to a context object with `.request`, `.subgraph`,
+and `.response` fields.
+
+For more information on the available functions and syntax, see the
+[VRL documentation](https://vrl.dev/).
+
+### Example
+```yaml
+# Insert a header with a value derived from another header.
+- insert:
+    name: x-auth-scheme
+    expression: 'split(.request.headers.authorization, " ")[0] ?? "none"'
+```
+
+
 **Properties**
 
 |Name|Type|Description|Required|
@@ -576,6 +595,25 @@ Static value provided in the config.
 
    
 **Option 2 (optional):** 
+A dynamic value computed by a VRL expression.
+
+This allows you to generate header values based on the incoming request,
+subgraph name, and (for response rules) subgraph response headers.
+The expression has access to a context object with `.request`, `.subgraph`,
+and `.response` fields.
+
+For more information on the available functions and syntax, see the
+[VRL documentation](https://vrl.dev/).
+
+### Example
+```yaml
+# Insert a header with a value derived from another header.
+- insert:
+    name: x-auth-scheme
+    expression: 'split(.request.headers.authorization, " ")[0] ?? "none"'
+```
+
+
 **Properties**
 
 |Name|Type|Description|Required|
@@ -881,6 +919,25 @@ Static value provided in the config.
 
    
 **Option 2 (optional):** 
+A dynamic value computed by a VRL expression.
+
+This allows you to generate header values based on the incoming request,
+subgraph name, and (for response rules) subgraph response headers.
+The expression has access to a context object with `.request`, `.subgraph`,
+and `.response` fields.
+
+For more information on the available functions and syntax, see the
+[VRL documentation](https://vrl.dev/).
+
+### Example
+```yaml
+# Insert a header with a value derived from another header.
+- insert:
+    name: x-auth-scheme
+    expression: 'split(.request.headers.authorization, " ")[0] ?? "none"'
+```
+
+
 **Properties**
 
 |Name|Type|Description|Required|
@@ -1134,6 +1191,25 @@ Static value provided in the config.
 
    
 **Option 2 (optional):** 
+A dynamic value computed by a VRL expression.
+
+This allows you to generate header values based on the incoming request,
+subgraph name, and (for response rules) subgraph response headers.
+The expression has access to a context object with `.request`, `.subgraph`,
+and `.response` fields.
+
+For more information on the available functions and syntax, see the
+[VRL documentation](https://vrl.dev/).
+
+### Example
+```yaml
+# Insert a header with a value derived from another header.
+- insert:
+    name: x-auth-scheme
+    expression: 'split(.request.headers.authorization, " ")[0] ?? "none"'
+```
+
+
 **Properties**
 
 |Name|Type|Description|Required|

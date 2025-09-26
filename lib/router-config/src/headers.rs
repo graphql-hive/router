@@ -208,13 +208,25 @@ pub struct ResponseInsertRule {
 #[serde(untagged)]
 pub enum InsertSource {
     /// Static value provided in the config.
-    Value {
-        value: String,
-    },
-    // TODO: cover it with description and examples
-    Expression {
-        expression: String,
-    },
+    Value { value: String },
+    /// A dynamic value computed by a VRL expression.
+    ///
+    /// This allows you to generate header values based on the incoming request,
+    /// subgraph name, and (for response rules) subgraph response headers.
+    /// The expression has access to a context object with `.request`, `.subgraph`,
+    /// and `.response` fields.
+    ///
+    /// For more information on the available functions and syntax, see the
+    /// [VRL documentation](https://vrl.dev/).
+    ///
+    /// ### Example
+    /// ```yaml
+    /// # Insert a header with a value derived from another header.
+    /// - insert:
+    ///     name: x-auth-scheme
+    ///     expression: 'split(.request.headers.authorization, " ")[0] ?? "none"'
+    /// ```
+    Expression { expression: String },
 }
 
 /// Helper to allow `one` or `many` values for ergonomics (OR semantics).
