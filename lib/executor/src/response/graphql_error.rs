@@ -52,7 +52,7 @@ pub struct GraphQLErrorLocation {
     pub column: usize,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, PartialEq)]
 pub enum GraphQLErrorPathSegment {
     String(String),
     Index(usize),
