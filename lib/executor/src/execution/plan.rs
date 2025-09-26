@@ -583,6 +583,8 @@ fn condition_node_by_variables<'a>(
  * So we should duplicate the error for both paths.
  */
 fn normalize_entity_errors_correctly() {
+    use crate::response::graphql_error::{GraphQLError, GraphQLErrorPathSegment};
+    use std::collections::HashMap;
     let mut ctx = ExecutionContext::default();
     let mut entity_index_error_map: HashMap<&usize, Vec<Vec<GraphQLErrorPathSegment>>> =
         HashMap::new();
