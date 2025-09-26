@@ -30,6 +30,21 @@ async fn delay_middleware(req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
+async fn add_subgraph_header(req: Request, next: Next) -> Response {
+    let path = req.uri().path();
+    let subgraph_name = path.trim_start_matches('/').to_string();
+
+    let mut response = next.run(req).await;
+
+    if !subgraph_name.is_empty() && subgraph_name != "health" {
+        if let Ok(header_value) = subgraph_name.parse() {
+            response.headers_mut().insert("x-subgraph", header_value);
+        }
+    }
+
+    response
+}
+
 async fn health_check_handler() -> impl IntoResponse {
     StatusCode::OK
 }
@@ -57,6 +72,7 @@ async fn main() {
             post_service(GraphQL::new(reviews::get_subgraph())),
         )
         .route("/health", get(health_check_handler))
+        .route_layer(middleware::from_fn(add_subgraph_header))
         .route_layer(middleware::from_fn(delay_middleware));
 
     println!("Starting server on http://localhost:4200");
