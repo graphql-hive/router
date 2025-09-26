@@ -134,6 +134,7 @@ impl From<&ClientRequestDetails<'_>> for Value {
         let operation_value = Self::Object(BTreeMap::from([
             ("name".into(), details.operation.name.clone().into()),
             ("type".into(), details.operation.kind.into()),
+            ("query".into(), details.operation.query.clone().into()),
         ]));
 
         Self::Object(BTreeMap::from([
