@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use bytes::Bytes;
-use http::HeaderValue;
+use http::{HeaderMap, HeaderValue};
 use vrl::core::Value;
 
 use crate::{
@@ -17,6 +17,32 @@ pub fn vrl_value_to_header_value(value: Value) -> Option<HeaderValue> {
         Value::Integer(i) => HeaderValue::from_str(&i.to_string()).ok(),
         _ => None,
     }
+}
+
+fn header_map_to_vrl_value(headers: &HeaderMap) -> Value {
+    let mut obj = BTreeMap::new();
+    for (header_name, header_value) in headers.iter() {
+        if let Ok(value) = header_value.to_str() {
+            obj.insert(
+                header_name.as_str().into(),
+                Value::Bytes(Bytes::from(value.to_owned())),
+            );
+        }
+    }
+    Value::Object(obj)
+}
+
+fn client_header_map_to_vrl_value(headers: &ntex_http::HeaderMap) -> Value {
+    let mut obj = BTreeMap::new();
+    for (header_name, header_value) in headers.iter() {
+        if let Ok(value) = header_value.to_str() {
+            obj.insert(
+                header_name.as_str().into(),
+                Value::Bytes(Bytes::from(value.to_owned())),
+            );
+        }
+    }
+    Value::Object(obj)
 }
 
 impl From<&RequestExpressionContext<'_>> for Value {
@@ -46,13 +72,9 @@ impl From<&ResponseExpressionContext<'_>> for Value {
             "name".into(),
             Self::Bytes(Bytes::from(ctx.subgraph_name.to_owned())),
         )]));
-
-        // TODO: implement
         // .response
-        let response_value = vrl::value!({
-          "headers": {},
-        });
-
+        let response_value = header_map_to_vrl_value(ctx.subgraph_headers);
+        // .request
         let request_value: Self = ctx.client_request.into();
 
         Self::Object(BTreeMap::from([
@@ -66,18 +88,7 @@ impl From<&ResponseExpressionContext<'_>> for Value {
 impl From<&ClientRequestDetails<'_>> for Value {
     fn from(details: &ClientRequestDetails) -> Self {
         // .request.headers
-        let headers_value = {
-            let mut obj = BTreeMap::new();
-            for (header_name, header_value) in details.headers.iter() {
-                if let Ok(value) = header_value.to_str() {
-                    obj.insert(
-                        header_name.as_str().into(),
-                        Self::Bytes(Bytes::from(value.to_owned())),
-                    );
-                }
-            }
-            Self::Object(obj)
-        };
+        let headers_value = client_header_map_to_vrl_value(details.headers);
 
         // .request.url
         let url_value = Self::Object(BTreeMap::from([
@@ -86,7 +97,20 @@ impl From<&ClientRequestDetails<'_>> for Value {
                 details.url.host().unwrap_or("unknown").into(),
             ),
             ("path".into(), details.url.path().into()),
-            ("port".into(), details.url.port_u16().unwrap_or(80).into()),
+            (
+                "port".into(),
+                details
+                    .url
+                    .port_u16()
+                    .unwrap_or_else(|| {
+                        if details.url.scheme() == Some(&http::uri::Scheme::HTTPS) {
+                            443
+                        } else {
+                            80
+                        }
+                    })
+                    .into(),
+            ),
         ]));
 
         // .request.operation
