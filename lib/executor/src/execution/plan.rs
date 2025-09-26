@@ -395,7 +395,7 @@ impl<'exec> Executor<'exec> {
                         >;
                         if response.errors.is_some() {
                             initial_error_path_arr =
-                                Some(Vec::with_capacity(normalized_path.len() + 1));
+                                Some(Vec::with_capacity(normalized_path.len() + 2));
                             entity_index_error_map = Some(HashMap::with_capacity(entities.len()));
                         } else {
                             initial_error_path_arr = None;
