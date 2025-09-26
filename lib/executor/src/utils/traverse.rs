@@ -20,12 +20,8 @@ pub fn traverse_and_callback_mut<'a, Callback>(
             // If the path is empty, we call the callback on each item in the array
             // We iterate because we want the entity objects directly
             for (index, item) in arr.iter_mut().enumerate() {
-                let current_error_path_for_index =
-                    current_error_path.as_ref().map(|current_path| {
-                        let mut path = current_path.clone();
-                        path.push(GraphQLErrorPathSegment::Index(index));
-                        path
-                    });
+                let current_error_path_for_index: Option<Vec<GraphQLErrorPathSegment>> =
+                    extend_error_path_with_index(&current_error_path, index);
                 callback(item, current_error_path_for_index);
             }
         } else {
@@ -42,13 +38,7 @@ pub fn traverse_and_callback_mut<'a, Callback>(
                 let rest_of_path = &remaining_path[1..];
                 for (index, item) in arr.iter_mut().enumerate() {
                     let current_error_path_for_index =
-                        current_error_path
-                            .as_ref()
-                            .map(|current_error_path_for_index| {
-                                let mut path = current_error_path_for_index.clone();
-                                path.push(GraphQLErrorPathSegment::Index(index));
-                                path
-                            });
+                        extend_error_path_with_index(&current_error_path, index);
                     traverse_and_callback_mut(
                         item,
                         rest_of_path,
@@ -106,13 +96,7 @@ pub fn traverse_and_callback_mut<'a, Callback>(
                 // If the current data is an array, we need to check each item
                 for (index, item) in arr.iter_mut().enumerate() {
                     let current_error_path_for_index =
-                        current_error_path
-                            .as_ref()
-                            .map(|current_error_path_for_index| {
-                                let mut path = current_error_path_for_index.clone();
-                                path.push(GraphQLErrorPathSegment::Index(index));
-                                path
-                            });
+                        extend_error_path_with_index(&current_error_path, index);
                     traverse_and_callback_mut(
                         item,
                         remaining_path,
@@ -124,6 +108,17 @@ pub fn traverse_and_callback_mut<'a, Callback>(
             }
         }
     }
+}
+
+fn extend_error_path_with_index(
+    current_error_path: &Option<Vec<GraphQLErrorPathSegment>>,
+    index: usize,
+) -> Option<Vec<GraphQLErrorPathSegment>> {
+    current_error_path.as_ref().map(|path| {
+        let mut new_path = path.clone();
+        new_path.push(GraphQLErrorPathSegment::Index(index));
+        new_path
+    })
 }
 
 pub fn traverse_and_callback<'a, E, Callback>(
