@@ -414,7 +414,8 @@ For never-join headers, appends another occurrence (multiple lines).
 **Example**
 
 ```yaml
-insert: {}
+insert:
+  algorithm: null
 
 ```
 
@@ -558,6 +559,7 @@ Insert a header with a static value.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|**algorithm**||How to merge values across multiple subgraph responses.<br/>Default: `Last` (overwrite).<br/>|no|
 |**name**|`string`|Header name to insert or overwrite (case-insensitive).<br/>|yes|
 
    
@@ -580,6 +582,13 @@ Static value provided in the config.
 |----|----|-----------|--------|
 |**expression**|`string`||yes|
 
+
+**Example**
+
+```yaml
+algorithm: null
+
+```
 
 <a name="headerssubgraphs"></a>
 ### headers\.subgraphs: object,null
@@ -963,7 +972,8 @@ For never-join headers, appends another occurrence (multiple lines).
 **Example**
 
 ```yaml
-insert: {}
+insert:
+  algorithm: null
 
 ```
 
@@ -1107,6 +1117,7 @@ Insert a header with a static value.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|**algorithm**||How to merge values across multiple subgraph responses.<br/>Default: `Last` (overwrite).<br/>|no|
 |**name**|`string`|Header name to insert or overwrite (case-insensitive).<br/>|yes|
 
    
@@ -1129,6 +1140,13 @@ Static value provided in the config.
 |----|----|-----------|--------|
 |**expression**|`string`||yes|
 
+
+**Example**
+
+```yaml
+algorithm: null
+
+```
 
 <a name="http"></a>
 ## http: object
