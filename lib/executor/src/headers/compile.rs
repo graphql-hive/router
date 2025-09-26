@@ -90,11 +90,7 @@ impl HeaderRuleCompiler<Vec<ResponseHeaderRule>> for config::ResponseHeaderRule 
 
         match self {
             config::ResponseHeaderRule::Propagate(rule) => {
-                let aggregation_strategy = match rule.algorithm {
-                    config::AggregationAlgo::First => HeaderAggregationStrategy::First,
-                    config::AggregationAlgo::Last => HeaderAggregationStrategy::Last,
-                    config::AggregationAlgo::Append => HeaderAggregationStrategy::Append,
-                };
+                let aggregation_strategy = rule.algorithm.into();
                 let spec = materialize_match_spec(
                     &rule.spec,
                     rule.rename.as_ref(),
@@ -119,13 +115,7 @@ impl HeaderRuleCompiler<Vec<ResponseHeaderRule>> for config::ResponseHeaderRule 
                 }
             }
             config::ResponseHeaderRule::Insert(rule) => {
-                let aggregation_strategy = match rule.algorithm {
-                    Some(config::AggregationAlgo::First) => HeaderAggregationStrategy::First,
-                    Some(config::AggregationAlgo::Last) => HeaderAggregationStrategy::Last,
-                    Some(config::AggregationAlgo::Append) => HeaderAggregationStrategy::Append,
-                    None => HeaderAggregationStrategy::Last,
-                };
-
+                let aggregation_strategy = rule.algorithm.into();
                 match &rule.source {
                     config::InsertSource::Value { value } => {
                         actions.push(ResponseHeaderRule::InsertStatic(ResponseInsertStatic {
@@ -307,6 +297,27 @@ fn build_regex_many(patterns: &[String]) -> Result<Option<meta::Regex>, HeaderRu
         .build_many(patterns)
         .map(Some)
         .map_err(|e| Box::new(e).into())
+}
+
+impl From<config::AggregationAlgo> for HeaderAggregationStrategy {
+    fn from(algo: config::AggregationAlgo) -> Self {
+        match algo {
+            config::AggregationAlgo::First => HeaderAggregationStrategy::First,
+            config::AggregationAlgo::Last => HeaderAggregationStrategy::Last,
+            config::AggregationAlgo::Append => HeaderAggregationStrategy::Append,
+        }
+    }
+}
+
+impl From<Option<config::AggregationAlgo>> for HeaderAggregationStrategy {
+    fn from(algo: Option<config::AggregationAlgo>) -> Self {
+        match algo {
+            Some(config::AggregationAlgo::First) => HeaderAggregationStrategy::First,
+            Some(config::AggregationAlgo::Last) => HeaderAggregationStrategy::Last,
+            Some(config::AggregationAlgo::Append) => HeaderAggregationStrategy::Append,
+            None => HeaderAggregationStrategy::Last,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
-use bytes::Bytes;
-use http::{HeaderMap, HeaderValue};
+use http::HeaderMap;
 use vrl::{
     compiler::TargetValue as VrlTargetValue,
     core::Value as VrlValue,
@@ -12,6 +11,7 @@ use vrl::{
 use crate::{
     execution::plan::ClientRequestDetails,
     headers::{
+        expression::vrl_value_to_header_value,
         plan::{
             HeaderRulesPlan, RequestHeaderRule, RequestInsertExpression, RequestInsertStatic,
             RequestPropagateNamed, RequestPropagateRegex, RequestRemoveNamed, RequestRemoveRegex,
@@ -43,8 +43,8 @@ pub fn modify_subgraph_request_headers(
 }
 
 pub struct RequestExpressionContext<'a> {
-    subgraph_name: &'a str,
-    client_request: &'a ClientRequestDetails<'a>,
+    pub subgraph_name: &'a str,
+    pub client_request: &'a ClientRequestDetails<'a>,
 }
 
 trait ApplyRequestHeader {
@@ -158,90 +158,28 @@ impl ApplyRequestHeader for RequestInsertExpression {
         ctx: &RequestExpressionContext,
         output_headers: &mut HeaderMap,
     ) {
-        if !is_denied_header(&self.name) {
-            let subgraph_value = {
-                let value = VrlValue::Bytes(Bytes::from(ctx.subgraph_name.to_owned()));
-                VrlValue::Object(BTreeMap::from([("name".into(), value)]))
-            };
+        if is_denied_header(&self.name) {
+            return;
+        }
 
-            let headers_value = {
-                let mut obj = BTreeMap::new();
-                for (header_name, header_value) in ctx.client_request.headers.iter() {
-                    match header_value.to_str() {
-                        Ok(value) => {
-                            obj.insert(
-                                header_name.as_str().into(),
-                                VrlValue::Bytes(Bytes::from(value.to_owned())),
-                            );
-                        }
-                        Err(_) => continue,
-                    }
-                }
+        let mut target = VrlTargetValue {
+            value: ctx.into(),
+            metadata: VrlValue::Object(BTreeMap::new()),
+            secrets: VrlSecrets::default(),
+        };
 
-                VrlValue::Object(obj)
-            };
+        let mut state = VrlState::default();
+        let timezone = VrlTimeZone::default();
+        let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
+        let value = self.expression.resolve(&mut ctx).unwrap();
 
-            let url_value = VrlValue::Object(BTreeMap::from([
-                (
-                    "host".into(),
-                    ctx.client_request.url.host().unwrap_or("unknown").into(),
-                ),
-                ("path".into(), ctx.client_request.url.path().into()),
-                (
-                    "port".into(),
-                    ctx.client_request.url.port_u16().unwrap_or(80).into(),
-                ),
-            ]));
-
-            let operation_value = VrlValue::Object(BTreeMap::from([
-                (
-                    "name".into(),
-                    ctx.client_request.operation.name.clone().into(),
-                ),
-                ("type".into(), ctx.client_request.operation.kind.into()),
-            ]));
-
-            let request_value = VrlValue::Object(BTreeMap::from([
-                ("method".into(), ctx.client_request.method.as_str().into()),
-                ("headers".into(), headers_value),
-                ("url".into(), url_value),
-                ("operation".into(), operation_value),
-            ]));
-
-            let value = VrlValue::Object(BTreeMap::from([
-                ("subgraph".into(), subgraph_value),
-                ("request".into(), request_value),
-            ]));
-
-            let mut target = VrlTargetValue {
-                value,
-                metadata: VrlValue::Object(BTreeMap::new()),
-                secrets: VrlSecrets::default(),
-            };
-
-            let mut state = VrlState::default();
-            let timezone = VrlTimeZone::default();
-            let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
-
-            let value = self.expression.resolve(&mut ctx).unwrap();
-            if let Some(header_value) = vrl_value_to_header_value(value) {
-                if is_never_join_header(&self.name) {
-                    output_headers.append(self.name.clone(), header_value);
-                } else {
-                    output_headers.insert(self.name.clone(), header_value);
-                }
+        if let Some(header_value) = vrl_value_to_header_value(value) {
+            if is_never_join_header(&self.name) {
+                output_headers.append(self.name.clone(), header_value);
+            } else {
+                output_headers.insert(self.name.clone(), header_value);
             }
         }
-    }
-}
-
-pub fn vrl_value_to_header_value(value: VrlValue) -> Option<HeaderValue> {
-    match value {
-        VrlValue::Bytes(bytes) => HeaderValue::from_bytes(&bytes).ok(),
-        VrlValue::Float(f) => HeaderValue::from_str(&f.to_string()).ok(),
-        VrlValue::Boolean(b) => HeaderValue::from_str(if b { "true" } else { "false" }).ok(),
-        VrlValue::Integer(i) => HeaderValue::from_str(&i.to_string()).ok(),
-        _ => None,
     }
 }
 

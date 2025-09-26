@@ -1,5 +1,6 @@
 pub mod compile;
 pub mod errors;
+pub mod expression;
 pub mod plan;
 pub mod request;
 pub mod response;

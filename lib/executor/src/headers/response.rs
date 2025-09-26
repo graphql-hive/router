@@ -3,19 +3,18 @@ use std::{collections::BTreeMap, iter::once};
 use crate::{
     execution::plan::ClientRequestDetails,
     headers::{
+        expression::vrl_value_to_header_value,
         plan::{
             HeaderAggregationStrategy, HeaderRulesPlan, ResponseHeaderAggregator,
             ResponseHeaderRule, ResponseInsertExpression, ResponseInsertStatic,
             ResponsePropagateNamed, ResponsePropagateRegex, ResponseRemoveNamed,
             ResponseRemoveRegex,
         },
-        request::vrl_value_to_header_value,
         sanitizer::is_denied_header,
     },
 };
 
 use super::sanitizer::is_never_join_header;
-use bytes::Bytes;
 use http::{HeaderMap, HeaderName, HeaderValue};
 use vrl::{
     compiler::TargetValue as VrlTargetValue,
@@ -48,10 +47,10 @@ pub fn apply_subgraph_response_headers(
     }
 }
 
-struct ResponseExpressionContext<'a> {
-    subgraph_name: &'a str,
-    client_request: &'a ClientRequestDetails<'a>,
-    subgraph_headers: &'a HeaderMap,
+pub struct ResponseExpressionContext<'a> {
+    pub subgraph_name: &'a str,
+    pub client_request: &'a ClientRequestDetails<'a>,
+    pub subgraph_headers: &'a HeaderMap,
 }
 
 trait ApplyResponseHeader {
@@ -187,68 +186,8 @@ impl ApplyResponseHeader for ResponseInsertExpression {
             return;
         }
 
-        let headers_value = {
-            let mut obj = BTreeMap::new();
-            for (header_name, header_value) in ctx.client_request.headers.iter() {
-                match header_value.to_str() {
-                    Ok(value) => {
-                        obj.insert(
-                            header_name.as_str().into(),
-                            VrlValue::Bytes(Bytes::from(value.to_owned())),
-                        );
-                    }
-                    Err(_) => continue,
-                }
-            }
-
-            VrlValue::Object(obj)
-        };
-
-        let url_value = VrlValue::Object(BTreeMap::from([
-            (
-                "host".into(),
-                ctx.client_request.url.host().unwrap_or("unknown").into(),
-            ),
-            ("path".into(), ctx.client_request.url.path().into()),
-            (
-                "port".into(),
-                ctx.client_request.url.port_u16().unwrap_or(80).into(),
-            ),
-        ]));
-
-        let operation_value = VrlValue::Object(BTreeMap::from([
-            (
-                "name".into(),
-                ctx.client_request.operation.name.clone().into(),
-            ),
-            ("type".into(), ctx.client_request.operation.kind.into()),
-        ]));
-
-        let request_value = VrlValue::Object(BTreeMap::from([
-            ("method".into(), ctx.client_request.method.as_str().into()),
-            ("headers".into(), headers_value),
-            ("url".into(), url_value),
-            ("operation".into(), operation_value),
-        ]));
-
-        let subgraph_value = VrlValue::Object(BTreeMap::from([(
-            "name".into(),
-            VrlValue::Bytes(Bytes::from(ctx.subgraph_name.to_owned())),
-        )]));
-
-        // TODO: implement
-        let response_value = vrl::value!({
-          "headers": {},
-        });
-
-        let value = VrlValue::Object(BTreeMap::from([
-            ("subgraph".into(), subgraph_value),
-            ("response".into(), response_value),
-            ("request".into(), request_value),
-        ]));
-
         let mut target = VrlTargetValue {
-            value,
+            value: ctx.into(),
             metadata: VrlValue::Object(BTreeMap::new()),
             secrets: VrlSecrets::default(),
         };

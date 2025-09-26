@@ -1,0 +1,105 @@
+use std::collections::BTreeMap;
+
+use bytes::Bytes;
+use http::HeaderValue;
+use vrl::core::Value;
+
+use crate::{
+    execution::plan::ClientRequestDetails,
+    headers::{request::RequestExpressionContext, response::ResponseExpressionContext},
+};
+
+pub fn vrl_value_to_header_value(value: Value) -> Option<HeaderValue> {
+    match value {
+        Value::Bytes(bytes) => HeaderValue::from_bytes(&bytes).ok(),
+        Value::Float(f) => HeaderValue::from_str(&f.to_string()).ok(),
+        Value::Boolean(b) => HeaderValue::from_str(if b { "true" } else { "false" }).ok(),
+        Value::Integer(i) => HeaderValue::from_str(&i.to_string()).ok(),
+        _ => None,
+    }
+}
+
+impl From<&RequestExpressionContext<'_>> for Value {
+    /// NOTE: If performance becomes an issue, consider pre-computing parts of this context that do not change
+    fn from(ctx: &RequestExpressionContext) -> Self {
+        // .subgraph
+        let subgraph_value = {
+            let value = Self::Bytes(Bytes::from(ctx.subgraph_name.to_owned()));
+            Self::Object(BTreeMap::from([("name".into(), value)]))
+        };
+
+        // .request
+        let request_value: Self = ctx.client_request.into();
+
+        Self::Object(BTreeMap::from([
+            ("subgraph".into(), subgraph_value),
+            ("request".into(), request_value),
+        ]))
+    }
+}
+
+impl From<&ResponseExpressionContext<'_>> for Value {
+    /// NOTE: If performance becomes an issue, consider pre-computing parts of this context that do not change
+    fn from(ctx: &ResponseExpressionContext) -> Self {
+        // .subgraph
+        let subgraph_value = Self::Object(BTreeMap::from([(
+            "name".into(),
+            Self::Bytes(Bytes::from(ctx.subgraph_name.to_owned())),
+        )]));
+
+        // TODO: implement
+        // .response
+        let response_value = vrl::value!({
+          "headers": {},
+        });
+
+        let request_value: Self = ctx.client_request.into();
+
+        Self::Object(BTreeMap::from([
+            ("subgraph".into(), subgraph_value),
+            ("response".into(), response_value),
+            ("request".into(), request_value),
+        ]))
+    }
+}
+
+impl From<&ClientRequestDetails<'_>> for Value {
+    fn from(details: &ClientRequestDetails) -> Self {
+        // .request.headers
+        let headers_value = {
+            let mut obj = BTreeMap::new();
+            for (header_name, header_value) in details.headers.iter() {
+                if let Ok(value) = header_value.to_str() {
+                    obj.insert(
+                        header_name.as_str().into(),
+                        Self::Bytes(Bytes::from(value.to_owned())),
+                    );
+                }
+            }
+            Self::Object(obj)
+        };
+
+        // .request.url
+        let url_value = Self::Object(BTreeMap::from([
+            (
+                "host".into(),
+                details.url.host().unwrap_or("unknown").into(),
+            ),
+            ("path".into(), details.url.path().into()),
+            ("port".into(), details.url.port_u16().unwrap_or(80).into()),
+        ]));
+
+        // .request.operation
+        let operation_value = Self::Object(BTreeMap::from([
+            ("name".into(), details.operation.name.clone().into()),
+            ("type".into(), details.operation.kind.into()),
+        ]));
+
+        Self::Object(BTreeMap::from([
+            ("method".into(), details.method.as_str().into()),
+            ("headers".into(), headers_value),
+            ("url".into(), url_value),
+            ("operation".into(), operation_value),
+        ]))
+    }
+}
