@@ -1,6 +1,6 @@
 use http::header::{InvalidHeaderName, InvalidHeaderValue};
 use regex_automata::meta::BuildError;
-use vrl::diagnostic::DiagnosticList;
+use vrl::{diagnostic::DiagnosticList, prelude::ExpressionError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum HeaderRuleCompileError {
@@ -18,6 +18,14 @@ pub enum HeaderRuleCompileError {
     ExpressionBuild(String, String),
 }
 
+#[derive(thiserror::Error, Debug, Clone)]
+pub enum HeaderRuleRuntimeError {
+    #[error("Failed to evaluate VRL expression for header '{0}'. Reason: {1}")]
+    ExpressionEvaluation(String, Box<ExpressionError>),
+    #[error("Invalid header value for header '{0}'.")]
+    BadHeaderValue(String),
+}
+
 impl HeaderRuleCompileError {
     pub fn new_expression_build(header_name: String, diagnostics: DiagnosticList) -> Self {
         HeaderRuleCompileError::ExpressionBuild(
@@ -29,5 +37,11 @@ impl HeaderRuleCompileError {
                 .collect::<Vec<_>>()
                 .join(", "),
         )
+    }
+}
+
+impl HeaderRuleRuntimeError {
+    pub fn new_expression_evaluation(header_name: String, error: Box<ExpressionError>) -> Self {
+        HeaderRuleRuntimeError::ExpressionEvaluation(header_name, error)
     }
 }

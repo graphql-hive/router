@@ -11,6 +11,7 @@ use vrl::{
 use crate::{
     execution::plan::ClientRequestDetails,
     headers::{
+        errors::HeaderRuleRuntimeError,
         expression::vrl_value_to_header_value,
         plan::{
             HeaderRulesPlan, RequestHeaderRule, RequestInsertExpression, RequestInsertStatic,
@@ -25,7 +26,7 @@ pub fn modify_subgraph_request_headers(
     subgraph_name: &str,
     client_request: &ClientRequestDetails,
     output_headers: &mut HeaderMap,
-) {
+) -> Result<(), HeaderRuleRuntimeError> {
     let global_actions = &header_rule_plan.request.global;
     let subgraph_actions = header_rule_plan.request.by_subgraph.get(subgraph_name);
 
@@ -38,8 +39,10 @@ pub fn modify_subgraph_request_headers(
         .iter()
         .chain(subgraph_actions.into_iter().flatten())
     {
-        action.apply_request_headers(&ctx, output_headers);
+        action.apply_request_headers(&ctx, output_headers)?;
     }
+
+    Ok(())
 }
 
 pub struct RequestExpressionContext<'a> {
@@ -48,7 +51,11 @@ pub struct RequestExpressionContext<'a> {
 }
 
 trait ApplyRequestHeader {
-    fn apply_request_headers(&self, ctx: &RequestExpressionContext, output_headers: &mut HeaderMap);
+    fn apply_request_headers(
+        &self,
+        ctx: &RequestExpressionContext,
+        output_headers: &mut HeaderMap,
+    ) -> Result<(), HeaderRuleRuntimeError>;
 }
 
 impl ApplyRequestHeader for RequestHeaderRule {
@@ -56,7 +63,7 @@ impl ApplyRequestHeader for RequestHeaderRule {
         &self,
         ctx: &RequestExpressionContext,
         output_headers: &mut HeaderMap,
-    ) {
+    ) -> Result<(), HeaderRuleRuntimeError> {
         match self {
             Self::PropagateNamed(data) => data.apply_request_headers(ctx, output_headers),
             Self::PropagateRegex(data) => data.apply_request_headers(ctx, output_headers),
@@ -73,7 +80,7 @@ impl ApplyRequestHeader for RequestPropagateNamed {
         &self,
         ctx: &RequestExpressionContext,
         output_headers: &mut HeaderMap,
-    ) {
+    ) -> Result<(), HeaderRuleRuntimeError> {
         let mut matched = false;
 
         for header_name in &self.names {
@@ -93,12 +100,14 @@ impl ApplyRequestHeader for RequestPropagateNamed {
                 let destination_name = self.rename.as_ref().unwrap_or(first_name);
 
                 if is_denied_header(destination_name) {
-                    return;
+                    return Ok(());
                 }
 
                 output_headers.append(destination_name, default_value.clone());
             }
         }
+
+        Ok(())
     }
 }
 
@@ -107,7 +116,7 @@ impl ApplyRequestHeader for RequestPropagateRegex {
         &self,
         ctx: &RequestExpressionContext,
         output_headers: &mut HeaderMap,
-    ) {
+    ) -> Result<(), HeaderRuleRuntimeError> {
         for (header_name, header_value) in ctx.client_request.headers {
             if is_denied_header(header_name) {
                 continue;
@@ -133,6 +142,8 @@ impl ApplyRequestHeader for RequestPropagateRegex {
 
             output_headers.append(header_name, header_value.into());
         }
+
+        Ok(())
     }
 }
 
@@ -141,7 +152,7 @@ impl ApplyRequestHeader for RequestInsertStatic {
         &self,
         _ctx: &RequestExpressionContext,
         output_headers: &mut HeaderMap,
-    ) {
+    ) -> Result<(), HeaderRuleRuntimeError> {
         if !is_denied_header(&self.name) {
             if is_never_join_header(&self.name) {
                 output_headers.append(self.name.clone(), self.value.clone());
@@ -149,6 +160,8 @@ impl ApplyRequestHeader for RequestInsertStatic {
                 output_headers.insert(self.name.clone(), self.value.clone());
             }
         }
+
+        Ok(())
     }
 }
 
@@ -157,9 +170,9 @@ impl ApplyRequestHeader for RequestInsertExpression {
         &self,
         ctx: &RequestExpressionContext,
         output_headers: &mut HeaderMap,
-    ) {
+    ) -> Result<(), HeaderRuleRuntimeError> {
         if is_denied_header(&self.name) {
-            return;
+            return Ok(());
         }
 
         let mut target = VrlTargetValue {
@@ -171,7 +184,9 @@ impl ApplyRequestHeader for RequestInsertExpression {
         let mut state = VrlState::default();
         let timezone = VrlTimeZone::default();
         let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
-        let value = self.expression.resolve(&mut ctx).unwrap();
+        let value = self.expression.resolve(&mut ctx).map_err(|err| {
+            HeaderRuleRuntimeError::new_expression_evaluation(self.name.to_string(), Box::new(err))
+        })?;
 
         if let Some(header_value) = vrl_value_to_header_value(value) {
             if is_never_join_header(&self.name) {
@@ -180,6 +195,8 @@ impl ApplyRequestHeader for RequestInsertExpression {
                 output_headers.insert(self.name.clone(), header_value);
             }
         }
+
+        Ok(())
     }
 }
 
@@ -188,13 +205,15 @@ impl ApplyRequestHeader for RequestRemoveNamed {
         &self,
         _ctx: &RequestExpressionContext,
         output_headers: &mut HeaderMap,
-    ) {
+    ) -> Result<(), HeaderRuleRuntimeError> {
         for header_name in &self.names {
             if is_denied_header(header_name) {
                 continue;
             }
             output_headers.remove(header_name);
         }
+
+        Ok(())
     }
 }
 
@@ -203,7 +222,7 @@ impl ApplyRequestHeader for RequestRemoveRegex {
         &self,
         _ctx: &RequestExpressionContext,
         output_headers: &mut HeaderMap,
-    ) {
+    ) -> Result<(), HeaderRuleRuntimeError> {
         let mut headers_to_remove = Vec::new();
         for header_name in output_headers.keys() {
             if is_denied_header(header_name) {
@@ -218,5 +237,7 @@ impl ApplyRequestHeader for RequestRemoveRegex {
         for header_name in headers_to_remove.iter() {
             output_headers.remove(header_name);
         }
+
+        Ok(())
     }
 }

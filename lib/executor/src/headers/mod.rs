@@ -63,7 +63,7 @@ mod tests {
         };
 
         let mut out = HeaderMap::new();
-        modify_subgraph_request_headers(&plan, "any", &client_details, &mut out);
+        modify_subgraph_request_headers(&plan, "any", &client_details, &mut out).unwrap();
 
         assert_eq!(out.get("x-renamed").unwrap(), &header_value_owned("abc"));
         assert_eq!(out.get("x-set").unwrap(), &header_value_owned("set-value"));
@@ -93,7 +93,7 @@ mod tests {
             },
         };
         let mut out = HeaderMap::new();
-        modify_subgraph_request_headers(&plan, "any", &client_details, &mut out);
+        modify_subgraph_request_headers(&plan, "any", &client_details, &mut out).unwrap();
 
         assert_eq!(
             out.get("x-missing").unwrap(),
@@ -138,7 +138,8 @@ mod tests {
             &subgraph_headers,
             &client_details,
             &mut accumulator,
-        );
+        )
+        .unwrap();
 
         let mut subgraph_headers = HeaderMap::new();
         subgraph_headers.insert(
@@ -152,10 +153,11 @@ mod tests {
             &subgraph_headers,
             &client_details,
             &mut accumulator,
-        );
+        )
+        .unwrap();
 
         let mut final_headers = HeaderMap::new();
-        modify_client_response_headers(accumulator, &mut final_headers);
+        modify_client_response_headers(accumulator, &mut final_headers).unwrap();
 
         assert_eq!(
             final_headers.get("x-resp").unwrap(),
@@ -197,7 +199,7 @@ mod tests {
         };
 
         let mut out = HeaderMap::new();
-        modify_subgraph_request_headers(&plan, "any", &client_details, &mut out);
+        modify_subgraph_request_headers(&plan, "any", &client_details, &mut out).unwrap();
 
         assert!(out.get("x-remove").is_none());
         assert_eq!(out.get("x-keep").unwrap(), &header_value_owned("hi"));

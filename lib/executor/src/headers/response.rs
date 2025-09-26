@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, iter::once};
 use crate::{
     execution::plan::ClientRequestDetails,
     headers::{
+        errors::HeaderRuleRuntimeError,
         expression::vrl_value_to_header_value,
         plan::{
             HeaderAggregationStrategy, HeaderRulesPlan, ResponseHeaderAggregator,
@@ -15,7 +16,7 @@ use crate::{
 };
 
 use super::sanitizer::is_never_join_header;
-use http::{HeaderMap, HeaderName, HeaderValue};
+use http::{header::InvalidHeaderValue, HeaderMap, HeaderName, HeaderValue};
 use vrl::{
     compiler::TargetValue as VrlTargetValue,
     core::Value as VrlValue,
@@ -29,7 +30,7 @@ pub fn apply_subgraph_response_headers(
     subgraph_headers: &HeaderMap,
     client_request_details: &ClientRequestDetails,
     accumulator: &mut ResponseHeaderAggregator,
-) {
+) -> Result<(), HeaderRuleRuntimeError> {
     let global_actions = &header_rule_plan.response.global;
     let subgraph_actions = header_rule_plan.response.by_subgraph.get(subgraph_name);
 
@@ -43,8 +44,10 @@ pub fn apply_subgraph_response_headers(
         .iter()
         .chain(subgraph_actions.into_iter().flatten())
     {
-        action.apply_response_headers(&ctx, accumulator);
+        action.apply_response_headers(&ctx, accumulator)?;
     }
+
+    Ok(())
 }
 
 pub struct ResponseExpressionContext<'a> {
@@ -58,7 +61,7 @@ trait ApplyResponseHeader {
         &self,
         ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
-    );
+    ) -> Result<(), HeaderRuleRuntimeError>;
 }
 
 impl ApplyResponseHeader for ResponseHeaderRule {
@@ -66,7 +69,7 @@ impl ApplyResponseHeader for ResponseHeaderRule {
         &self,
         ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
-    ) {
+    ) -> Result<(), HeaderRuleRuntimeError> {
         match self {
             ResponseHeaderRule::PropagateNamed(data) => {
                 data.apply_response_headers(ctx, accumulator)
@@ -89,7 +92,7 @@ impl ApplyResponseHeader for ResponsePropagateNamed {
         &self,
         ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
-    ) {
+    ) -> Result<(), HeaderRuleRuntimeError> {
         let mut matched = false;
 
         for header_name in &self.names {
@@ -113,12 +116,14 @@ impl ApplyResponseHeader for ResponsePropagateNamed {
                 let destination_name = self.rename.as_ref().unwrap_or(first_name);
 
                 if is_denied_header(destination_name) {
-                    return;
+                    return Ok(());
                 }
 
                 write_agg(accumulator, destination_name, default_value, self.strategy);
             }
         }
+
+        Ok(())
     }
 }
 
@@ -127,7 +132,7 @@ impl ApplyResponseHeader for ResponsePropagateRegex {
         &self,
         ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
-    ) {
+    ) -> Result<(), HeaderRuleRuntimeError> {
         for (header_name, header_value) in ctx.subgraph_headers {
             if is_denied_header(header_name) {
                 continue;
@@ -153,6 +158,8 @@ impl ApplyResponseHeader for ResponsePropagateRegex {
 
             write_agg(accumulator, header_name, header_value, self.strategy);
         }
+
+        Ok(())
     }
 }
 
@@ -161,9 +168,9 @@ impl ApplyResponseHeader for ResponseInsertStatic {
         &self,
         _ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
-    ) {
+    ) -> Result<(), HeaderRuleRuntimeError> {
         if is_denied_header(&self.name) {
-            return;
+            return Ok(());
         }
 
         let strategy = if is_never_join_header(&self.name) {
@@ -173,6 +180,8 @@ impl ApplyResponseHeader for ResponseInsertStatic {
         };
 
         write_agg(accumulator, &self.name, &self.value, strategy);
+
+        Ok(())
     }
 }
 
@@ -181,9 +190,9 @@ impl ApplyResponseHeader for ResponseInsertExpression {
         &self,
         ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
-    ) {
+    ) -> Result<(), HeaderRuleRuntimeError> {
         if is_denied_header(&self.name) {
-            return;
+            return Ok(());
         }
 
         let mut target = VrlTargetValue {
@@ -195,7 +204,9 @@ impl ApplyResponseHeader for ResponseInsertExpression {
         let mut state = VrlState::default();
         let timezone = VrlTimeZone::default();
         let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
-        let value = self.expression.resolve(&mut ctx).unwrap();
+        let value = self.expression.resolve(&mut ctx).map_err(|err| {
+            HeaderRuleRuntimeError::ExpressionEvaluation(self.name.to_string(), Box::new(err))
+        })?;
 
         if let Some(header_value) = vrl_value_to_header_value(value) {
             let strategy = if is_never_join_header(&self.name) {
@@ -206,6 +217,8 @@ impl ApplyResponseHeader for ResponseInsertExpression {
 
             write_agg(accumulator, &self.name, &header_value, strategy);
         }
+
+        Ok(())
     }
 }
 
@@ -214,13 +227,15 @@ impl ApplyResponseHeader for ResponseRemoveNamed {
         &self,
         _ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
-    ) {
+    ) -> Result<(), HeaderRuleRuntimeError> {
         for header_name in &self.names {
             if is_denied_header(header_name) {
                 continue;
             }
             accumulator.entries.remove(header_name);
         }
+
+        Ok(())
     }
 }
 
@@ -229,7 +244,7 @@ impl ApplyResponseHeader for ResponseRemoveRegex {
         &self,
         _ctx: &ResponseExpressionContext,
         accumulator: &mut ResponseHeaderAggregator,
-    ) {
+    ) -> Result<(), HeaderRuleRuntimeError> {
         accumulator.entries.retain(|name, _| {
             if is_denied_header(name) {
                 // Denied headers (hop-by–hop) are never inserted in the first place
@@ -239,6 +254,8 @@ impl ApplyResponseHeader for ResponseRemoveRegex {
 
             !self.regex.is_match(name.as_str().as_bytes())
         });
+
+        Ok(())
     }
 }
 
@@ -280,7 +297,10 @@ fn write_agg(
 }
 
 /// Modify the outgoing client response headers based on the aggregated headers from subgraphs.
-pub fn modify_client_response_headers(agg: ResponseHeaderAggregator, out: &mut HeaderMap) {
+pub fn modify_client_response_headers(
+    agg: ResponseHeaderAggregator,
+    out: &mut HeaderMap,
+) -> Result<(), HeaderRuleRuntimeError> {
     for (name, (agg_strategy, mut values)) in agg.entries {
         if values.is_empty() {
             continue;
@@ -300,14 +320,17 @@ pub fn modify_client_response_headers(agg: ResponseHeaderAggregator, out: &mut H
         }
 
         if matches!(agg_strategy, HeaderAggregationStrategy::Append) {
-            let joined = join_with_comma(&values);
+            let joined = join_with_comma(&values)
+                .map_err(|_| HeaderRuleRuntimeError::BadHeaderValue(name.to_string()))?;
             out.insert(name, joined);
         }
     }
+
+    Ok(())
 }
 
 #[inline]
-fn join_with_comma(values: &[HeaderValue]) -> HeaderValue {
+fn join_with_comma(values: &[HeaderValue]) -> Result<HeaderValue, InvalidHeaderValue> {
     // Compute capacity: sum of lengths + ", ".len() * (n-1)
     let mut cap = 0usize;
 
@@ -326,5 +349,5 @@ fn join_with_comma(values: &[HeaderValue]) -> HeaderValue {
         }
         buf.extend_from_slice(value.as_bytes());
     }
-    HeaderValue::from_bytes(&buf).unwrap_or_else(|_| HeaderValue::from_static(""))
+    HeaderValue::from_bytes(&buf)
 }

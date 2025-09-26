@@ -21,6 +21,12 @@ pub struct HeaderRuleCompilerContext {
     vrl_functions: Vec<Box<dyn VrlFunction>>,
 }
 
+impl Default for HeaderRuleCompilerContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HeaderRuleCompilerContext {
     pub fn new() -> Self {
         Self {
