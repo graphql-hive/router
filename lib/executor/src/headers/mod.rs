@@ -101,6 +101,159 @@ mod tests {
         );
     }
 
+    // Tests that `matching` and `exclude` rules are correctly applied for propagation.
+    #[test]
+    fn test_propagate_with_matching_and_exclude() {
+        let yaml_str = r#"
+          headers:
+            all:
+              request:
+                - propagate:
+                    matching: "^x-.*"
+                    exclude: "^x-secret-.*"
+        "#;
+        let config = parse_yaml_config(String::from(yaml_str)).unwrap();
+        let plan = compile_headers_plan(&config.headers).unwrap();
+
+        let mut client_headers = NtexHeaderMap::new();
+        client_headers.insert(
+            header_name_owned("x-forward-this"),
+            header_value_owned("value1").into(),
+        );
+        client_headers.insert(
+            header_name_owned("x-secret-header"),
+            header_value_owned("value2").into(),
+        );
+        client_headers.insert(
+            header_name_owned("authorization"),
+            header_value_owned("value3").into(),
+        );
+
+        let client_details = ClientRequestDetails {
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: &client_headers,
+            operation: OperationDetails {
+                name: None,
+                query: "{ __typename }".to_string().into(),
+                kind: "query",
+            },
+        };
+
+        let mut out = HeaderMap::new();
+        modify_subgraph_request_headers(&plan, "any", &client_details, &mut out).unwrap();
+
+        assert_eq!(out.get("x-forward-this").unwrap(), "value1");
+        assert!(out.get("x-secret-header").is_none());
+        assert!(out.get("authorization").is_none());
+    }
+
+    // Tests inserting a header with a value from a VRL expression.
+    #[test]
+    fn test_insert_request_header_with_expression() {
+        let yaml_str = r#"
+          headers:
+            all:
+              request:
+                - insert:
+                    name: x-operation-name
+                    expression: '.request.operation.name || "unknown"'
+        "#;
+        let config = parse_yaml_config(String::from(yaml_str)).unwrap();
+        let plan = compile_headers_plan(&config.headers).unwrap();
+        let client_headers = NtexHeaderMap::new();
+        let client_details = ClientRequestDetails {
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: &client_headers,
+            operation: OperationDetails {
+                name: Some("MyQuery".to_string()),
+                query: "{ __typename }".to_string().into(),
+                kind: "query",
+            },
+        };
+
+        let mut out = HeaderMap::new();
+        modify_subgraph_request_headers(&plan, "any", &client_details, &mut out).unwrap();
+
+        assert_eq!(out.get("x-operation-name").unwrap(), "MyQuery");
+    }
+
+    // Tests VRL expression fallback to a default value when a field is null.
+    #[test]
+    fn test_insert_request_header_with_expression_fallback() {
+        let yaml_str = r#"
+          headers:
+            all:
+              request:
+                - insert:
+                    name: x-operation-name
+                    expression: '.request.operation.name || "unknown"'
+        "#;
+        let config = parse_yaml_config(String::from(yaml_str)).unwrap();
+        let plan = compile_headers_plan(&config.headers).unwrap();
+        let client_headers = NtexHeaderMap::new();
+        let client_details = ClientRequestDetails {
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: &client_headers,
+            operation: OperationDetails {
+                name: None,
+                query: "{ __typename }".to_string().into(),
+                kind: "query",
+            },
+        };
+
+        let mut out = HeaderMap::new();
+        modify_subgraph_request_headers(&plan, "any", &client_details, &mut out).unwrap();
+
+        assert_eq!(out.get("x-operation-name").unwrap(), "unknown");
+    }
+
+    // Tests that subgraph-specific rules override global `all` rules.
+    #[test]
+    fn test_subgraph_specific_request_rules() {
+        let yaml_str = r#"
+          headers:
+            all:
+              request:
+                - insert:
+                    name: x-scope
+                    value: all
+            subgraphs:
+              accounts:
+                request:
+                  - insert:
+                      name: x-scope
+                      value: accounts
+        "#;
+        let config = parse_yaml_config(String::from(yaml_str)).unwrap();
+        let plan = compile_headers_plan(&config.headers).unwrap();
+        let client_headers = NtexHeaderMap::new();
+        let client_details = ClientRequestDetails {
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: &client_headers,
+            operation: OperationDetails {
+                name: None,
+                query: "{ __typename }".to_string().into(),
+                kind: "query",
+            },
+        };
+
+        // For "accounts" subgraph, the specific rule should apply.
+        let mut out_accounts = HeaderMap::new();
+        modify_subgraph_request_headers(&plan, "accounts", &client_details, &mut out_accounts)
+            .unwrap();
+        assert_eq!(out_accounts.get("x-scope").unwrap(), "accounts");
+
+        // For any other subgraph, the `all` rule should apply.
+        let mut out_other = HeaderMap::new();
+        modify_subgraph_request_headers(&plan, "products", &client_details, &mut out_other)
+            .unwrap();
+        assert_eq!(out_other.get("x-scope").unwrap(), "all");
+    }
+
     #[test]
     fn test_apply_subgraph_response_headers_and_finalize() {
         let yaml_str = r#"
@@ -162,6 +315,232 @@ mod tests {
         assert_eq!(
             final_headers.get("x-resp").unwrap(),
             &header_value_owned("resp-value-2")
+        );
+    }
+
+    // Tests the `first` algorithm for response header propagation.
+    #[test]
+    fn test_response_propagate_first() {
+        let yaml_str = r#"
+          headers:
+            all:
+              response:
+                - propagate:
+                    named: x-resp
+                    algorithm: first
+        "#;
+        let config = parse_yaml_config(String::from(yaml_str)).unwrap();
+        let plan = compile_headers_plan(&config.headers).unwrap();
+        let client_headers = NtexHeaderMap::new();
+        let client_details = ClientRequestDetails {
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: &client_headers,
+            operation: OperationDetails {
+                name: None,
+                query: "{ __typename }".to_string().into(),
+                kind: "query",
+            },
+        };
+
+        let mut accumulator = ResponseHeaderAggregator::default();
+
+        let mut subgraph_headers_1 = HeaderMap::new();
+        subgraph_headers_1.insert(
+            header_name_owned("x-resp"),
+            header_value_owned("resp-value-1"),
+        );
+        apply_subgraph_response_headers(
+            &plan,
+            "any",
+            &subgraph_headers_1,
+            &client_details,
+            &mut accumulator,
+        )
+        .unwrap();
+
+        let mut subgraph_headers_2 = HeaderMap::new();
+        subgraph_headers_2.insert(
+            header_name_owned("x-resp"),
+            header_value_owned("resp-value-2"),
+        );
+        apply_subgraph_response_headers(
+            &plan,
+            "any",
+            &subgraph_headers_2,
+            &client_details,
+            &mut accumulator,
+        )
+        .unwrap();
+
+        let mut final_headers = HeaderMap::new();
+        modify_client_response_headers(accumulator, &mut final_headers).unwrap();
+
+        assert_eq!(
+            final_headers.get("x-resp").unwrap(),
+            &header_value_owned("resp-value-1")
+        );
+    }
+
+    // Tests the `append` algorithm for response header propagation.
+    #[test]
+    fn test_response_propagate_append() {
+        let yaml_str = r#"
+          headers:
+            all:
+              response:
+                - propagate:
+                    named: x-stuff
+                    algorithm: append
+        "#;
+        let config = parse_yaml_config(String::from(yaml_str)).unwrap();
+        let plan = compile_headers_plan(&config.headers).unwrap();
+        let client_headers = NtexHeaderMap::new();
+        let client_details = ClientRequestDetails {
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: &client_headers,
+            operation: OperationDetails {
+                name: None,
+                query: "{ __typename }".to_string().into(),
+                kind: "query",
+            },
+        };
+        let mut accumulator = ResponseHeaderAggregator::default();
+
+        let mut subgraph1_headers = HeaderMap::new();
+        subgraph1_headers.insert(header_name_owned("x-stuff"), header_value_owned("val1"));
+        apply_subgraph_response_headers(
+            &plan,
+            "subgraph1",
+            &subgraph1_headers,
+            &client_details,
+            &mut accumulator,
+        )
+        .unwrap();
+
+        let mut subgraph2_headers = HeaderMap::new();
+        subgraph2_headers.insert(header_name_owned("x-stuff"), header_value_owned("val2"));
+        apply_subgraph_response_headers(
+            &plan,
+            "subgraph2",
+            &subgraph2_headers,
+            &client_details,
+            &mut accumulator,
+        )
+        .unwrap();
+
+        let mut final_headers = HeaderMap::new();
+        modify_client_response_headers(accumulator, &mut final_headers).unwrap();
+
+        assert_eq!(final_headers.get("x-stuff").unwrap(), "val1, val2");
+    }
+
+    // Tests that "never-join" headers like set-cookie are appended as separate fields.
+    #[test]
+    fn test_response_propagate_append_never_join() {
+        let yaml_str = r#"
+          headers:
+            all:
+              response:
+                - propagate:
+                    named: set-cookie
+                    algorithm: append
+        "#;
+        let config = parse_yaml_config(String::from(yaml_str)).unwrap();
+        let plan = compile_headers_plan(&config.headers).unwrap();
+        let client_headers = NtexHeaderMap::new();
+        let client_details = ClientRequestDetails {
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: &client_headers,
+            operation: OperationDetails {
+                name: None,
+                query: "{ __typename }".to_string().into(),
+                kind: "query",
+            },
+        };
+        let mut accumulator = ResponseHeaderAggregator::default();
+
+        let mut subgraph1_headers = HeaderMap::new();
+        subgraph1_headers.insert(header_name_owned("set-cookie"), header_value_owned("a=1"));
+        apply_subgraph_response_headers(
+            &plan,
+            "subgraph1",
+            &subgraph1_headers,
+            &client_details,
+            &mut accumulator,
+        )
+        .unwrap();
+
+        let mut subgraph2_headers = HeaderMap::new();
+        subgraph2_headers.insert(header_name_owned("set-cookie"), header_value_owned("b=2"));
+        apply_subgraph_response_headers(
+            &plan,
+            "subgraph2",
+            &subgraph2_headers,
+            &client_details,
+            &mut accumulator,
+        )
+        .unwrap();
+
+        let mut final_headers = HeaderMap::new();
+        modify_client_response_headers(accumulator, &mut final_headers).unwrap();
+
+        let cookies: Vec<_> = final_headers.get_all("set-cookie").iter().collect();
+        assert_eq!(cookies.len(), 2);
+        assert_eq!(cookies[0], "a=1");
+        assert_eq!(cookies[1], "b=2");
+    }
+
+    // Tests inserting a response header with a value from a VRL expression.
+    #[test]
+    fn test_insert_response_header_with_expression() {
+        let yaml_str = r#"
+          headers:
+            all:
+              response:
+                - insert:
+                    name: x-original-forwarded-for
+                    expression: '.response."x-forwarded-for"'
+        "#;
+        let config = parse_yaml_config(String::from(yaml_str)).unwrap();
+        let plan = compile_headers_plan(&config.headers).unwrap();
+        let client_headers = NtexHeaderMap::new();
+        let client_details = ClientRequestDetails {
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: &client_headers,
+            operation: OperationDetails {
+                name: None,
+                query: "{ __typename }".to_string().into(),
+                kind: "query",
+            },
+        };
+
+        let mut accumulator = ResponseHeaderAggregator::default();
+
+        let mut subgraph_headers = HeaderMap::new();
+        subgraph_headers.insert(
+            header_name_owned("x-forwarded-for"),
+            header_value_owned("1.2.3.4"),
+        );
+
+        apply_subgraph_response_headers(
+            &plan,
+            "any",
+            &subgraph_headers,
+            &client_details,
+            &mut accumulator,
+        )
+        .unwrap();
+
+        let mut final_headers = HeaderMap::new();
+        modify_client_response_headers(accumulator, &mut final_headers).unwrap();
+
+        assert_eq!(
+            final_headers.get("x-original-forwarded-for").unwrap(),
+            "1.2.3.4"
         );
     }
 

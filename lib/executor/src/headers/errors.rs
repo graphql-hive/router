@@ -33,7 +33,7 @@ impl HeaderRuleCompileError {
             diagnostics
                 .errors()
                 .into_iter()
-                .map(|d| d.message.clone())
+                .map(|d| d.code.to_string() + ": " + &d.message)
                 .collect::<Vec<_>>()
                 .join(", "),
         )
