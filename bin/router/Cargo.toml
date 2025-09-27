@@ -37,8 +37,12 @@ lazy_static = { workspace = true }
 async-trait = { workspace = true }
 xxhash-rust = { workspace = true }
 rand = { workspace = true }
+jsonwebtoken = { workspace = true }
 
 mimalloc = { version = "0.1.47", features = ["override"] }
 moka = { version = "0.12.10", features = ["future"] }
 ulid = "1.2.1"
 ntex = { version = "2", features = ["tokio"] }
+tokio-util = "0.7.16"
+reqwest = "0.12.23"
+cookie = "0.18.1"
