@@ -1,9 +1,12 @@
 use hive_router_plan_executor::response::graphql_error::GraphQLError;
-use http::{
-    header::{InvalidHeaderValue, ToStrError},
-    StatusCode,
+use http::StatusCode;
+use ntex::{
+    http::{
+        header::{InvalidHeaderValue, ToStrError},
+        ResponseBuilder,
+    },
+    web,
 };
-use ntex::{http::ResponseBuilder, web};
 
 use crate::pipeline::error::FailedExecutionResult;
 

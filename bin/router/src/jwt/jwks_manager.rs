@@ -23,6 +23,20 @@ impl JwksManager {
         JwksManager { sources }
     }
 
+    pub fn all(&self) -> Vec<Arc<JwkSet>> {
+        self.sources
+            .iter()
+            .filter_map(|v| match v.get_jwk_set() {
+                Ok(set) => Some(set),
+                Err(err) => {
+                    tracing::error!("Failed to use JWK set: {}, ignoring", err);
+
+                    None
+                }
+            })
+            .collect()
+    }
+
     pub async fn prefetch_sources(&self) -> Result<(), JwksSourceError> {
         for source in &self.sources {
             if source.should_prefetch() {
@@ -159,7 +173,7 @@ impl JwksSource {
         }
     }
 
-    pub async fn get_jwk_set(&self) -> Result<Arc<JwkSet>, JwksSourceError> {
+    pub fn get_jwk_set(&self) -> Result<Arc<JwkSet>, JwksSourceError> {
         if let Ok(jwk) = self.jwk.try_read() {
             if let Some(jwk) = jwk.as_ref() {
                 return Ok(jwk.clone());

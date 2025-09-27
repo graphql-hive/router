@@ -45,3 +45,4 @@ ulid = "1.2.1"
 ntex = { version = "2", features = ["tokio"] }
 tokio-util = "0.7.16"
 reqwest = "0.12.23"
+cookie = "0.18.1"

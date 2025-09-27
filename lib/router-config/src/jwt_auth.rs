@@ -116,9 +116,6 @@ pub enum JwtAuthPluginLookupLocation {
         name: String,
         prefix: Option<String>,
     },
-    #[serde(rename = "query_param")]
-    #[schemars(title = "query_param")]
-    QueryParam { name: String },
     #[serde(rename = "cookies")]
     #[schemars(title = "cookies")]
     Cookie { name: String },
