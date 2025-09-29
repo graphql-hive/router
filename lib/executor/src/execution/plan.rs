@@ -318,7 +318,7 @@ impl<'exec> Executor<'exec> {
         ctx: &mut ExecutionContext<'exec>,
         response_bytes: Bytes,
         fetch_node_id: i64,
-    ) -> Option<(Value<'exec>, Option<&'exec Vec<FetchRewrite>>)> {
+    ) -> Option<(SubgraphResponse<'exec>, Option<&'exec Vec<FetchRewrite>>)> {
         let idx = ctx.response_storage.add_response(response_bytes);
         // SAFETY: The `bytes` are transmuted to the lifetime `'a` of the `ExecutionContext`.
         // This is safe because the `response_storage` is part of the `ExecutionContext` (`ctx`)
@@ -350,31 +350,31 @@ impl<'exec> Executor<'exec> {
             }
         };
 
-        ctx.handle_errors(response.errors);
-
-        Some((response.data, output_rewrites))
+        Some((response, output_rewrites))
     }
 
     fn process_job_result(&self, ctx: &mut ExecutionContext<'exec>, job: ExecutionJob) {
         match job {
             ExecutionJob::Fetch(job) => {
-                if let Some((mut data, output_rewrites)) =
+                if let Some((mut response, output_rewrites)) =
                     self.process_subgraph_response(ctx, job.response, job.fetch_node_id)
                 {
+                    ctx.handle_errors(response.errors, None);
                     if let Some(output_rewrites) = output_rewrites {
                         for output_rewrite in output_rewrites {
-                            output_rewrite.rewrite(&self.schema_metadata.possible_types, &mut data);
+                            output_rewrite
+                                .rewrite(&self.schema_metadata.possible_types, &mut response.data);
                         }
                     }
 
-                    deep_merge(&mut ctx.final_response, data);
+                    deep_merge(&mut ctx.final_response, response.data);
                 }
             }
             ExecutionJob::FlattenFetch(job) => {
-                if let Some((mut data, output_rewrites)) =
+                if let Some((mut response, output_rewrites)) =
                     self.process_subgraph_response(ctx, job.response, job.fetch_node_id)
                 {
-                    if let Some(mut entities) = data.take_entities() {
+                    if let Some(mut entities) = response.data.take_entities() {
                         if let Some(output_rewrites) = output_rewrites {
                             for output_rewrite in output_rewrites {
                                 for entity in &mut entities {
@@ -386,15 +386,34 @@ impl<'exec> Executor<'exec> {
 
                         let mut index = 0;
                         let normalized_path = job.flatten_node_path.as_slice();
+                        // If there is an error in the response, then collect the paths for normalizing the error
+                        let (initial_error_path_arr, mut entity_index_error_map) =
+                            if response.errors.is_some() {
+                                (
+                                    Some(Vec::with_capacity(normalized_path.len() + 2)),
+                                    Some(HashMap::with_capacity(entities.len())),
+                                )
+                            } else {
+                                (None, None)
+                            };
                         traverse_and_callback_mut(
                             &mut ctx.final_response,
                             normalized_path,
                             self.schema_metadata,
-                            &mut |target| {
+                            initial_error_path_arr,
+                            &mut |target, error_path| {
                                 let hash = job.representation_hashes[index];
                                 if let Some(entity_index) =
                                     job.representation_hash_to_index.get(&hash)
                                 {
+                                    if let (Some(error_path), Some(entity_index_error_map)) =
+                                        (error_path, entity_index_error_map.as_mut())
+                                    {
+                                        let error_paths = entity_index_error_map
+                                            .entry(entity_index)
+                                            .or_insert_with(Vec::new);
+                                        error_paths.push(error_path);
+                                    }
                                     if let Some(entity) = entities.get(*entity_index) {
                                         // SAFETY: `new_val` is a clone of an entity that lives for `'a`.
                                         // The transmute is to satisfy the compiler, but the lifetime
@@ -407,6 +426,7 @@ impl<'exec> Executor<'exec> {
                                 index += 1;
                             },
                         );
+                        ctx.handle_errors(response.errors, entity_index_error_map);
                     }
                 }
             }
@@ -554,4 +574,61 @@ fn condition_node_by_variables<'a>(
     } else {
         condition_node.else_clause.as_deref()
     }
+}
+
+#[test]
+/**
+ * We have the same entity in two different paths ["a", 0] and ["b", 1],
+ * and the subgraph response has an error for this entity.
+ * So we should duplicate the error for both paths.
+ */
+fn normalize_entity_errors_correctly() {
+    use crate::response::graphql_error::{GraphQLError, GraphQLErrorPathSegment};
+    use std::collections::HashMap;
+    let mut ctx = ExecutionContext::default();
+    let mut entity_index_error_map: HashMap<&usize, Vec<Vec<GraphQLErrorPathSegment>>> =
+        HashMap::new();
+    entity_index_error_map.insert(
+        &0,
+        vec![
+            vec![
+                GraphQLErrorPathSegment::String("a".to_string()),
+                GraphQLErrorPathSegment::Index(0),
+            ],
+            vec![
+                GraphQLErrorPathSegment::String("b".to_string()),
+                GraphQLErrorPathSegment::Index(1),
+            ],
+        ],
+    );
+    let response_errors = vec![GraphQLError {
+        message: "Error 1".to_string(),
+        locations: None,
+        path: Some(vec![
+            GraphQLErrorPathSegment::String("_entities".to_string()),
+            GraphQLErrorPathSegment::Index(0),
+            GraphQLErrorPathSegment::String("field1".to_string()),
+        ]),
+        extensions: None,
+    }];
+    ctx.handle_errors(Some(response_errors), Some(entity_index_error_map));
+    assert_eq!(ctx.errors.len(), 2);
+    assert_eq!(ctx.errors[0].message, "Error 1");
+    assert_eq!(
+        ctx.errors[0].path.as_ref().unwrap(),
+        &vec![
+            GraphQLErrorPathSegment::String("a".to_string()),
+            GraphQLErrorPathSegment::Index(0),
+            GraphQLErrorPathSegment::String("field1".to_string())
+        ]
+    );
+    assert_eq!(ctx.errors[1].message, "Error 1");
+    assert_eq!(
+        ctx.errors[1].path.as_ref().unwrap(),
+        &vec![
+            GraphQLErrorPathSegment::String("b".to_string()),
+            GraphQLErrorPathSegment::Index(1),
+            GraphQLErrorPathSegment::String("field1".to_string())
+        ]
+    );
 }
