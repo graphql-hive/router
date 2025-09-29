@@ -4,7 +4,7 @@
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{"all":null,"subgraphs":null}`<br/>||
+|[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"host":"0.0.0.0","port":4000}`<br/>||
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
@@ -15,9 +15,7 @@
 **Example**
 
 ```yaml
-headers:
-  all: null
-  subgraphs: null
+headers: {}
 http:
   host: 0.0.0.0
   port: 4000
@@ -51,14 +49,6 @@ Configuration for the headers.
 |[**all**](#headersall)|`object`, `null`|Rules applied to all subgraphs (global defaults).<br/>||
 |[**subgraphs**](#headerssubgraphs)|`object`, `null`|Rules applied to individual subgraphs.<br/>||
 
-**Example**
-
-```yaml
-all: null
-subgraphs: null
-
-```
-
 <a name="headersall"></a>
 ### headers\.all: object,null
 
@@ -71,13 +61,6 @@ Rules applied to all subgraphs (global defaults).
 |----|----|-----------|--------|
 |[**request**](#headersallrequest)|`array`|Rules that shape the **request** sent from the router to subgraphs.<br/>||
 |[**response**](#headersallresponse)|`array`|Rules that shape the **response** sent from the router back to the client.<br/>||
-
-**Example**
-
-```yaml
-{}
-
-```
 
 <a name="headersallrequest"></a>
 #### headers\.all\.request\[\]: array,null
@@ -643,13 +626,6 @@ override the result of global rules for that subgraph.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |[**Additional Properties**](#headerssubgraphsadditionalproperties)|`object`|Rules for a single scope (global or per-subgraph).<br/>||
-
-**Example**
-
-```yaml
-{}
-
-```
 
 <a name="headerssubgraphsadditionalproperties"></a>
 #### headers\.subgraphs\.additionalProperties: object

@@ -66,7 +66,7 @@ pub static NEVER_JOIN_HEADERS: &[&str] = &["set-cookie", "www-authenticate"];
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 pub struct HeadersConfig {
     /// Rules applied to all subgraphs (global defaults).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub all: Option<HeaderRules>,
 
     /// Rules applied to individual subgraphs.
@@ -74,7 +74,7 @@ pub struct HeadersConfig {
     ///
     /// **Precedence:** These are applied **after** `all`, and therefore can
     /// override the result of global rules for that subgraph.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subgraphs: Option<HashMap<String, HeaderRules>>,
 }
 
