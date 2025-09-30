@@ -13,7 +13,7 @@
   "devDependencies": {
     "graphql-federation-gateway-audit": "the-guild-org/graphql-federation-gateway-audit",
     "graphql-http": "1.22.4",
-    "typescript": "5.9.2",
+    "typescript": "5.9.3",
     "start-server-and-test": "2.1.2"
   },
   "packageManager": "npm@11.6.1"
