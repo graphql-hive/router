@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.18
+# syntax=docker/dockerfile:1.19
 
 FROM gcr.io/distroless/cc-debian12
 ARG TARGETARCH
