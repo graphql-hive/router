@@ -13,7 +13,7 @@ use hive_router_query_planner::{
 };
 use moka::future::Cache;
 
-use crate::pipeline::normalize::GraphQLNormalizationPayload;
+use crate::{jwt::JwtAuthRuntime, pipeline::normalize::GraphQLNormalizationPayload};
 
 pub struct RouterSharedState {
     pub schema_metadata: SchemaMetadata,
@@ -25,12 +25,14 @@ pub struct RouterSharedState {
     pub parse_cache: Cache<u64, Arc<graphql_parser::query::Document<'static, String>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
     pub router_config: HiveRouterConfig,
+    pub jwt_auth_runtime: Option<JwtAuthRuntime>,
 }
 
 impl RouterSharedState {
     pub fn new(
         parsed_supergraph_sdl: Document<'static, String>,
         router_config: HiveRouterConfig,
+        jwt_auth_runtime: Option<JwtAuthRuntime>,
     ) -> Arc<Self> {
         let supergraph_state = SupergraphState::new(&parsed_supergraph_sdl);
         let planner =
@@ -53,6 +55,7 @@ impl RouterSharedState {
             parse_cache: moka::future::Cache::new(1000),
             normalize_cache: moka::future::Cache::new(1000),
             router_config,
+            jwt_auth_runtime,
         })
     }
 }
