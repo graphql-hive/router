@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::{BTreeSet, HashMap}};
 
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
@@ -651,6 +651,8 @@ impl<'exec> Executor<'exec> {
             self.client_request,
             &mut headers_map,
         )?;
+        let variable_refs =
+            select_fetch_variables(self.variable_values, node.variable_usages.as_ref());
 
         Ok(ExecutionJob::Fetch(FetchJob {
             fetch_node_id: node.id,
@@ -663,7 +665,7 @@ impl<'exec> Executor<'exec> {
                         query: node.operation.document_str.as_str(),
                         dedupe: self.dedupe_subgraph_requests,
                         operation_name: node.operation_name.as_deref(),
-                        variables: None,
+                        variables: variable_refs,
                         representations,
                         headers: headers_map,
                     },
@@ -686,5 +688,81 @@ fn condition_node_by_variables<'a>(
         condition_node.if_clause.as_deref()
     } else {
         condition_node.else_clause.as_deref()
+    }
+}
+
+fn select_fetch_variables<'a>(
+    variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
+    variable_usages: Option<&BTreeSet<String>>,
+) -> Option<HashMap<&'a str, &'a sonic_rs::Value>> {
+    let values = variable_values.as_ref()?;
+
+    variable_usages.map(|variable_usages| {
+        variable_usages
+            .iter()
+            .filter_map(|var_name| {
+                values
+                    .get_key_value(var_name.as_str())
+                    .map(|(key, value)| (key.as_str(), value))
+            })
+            .collect()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_fetch_variables;
+    use sonic_rs::Value;
+    use std::collections::{BTreeSet, HashMap};
+
+    fn value_from_number(n: i32) -> Value {
+        sonic_rs::from_str(&n.to_string()).unwrap()
+    }
+
+    #[test]
+    fn select_fetch_variables_only_used_variables() {
+        let mut variable_values_map = HashMap::new();
+        variable_values_map.insert("used".to_string(), value_from_number(1));
+        variable_values_map.insert("unused".to_string(), value_from_number(2));
+        let variable_values = Some(variable_values_map);
+
+        let mut usages = BTreeSet::new();
+        usages.insert("used".to_string());
+
+        let selected = select_fetch_variables(&variable_values, Some(&usages)).unwrap();
+
+        assert_eq!(selected.len(), 1);
+        assert!(selected.contains_key("used"));
+        assert!(!selected.contains_key("unused"));
+    }
+
+    #[test]
+    fn select_fetch_variables_ignores_missing_usage_entries() {
+        let mut variable_values_map = HashMap::new();
+        variable_values_map.insert("present".to_string(), value_from_number(3));
+        let variable_values = Some(variable_values_map);
+
+        let mut usages = BTreeSet::new();
+        usages.insert("present".to_string());
+        usages.insert("missing".to_string());
+
+        let selected = select_fetch_variables(&variable_values, Some(&usages)).unwrap();
+
+        assert_eq!(selected.len(), 1);
+        assert!(selected.contains_key("present"));
+        assert!(!selected.contains_key("missing"));
+    }
+
+    #[test]
+    fn select_fetch_variables_for_no_usage_entries() {
+        let mut variable_values_map = HashMap::new();
+        variable_values_map.insert("unused_1".to_string(), value_from_number(1));
+        variable_values_map.insert("unused_2".to_string(), value_from_number(2));
+
+        let variable_values = Some(variable_values_map);
+
+        let selected = select_fetch_variables(&variable_values, None);
+
+        assert!(selected.is_none());
     }
 }
