@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
@@ -6,13 +6,23 @@ use hive_router_query_planner::planner::plan_nodes::{
     ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
     QueryPlan, SequenceNode,
 };
+use http::{HeaderMap, Method};
+use ntex_http::HeaderMap as NtexHeaderMap;
 use serde::Deserialize;
 use sonic_rs::ValueRef;
 
 use crate::{
     context::ExecutionContext,
     execution::{error::PlanExecutionError, rewrites::FetchRewriteExt},
-    executors::{common::HttpExecutionRequest, map::SubgraphExecutorMap},
+    executors::{
+        common::{HttpExecutionRequest, HttpExecutionResponse},
+        map::SubgraphExecutorMap,
+    },
+    headers::{
+        plan::HeaderRulesPlan,
+        request::modify_subgraph_request_headers,
+        response::{apply_subgraph_response_headers, modify_client_response_headers},
+    },
     introspection::{
         resolve::{resolve_introspection, IntrospectionContext},
         schema::SchemaMetadata,
@@ -32,19 +42,39 @@ use crate::{
     },
 };
 
+pub struct OperationDetails<'a> {
+    pub name: Option<String>,
+    pub query: Cow<'a, str>,
+    pub kind: &'a str,
+}
+
+pub struct ClientRequestDetails<'a> {
+    pub method: Method,
+    pub url: http::Uri,
+    pub headers: &'a NtexHeaderMap,
+    pub operation: OperationDetails<'a>,
+}
+
 pub struct QueryPlanExecutionContext<'exec> {
     pub query_plan: &'exec QueryPlan,
     pub projection_plan: &'exec Vec<FieldProjectionPlan>,
+    pub headers_plan: &'exec HeaderRulesPlan,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     pub extensions: Option<HashMap<String, sonic_rs::Value>>,
+    pub client_request: ClientRequestDetails<'exec>,
     pub introspection_context: &'exec IntrospectionContext<'exec, 'static>,
     pub operation_type_name: &'exec str,
     pub executors: &'exec SubgraphExecutorMap,
 }
 
+pub struct PlanExecutionOutput {
+    pub body: Vec<u8>,
+    pub headers: HeaderMap,
+}
+
 pub async fn execute_query_plan<'exec>(
     ctx: QueryPlanExecutionContext<'exec>,
-) -> Result<Vec<u8>, PlanExecutionError> {
+) -> Result<PlanExecutionOutput, PlanExecutionError> {
     let init_value = if let Some(introspection_query) = ctx.introspection_context.query {
         resolve_introspection(introspection_query, ctx.introspection_context)
     } else {
@@ -52,22 +82,27 @@ pub async fn execute_query_plan<'exec>(
     };
 
     let mut exec_ctx = ExecutionContext::new(ctx.query_plan, init_value);
+    let executor = Executor::new(
+        ctx.variable_values,
+        ctx.executors,
+        ctx.introspection_context.metadata,
+        &ctx.client_request,
+        ctx.headers_plan,
+        // Deduplicate subgraph requests only if the operation type is a query
+        ctx.operation_type_name == "Query",
+    );
 
     if ctx.query_plan.node.is_some() {
-        let executor = Executor::new(
-            ctx.variable_values,
-            ctx.executors,
-            ctx.introspection_context.metadata,
-            // Deduplicate subgraph requests only if the operation type is a query
-            ctx.operation_type_name == "Query",
-        );
         executor
             .execute(&mut exec_ctx, ctx.query_plan.node.as_ref())
-            .await;
+            .await?;
     }
 
+    let mut response_headers = HeaderMap::new();
+    modify_client_response_headers(exec_ctx.response_headers_aggregator, &mut response_headers)?;
+
     let final_response = &exec_ctx.final_response;
-    project_by_operation(
+    let body = project_by_operation(
         final_response,
         exec_ctx.errors,
         &ctx.extensions,
@@ -75,14 +110,20 @@ pub async fn execute_query_plan<'exec>(
         ctx.projection_plan,
         ctx.variable_values,
         exec_ctx.response_storage.estimate_final_response_size(),
-    )
-    .map_err(|e| e.into())
+    )?;
+
+    Ok(PlanExecutionOutput {
+        body,
+        headers: response_headers,
+    })
 }
 
 pub struct Executor<'exec> {
     variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     schema_metadata: &'exec SchemaMetadata,
     executors: &'exec SubgraphExecutorMap,
+    client_request: &'exec ClientRequestDetails<'exec>,
+    headers_plan: &'exec HeaderRulesPlan,
     dedupe_subgraph_requests: bool,
 }
 
@@ -110,15 +151,22 @@ impl<'exec, T> ConcurrencyScope<'exec, T> {
     }
 }
 
+struct SubgraphOutput {
+    body: Bytes,
+    headers: HeaderMap,
+}
+
 struct FetchJob {
     fetch_node_id: i64,
-    response: Bytes,
+    subgraph_name: String,
+    response: SubgraphOutput,
 }
 
 struct FlattenFetchJob {
     flatten_node_path: FlattenNodePath,
-    response: Bytes,
+    response: SubgraphOutput,
     fetch_node_id: i64,
+    subgraph_name: String,
     representation_hashes: Vec<u64>,
     representation_hash_to_index: HashMap<u64, usize>,
 }
@@ -129,12 +177,30 @@ enum ExecutionJob {
     None,
 }
 
-impl From<ExecutionJob> for Bytes {
+impl From<ExecutionJob> for SubgraphOutput {
     fn from(value: ExecutionJob) -> Self {
         match value {
-            ExecutionJob::Fetch(j) => j.response,
-            ExecutionJob::FlattenFetch(j) => j.response,
-            ExecutionJob::None => Bytes::new(),
+            ExecutionJob::Fetch(j) => Self {
+                body: j.response.body,
+                headers: j.response.headers,
+            },
+            ExecutionJob::FlattenFetch(j) => Self {
+                body: j.response.body,
+                headers: j.response.headers,
+            },
+            ExecutionJob::None => Self {
+                body: Bytes::new(),
+                headers: HeaderMap::new(),
+            },
+        }
+    }
+}
+
+impl From<HttpExecutionResponse> for SubgraphOutput {
+    fn from(res: HttpExecutionResponse) -> Self {
+        Self {
+            body: res.body,
+            headers: res.headers,
         }
     }
 }
@@ -150,48 +216,73 @@ impl<'exec> Executor<'exec> {
         variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
         executors: &'exec SubgraphExecutorMap,
         schema_metadata: &'exec SchemaMetadata,
+        client_request: &'exec ClientRequestDetails<'exec>,
+        headers_plan: &'exec HeaderRulesPlan,
         dedupe_subgraph_requests: bool,
     ) -> Self {
         Executor {
             variable_values,
             executors,
             schema_metadata,
+            client_request,
+            headers_plan,
             dedupe_subgraph_requests,
         }
     }
 
-    pub async fn execute(&self, ctx: &mut ExecutionContext<'exec>, plan: Option<&PlanNode>) {
+    pub async fn execute(
+        &self,
+        ctx: &mut ExecutionContext<'exec>,
+        plan: Option<&PlanNode>,
+    ) -> Result<(), PlanExecutionError> {
         match plan {
             Some(PlanNode::Fetch(node)) => self.execute_fetch_wave(ctx, node).await,
             Some(PlanNode::Parallel(node)) => self.execute_parallel_wave(ctx, node).await,
             Some(PlanNode::Sequence(node)) => self.execute_sequence_wave(ctx, node).await,
             // Plans produced by our Query Planner can only start with: Fetch, Sequence or Parallel.
             // Any other node type at the root is not supported, do nothing
-            Some(_) => (),
+            Some(_) => Ok(()),
             // An empty plan is valid, just do nothing
-            None => (),
+            None => Ok(()),
         }
     }
 
-    async fn execute_fetch_wave(&self, ctx: &mut ExecutionContext<'exec>, node: &FetchNode) {
+    async fn execute_fetch_wave(
+        &self,
+        ctx: &mut ExecutionContext<'exec>,
+        node: &FetchNode,
+    ) -> Result<(), PlanExecutionError> {
         match self.execute_fetch_node(node, None).await {
             Ok(result) => self.process_job_result(ctx, result),
-            Err(err) => ctx.errors.push(GraphQLError {
-                message: err.to_string(),
-                locations: None,
-                path: None,
-                extensions: None,
-            }),
+            Err(err) => {
+                ctx.errors.push(GraphQLError {
+                    message: err.to_string(),
+                    locations: None,
+                    path: None,
+                    extensions: None,
+                });
+                Ok(())
+            }
         }
     }
 
-    async fn execute_sequence_wave(&self, ctx: &mut ExecutionContext<'exec>, node: &SequenceNode) {
+    async fn execute_sequence_wave(
+        &self,
+        ctx: &mut ExecutionContext<'exec>,
+        node: &SequenceNode,
+    ) -> Result<(), PlanExecutionError> {
         for child in &node.nodes {
-            Box::pin(self.execute_plan_node(ctx, child)).await;
+            Box::pin(self.execute_plan_node(ctx, child)).await?;
         }
+
+        Ok(())
     }
 
-    async fn execute_parallel_wave(&self, ctx: &mut ExecutionContext<'exec>, node: &ParallelNode) {
+    async fn execute_parallel_wave(
+        &self,
+        ctx: &mut ExecutionContext<'exec>,
+        node: &ParallelNode,
+    ) -> Result<(), PlanExecutionError> {
         let mut scope = ConcurrencyScope::new();
 
         for child in &node.nodes {
@@ -204,7 +295,7 @@ impl<'exec> Executor<'exec> {
         for result in results {
             match result {
                 Ok(job) => {
-                    self.process_job_result(ctx, job);
+                    self.process_job_result(ctx, job)?;
                 }
                 Err(err) => ctx.errors.push(GraphQLError {
                     message: err.to_string(),
@@ -214,13 +305,19 @@ impl<'exec> Executor<'exec> {
                 }),
             }
         }
+
+        Ok(())
     }
 
-    async fn execute_plan_node(&self, ctx: &mut ExecutionContext<'exec>, node: &PlanNode) {
+    async fn execute_plan_node(
+        &self,
+        ctx: &mut ExecutionContext<'exec>,
+        node: &PlanNode,
+    ) -> Result<(), PlanExecutionError> {
         match node {
             PlanNode::Fetch(fetch_node) => match self.execute_fetch_node(fetch_node, None).await {
                 Ok(job) => {
-                    self.process_job_result(ctx, job);
+                    self.process_job_result(ctx, job)?;
                 }
                 Err(err) => ctx.errors.push(GraphQLError {
                     message: err.to_string(),
@@ -230,7 +327,7 @@ impl<'exec> Executor<'exec> {
                 }),
             },
             PlanNode::Parallel(parallel_node) => {
-                self.execute_parallel_wave(ctx, parallel_node).await;
+                self.execute_parallel_wave(ctx, parallel_node).await?;
             }
             PlanNode::Flatten(flatten_node) => {
                 match self.prepare_flatten_data(&ctx.final_response, flatten_node) {
@@ -245,7 +342,7 @@ impl<'exec> Executor<'exec> {
                             .await
                         {
                             Ok(job) => {
-                                self.process_job_result(ctx, job);
+                                self.process_job_result(ctx, job)?;
                             }
                             Err(err) => {
                                 ctx.errors.push(GraphQLError {
@@ -269,18 +366,20 @@ impl<'exec> Executor<'exec> {
                 }
             }
             PlanNode::Sequence(sequence_node) => {
-                self.execute_sequence_wave(ctx, sequence_node).await;
+                self.execute_sequence_wave(ctx, sequence_node).await?;
             }
             PlanNode::Condition(condition_node) => {
                 if let Some(node) =
                     condition_node_by_variables(condition_node, self.variable_values)
                 {
-                    Box::pin(self.execute_plan_node(ctx, node)).await;
+                    Box::pin(self.execute_plan_node(ctx, node)).await?;
                 }
             }
             // An unsupported plan node was found, do nothing.
             _ => {}
         }
+
+        Ok(())
     }
 
     fn prepare_job_future<'wave>(
@@ -355,11 +454,23 @@ impl<'exec> Executor<'exec> {
         Some((response.data, output_rewrites))
     }
 
-    fn process_job_result(&self, ctx: &mut ExecutionContext<'exec>, job: ExecutionJob) {
-        match job {
+    fn process_job_result(
+        &self,
+        ctx: &mut ExecutionContext<'exec>,
+        job: ExecutionJob,
+    ) -> Result<(), PlanExecutionError> {
+        let _: () = match job {
             ExecutionJob::Fetch(job) => {
+                apply_subgraph_response_headers(
+                    self.headers_plan,
+                    &job.subgraph_name,
+                    &job.response.headers,
+                    self.client_request,
+                    &mut ctx.response_headers_aggregator,
+                )?;
+
                 if let Some((mut data, output_rewrites)) =
-                    self.process_subgraph_response(ctx, job.response, job.fetch_node_id)
+                    self.process_subgraph_response(ctx, job.response.body, job.fetch_node_id)
                 {
                     if let Some(output_rewrites) = output_rewrites {
                         for output_rewrite in output_rewrites {
@@ -371,8 +482,16 @@ impl<'exec> Executor<'exec> {
                 }
             }
             ExecutionJob::FlattenFetch(job) => {
+                apply_subgraph_response_headers(
+                    self.headers_plan,
+                    &job.subgraph_name,
+                    &job.response.headers,
+                    self.client_request,
+                    &mut ctx.response_headers_aggregator,
+                )?;
+
                 if let Some((mut data, output_rewrites)) =
-                    self.process_subgraph_response(ctx, job.response, job.fetch_node_id)
+                    self.process_subgraph_response(ctx, job.response.body, job.fetch_node_id)
                 {
                     if let Some(mut entities) = data.take_entities() {
                         if let Some(output_rewrites) = output_rewrites {
@@ -413,7 +532,8 @@ impl<'exec> Executor<'exec> {
             ExecutionJob::None => {
                 // nothing to do
             }
-        }
+        };
+        Ok(())
     }
 
     fn prepare_flatten_data(
@@ -510,6 +630,7 @@ impl<'exec> Executor<'exec> {
                     .await?
                     .into(),
                 fetch_node_id: fetch_node.id,
+                subgraph_name: fetch_node.service_name.clone(),
                 representation_hashes: representation_hashes.unwrap_or_default(),
                 representation_hash_to_index: filtered_representations_hashes.unwrap_or_default(),
             }),
@@ -522,8 +643,18 @@ impl<'exec> Executor<'exec> {
         node: &FetchNode,
         representations: Option<Vec<u8>>,
     ) -> Result<ExecutionJob, PlanExecutionError> {
+        // TODO: We could optimize header map creation by caching them per service name
+        let mut headers_map = HeaderMap::new();
+        modify_subgraph_request_headers(
+            self.headers_plan,
+            &node.service_name,
+            self.client_request,
+            &mut headers_map,
+        )?;
+
         Ok(ExecutionJob::Fetch(FetchJob {
             fetch_node_id: node.id,
+            subgraph_name: node.service_name.clone(),
             response: self
                 .executors
                 .execute(
@@ -534,9 +665,11 @@ impl<'exec> Executor<'exec> {
                         operation_name: node.operation_name.as_deref(),
                         variables: None,
                         representations,
+                        headers: headers_map,
                     },
                 )
-                .await,
+                .await
+                .into(),
         }))
     }
 }
