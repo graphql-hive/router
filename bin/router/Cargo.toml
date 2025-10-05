@@ -25,6 +25,7 @@ futures = { workspace = true }
 graphql-parser = { workspace = true }
 graphql-tools = { workspace = true }
 serde = { workspace = true }
+reqwest = { workspace = true }
 sonic-rs = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -42,3 +43,4 @@ mimalloc = { version = "0.1.47", features = ["override"] }
 moka = { version = "0.12.10", features = ["future"] }
 ulid = "1.2.1"
 ntex = { version = "2", features = ["tokio"] }
+arc-swap = "1.7.1"

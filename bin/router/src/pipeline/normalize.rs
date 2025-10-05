@@ -12,6 +12,7 @@ use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, Pipel
 use crate::pipeline::execution_request::ExecutionRequest;
 use crate::pipeline::parser::GraphQLParserPayload;
 use crate::shared_state::RouterSharedState;
+use crate::supergraph_mgr::SupergraphData;
 use tracing::{error, trace};
 
 #[derive(Debug)]
@@ -26,6 +27,7 @@ pub struct GraphQLNormalizationPayload {
 #[inline]
 pub async fn normalize_request_with_cache(
     req: &HttpRequest,
+    supergraph: &Arc<SupergraphData>,
     app_state: &Arc<RouterSharedState>,
     execution_params: &ExecutionRequest,
     parser_payload: &GraphQLParserPayload,
@@ -51,7 +53,7 @@ pub async fn normalize_request_with_cache(
             Ok(payload)
         }
         None => match normalize_operation(
-            &app_state.planner.supergraph,
+            &supergraph.planner.supergraph,
             &parser_payload.parsed_operation,
             execution_params.operation_name.as_deref(),
         ) {
@@ -64,7 +66,7 @@ pub async fn normalize_request_with_cache(
 
                 let operation = doc.operation;
                 let (root_type_name, projection_plan) =
-                    FieldProjectionPlan::from_operation(&operation, &app_state.schema_metadata);
+                    FieldProjectionPlan::from_operation(&operation, &supergraph.metadata);
                 let partitioned_operation = partition_operation(operation);
 
                 let payload = GraphQLNormalizationPayload {

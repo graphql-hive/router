@@ -51,3 +51,4 @@ xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 tokio = { version = "1.47.1", features = ["full"] }
 tokio-util = { version = "0.7.16" }
 rand = "0.9.2"
+reqwest = "0.12.23"
