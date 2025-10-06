@@ -5,6 +5,7 @@ pub mod primitives;
 pub mod query_planner;
 pub mod supergraph;
 pub mod traffic_shaping;
+pub mod override_subgraph_urls;
 
 use config::{Config, Environment, File, FileFormat, FileSourceFile};
 use schemars::JsonSchema;
@@ -45,6 +46,10 @@ pub struct HiveRouterConfig {
     /// Configuration for the headers.
     #[serde(default)]
     pub headers: headers::HeadersConfig,
+
+    /// Configuration for overriding subgraph URLs.
+    #[serde(default)]
+    pub override_subgraph_urls: override_subgraph_urls::OverrideSubgraphUrlsConfig,
 }
 
 #[derive(Debug, thiserror::Error)]

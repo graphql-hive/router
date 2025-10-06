@@ -2,8 +2,10 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use bytes::{BufMut, BytesMut};
 use dashmap::DashMap;
-use hive_router_config::traffic_shaping::TrafficShapingExecutorConfig;
-use http::Uri;
+use hive_router_config::{
+    override_subgraph_urls::{OverrideSubgraphUrlConfig, OverrideSubgraphUrlsConfig},
+    traffic_shaping::TrafficShapingExecutorConfig,
+};
 use hyper_tls::HttpsConnector;
 use hyper_util::{
     client::legacy::Client,
@@ -18,6 +20,7 @@ use crate::{
         },
         dedupe::{ABuildHasher, SharedResponse},
         error::SubgraphExecutorError,
+        expression_http::ExpressionHTTPExecutor,
         http::HTTPSubgraphExecutor,
     },
     response::graphql_error::GraphQLError,
@@ -74,56 +77,67 @@ impl SubgraphExecutorMap {
 
     pub fn from_http_endpoint_map(
         subgraph_endpoint_map: HashMap<String, String>,
-        config: TrafficShapingExecutorConfig,
+        override_subgraph_urls_config: OverrideSubgraphUrlsConfig,
+        traffic_shaping_config: TrafficShapingExecutorConfig,
     ) -> Result<Self, SubgraphExecutorError> {
         let https = HttpsConnector::new();
         let client = Client::builder(TokioExecutor::new())
             .pool_timer(TokioTimer::new())
-            .pool_idle_timeout(Duration::from_secs(config.pool_idle_timeout_seconds))
-            .pool_max_idle_per_host(config.max_connections_per_host)
+            .pool_idle_timeout(Duration::from_secs(
+                traffic_shaping_config.pool_idle_timeout_seconds,
+            ))
+            .pool_max_idle_per_host(traffic_shaping_config.max_connections_per_host)
             .build(https);
 
         let client_arc = Arc::new(client);
         let semaphores_by_origin: DashMap<String, Arc<Semaphore>> = DashMap::new();
-        let max_connections_per_host = config.max_connections_per_host;
-        let config_arc = Arc::new(config);
+        let semaphores_by_origin_arc = Arc::new(semaphores_by_origin);
+        let config_arc = Arc::new(traffic_shaping_config);
         let in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>> =
             Arc::new(DashMap::with_hasher(ABuildHasher::default()));
 
         let executor_map = subgraph_endpoint_map
             .into_iter()
             .map(|(subgraph_name, endpoint_str)| {
-                let endpoint_uri = endpoint_str.parse::<Uri>().map_err(|e| {
-                    SubgraphExecutorError::EndpointParseFailure(endpoint_str.clone(), e.to_string())
-                })?;
-
-                let origin = format!(
-                    "{}://{}:{}",
-                    endpoint_uri.scheme_str().unwrap_or("http"),
-                    endpoint_uri.host().unwrap_or(""),
-                    endpoint_uri.port_u16().unwrap_or_else(|| {
-                        if endpoint_uri.scheme_str() == Some("https") {
-                            443
-                        } else {
-                            80
+                let executor: Arc<Box<dyn SubgraphExecutor + Send + Sync>> =
+                    if let Some(subgraph_entry) =
+                        override_subgraph_urls_config.subgraphs.get(&subgraph_name)
+                    {
+                        match subgraph_entry {
+                            OverrideSubgraphUrlConfig::Url(endpoint_str) => {
+                                HTTPSubgraphExecutor::try_new(
+                                    endpoint_str,
+                                    client_arc.clone(),
+                                    semaphores_by_origin_arc.clone(),
+                                    config_arc.clone(),
+                                    in_flight_requests.clone(),
+                                )?
+                                .to_boxed_arc()
+                            }
+                            OverrideSubgraphUrlConfig::Expression(expression) => {
+                                ExpressionHTTPExecutor::try_new(
+                                    &endpoint_str,
+                                    expression,
+                                    client_arc.clone(),
+                                    config_arc.clone(),
+                                    in_flight_requests.clone(),
+                                    semaphores_by_origin_arc.clone(),
+                                )?
+                                .to_boxed_arc()
+                            }
                         }
-                    })
-                );
+                    } else {
+                        HTTPSubgraphExecutor::try_new(
+                            &endpoint_str,
+                            client_arc.clone(),
+                            semaphores_by_origin_arc.clone(),
+                            config_arc.clone(),
+                            in_flight_requests.clone(),
+                        )?
+                        .to_boxed_arc()
+                    };
 
-                let semaphore = semaphores_by_origin
-                    .entry(origin)
-                    .or_insert_with(|| Arc::new(Semaphore::new(max_connections_per_host)))
-                    .clone();
-
-                let executor = HTTPSubgraphExecutor::new(
-                    endpoint_uri,
-                    client_arc.clone(),
-                    semaphore,
-                    config_arc.clone(),
-                    in_flight_requests.clone(),
-                );
-
-                Ok((subgraph_name, executor.to_boxed_arc()))
+                Ok((subgraph_name, executor))
             })
             .collect::<Result<HashMap<_, _>, SubgraphExecutorError>>()?;
 
