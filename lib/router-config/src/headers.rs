@@ -41,29 +41,8 @@ pub static NEVER_JOIN_HEADERS: &[&str] = &["set-cookie", "www-authenticate"];
 /// ## Safety
 /// Hop-by-hop headers are always stripped. Never-join headers (e.g. `set-cookie`)
 /// are never comma-joined. Multiple values are preserved as separate fields.
-///
-/// ### Example
-/// ```yaml
-/// headers:
-///   all:
-///     request:
-///       - propagate:
-///           named: Authorization
-///       - remove:
-///           matching: "^x-legacy-.*"
-///       - insert:
-///           name: x-router
-///           value: hive-router
-///
-///   subgraphs:
-///     accounts:
-///       request:
-///         - propagate:
-///             named: x-tenant-id
-///             rename: x-acct-tenant
-///             default: unknown
-/// ```
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
+#[schemars(example = headers_example_1())]
 pub struct HeadersConfig {
     /// Rules applied to all subgraphs (global defaults).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -78,6 +57,49 @@ pub struct HeadersConfig {
     pub subgraphs: Option<HashMap<String, HeaderRules>>,
 }
 
+fn headers_example_1() -> HeadersConfig {
+    HeadersConfig {
+        all: Some(HeaderRules {
+            request: Some(vec![
+                RequestHeaderRule::Propagate(RequestPropagateRule {
+                    spec: MatchSpec {
+                        named: Some(OneOrMany::One("Authorization".to_string())),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                RequestHeaderRule::Remove(RemoveRule {
+                    spec: MatchSpec {
+                        matching: Some(OneOrMany::One("^x-legacy-.*".to_string())),
+                        ..Default::default()
+                    },
+                }),
+                RequestHeaderRule::Insert(RequestInsertRule {
+                    name: "x-router".to_string(),
+                    source: InsertSource::Value {
+                        value: "hive-router".to_string(),
+                    },
+                }),
+            ]),
+            response: None,
+        }),
+        subgraphs: Some(HashMap::from([(
+            "accounts".to_string(),
+            HeaderRules {
+                request: Some(vec![RequestHeaderRule::Propagate(RequestPropagateRule {
+                    spec: MatchSpec {
+                        named: Some(OneOrMany::One("x-tenant-id".to_string())),
+                        ..Default::default()
+                    },
+                    rename: Some("x-acct-tenant".to_string()),
+                    default: Some("unknown".to_string()),
+                })]),
+                response: None,
+            },
+        )])),
+    }
+}
+
 /// Rules for a single scope (global or per-subgraph).
 ///
 /// You can specify independent rule lists for **request** (to subgraphs)
@@ -85,11 +107,11 @@ pub struct HeadersConfig {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 pub struct HeaderRules {
     /// Rules that shape the **request** sent from the router to subgraphs.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<Vec<RequestHeaderRule>>,
 
     /// Rules that shape the **response** sent from the router back to the client.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response: Option<Vec<ResponseHeaderRule>>,
 }
 
@@ -199,7 +221,7 @@ pub struct ResponseInsertRule {
     pub source: InsertSource,
     /// How to merge values across multiple subgraph responses.
     /// Default: `Last` (overwrite).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub algorithm: Option<AggregationAlgo>,
 }
 
@@ -268,15 +290,15 @@ pub enum OneOrMany<T> {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 pub struct MatchSpec {
     /// Match headers by exact name (OR).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub named: Option<OneOrMany<HeaderName>>,
 
     /// Match headers by regex pattern(s) (OR).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matching: Option<OneOrMany<RegExp>>,
 
     /// Exclude headers matching these regexes, applied after `matching`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exclude: Option<Vec<RegExp>>,
 }
 
@@ -304,19 +326,18 @@ pub struct MatchSpec {
 ///   named: Authorization
 ///   default: "Bearer test-token"
 /// ```
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 pub struct RequestPropagateRule {
     #[serde(flatten)]
     pub spec: MatchSpec,
 
     /// Optionally rename the header when forwarding.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rename: Option<HeaderName>,
 
     /// If the header is missing, set a default value.
     /// Applied only when **none** of the matched headers exist.
-
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
 }
 
@@ -372,11 +393,11 @@ pub struct ResponsePropagateRule {
     pub spec: MatchSpec,
 
     /// Optionally rename the header when returning it to the client.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rename: Option<HeaderName>,
 
     /// If no subgraph returns the header, set this default value.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
 
     /// How to merge values across multiple subgraph responses.

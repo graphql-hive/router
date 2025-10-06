@@ -15,7 +15,23 @@
 **Example**
 
 ```yaml
-headers: {}
+headers:
+  all:
+    request:
+      - propagate:
+          named: Authorization
+      - remove:
+          matching: ^x-legacy-.*
+      - insert:
+          name: x-router
+          value: hive-router
+  subgraphs:
+    accounts:
+      request:
+        - propagate:
+            default: unknown
+            named: x-tenant-id
+            rename: x-acct-tenant
 http:
   host: 0.0.0.0
   port: 4000
@@ -48,6 +64,28 @@ Configuration for the headers.
 |----|----|-----------|--------|
 |[**all**](#headersall)|`object`, `null`|Rules applied to all subgraphs (global defaults).<br/>||
 |[**subgraphs**](#headerssubgraphs)|`object`, `null`|Rules applied to individual subgraphs.<br/>||
+
+**Example**
+
+```yaml
+all:
+  request:
+    - propagate:
+        named: Authorization
+    - remove:
+        matching: ^x-legacy-.*
+    - insert:
+        name: x-router
+        value: hive-router
+subgraphs:
+  accounts:
+    request:
+      - propagate:
+          default: unknown
+          named: x-tenant-id
+          rename: x-acct-tenant
+
+```
 
 <a name="headersall"></a>
 ### headers\.all: object,null
@@ -94,12 +132,7 @@ to refine the final output.
 **Example**
 
 ```yaml
-propagate:
-  default: null
-  exclude: null
-  matching: null
-  named: null
-  rename: null
+propagate: {}
 
 ```
 
@@ -122,10 +155,7 @@ Useful to drop sensitive or irrelevant headers, or to undo a previous
 **Example**
 
 ```yaml
-remove:
-  exclude: null
-  matching: null
-  named: null
+remove: {}
 
 ```
 
@@ -153,13 +183,6 @@ insert: {}
 
 ```
 
-
-**Example**
-
-```yaml
-{}
-
-```
 
 <a name="option1propagate"></a>
 ## Option 1: propagate: object
@@ -200,17 +223,6 @@ propagate:
 |**named**||Match headers by exact name (OR).<br/>||
 |**rename**|`string`, `null`|Optionally rename the header when forwarding.<br/>||
 
-**Example**
-
-```yaml
-default: null
-exclude: null
-matching: null
-named: null
-rename: null
-
-```
-
 <a name="option1propagateexclude"></a>
 ### Option 1: propagate\.exclude\[\]: array,null
 
@@ -220,13 +232,6 @@ Exclude headers matching these regexes, applied after `matching`.
 **Items**
 
 **Item Type:** `string`  
-**Example**
-
-```yaml
-{}
-
-```
-
 <a name="option2remove"></a>
 ## Option 2: remove: object
 
@@ -241,15 +246,6 @@ Remove headers matched by the specification.
 |**matching**||Match headers by regex pattern(s) (OR).<br/>||
 |**named**||Match headers by exact name (OR).<br/>||
 
-**Example**
-
-```yaml
-exclude: null
-matching: null
-named: null
-
-```
-
 <a name="option2removeexclude"></a>
 ### Option 2: remove\.exclude\[\]: array,null
 
@@ -259,13 +255,6 @@ Exclude headers matching these regexes, applied after `matching`.
 **Items**
 
 **Item Type:** `string`  
-**Example**
-
-```yaml
-{}
-
-```
-
 <a name="option3insert"></a>
 ## Option 3: insert: object
 
@@ -366,12 +355,7 @@ multiple values are returned as separate header fields regardless of `algorithm`
 **Example**
 
 ```yaml
-propagate:
-  default: null
-  exclude: null
-  matching: null
-  named: null
-  rename: null
+propagate: {}
 
 ```
 
@@ -391,10 +375,7 @@ Remove headers before sending the response to the client.
 **Example**
 
 ```yaml
-remove:
-  exclude: null
-  matching: null
-  named: null
+remove: {}
 
 ```
 
@@ -416,18 +397,10 @@ For never-join headers, appends another occurrence (multiple lines).
 **Example**
 
 ```yaml
-insert:
-  algorithm: null
+insert: {}
 
 ```
 
-
-**Example**
-
-```yaml
-{}
-
-```
 
 <a name="option1propagate"></a>
 ## Option 1: propagate: object
@@ -471,17 +444,6 @@ propagate:
 |**named**||Match headers by exact name (OR).<br/>|no|
 |**rename**|`string`, `null`|Optionally rename the header when returning it to the client.<br/>|no|
 
-**Example**
-
-```yaml
-default: null
-exclude: null
-matching: null
-named: null
-rename: null
-
-```
-
 <a name="option1propagateexclude"></a>
 ### Option 1: propagate\.exclude\[\]: array,null
 
@@ -491,13 +453,6 @@ Exclude headers matching these regexes, applied after `matching`.
 **Items**
 
 **Item Type:** `string`  
-**Example**
-
-```yaml
-{}
-
-```
-
 <a name="option2remove"></a>
 ## Option 2: remove: object
 
@@ -512,15 +467,6 @@ Remove headers matched by the specification.
 |**matching**||Match headers by regex pattern(s) (OR).<br/>||
 |**named**||Match headers by exact name (OR).<br/>||
 
-**Example**
-
-```yaml
-exclude: null
-matching: null
-named: null
-
-```
-
 <a name="option2removeexclude"></a>
 ### Option 2: remove\.exclude\[\]: array,null
 
@@ -530,13 +476,6 @@ Exclude headers matching these regexes, applied after `matching`.
 **Items**
 
 **Item Type:** `string`  
-**Example**
-
-```yaml
-{}
-
-```
-
 <a name="option3insert"></a>
 ## Option 3: insert: object
 
@@ -604,13 +543,6 @@ For more information on the available functions and syntax, see the
 |**expression**|`string`||yes|
 
 
-**Example**
-
-```yaml
-algorithm: null
-
-```
-
 <a name="headerssubgraphs"></a>
 ### headers\.subgraphs: object,null
 
@@ -642,14 +574,6 @@ and **response** (to clients). Within each list, rules are applied in order.
 |----|----|-----------|--------|
 |[**request**](#headerssubgraphsadditionalpropertiesrequest)|`array`|Rules that shape the **request** sent from the router to subgraphs.<br/>||
 |[**response**](#headerssubgraphsadditionalpropertiesresponse)|`array`|Rules that shape the **response** sent from the router back to the client.<br/>||
-
-**Example**
-
-```yaml
-request: null
-response: null
-
-```
 
 <a name="headerssubgraphsadditionalpropertiesrequest"></a>
 ##### headers\.subgraphs\.additionalProperties\.request\[\]: array,null
@@ -683,12 +607,7 @@ to refine the final output.
 **Example**
 
 ```yaml
-propagate:
-  default: null
-  exclude: null
-  matching: null
-  named: null
-  rename: null
+propagate: {}
 
 ```
 
@@ -711,10 +630,7 @@ Useful to drop sensitive or irrelevant headers, or to undo a previous
 **Example**
 
 ```yaml
-remove:
-  exclude: null
-  matching: null
-  named: null
+remove: {}
 
 ```
 
@@ -742,13 +658,6 @@ insert: {}
 
 ```
 
-
-**Example**
-
-```yaml
-{}
-
-```
 
 <a name="option1propagate"></a>
 ## Option 1: propagate: object
@@ -789,17 +698,6 @@ propagate:
 |**named**||Match headers by exact name (OR).<br/>||
 |**rename**|`string`, `null`|Optionally rename the header when forwarding.<br/>||
 
-**Example**
-
-```yaml
-default: null
-exclude: null
-matching: null
-named: null
-rename: null
-
-```
-
 <a name="option1propagateexclude"></a>
 ### Option 1: propagate\.exclude\[\]: array,null
 
@@ -809,13 +707,6 @@ Exclude headers matching these regexes, applied after `matching`.
 **Items**
 
 **Item Type:** `string`  
-**Example**
-
-```yaml
-{}
-
-```
-
 <a name="option2remove"></a>
 ## Option 2: remove: object
 
@@ -830,15 +721,6 @@ Remove headers matched by the specification.
 |**matching**||Match headers by regex pattern(s) (OR).<br/>||
 |**named**||Match headers by exact name (OR).<br/>||
 
-**Example**
-
-```yaml
-exclude: null
-matching: null
-named: null
-
-```
-
 <a name="option2removeexclude"></a>
 ### Option 2: remove\.exclude\[\]: array,null
 
@@ -848,13 +730,6 @@ Exclude headers matching these regexes, applied after `matching`.
 **Items**
 
 **Item Type:** `string`  
-**Example**
-
-```yaml
-{}
-
-```
-
 <a name="option3insert"></a>
 ## Option 3: insert: object
 
@@ -955,12 +830,7 @@ multiple values are returned as separate header fields regardless of `algorithm`
 **Example**
 
 ```yaml
-propagate:
-  default: null
-  exclude: null
-  matching: null
-  named: null
-  rename: null
+propagate: {}
 
 ```
 
@@ -980,10 +850,7 @@ Remove headers before sending the response to the client.
 **Example**
 
 ```yaml
-remove:
-  exclude: null
-  matching: null
-  named: null
+remove: {}
 
 ```
 
@@ -1005,18 +872,10 @@ For never-join headers, appends another occurrence (multiple lines).
 **Example**
 
 ```yaml
-insert:
-  algorithm: null
+insert: {}
 
 ```
 
-
-**Example**
-
-```yaml
-{}
-
-```
 
 <a name="option1propagate"></a>
 ## Option 1: propagate: object
@@ -1060,17 +919,6 @@ propagate:
 |**named**||Match headers by exact name (OR).<br/>|no|
 |**rename**|`string`, `null`|Optionally rename the header when returning it to the client.<br/>|no|
 
-**Example**
-
-```yaml
-default: null
-exclude: null
-matching: null
-named: null
-rename: null
-
-```
-
 <a name="option1propagateexclude"></a>
 ### Option 1: propagate\.exclude\[\]: array,null
 
@@ -1080,13 +928,6 @@ Exclude headers matching these regexes, applied after `matching`.
 **Items**
 
 **Item Type:** `string`  
-**Example**
-
-```yaml
-{}
-
-```
-
 <a name="option2remove"></a>
 ## Option 2: remove: object
 
@@ -1101,15 +942,6 @@ Remove headers matched by the specification.
 |**matching**||Match headers by regex pattern(s) (OR).<br/>||
 |**named**||Match headers by exact name (OR).<br/>||
 
-**Example**
-
-```yaml
-exclude: null
-matching: null
-named: null
-
-```
-
 <a name="option2removeexclude"></a>
 ### Option 2: remove\.exclude\[\]: array,null
 
@@ -1119,13 +951,6 @@ Exclude headers matching these regexes, applied after `matching`.
 **Items**
 
 **Item Type:** `string`  
-**Example**
-
-```yaml
-{}
-
-```
-
 <a name="option3insert"></a>
 ## Option 3: insert: object
 
@@ -1192,13 +1017,6 @@ For more information on the available functions and syntax, see the
 |----|----|-----------|--------|
 |**expression**|`string`||yes|
 
-
-**Example**
-
-```yaml
-algorithm: null
-
-```
 
 <a name="http"></a>
 ## http: object
