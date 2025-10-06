@@ -4,6 +4,9 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::HeaderMap;
 
+use crate::execution::plan::ClientRequestDetails;
+use std::any::Any;
+
 #[async_trait]
 pub trait SubgraphExecutor {
     async fn execute<'a>(
@@ -16,6 +19,7 @@ pub trait SubgraphExecutor {
     {
         Arc::new(Box::new(self))
     }
+    fn as_any(&self) -> &dyn Any;
 }
 
 pub type SubgraphExecutorType = dyn crate::executors::common::SubgraphExecutor + Send + Sync;
@@ -28,6 +32,7 @@ pub struct HttpExecutionRequest<'a> {
     pub operation_name: Option<&'a str>,
     // TODO: variables could be stringified before even executing the request
     pub variables: Option<HashMap<&'a str, &'a sonic_rs::Value>>,
+    pub client_request: &'a ClientRequestDetails<'a>,
     pub headers: HeaderMap,
     pub representations: Option<Vec<u8>>,
 }

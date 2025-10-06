@@ -47,6 +47,7 @@ impl RouterSharedState {
 
         let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(
             supergraph_state.subgraph_endpoint_map,
+            router_config.override_subgraph_urls.clone(),
             router_config.traffic_shaping.clone(),
         )
         .expect("Failed to create subgraph executor map");

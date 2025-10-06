@@ -724,6 +724,7 @@ impl<'exec> Executor<'exec> {
                         dedupe: self.dedupe_subgraph_requests,
                         operation_name: node.operation_name.as_deref(),
                         variables: variable_refs,
+                        client_request: self.client_request,
                         representations,
                         headers: headers_map,
                     },

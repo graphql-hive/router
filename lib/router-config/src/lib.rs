@@ -3,6 +3,7 @@ pub mod csrf;
 pub mod headers;
 pub mod http_server;
 pub mod log;
+pub mod override_subgraph_urls;
 pub mod primitives;
 pub mod query_planner;
 pub mod supergraph;
@@ -54,6 +55,9 @@ pub struct HiveRouterConfig {
     /// Configuration for CORS (Cross-Origin Resource Sharing).
     #[serde(default)]
     pub cors: cors::CORSConfig,
+    /// Configuration for overriding subgraph URLs.
+    #[serde(default)]
+    pub override_subgraph_urls: override_subgraph_urls::OverrideSubgraphUrlsConfig,
 }
 
 #[derive(Debug, thiserror::Error)]

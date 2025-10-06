@@ -9,6 +9,7 @@
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"host":"0.0.0.0","port":4000}`<br/>||
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
+|[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{"subgraphs":{}}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>Default: `{"path":"supergraph.graphql","source":"file"}`<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaper executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"dedupe_enabled":true,"max_connections_per_host":100,"pool_idle_timeout_seconds":50}`<br/>||
@@ -57,6 +58,21 @@ log:
   filter: null
   format: json
   level: info
+override_subgraph_urls:
+  subgraphs:
+    accounts:
+      url: https://accounts.example.com/graphql
+    products:
+      expression: |2-
+
+                if .request.headers."x-region" == "us-east" {
+                    "https://products-us-east.example.com/graphql"
+                } else if .request.headers."x-region" == "eu-west" {
+                    "https://products-eu-west.example.com/graphql"
+                } else {
+                    "https://products.example.com/graphql"
+                }
+            
 query_planner:
   allow_expose: false
   timeout: 10s
@@ -1305,6 +1321,50 @@ format: json
 level: info
 
 ```
+
+<a name="override_subgraph_urls"></a>
+## override\_subgraph\_urls: object
+
+Configuration for overriding subgraph URLs.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**subgraphs**](#override_subgraph_urlssubgraphs)|`object`|Keys are subgraph names as defined in the supergraph schema.<br/>Default: `{}`<br/>||
+
+**Example**
+
+```yaml
+subgraphs:
+  accounts:
+    url: https://accounts.example.com/graphql
+  products:
+    expression: |2-
+
+              if .request.headers."x-region" == "us-east" {
+                  "https://products-us-east.example.com/graphql"
+              } else if .request.headers."x-region" == "eu-west" {
+                  "https://products-eu-west.example.com/graphql"
+              } else {
+                  "https://products.example.com/graphql"
+              }
+          
+
+```
+
+<a name="override_subgraph_urlssubgraphs"></a>
+### override\_subgraph\_urls\.subgraphs: object
+
+Keys are subgraph names as defined in the supergraph schema.
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
 
 <a name="query_planner"></a>
 ## query\_planner: object

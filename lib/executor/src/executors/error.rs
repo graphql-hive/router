@@ -8,4 +8,6 @@ pub enum SubgraphExecutorError {
     RequestFailure(String, String),
     #[error("Failed to serialize variable \"{0}\": {1}")]
     VariablesSerializationFailure(String, String),
+    #[error("Failed to parse VRL expression: {0}")]
+    VrlCompileError(String),
 }
