@@ -36,7 +36,7 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
     let supergraph_sdl = router_config.supergraph.load().await?;
     let parsed_schema = parse_schema(&supergraph_sdl);
     let addr = router_config.http.address();
-    let shared_state = RouterSharedState::new(parsed_schema, router_config);
+    let shared_state = RouterSharedState::new(parsed_schema, router_config)?;
 
     web::HttpServer::new(move || {
         web::App::new()

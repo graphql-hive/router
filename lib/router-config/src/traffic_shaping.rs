@@ -17,12 +17,6 @@ pub struct TrafficShapingExecutorConfig {
     /// be deduplicated by sharing the response of other in-flight requests.
     #[serde(default = "default_dedupe_enabled")]
     pub dedupe_enabled: bool,
-
-    /// A list of headers that should be used to fingerprint requests for deduplication.
-    ///
-    /// If not provided, the default is to use the "authorization" header only.
-    #[serde(default = "default_dedupe_fingerprint_headers")]
-    pub dedupe_fingerprint_headers: Vec<String>,
 }
 
 impl Default for TrafficShapingExecutorConfig {
@@ -31,7 +25,6 @@ impl Default for TrafficShapingExecutorConfig {
             max_connections_per_host: default_max_connections_per_host(),
             pool_idle_timeout_seconds: default_pool_idle_timeout_seconds(),
             dedupe_enabled: default_dedupe_enabled(),
-            dedupe_fingerprint_headers: default_dedupe_fingerprint_headers(),
         }
     }
 }
@@ -46,8 +39,4 @@ fn default_pool_idle_timeout_seconds() -> u64 {
 
 fn default_dedupe_enabled() -> bool {
     true
-}
-
-fn default_dedupe_fingerprint_headers() -> Vec<String> {
-    vec!["authorization".to_string()]
 }

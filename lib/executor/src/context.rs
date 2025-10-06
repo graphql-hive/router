@@ -2,13 +2,17 @@ use std::collections::HashMap;
 
 use hive_router_query_planner::planner::plan_nodes::{FetchNode, FetchRewrite, QueryPlan};
 
-use crate::response::{graphql_error::GraphQLError, storage::ResponsesStorage, value::Value};
+use crate::{
+    headers::plan::ResponseHeaderAggregator,
+    response::{graphql_error::GraphQLError, storage::ResponsesStorage, value::Value},
+};
 
 pub struct ExecutionContext<'a> {
     pub response_storage: ResponsesStorage,
     pub final_response: Value<'a>,
     pub errors: Vec<GraphQLError>,
     pub output_rewrites: OutputRewritesStorage,
+    pub response_headers_aggregator: ResponseHeaderAggregator,
 }
 
 impl<'a> Default for ExecutionContext<'a> {
@@ -18,6 +22,7 @@ impl<'a> Default for ExecutionContext<'a> {
             output_rewrites: Default::default(),
             errors: Vec::new(),
             final_response: Value::Null,
+            response_headers_aggregator: Default::default(),
         }
     }
 }
@@ -29,6 +34,7 @@ impl<'a> ExecutionContext<'a> {
             output_rewrites: OutputRewritesStorage::from_query_plan(query_plan),
             errors: Vec::new(),
             final_response: init_final_response,
+            response_headers_aggregator: Default::default(),
         }
     }
 
