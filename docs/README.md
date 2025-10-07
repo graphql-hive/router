@@ -66,7 +66,7 @@ Configuration for CSRF prevention.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**required\_headers**](#csrfrequired_headers)|`string[]`|Default: <br/>||
+|[**required\_headers**](#csrfrequired_headers)|`string[]`|A list of required header names for CSRF protection.<br/>Default: <br/>||
 
 **Example**
 
@@ -78,6 +78,9 @@ required_headers:
 
 <a name="csrfrequired_headers"></a>
 ### csrf\.required\_headers\[\]: array
+
+A list of required header names for CSRF protection.
+
 
 **Items**
 
