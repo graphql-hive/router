@@ -1,3 +1,4 @@
+pub mod csrf;
 pub mod headers;
 pub mod http_server;
 pub mod log;
@@ -5,7 +6,6 @@ pub mod primitives;
 pub mod query_planner;
 pub mod supergraph;
 pub mod traffic_shaping;
-pub mod csrf;
 
 use config::{Config, Environment, File, FileFormat, FileSourceFile};
 use schemars::JsonSchema;

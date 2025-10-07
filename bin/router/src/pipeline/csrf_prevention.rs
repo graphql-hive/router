@@ -4,7 +4,7 @@ use ntex::web::HttpRequest;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 
 // NON_PREFLIGHTED_CONTENT_TYPES are content types that do not require a preflight
-// OPTIONS request. These are content types that are considered "simple" by the CORS    
+// OPTIONS request. These are content types that are considered "simple" by the CORS
 // specification.
 // See: https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS#simple_requests
 const NON_PREFLIGHTED_CONTENT_TYPES: [&str; 3] = [
@@ -53,7 +53,7 @@ pub fn perform_csrf_prevention(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn do_not_allow_requests_without_the_necessary_header(){ 
+    fn do_not_allow_requests_without_the_necessary_header() {
         let config = super::CSRFPreventionConfig {
             required_headers: vec!["x-csrf-token".to_string()],
         };
