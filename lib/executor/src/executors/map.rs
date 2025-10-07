@@ -27,7 +27,7 @@ use crate::{
 };
 
 pub struct SubgraphExecutorMap {
-    inner: HashMap<String, SubgraphExecutorBoxedArc>,
+    pub inner: HashMap<String, SubgraphExecutorBoxedArc>,
 }
 
 impl Default for SubgraphExecutorMap {
@@ -104,7 +104,7 @@ impl SubgraphExecutorMap {
                         override_subgraph_urls_config.subgraphs.get(&subgraph_name)
                     {
                         match subgraph_entry {
-                            OverrideSubgraphUrlConfig::Url(endpoint_str) => {
+                            OverrideSubgraphUrlConfig::Url { url: endpoint_str } => {
                                 HTTPSubgraphExecutor::try_new(
                                     endpoint_str,
                                     client_arc.clone(),
@@ -114,7 +114,7 @@ impl SubgraphExecutorMap {
                                 )?
                                 .to_boxed_arc()
                             }
-                            OverrideSubgraphUrlConfig::Expression(expression) => {
+                            OverrideSubgraphUrlConfig::Expression { expression } => {
                                 ExpressionHTTPExecutor::try_new(
                                     &endpoint_str,
                                     expression,
@@ -144,5 +144,83 @@ impl SubgraphExecutorMap {
         Ok(SubgraphExecutorMap {
             inner: executor_map,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use hive_router_config::parse_yaml_config;
+
+    use crate::{
+        executors::{expression_http::ExpressionHTTPExecutor, http::HTTPSubgraphExecutor},
+        SubgraphExecutorMap,
+    };
+
+    #[test]
+    fn create_executors_with_override_subgraph_urls() {
+        let yaml_str = r#"
+        override_subgraph_urls:
+            subgraphs:
+                subgraph_a:
+                    url: http://subgraph-a-new.com/graphql
+                subgraph_b:
+                    expression: |
+                        if .request.headers."x-region" == "eu-west" {
+                            "http://subgraph-b-eu-west.com/graphql"
+                        } else {
+                            "http://subgraph-b.com/graphql"
+                        }
+        "#;
+        let mut subgraph_endpoint_map = HashMap::new();
+        subgraph_endpoint_map.insert(
+            "subgraph_a".to_string(),
+            "http://subgraph-a.com/graphql".to_string(),
+        );
+        subgraph_endpoint_map.insert(
+            "subgraph_b".to_string(),
+            "http://subgraph-b-eu-west.com/graphql".to_string(),
+        );
+        subgraph_endpoint_map.insert(
+            "subgraph_c".to_string(),
+            "http://subgraph-c.com/graphql".to_string(),
+        );
+        let config = parse_yaml_config(String::from(yaml_str)).unwrap();
+        let executor_map = SubgraphExecutorMap::from_http_endpoint_map(
+            subgraph_endpoint_map,
+            config.override_subgraph_urls,
+            config.traffic_shaping,
+        )
+        .unwrap();
+        assert_eq!(executor_map.inner.len(), 3);
+        let executor_a = executor_map.inner.get("subgraph_a").unwrap();
+        let http_executor_a = executor_a
+            .as_any()
+            .downcast_ref::<HTTPSubgraphExecutor>()
+            .unwrap();
+        // cast to HTTPSubgraphExecutor
+        assert_eq!(
+            http_executor_a.endpoint.to_string(),
+            "http://subgraph-a-new.com/graphql"
+        );
+        let executor_b = executor_map.inner.get("subgraph_b").unwrap();
+        let expr_executor_b = executor_b
+            .as_any()
+            .downcast_ref::<ExpressionHTTPExecutor>()
+            .unwrap();
+        assert_eq!(
+            expr_executor_b.default_endpoint.to_string(),
+            "http://subgraph-b-eu-west.com/graphql"
+        );
+        let executor_c = executor_map.inner.get("subgraph_c").unwrap();
+        let http_executor_c = executor_c
+            .as_any()
+            .downcast_ref::<HTTPSubgraphExecutor>()
+            .unwrap();
+        assert_eq!(
+            http_executor_c.endpoint.to_string(),
+            "http://subgraph-c.com/graphql"
+        );
     }
 }

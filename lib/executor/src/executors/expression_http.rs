@@ -1,4 +1,4 @@
-use std::{collections::{BTreeMap}, sync::Arc};
+use std::{any::Any, collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -11,22 +11,23 @@ use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::{OnceCell, Semaphore};
 use tracing::warn;
 
-use crate::{execution::plan::ClientRequestDetails, executors::{
-    common::{HttpExecutionRequest, HttpExecutionResponse, SubgraphExecutor},
-    dedupe::{ABuildHasher, SharedResponse},
-    error::SubgraphExecutorError, http::HTTPSubgraphExecutor,
-}};
+use crate::{
+    execution::plan::ClientRequestDetails,
+    executors::{
+        common::{HttpExecutionRequest, HttpExecutionResponse, SubgraphExecutor},
+        dedupe::{ABuildHasher, SharedResponse},
+        error::SubgraphExecutorError,
+        http::HTTPSubgraphExecutor,
+    },
+};
 use vrl::compiler::Program as VrlProgram;
 
+use vrl::{compiler::compile as vrl_compile, stdlib::all as vrl_build_functions};
 use vrl::{
     compiler::TargetValue as VrlTargetValue,
     core::Value as VrlValue,
     prelude::{state::RuntimeState as VrlState, Context as VrlContext, TimeZone as VrlTimeZone},
     value::Secrets as VrlSecrets,
-};
-use vrl::{
-    compiler::compile as vrl_compile,
-    stdlib::all as vrl_build_functions,
 };
 
 pub struct ExpressionHTTPExecutor {
@@ -57,8 +58,7 @@ impl ExpressionHTTPExecutor {
         let vrl_functions = vrl_build_functions();
         let compilation_result = vrl_compile(expression_str, &vrl_functions).map_err(|e| {
             SubgraphExecutorError::VrlCompileError(
-                e
-                    .errors()
+                e.errors()
                     .into_iter()
                     .map(|d| d.code.to_string() + ": " + &d.message)
                     .collect::<Vec<_>>()
@@ -86,9 +86,7 @@ impl From<&ExpressionContext<'_>> for VrlValue {
         // .request
         let request_value: Self = ctx.client_request.into();
 
-        Self::Object(BTreeMap::from([
-            ("request".into(), request_value),
-        ]))
+        Self::Object(BTreeMap::from([("request".into(), request_value)]))
     }
 }
 
@@ -140,7 +138,10 @@ impl ExpressionHTTPExecutor {
                 }
             }
             Err(err) => {
-                warn!("Failed to evaluate expression: {}, falling back to default endpoint", err);
+                warn!(
+                    "Failed to evaluate expression: {}, falling back to default endpoint",
+                    err
+                );
                 self.default_endpoint.clone()
             }
         }
@@ -168,11 +169,110 @@ impl SubgraphExecutor for ExpressionHTTPExecutor {
                     self.in_flight_requests.clone(),
                 );
                 let executor_arc = Arc::new(new_executor);
-                self.executor_map
-                    .insert(endpoint, executor_arc.clone());
+                self.executor_map.insert(endpoint, executor_arc.clone());
                 executor_arc
             }
         };
         executor.execute(execution_request).await
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use http::HeaderName;
+    use hyper_tls::HttpsConnector;
+    use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+    use ntex_http::HeaderMap;
+
+    use crate::{
+        execution::plan::{ClientRequestDetails, OperationDetails},
+        executors::expression_http::ExpressionHTTPExecutor,
+    };
+
+    #[test]
+    fn resolve_endpoint_with_header_interpolation() {
+        let expression = r#"
+            if .request.headers."x-region" == "us-east" {
+                "http://www.example-us-east.com/graphql"
+            } else if .request.headers."x-region" == "eu-west" {
+                "http://www.example-eu-west.com/graphql"
+            } else {
+                "http://example.com/graphql"
+            }
+        "#;
+        let executor = ExpressionHTTPExecutor::try_new(
+            "http://example.com/graphql",
+            expression,
+            Arc::new(Client::builder(TokioExecutor::new()).build(HttpsConnector::new())),
+            Arc::new(Default::default()),
+            Arc::new(Default::default()),
+            Arc::new(Default::default()),
+        )
+        .unwrap();
+        let mut client_headers = HeaderMap::new();
+        client_headers.insert(
+            HeaderName::from_static("x-region"),
+            "us-east".parse().unwrap(),
+        );
+        let client_request = ClientRequestDetails {
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: &client_headers,
+            operation: OperationDetails {
+                name: Some("MyQuery".to_string()),
+                query: "{ __typename }".to_string().into(),
+                kind: "query",
+            },
+        };
+        let ctx = super::ExpressionContext {
+            client_request: &client_request,
+        };
+        let endpoint = executor.resolve_endpoint(&ctx);
+        assert_eq!(
+            endpoint.to_string(),
+            "http://www.example-us-east.com/graphql"
+        );
+    }
+
+    #[test]
+    fn resolve_endpoint_with_fallback() {
+        let expression = r#"
+            if .request.headers."x-region" == "us-east" {
+                "http://www.example-us-east.com/graphql"
+            } else if .request.headers."x-region" == "eu-west" {
+                "http://www.example-eu-west.com/graphql"
+            } else {
+                "http://example.com/graphql"
+            }
+        "#;
+        let executor = ExpressionHTTPExecutor::try_new(
+            "http://example.com/graphql",
+            expression,
+            Arc::new(Client::builder(TokioExecutor::new()).build(HttpsConnector::new())),
+            Arc::new(Default::default()),
+            Arc::new(Default::default()),
+            Arc::new(Default::default()),
+        )
+        .unwrap();
+        let client_request = ClientRequestDetails {
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: &HeaderMap::new(),
+            operation: OperationDetails {
+                name: Some("MyQuery".to_string()),
+                query: "{ __typename }".to_string().into(),
+                kind: "query",
+            },
+        };
+        let ctx = super::ExpressionContext {
+            client_request: &client_request,
+        };
+        let endpoint = executor.resolve_endpoint(&ctx);
+        assert_eq!(endpoint.to_string(), "http://example.com/graphql");
     }
 }

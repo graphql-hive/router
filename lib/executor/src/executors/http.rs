@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::sync::Arc;
 
 use crate::executors::common::HttpExecutionResponse;
@@ -278,5 +279,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 headers: Default::default(),
             },
         }
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

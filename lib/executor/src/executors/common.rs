@@ -2,9 +2,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use http::{HeaderMap};
+use http::HeaderMap;
 
 use crate::execution::plan::ClientRequestDetails;
+use std::any::Any;
 
 #[async_trait]
 pub trait SubgraphExecutor {
@@ -18,6 +19,7 @@ pub trait SubgraphExecutor {
     {
         Arc::new(Box::new(self))
     }
+    fn as_any(&self) -> &dyn Any;
 }
 
 pub type SubgraphExecutorType = dyn crate::executors::common::SubgraphExecutor + Send + Sync;
