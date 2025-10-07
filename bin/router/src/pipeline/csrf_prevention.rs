@@ -27,11 +27,10 @@ pub fn perform_csrf_prevention(
     }
 
     // Check for the presence of at least one required header.
-    let has_required_header = csrf_config.required_headers.iter().any(|header_name| {
-        req.headers()
-            .keys()
-            .any(|h| h.as_str().eq_ignore_ascii_case(header_name))
-    });
+    let has_required_header = csrf_config
+        .required_headers
+        .iter()
+        .any(|header_name| req.headers().contains_key(header_name));
 
     if has_required_header {
         Ok(())
