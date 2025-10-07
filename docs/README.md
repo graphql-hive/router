@@ -4,6 +4,7 @@
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"required_headers":[]}`<br/>||
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"host":"0.0.0.0","port":4000}`<br/>||
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
@@ -15,6 +16,9 @@
 **Example**
 
 ```yaml
+csrf:
+  required_headers:
+    - x-csrf-token
 headers:
   all:
     request:
@@ -52,6 +56,32 @@ traffic_shaping:
 
 ```
 
+<a name="csrf"></a>
+## csrf: object
+
+Configuration for CSRF prevention.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**required\_headers**](#csrfrequired_headers)|`string[]`|Default: <br/>||
+
+**Example**
+
+```yaml
+required_headers:
+  - x-csrf-token
+
+```
+
+<a name="csrfrequired_headers"></a>
+### csrf\.required\_headers\[\]: array
+
+**Items**
+
+**Item Type:** `string`  
 <a name="headers"></a>
 ## headers: object
 

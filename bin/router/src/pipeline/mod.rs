@@ -10,19 +10,9 @@ use ntex::{
 
 use crate::{
     pipeline::{
-        coerce_variables::coerce_request_variables,
-        error::PipelineError,
-        execution::execute_plan,
-        execution_request::get_execution_request,
-        header::{
-            RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON,
-            APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, TEXT_HTML_CONTENT_TYPE,
-        },
-        normalize::normalize_request_with_cache,
-        parser::parse_operation_with_cache,
-        progressive_override::request_override_context,
-        query_plan::plan_operation_with_cache,
-        validation::validate_operation_with_cache,
+        coerce_variables::coerce_request_variables, csrf_prevention::perform_csrf_prevention, error::PipelineError, execution::execute_plan, execution_request::get_execution_request, header::{
+            APPLICATION_GRAPHQL_RESPONSE_JSON, APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, RequestAccepts, TEXT_HTML_CONTENT_TYPE
+        }, normalize::normalize_request_with_cache, parser::parse_operation_with_cache, progressive_override::request_override_context, query_plan::plan_operation_with_cache, validation::validate_operation_with_cache
     },
     shared_state::RouterSharedState,
 };
@@ -37,6 +27,7 @@ pub mod parser;
 pub mod progressive_override;
 pub mod query_plan;
 pub mod validation;
+pub mod csrf_prevention;
 
 static GRAPHIQL_HTML: &str = include_str!("../../static/graphiql.html");
 
@@ -85,6 +76,8 @@ pub async fn execute_pipeline(
     body_bytes: Bytes,
     state: &Arc<RouterSharedState>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
+    perform_csrf_prevention(req, &state.router_config.csrf)?;
+
     let execution_request = get_execution_request(req, body_bytes).await?;
     let parser_payload = parse_operation_with_cache(req, state, &execution_request).await?;
     validate_operation_with_cache(req, state, &parser_payload).await?;
