@@ -22,18 +22,8 @@ pub fn perform_csrf_prevention(
         return Ok(());
     }
 
-    // Allow requests with non-prefetched content types to pass through.
-    if let Some(content_type) = req
-        .headers()
-        .get(http::header::CONTENT_TYPE)
-        .and_then(|ct| ct.to_str().ok())
-    {
-        if !NON_PREFLIGHTED_CONTENT_TYPES
-            .iter()
-            .any(|&non_prefetched| content_type.starts_with(non_prefetched))
-        {
-            return Ok(());
-        }
+    if was_the_request_already_preflight_checked(req) {
+        return Ok(());
     }
 
     // Check for the presence of at least one required header.
@@ -47,6 +37,21 @@ pub fn perform_csrf_prevention(
         Ok(())
     } else {
         Err(req.new_pipeline_error(PipelineErrorVariant::CsrfPreventionFailed))
+    }
+}
+
+fn was_the_request_already_preflight_checked(req: &HttpRequest) -> bool {
+    match req
+        .headers()
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|ct| ct.to_str().ok())
+    {
+        Some(content_type) => !NON_PREFLIGHTED_CONTENT_TYPES.iter().any(|&non_prefetched| {
+            content_type
+                .to_ascii_lowercase()
+                .starts_with(non_prefetched)
+        }),
+        None => false,
     }
 }
 
