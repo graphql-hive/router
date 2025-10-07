@@ -5,7 +5,7 @@
 /// If the required headers are not present, the router will reject the request with a `403 Forbidden` response.
 /// This helps to ensure that requests are coming from trusted sources and not from malicious third-party sites.
 ///
-/// In case of CSRF Prevention is enabled, the router only executed operations if at least one of the following conditions are true;
+/// When CSRF prevention is enabled, the router only executes operations if at least one of the following conditions is true;
 ///
 /// - The incoming request includes a `Content-Type` header other than a value of
 ///   - `text/plain`
@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 #[schemars(example = csrf_prevention_example_1())]
 pub struct CSRFPreventionConfig {
     #[serde(default)]
+    /// A list of required header names for CSRF protection.
     pub required_headers: Vec<String>,
 }
 
