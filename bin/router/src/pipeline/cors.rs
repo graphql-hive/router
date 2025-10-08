@@ -109,7 +109,7 @@ pub fn perform_cors_on_request(req: &HttpRequest, cors: &CORSPlan) -> CORSResult
         } else if cors
             .origins
             .as_ref()
-            .is_some_and(|origins| origins.iter().any(|o| o == current_origin))
+            .is_some_and(|origins| origins.iter().any(|o| current_origin == o.as_str()))
         {
             headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, current_origin.clone());
             headers.insert(header::VARY, HeaderValue::from_static("Origin"));
