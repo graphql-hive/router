@@ -93,21 +93,22 @@ impl CORSPlan {
     }
 }
 
-pub struct CORSHeaders {
-    pub headers: HeaderMap,
+pub enum CORSResult {
+    EarlyResponse(web::HttpResponse),
+    Continue(HeaderMap),
+    None,
 }
 
-pub fn perform_cors_on_request(req: &HttpRequest, cors: &CORSPlan) -> Option<web::HttpResponse> {
+pub fn perform_cors_on_request(req: &HttpRequest, cors: &CORSPlan) -> CORSResult {
     let mut headers = HeaderMap::new();
     if let Some(current_origin) = req.headers().get(header::ORIGIN) {
         if cors.allow_any_origin {
             headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, current_origin.clone());
             headers.insert(header::VARY, HeaderValue::from_static("Origin"));
         } else if let Some(single_origin) = &cors.single_origin {
-            headers.insert(
-                header::ACCESS_CONTROL_ALLOW_ORIGIN,
-                HeaderValue::from_str(single_origin).ok()?,
-            );
+            if let Ok(single_origin) = HeaderValue::from_str(single_origin) {
+                headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, single_origin);
+            }
         } else if cors
             .origins
             .as_ref()
@@ -115,8 +116,7 @@ pub fn perform_cors_on_request(req: &HttpRequest, cors: &CORSPlan) -> Option<web
         {
             headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, current_origin.clone());
             headers.insert(header::VARY, HeaderValue::from_static("Origin"));
-        } else {
-            let current_origin_str = current_origin.to_str().ok()?;
+        } else if let Ok(current_origin_str) = current_origin.to_str() {
             if cors
                 .match_origin
                 .as_ref()
@@ -196,12 +196,11 @@ pub fn perform_cors_on_request(req: &HttpRequest, cors: &CORSPlan) -> Option<web
 
         *response.headers_mut() = headers;
 
-        Some(response)
+        CORSResult::EarlyResponse(response)
+    } else if headers.is_empty() {
+        CORSResult::None
     } else {
-        if !headers.is_empty() {
-            req.extensions_mut().insert(CORSHeaders { headers });
-        }
-        None
+        CORSResult::Continue(headers)
     }
 }
 
@@ -209,7 +208,7 @@ pub fn perform_cors_on_request(req: &HttpRequest, cors: &CORSPlan) -> Option<web
 mod tests {
     use ntex::{http::header, web::test::TestRequest};
 
-    use crate::pipeline::cors::{perform_cors_on_request, CORSPlan};
+    use crate::pipeline::cors::{perform_cors_on_request, CORSPlan, CORSResult};
 
     #[test]
     fn options_call_responds_with_correct_status_and_headers() {
@@ -222,15 +221,18 @@ mod tests {
         let req = TestRequest::with_uri("/graphql")
             .method(ntex::http::Method::OPTIONS)
             .to_http_request();
-        let res = perform_cors_on_request(&req, &cors_plan).unwrap();
-        assert_eq!(res.status(), ntex::http::StatusCode::NO_CONTENT);
-        assert_eq!(res.headers().get(header::CONTENT_LENGTH).unwrap(), "0");
+        if let CORSResult::EarlyResponse(res) = perform_cors_on_request(&req, &cors_plan) {
+            assert_eq!(res.status(), ntex::http::StatusCode::NO_CONTENT);
+            assert_eq!(res.headers().get(header::CONTENT_LENGTH).unwrap(), "0");
+        } else {
+            panic!("Expected EarlyResponse variant");
+        }
     }
 
     mod no_origin_specified {
         use ntex::{http::header, web::test::TestRequest};
 
-        use crate::pipeline::cors::{perform_cors_on_request, CORSHeaders, CORSPlan};
+        use crate::pipeline::cors::{perform_cors_on_request, CORSPlan, CORSResult};
 
         #[test]
         fn no_cors_headers_if_no_origin_present_on_the_request_headers() {
@@ -244,10 +246,10 @@ mod tests {
                 .method(ntex::http::Method::POST)
                 .header(header::CONTENT_TYPE, "application/json")
                 .to_http_request();
-            perform_cors_on_request(&req, &cors_plan);
-            let req_extensions = req.extensions();
-            let cors_headers = req_extensions.get::<CORSHeaders>();
-            assert!(cors_headers.is_none());
+            assert!(matches!(
+                perform_cors_on_request(&req, &cors_plan),
+                CORSResult::None
+            ));
         }
 
         #[test]
@@ -263,25 +265,21 @@ mod tests {
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::ORIGIN, "https://example.com")
                 .to_http_request();
-            perform_cors_on_request(&req, &cors_plan);
-            let req_extensions = req.extensions();
-            let cors_headers = req_extensions.get::<CORSHeaders>();
-            assert!(cors_headers.is_some());
-            let cors_headers = cors_headers.unwrap();
-            assert_eq!(
-                cors_headers
-                    .headers
-                    .get("access-control-allow-origin")
-                    .unwrap(),
-                "https://example.com"
-            );
+            if let CORSResult::Continue(cors_headers) = perform_cors_on_request(&req, &cors_plan) {
+                assert_eq!(
+                    cors_headers.get("access-control-allow-origin").unwrap(),
+                    "https://example.com"
+                );
+            } else {
+                panic!("Expected Continue variant");
+            }
         }
     }
 
     mod single_origin {
         use ntex::http::header;
 
-        use crate::pipeline::cors::{perform_cors_on_request, CORSHeaders, CORSPlan};
+        use crate::pipeline::cors::{perform_cors_on_request, CORSPlan, CORSResult};
 
         #[test]
         fn returns_the_origin_even_if_it_is_different_than_the_sent_origin() {
@@ -297,25 +295,21 @@ mod tests {
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::ORIGIN, "https://example.com")
                 .to_http_request();
-            perform_cors_on_request(&req, &cors_plan);
-            let req_extensions = req.extensions();
-            let cors_headers = req_extensions.get::<CORSHeaders>();
-            assert!(cors_headers.is_some());
-            let cors_headers = cors_headers.unwrap();
-            assert_eq!(
-                cors_headers
-                    .headers
-                    .get("access-control-allow-origin")
-                    .unwrap(),
-                "https://allowed.com"
-            );
+            if let CORSResult::Continue(cors_headers) = perform_cors_on_request(&req, &cors_plan) {
+                assert_eq!(
+                    cors_headers.get("access-control-allow-origin").unwrap(),
+                    "https://allowed.com"
+                );
+            } else {
+                panic!("Expected Continue variant");
+            }
         }
     }
 
     mod multiple_origins {
         use ntex::http::header;
 
-        use crate::pipeline::cors::{perform_cors_on_request, CORSHeaders, CORSPlan};
+        use crate::pipeline::cors::{perform_cors_on_request, CORSPlan, CORSResult};
 
         #[test]
         fn returns_the_origin_itself_if_it_matches() {
@@ -334,18 +328,15 @@ mod tests {
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::ORIGIN, "https://example.com")
                 .to_http_request();
-            perform_cors_on_request(&req, &cors_plan);
-            let req_extensions = req.extensions();
-            let cors_headers = req_extensions.get::<CORSHeaders>();
-            assert!(cors_headers.is_some());
-            let cors_headers = cors_headers.unwrap();
-            assert_eq!(
-                cors_headers
-                    .headers
-                    .get("access-control-allow-origin")
-                    .unwrap(),
-                "https://example.com"
-            );
+            let cors_response = perform_cors_on_request(&req, &cors_plan);
+            if let CORSResult::Continue(cors_headers) = cors_response {
+                assert_eq!(
+                    cors_headers.get("access-control-allow-origin").unwrap(),
+                    "https://example.com"
+                );
+            } else {
+                panic!("Expected Continue variant");
+            }
         }
 
         #[test]
@@ -365,25 +356,21 @@ mod tests {
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::ORIGIN, "https://notallowed.com")
                 .to_http_request();
-            perform_cors_on_request(&req, &cors_plan);
-            let req_extensions = req.extensions();
-            let cors_headers = req_extensions.get::<CORSHeaders>();
-            assert!(cors_headers.is_some());
-            let cors_headers = cors_headers.unwrap();
-            assert_eq!(
-                cors_headers
-                    .headers
-                    .get("access-control-allow-origin")
-                    .unwrap(),
-                "null"
-            );
+            if let CORSResult::Continue(cors_headers) = perform_cors_on_request(&req, &cors_plan) {
+                assert_eq!(
+                    cors_headers.get("access-control-allow-origin").unwrap(),
+                    "null"
+                );
+            } else {
+                panic!("Expected Continue variant");
+            }
         }
     }
 
     mod vary_header {
         use ntex::http::header;
 
-        use crate::pipeline::cors::{perform_cors_on_request, CORSPlan};
+        use crate::pipeline::cors::{perform_cors_on_request, CORSPlan, CORSResult};
 
         #[test]
         fn returns_vary_with_multiple_values() {
@@ -403,16 +390,18 @@ mod tests {
                 .header(header::ORIGIN, "https://example.com")
                 .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "X-Custom-Header")
                 .to_http_request();
-            perform_cors_on_request(&req, &cors_plan);
-            let req_extensions = req.extensions();
-            let cors_headers = req_extensions.get::<crate::pipeline::cors::CORSHeaders>();
-            assert!(cors_headers.is_some());
-            let cors_headers = cors_headers.unwrap();
-            let vary_header_value = cors_headers.headers.get("vary").unwrap();
-            let vary_header_str = vary_header_value.to_str().unwrap();
-            let vary_values: Vec<&str> = vary_header_str.split(',').map(|s| s.trim()).collect();
-            assert!(vary_values.contains(&"Origin"));
-            assert!(vary_values.contains(&"Access-Control-Request-Headers"));
+            if let CORSResult::Continue(cors_headers) = perform_cors_on_request(&req, &cors_plan) {
+                assert_eq!(
+                    cors_headers.get("access-control-allow-origin").unwrap(),
+                    "https://example.com"
+                );
+                assert_eq!(
+                    cors_headers.get("vary").unwrap(),
+                    "Origin, Access-Control-Request-Headers"
+                );
+            } else {
+                panic!("Expected Continue variant");
+            }
         }
     }
 }

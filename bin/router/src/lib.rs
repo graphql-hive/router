@@ -8,7 +8,10 @@ use std::sync::Arc;
 use crate::{
     http_utils::{health::health_check_handler, landing_page::landing_page_handler},
     logger::configure_logging,
-    pipeline::{cors::perform_cors_on_request, graphql_request_handler},
+    pipeline::{
+        cors::{perform_cors_on_request, CORSResult},
+        graphql_request_handler,
+    },
     shared_state::RouterSharedState,
 };
 
@@ -25,20 +28,20 @@ async fn graphql_endpoint_handler(
     body_bytes: Bytes,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> impl web::Responder {
+    let mut cors_result = CORSResult::None;
     if app_state.cors.is_some() {
         if let Some(cors_plan) = &app_state.cors {
-            perform_cors_on_request(&request, cors_plan);
+            cors_result = perform_cors_on_request(&request, cors_plan);
+            // If an early CORS response is needed, return it immediately.
+            if let CORSResult::EarlyResponse(cors_response) = cors_result {
+                return cors_response;
+            }
         }
     }
     let mut res = graphql_request_handler(&mut request, body_bytes, app_state.get_ref()).await;
-    if app_state.cors.is_some() {
-        let cors_headers = request
-            .extensions_mut()
-            .remove::<pipeline::cors::CORSHeaders>();
-        if let Some(cors_headers) = cors_headers {
-            for (key, value) in &cors_headers.headers {
-                res.headers_mut().insert(key.clone(), value.clone());
-            }
+    if let CORSResult::Continue(cors_headers) = cors_result {
+        for (key, value) in &cors_headers {
+            res.headers_mut().insert(key.clone(), value.clone());
         }
     }
     res
