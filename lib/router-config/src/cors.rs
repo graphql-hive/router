@@ -20,7 +20,7 @@ pub struct CORSConfig {
 
     /// List of regex patterns to match allowed origins. If `allow_any_origin` is true, this field is ignored.
     /// If both `origins` and `match_origin` are set, the request origin must match one of the values in either list to be allowed.
-    // Each pattern should be a valid regex.
+    /// Each pattern should be a valid regex.
     /// Example: "^https://.*\.example\.com$", "^http://localhost:\d+$"
     pub match_origin: Option<Vec<String>>,
 
@@ -38,15 +38,11 @@ pub struct CORSConfig {
     /// List of headers that the server allows the client to send in a cross-origin request.
     /// This will set the `Access-Control-Allow-Headers` header.
     /// If not set, the server will reflect the headers specified in the `Access-Control-Request-Headers` request header.
-    /// If this is set, the `Access-Control-Allow-Headers` header will be set to this value.
-    /// If not set, the server will reflect the headers specified in the `Access-Control-Request-Headers` request header.
     /// Example: ["Content-Type", "Authorization"]
     pub allow_headers: Option<Vec<String>>,
 
     /// List of methods that the server allows for cross-origin requests.
     /// This will set the `Access-Control-Allow-Methods` header.
-    /// If not set, the server will reflect the method specified in the `Access-Control-Request-Method` request header.
-    /// If this is set, the `Access-Control-Allow-Methods` header will be set to this value.
     /// If not set, the server will reflect the method specified in the `Access-Control-Request-Method` request header.
     /// Example: ["GET", "POST", "OPTIONS"]
     pub methods: Option<Vec<String>>,
