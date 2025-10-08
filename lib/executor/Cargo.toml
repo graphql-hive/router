@@ -53,7 +53,6 @@ subgraphs = { path = "../../bench/subgraphs" }
 criterion = { workspace = true }
 tokio = { workspace = true }
 insta = { workspace = true }
-mock-http-connector = "0.5.0"
 
 [[bench]]
 name = "executor_benches"
