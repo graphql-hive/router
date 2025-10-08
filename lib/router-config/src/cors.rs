@@ -26,13 +26,6 @@ pub struct CORSConfig {
 
     /// Set to true to allow credentials (cookies, authorization headers, or TLS client certificates) in cross-origin requests.
     /// This will set the `Access-Control-Allow-Credentials` header to `true`.
-    /// Note that when this is true, `allow_any_origin` must be false, and you must not use the wildcard (`*`) for allowed origins.
-    /// Instead, you must specify allowed origins explicitly using the `origins` or `match_origin` fields.
-    /// If this is true, the `Access-Control-Allow-Origin` header will be set to the request's `Origin` header value if it is allowed.
-    /// If the request's origin is not allowed, the `Access-Control-Allow-Origin` header will be set to `null`.
-    /// If this is false, the `Access-Control-Allow-Origin` header will be set to `*` if `allow_any_origin` is true, or to the first allowed origin if `allow_any_origin` is false.
-    /// The `Vary: Origin` header will be added to responses when `allow_credentials` is true to indicate that the response varies based on the `Origin` request header.
-    /// This is important for caching proxies to handle responses correctly.
     pub allow_credentials: bool,
 
     /// List of headers that the server allows the client to send in a cross-origin request.

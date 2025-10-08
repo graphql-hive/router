@@ -23,13 +23,6 @@ impl CORSPlan {
             return None;
         }
 
-        let expose_headers_value = if let Some(expose_headers) = &config.expose_headers {
-            let headers_str = expose_headers.join(", ");
-            HeaderValue::from_str(&headers_str).ok()
-        } else {
-            None
-        };
-
         let allow_credentials_value = if config.allow_credentials {
             Some(HeaderValue::from_static("true"))
         } else {
@@ -50,19 +43,11 @@ impl CORSPlan {
                 .collect()
         });
 
-        let methods_value = if let Some(methods) = &config.methods {
-            let methods_str = methods.join(", ");
-            HeaderValue::from_str(&methods_str).ok()
-        } else {
-            None
-        };
+        let methods_value = create_header_value_from_vec_str(&config.methods);
 
-        let allow_headers_value = if let Some(allow_headers) = &config.allow_headers {
-            let headers_str = allow_headers.join(", ");
-            HeaderValue::from_str(&headers_str).ok()
-        } else {
-            None
-        };
+        let allow_headers_value = create_header_value_from_vec_str(&config.allow_headers);
+
+        let expose_headers_value = create_header_value_from_vec_str(&config.expose_headers);
 
         let single_origin: Option<String>;
         let origins: Option<Vec<String>>;
@@ -90,6 +75,18 @@ impl CORSPlan {
             methods_value,
             allow_headers_value,
         })
+    }
+}
+
+fn create_header_value_from_vec_str(vec: &Option<Vec<String>>) -> Option<HeaderValue> {
+    if let Some(vec) = vec {
+        if vec.is_empty() {
+            return None;
+        }
+        let joined = vec.join(", ");
+        HeaderValue::from_str(&joined).ok()
+    } else {
+        None
     }
 }
 
