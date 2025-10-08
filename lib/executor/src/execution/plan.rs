@@ -1,4 +1,7 @@
-use std::{borrow::Cow, collections::{BTreeSet, HashMap}};
+use std::{
+    borrow::Cow,
+    collections::{BTreeSet, HashMap},
+};
 
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
