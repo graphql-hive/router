@@ -28,6 +28,7 @@ use crate::{
 };
 
 pub mod coerce_variables;
+pub mod cors;
 pub mod error;
 pub mod execution;
 pub mod execution_request;
@@ -45,7 +46,7 @@ pub async fn graphql_request_handler(
     req: &mut HttpRequest,
     body_bytes: Bytes,
     state: &Arc<RouterSharedState>,
-) -> impl web::Responder {
+) -> web::HttpResponse {
     if req.method() == Method::GET && req.accepts_content_type(*TEXT_HTML_CONTENT_TYPE) {
         return web::HttpResponse::Ok()
             .header(CONTENT_TYPE, *TEXT_HTML_CONTENT_TYPE)

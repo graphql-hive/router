@@ -1,3 +1,4 @@
+pub mod cors;
 pub mod headers;
 pub mod http_server;
 pub mod log;
@@ -45,6 +46,10 @@ pub struct HiveRouterConfig {
     /// Configuration for the headers.
     #[serde(default)]
     pub headers: headers::HeadersConfig,
+
+    /// Configuration for CORS (Cross-Origin Resource Sharing).
+    #[serde(default)]
+    pub cors: cors::CORSConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
