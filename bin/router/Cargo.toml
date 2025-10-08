@@ -37,6 +37,7 @@ lazy_static = { workspace = true }
 async-trait = { workspace = true }
 xxhash-rust = { workspace = true }
 rand = { workspace = true }
+regex = "1.11.3"
 
 mimalloc = { version = "0.1.47", features = ["override"] }
 moka = { version = "0.12.10", features = ["future"] }
