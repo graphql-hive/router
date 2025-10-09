@@ -154,12 +154,10 @@ impl PipelineError {
         let code = self.error.graphql_error_code();
         let message = self.error.graphql_error_message();
 
-        let graphql_error = GraphQLError {
-            extensions: GraphQLErrorExtensions::new(Some(code), None, None),
+        let graphql_error = GraphQLError::from_message_and_extensions(
             message,
-            path: None,
-            locations: None,
-        };
+            GraphQLErrorExtensions::new_from_code(code),
+        );
 
         let result = FailedExecutionResult {
             errors: Some(vec![graphql_error]),

@@ -33,7 +33,7 @@ impl From<&ValidationError> for GraphQLError {
             message: val.message.to_string(),
             locations: Some(val.locations.iter().map(|pos| pos.into()).collect()),
             path: None,
-            extensions: GraphQLErrorExtensions::new(Some("GRAPHQL_VALIDATION_FAILED"), None, None),
+            extensions: GraphQLErrorExtensions::new_from_code("GRAPHQL_VALIDATION_FAILED"),
         }
     }
 }
@@ -74,6 +74,18 @@ impl GraphQLError {
             }
         }
         vec![self]
+    }
+
+    pub fn from_message_and_extensions(
+        message: String,
+        extensions: GraphQLErrorExtensions,
+    ) -> Self {
+        GraphQLError {
+            message,
+            locations: None,
+            path: None,
+            extensions,
+        }
     }
 
     pub fn add_subgraph_name(mut self, subgraph_name: &str) -> Self {
@@ -202,9 +214,8 @@ impl GraphQLErrorPath {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
-#[derive(Default)]
 pub struct GraphQLErrorExtensions {
     pub code: Option<String>,
     pub service_name: Option<String>,
@@ -213,15 +224,18 @@ pub struct GraphQLErrorExtensions {
 }
 
 impl GraphQLErrorExtensions {
-    pub fn new(
-        code: Option<&str>,
-        service_name: Option<&str>,
-        extensions: Option<HashMap<String, Value>>,
-    ) -> Self {
+    pub fn new_from_code(code: &str) -> Self {
         GraphQLErrorExtensions {
-            code: code.map(|s| s.to_string()),
-            service_name: service_name.map(|s| s.to_string()),
-            extensions: extensions.unwrap_or_default(),
+            code: Some(code.to_string()),
+            service_name: None,
+            extensions: HashMap::new(),
+        }
+    }
+    pub fn new_from_code_and_service_name(code: &str, service_name: &str) -> Self {
+        GraphQLErrorExtensions {
+            code: Some(code.to_string()),
+            service_name: Some(service_name.to_string()),
+            extensions: HashMap::new(),
         }
     }
     pub fn get(&self, key: &str) -> Option<&Value> {
