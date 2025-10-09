@@ -511,17 +511,14 @@ impl<'exec> Executor<'exec> {
                         let mut index = 0;
                         let normalized_path = job.flatten_node_path.as_slice();
                         // If there is an error in the response, then collect the paths for normalizing the error
-                        let (initial_error_path, mut entity_index_error_map) = if response
+                        let initial_error_path = response
                             .errors
-                            .is_some()
-                        {
-                            (
-                                Some(GraphQLErrorPath::with_capacity(normalized_path.len() + 2)),
-                                Some(HashMap::with_capacity(entities.len())),
-                            )
-                        } else {
-                            (None, None)
-                        };
+                            .as_ref()
+                            .map(|_| GraphQLErrorPath::with_capacity(normalized_path.len() + 2));
+                        let mut entity_index_error_map = response
+                            .errors
+                            .as_ref()
+                            .map(|_| HashMap::with_capacity(entities.len()));
                         traverse_and_callback_mut(
                             &mut ctx.final_response,
                             normalized_path,
