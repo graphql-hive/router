@@ -36,7 +36,7 @@ use crate::{
         response::project_by_operation,
     },
     response::{
-        graphql_error::{GraphQLError, GraphQLErrorPath},
+        graphql_error::{GraphQLError, GraphQLErrorExtensions, GraphQLErrorPath},
         merge::deep_merge,
         subgraph_response::SubgraphResponse,
         value::Value,
@@ -264,7 +264,11 @@ impl<'exec> Executor<'exec> {
                     message: err.to_string(),
                     locations: None,
                     path: None,
-                    extensions: None,
+                    extensions: GraphQLErrorExtensions::new(
+                        Some("PLAN_EXECUTION_ERROR"),
+                        Some(node.service_name.as_ref()),
+                        None,
+                    ),
                 });
                 Ok(())
             }
@@ -306,7 +310,11 @@ impl<'exec> Executor<'exec> {
                     message: err.to_string(),
                     locations: None,
                     path: None,
-                    extensions: None,
+                    extensions: GraphQLErrorExtensions::new(
+                        Some("PLAN_EXECUTION_ERROR"),
+                        None,
+                        None,
+                    ),
                 }),
             }
         }
@@ -328,7 +336,11 @@ impl<'exec> Executor<'exec> {
                     message: err.to_string(),
                     locations: None,
                     path: None,
-                    extensions: None,
+                    extensions: GraphQLErrorExtensions::new(
+                        Some("PLAN_EXECUTION_ERROR"),
+                        Some(fetch_node.service_name.as_ref()),
+                        None,
+                    ),
                 }),
             },
             PlanNode::Parallel(parallel_node) => {
@@ -350,22 +362,43 @@ impl<'exec> Executor<'exec> {
                                 self.process_job_result(ctx, job)?;
                             }
                             Err(err) => {
+                                let service_name = if let PlanNode::Fetch(fetch_node) =
+                                    flatten_node.node.as_ref()
+                                {
+                                    Some(fetch_node.service_name.as_ref())
+                                } else {
+                                    None
+                                };
                                 ctx.errors.push(GraphQLError {
                                     message: err.to_string(),
                                     locations: None,
                                     path: None,
-                                    extensions: None,
+                                    extensions: GraphQLErrorExtensions::new(
+                                        Some("PLAN_EXECUTION_ERROR"),
+                                        service_name,
+                                        None,
+                                    ),
                                 });
                             }
                         }
                     }
                     Ok(None) => { /* do nothing */ }
-                    Err(e) => {
+                    Err(err) => {
+                        let service_name =
+                            if let PlanNode::Fetch(fetch_node) = flatten_node.node.as_ref() {
+                                Some(fetch_node.service_name.as_ref())
+                            } else {
+                                None
+                            };
                         ctx.errors.push(GraphQLError {
-                            message: e.to_string(),
+                            message: err.to_string(),
                             locations: None,
                             path: None,
-                            extensions: None,
+                            extensions: GraphQLErrorExtensions::new(
+                                Some("PLAN_EXECUTION_ERROR"),
+                                service_name,
+                                None,
+                            ),
                         });
                     }
                 }
@@ -419,6 +452,7 @@ impl<'exec> Executor<'exec> {
 
     fn process_subgraph_response(
         &self,
+        subgraph_name: &str,
         ctx: &mut ExecutionContext<'exec>,
         response_bytes: Bytes,
         fetch_node_id: i64,
@@ -448,7 +482,11 @@ impl<'exec> Executor<'exec> {
                         message: format!("Failed to deserialize subgraph response: {}", e),
                         locations: None,
                         path: None,
-                        extensions: None,
+                        extensions: GraphQLErrorExtensions::new(
+                            Some("SUBGRAPH_RESPONSE_DESERIALIZATION_ERROR"),
+                            Some(subgraph_name),
+                            None,
+                        ),
                     });
                 return None;
             }
@@ -472,10 +510,13 @@ impl<'exec> Executor<'exec> {
                     &mut ctx.response_headers_aggregator,
                 )?;
 
-                if let Some((mut response, output_rewrites)) =
-                    self.process_subgraph_response(ctx, job.response.body, job.fetch_node_id)
-                {
-                    ctx.handle_errors(response.errors, None);
+                if let Some((mut response, output_rewrites)) = self.process_subgraph_response(
+                    job.subgraph_name.as_ref(),
+                    ctx,
+                    job.response.body,
+                    job.fetch_node_id,
+                ) {
+                    ctx.handle_errors(&job.subgraph_name, response.errors, None);
                     if let Some(output_rewrites) = output_rewrites {
                         for output_rewrite in output_rewrites {
                             output_rewrite
@@ -495,9 +536,12 @@ impl<'exec> Executor<'exec> {
                     &mut ctx.response_headers_aggregator,
                 )?;
 
-                if let Some((mut response, output_rewrites)) =
-                    self.process_subgraph_response(ctx, job.response.body, job.fetch_node_id)
-                {
+                if let Some((mut response, output_rewrites)) = self.process_subgraph_response(
+                    &job.subgraph_name,
+                    ctx,
+                    job.response.body,
+                    job.fetch_node_id,
+                ) {
                     if let Some(mut entities) = response.data.take_entities() {
                         if let Some(output_rewrites) = output_rewrites {
                             for output_rewrite in output_rewrites {
@@ -549,7 +593,11 @@ impl<'exec> Executor<'exec> {
                                 index += 1;
                             },
                         );
-                        ctx.handle_errors(response.errors, entity_index_error_map);
+                        ctx.handle_errors(
+                            &job.subgraph_name,
+                            response.errors,
+                            entity_index_error_map,
+                        );
                     }
                 }
             }
@@ -735,7 +783,10 @@ fn select_fetch_variables<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::{context::ExecutionContext, response::graphql_error::GraphQLErrorPath};
+    use crate::{
+        context::ExecutionContext,
+        response::graphql_error::{GraphQLErrorExtensions, GraphQLErrorPath},
+    };
 
     use super::select_fetch_variables;
     use sonic_rs::Value;
@@ -829,9 +880,13 @@ mod tests {
                     GraphQLErrorPathSegment::String("field1".to_string()),
                 ],
             }),
-            extensions: None,
+            extensions: GraphQLErrorExtensions::default(),
         }];
-        ctx.handle_errors(Some(response_errors), Some(entity_index_error_map));
+        ctx.handle_errors(
+            "subgraph_a",
+            Some(response_errors),
+            Some(entity_index_error_map),
+        );
         assert_eq!(ctx.errors.len(), 2);
         assert_eq!(ctx.errors[0].message, "Error 1");
         assert_eq!(

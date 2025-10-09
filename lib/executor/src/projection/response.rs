@@ -2,7 +2,7 @@ use crate::projection::error::ProjectionError;
 use crate::projection::plan::{
     FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan, TypeCondition,
 };
-use crate::response::graphql_error::GraphQLError;
+use crate::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use crate::response::value::Value;
 use bytes::BufMut;
 use sonic_rs::JsonValueTrait;
@@ -231,7 +231,7 @@ fn project_selection_set_with_map(
                     message: "Value is not a valid enum value".to_string(),
                     locations: None,
                     path: None,
-                    extensions: None,
+                    extensions: GraphQLErrorExtensions::default(),
                 });
             }
             Err(FieldProjectionConditionError::InvalidFieldType) => {

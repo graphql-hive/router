@@ -44,17 +44,20 @@ impl<'a> ExecutionContext<'a> {
 
     pub fn handle_errors(
         &mut self,
+        subgraph_name: &str,
         errors: Option<Vec<GraphQLError>>,
         entity_index_error_map: Option<HashMap<&usize, Vec<GraphQLErrorPath>>>,
     ) {
         if let Some(response_errors) = errors {
             for response_error in response_errors {
+                let response_error_with_subgraph_name =
+                    response_error.add_subgraph_name(subgraph_name);
                 if let Some(entity_index_error_map) = &entity_index_error_map {
-                    let normalized_errors =
-                        response_error.normalize_entity_error(entity_index_error_map);
+                    let normalized_errors = response_error_with_subgraph_name
+                        .normalize_entity_error(entity_index_error_map);
                     self.errors.extend(normalized_errors);
                 } else {
-                    self.errors.push(response_error);
+                    self.errors.push(response_error_with_subgraph_name);
                 }
             }
         }

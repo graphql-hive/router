@@ -12,7 +12,8 @@ pub struct GraphQLError {
     pub locations: Option<Vec<GraphQLErrorLocation>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<GraphQLErrorPath>,
-    pub extensions: Option<Value>,
+    #[serde(default, skip_serializing_if = "GraphQLErrorExtensions::is_empty")]
+    pub extensions: GraphQLErrorExtensions,
 }
 
 impl From<String> for GraphQLError {
@@ -21,7 +22,7 @@ impl From<String> for GraphQLError {
             message,
             locations: None,
             path: None,
-            extensions: None,
+            extensions: GraphQLErrorExtensions::default(),
         }
     }
 }
@@ -32,7 +33,7 @@ impl From<&ValidationError> for GraphQLError {
             message: val.message.to_string(),
             locations: Some(val.locations.iter().map(|pos| pos.into()).collect()),
             path: None,
-            extensions: None,
+            extensions: GraphQLErrorExtensions::new(Some("GRAPHQL_VALIDATION_FAILED"), None, None),
         }
     }
 }
@@ -73,6 +74,16 @@ impl GraphQLError {
             }
         }
         vec![self]
+    }
+
+    pub fn add_subgraph_name(mut self, subgraph_name: &str) -> Self {
+        self.extensions
+            .service_name
+            .get_or_insert(subgraph_name.to_string());
+        self.extensions
+            .code
+            .get_or_insert("DOWNSTREAM_SERVICE_ERROR".to_string());
+        self
     }
 }
 
@@ -188,5 +199,40 @@ impl GraphQLErrorPath {
             }
             _ => None,
         }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(Default)]
+pub struct GraphQLErrorExtensions {
+    pub code: Option<String>,
+    pub service_name: Option<String>,
+    #[serde(flatten)]
+    pub extensions: HashMap<String, Value>,
+}
+
+impl GraphQLErrorExtensions {
+    pub fn new(
+        code: Option<&str>,
+        service_name: Option<&str>,
+        extensions: Option<HashMap<String, Value>>,
+    ) -> Self {
+        GraphQLErrorExtensions {
+            code: code.map(|s| s.to_string()),
+            service_name: service_name.map(|s| s.to_string()),
+            extensions: extensions.unwrap_or_default(),
+        }
+    }
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.extensions.get(key)
+    }
+
+    pub fn set(&mut self, key: String, value: Value) {
+        self.extensions.insert(key, value);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.code.is_none() && self.service_name.is_none() && self.extensions.is_empty()
     }
 }
