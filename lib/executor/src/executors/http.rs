@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::sync::Arc;
 
 use crate::executors::common::HttpExecutionResponse;
@@ -9,8 +10,8 @@ use tokio::sync::OnceCell;
 use async_trait::async_trait;
 
 use bytes::{BufMut, Bytes, BytesMut};
-use http::HeaderMap;
 use http::HeaderValue;
+use http::{HeaderMap, Uri};
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::Version;
@@ -41,10 +42,28 @@ const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
 const FIRST_QUOTE_STR: &[u8] = b"{\"query\":";
 
 impl HTTPSubgraphExecutor {
+    pub fn try_new(
+        endpoint_str: &str,
+        http_client: Arc<Client<HttpsConnector<HttpConnector>, Full<Bytes>>>,
+        semaphores_by_origin: Arc<DashMap<String, Arc<Semaphore>>>,
+        config: Arc<TrafficShapingExecutorConfig>,
+        in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    ) -> Result<Self, SubgraphExecutorError> {
+        let endpoint = endpoint_str.parse::<Uri>().map_err(|e| {
+            SubgraphExecutorError::EndpointParseFailure(endpoint_str.to_string(), e.to_string())
+        })?;
+        Ok(Self::new(
+            endpoint,
+            http_client,
+            semaphores_by_origin,
+            config,
+            in_flight_requests,
+        ))
+    }
     pub fn new(
         endpoint: http::Uri,
         http_client: Arc<Client<HttpsConnector<HttpConnector>, Full<Bytes>>>,
-        semaphore: Arc<Semaphore>,
+        semaphores_by_origin: Arc<DashMap<String, Arc<Semaphore>>>,
         config: Arc<TrafficShapingExecutorConfig>,
         in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
     ) -> Self {
@@ -57,6 +76,24 @@ impl HTTPSubgraphExecutor {
             http::header::CONNECTION,
             HeaderValue::from_static("keep-alive"),
         );
+
+        let origin = format!(
+            "{}://{}:{}",
+            endpoint.scheme_str().unwrap_or("http"),
+            endpoint.host().unwrap_or(""),
+            endpoint.port_u16().unwrap_or_else(|| {
+                if endpoint.scheme_str() == Some("https") {
+                    443
+                } else {
+                    80
+                }
+            })
+        );
+
+        let semaphore = semaphores_by_origin
+            .entry(origin)
+            .or_insert_with(|| Arc::new(Semaphore::new(config.max_connections_per_host)))
+            .clone();
 
         Self {
             endpoint,
@@ -242,5 +279,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 headers: Default::default(),
             },
         }
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
