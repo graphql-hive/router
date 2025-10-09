@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_plan_executor::{
-    execution::error::PlanExecutionError, response::graphql_error::GraphQLError,
+    execution::error::PlanExecutionError,
+    response::graphql_error::{GraphQLError, GraphQLErrorExtensions},
 };
 use hive_router_query_planner::{
     ast::normalization::error::NormalizationError, planner::PlannerError,
@@ -13,7 +14,6 @@ use ntex::{
     web::{self, error::QueryPayloadError, HttpRequest},
 };
 use serde::{Deserialize, Serialize};
-use sonic_rs::{object, Value};
 
 use crate::pipeline::header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR};
 
@@ -154,12 +154,10 @@ impl PipelineError {
         let code = self.error.graphql_error_code();
         let message = self.error.graphql_error_message();
 
-        let graphql_error = GraphQLError {
-            extensions: Some(Value::from_iter(&object! {"code": code.to_string()})),
+        let graphql_error = GraphQLError::from_message_and_extensions(
             message,
-            path: None,
-            locations: None,
-        };
+            GraphQLErrorExtensions::new_from_code(code),
+        );
 
         let result = FailedExecutionResult {
             errors: Some(vec![graphql_error]),
