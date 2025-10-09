@@ -16,5 +16,5 @@
     "typescript": "5.9.3",
     "start-server-and-test": "2.1.2"
   },
-  "packageManager": "npm@11.6.1"
+  "packageManager": "npm@11.6.2"
 }
