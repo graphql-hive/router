@@ -2,7 +2,7 @@ use hive_router_query_planner::planner::plan_nodes::FlattenNodePathSegment;
 
 use crate::{
     introspection::schema::SchemaMetadata,
-    response::{graphql_error::GraphQLErrorPathSegment, value::Value},
+    response::{graphql_error::GraphQLErrorPath, value::Value},
     utils::consts::TYPENAME_FIELD_NAME,
 };
 
@@ -10,18 +10,19 @@ pub fn traverse_and_callback_mut<'a, Callback>(
     current_data: &mut Value<'a>,
     remaining_path: &[FlattenNodePathSegment],
     schema_metadata: &SchemaMetadata,
-    current_error_path: Option<Vec<GraphQLErrorPathSegment>>,
+    current_error_path: Option<GraphQLErrorPath>,
     callback: &mut Callback,
 ) where
-    Callback: FnMut(&mut Value, Option<Vec<GraphQLErrorPathSegment>>),
+    Callback: FnMut(&mut Value, Option<GraphQLErrorPath>),
 {
     if remaining_path.is_empty() {
         if let Value::Array(arr) = current_data {
             // If the path is empty, we call the callback on each item in the array
             // We iterate because we want the entity objects directly
             for (index, item) in arr.iter_mut().enumerate() {
-                let current_error_path_for_index: Option<Vec<GraphQLErrorPathSegment>> =
-                    extend_error_path_with_index(&current_error_path, index);
+                let current_error_path_for_index = current_error_path
+                    .as_ref()
+                    .map(|current_error_path| current_error_path.concat_index(index));
                 callback(item, current_error_path_for_index);
             }
         } else {
@@ -37,8 +38,9 @@ pub fn traverse_and_callback_mut<'a, Callback>(
             if let Value::Array(arr) = current_data {
                 let rest_of_path = &remaining_path[1..];
                 for (index, item) in arr.iter_mut().enumerate() {
-                    let current_error_path_for_index =
-                        extend_error_path_with_index(&current_error_path, index);
+                    let current_error_path_for_index = current_error_path
+                        .as_ref()
+                        .map(|current_error_path| current_error_path.concat_index(index));
                     traverse_and_callback_mut(
                         item,
                         rest_of_path,
@@ -56,10 +58,8 @@ pub fn traverse_and_callback_mut<'a, Callback>(
                     let (_, next_data) = map.get_mut(idx).unwrap();
                     let rest_of_path = &remaining_path[1..];
                     let current_error_path_for_field =
-                        current_error_path.as_ref().map(|current_path| {
-                            let mut path = current_path.clone();
-                            path.push(GraphQLErrorPathSegment::String(field_name.clone()));
-                            path
+                        current_error_path.map(|current_error_path| {
+                            current_error_path.concat_str(field_name.clone())
                         });
                     traverse_and_callback_mut(
                         next_data,
@@ -95,8 +95,9 @@ pub fn traverse_and_callback_mut<'a, Callback>(
             } else if let Value::Array(arr) = current_data {
                 // If the current data is an array, we need to check each item
                 for (index, item) in arr.iter_mut().enumerate() {
-                    let current_error_path_for_index =
-                        extend_error_path_with_index(&current_error_path, index);
+                    let current_error_path_for_index = current_error_path
+                        .as_ref()
+                        .map(|current_error_path| current_error_path.concat_index(index));
                     traverse_and_callback_mut(
                         item,
                         remaining_path,
@@ -108,17 +109,6 @@ pub fn traverse_and_callback_mut<'a, Callback>(
             }
         }
     }
-}
-
-fn extend_error_path_with_index(
-    current_error_path: &Option<Vec<GraphQLErrorPathSegment>>,
-    index: usize,
-) -> Option<Vec<GraphQLErrorPathSegment>> {
-    current_error_path.as_ref().map(|path| {
-        let mut new_path = path.clone();
-        new_path.push(GraphQLErrorPathSegment::Index(index));
-        new_path
-    })
 }
 
 pub fn traverse_and_callback<'a, E, Callback>(
@@ -184,122 +174,135 @@ where
     Ok(())
 }
 
-#[test]
-/**
- * Collect error paths for each item in a list at one level
- * E.g. for data { items: [ {...}, {...} ] } and path ["items", List]
- * we should collect paths ["items", 0] and ["items", 1]
- */
-fn test_collect_error_paths_one_level() {
-    let mut data = Value::Object(vec![(
-        "items",
-        Value::Array(vec![
-            Value::Object(vec![("id", Value::String("1".into()))]),
-            Value::Object(vec![("id", Value::String("2".into()))]),
-        ]),
-    )]);
-    let path = vec![
-        FlattenNodePathSegment::Field("items".into()),
-        FlattenNodePathSegment::List,
-    ];
-    let mut collected = vec![];
-    traverse_and_callback_mut(
-        &mut data,
-        &path,
-        &SchemaMetadata::default(),
-        Some(Vec::new()),
-        &mut |_item, error_path| {
-            collected.push(error_path);
-        },
-    );
-    assert_eq!(collected.len(), 2);
-    assert_eq!(
-        collected[0],
-        Some(vec![
-            GraphQLErrorPathSegment::String("items".into()),
-            GraphQLErrorPathSegment::Index(0)
-        ])
-    );
-    assert_eq!(
-        collected[1],
-        Some(vec![
-            GraphQLErrorPathSegment::String("items".into()),
-            GraphQLErrorPathSegment::Index(1)
-        ])
-    );
-}
+#[cfg(test)]
+mod tests {
+    use hive_router_query_planner::planner::plan_nodes::FlattenNodePathSegment;
 
-#[test]
-/**
- * Collect error paths for each item in a list at two levels
- * E.g. for data { users: [ { posts: [ {...}, {...} ] }, { posts: [ {...} ] } ] } and path ["users", List, "posts", List]
- * we should collect paths ["users", 0, "posts", 0], ["users", 0, "posts", 1], and ["users", 1, "posts", 0]
- */
-fn test_collect_error_paths_two_levels() {
-    let mut data = Value::Object(vec![(
-        "users",
-        Value::Array(vec![
-            Value::Object(vec![
-                ("id", Value::String("1".into())),
-                (
-                    "posts",
-                    Value::Array(vec![
-                        Value::Object(vec![("id", Value::String("a".into()))]),
-                        Value::Object(vec![("id", Value::String("b".into()))]),
-                    ]),
-                ),
-            ]),
-            Value::Object(vec![
-                ("id", Value::String("2".into())),
-                (
-                    "posts",
-                    Value::Array(vec![Value::Object(vec![("id", Value::String("c".into()))])]),
-                ),
-            ]),
-        ]),
-    )]);
-    let path = vec![
-        FlattenNodePathSegment::Field("users".into()),
-        FlattenNodePathSegment::List,
-        FlattenNodePathSegment::Field("posts".into()),
-        FlattenNodePathSegment::List,
-    ];
-    let mut collected = vec![];
-    traverse_and_callback_mut(
-        &mut data,
-        &path,
-        &SchemaMetadata::default(),
-        Some(Vec::new()),
-        &mut |_item, error_path| {
-            collected.push(error_path);
+    use crate::{
+        introspection::schema::SchemaMetadata,
+        response::{
+            graphql_error::{GraphQLErrorPath, GraphQLErrorPathSegment},
+            value::Value,
         },
-    );
-    assert_eq!(collected.len(), 3);
-    assert_eq!(
-        collected[0],
-        Some(vec![
-            GraphQLErrorPathSegment::String("users".into()),
-            GraphQLErrorPathSegment::Index(0),
-            GraphQLErrorPathSegment::String("posts".into()),
-            GraphQLErrorPathSegment::Index(0),
-        ])
-    );
-    assert_eq!(
-        collected[1],
-        Some(vec![
-            GraphQLErrorPathSegment::String("users".into()),
-            GraphQLErrorPathSegment::Index(0),
-            GraphQLErrorPathSegment::String("posts".into()),
-            GraphQLErrorPathSegment::Index(1),
-        ])
-    );
-    assert_eq!(
-        collected[2],
-        Some(vec![
-            GraphQLErrorPathSegment::String("users".into()),
-            GraphQLErrorPathSegment::Index(1),
-            GraphQLErrorPathSegment::String("posts".into()),
-            GraphQLErrorPathSegment::Index(0),
-        ])
-    );
+    };
+
+    #[test]
+    /**
+     * Collect error paths for each item in a list at one level
+     * E.g. for data { items: [ {...}, {...} ] } and path ["items", List]
+     * we should collect paths ["items", 0] and ["items", 1]
+     */
+    fn test_collect_error_paths_one_level() {
+        let mut data = Value::Object(vec![(
+            "items",
+            Value::Array(vec![
+                Value::Object(vec![("id", Value::String("1".into()))]),
+                Value::Object(vec![("id", Value::String("2".into()))]),
+            ]),
+        )]);
+        let path = vec![
+            FlattenNodePathSegment::Field("items".into()),
+            FlattenNodePathSegment::List,
+        ];
+        let mut collected = vec![];
+        super::traverse_and_callback_mut(
+            &mut data,
+            &path,
+            &SchemaMetadata::default(),
+            Some(GraphQLErrorPath::default()),
+            &mut |_item, error_path| {
+                collected.push(error_path.unwrap());
+            },
+        );
+        assert_eq!(collected.len(), 2);
+        assert_eq!(
+            collected[0].segments,
+            vec![
+                GraphQLErrorPathSegment::String("items".into()),
+                GraphQLErrorPathSegment::Index(0)
+            ]
+        );
+        assert_eq!(
+            collected[1].segments,
+            vec![
+                GraphQLErrorPathSegment::String("items".into()),
+                GraphQLErrorPathSegment::Index(1)
+            ]
+        );
+    }
+
+    #[test]
+    /**
+     * Collect error paths for each item in a list at two levels
+     * E.g. for data { users: [ { posts: [ {...}, {...} ] }, { posts: [ {...} ] } ] } and path ["users", List, "posts", List]
+     * we should collect paths ["users", 0, "posts", 0], ["users", 0, "posts", 1], and ["users", 1, "posts", 0]
+     */
+    fn test_collect_error_paths_two_levels() {
+        let mut data = Value::Object(vec![(
+            "users",
+            Value::Array(vec![
+                Value::Object(vec![
+                    ("id", Value::String("1".into())),
+                    (
+                        "posts",
+                        Value::Array(vec![
+                            Value::Object(vec![("id", Value::String("a".into()))]),
+                            Value::Object(vec![("id", Value::String("b".into()))]),
+                        ]),
+                    ),
+                ]),
+                Value::Object(vec![
+                    ("id", Value::String("2".into())),
+                    (
+                        "posts",
+                        Value::Array(vec![Value::Object(vec![("id", Value::String("c".into()))])]),
+                    ),
+                ]),
+            ]),
+        )]);
+        let path = vec![
+            FlattenNodePathSegment::Field("users".into()),
+            FlattenNodePathSegment::List,
+            FlattenNodePathSegment::Field("posts".into()),
+            FlattenNodePathSegment::List,
+        ];
+        let mut collected = vec![];
+        super::traverse_and_callback_mut(
+            &mut data,
+            &path,
+            &SchemaMetadata::default(),
+            Some(GraphQLErrorPath::default()),
+            &mut |_item, error_path| {
+                collected.push(error_path.unwrap());
+            },
+        );
+        assert_eq!(collected.len(), 3);
+        assert_eq!(
+            collected[0].segments,
+            vec![
+                GraphQLErrorPathSegment::String("users".into()),
+                GraphQLErrorPathSegment::Index(0),
+                GraphQLErrorPathSegment::String("posts".into()),
+                GraphQLErrorPathSegment::Index(0),
+            ]
+        );
+        assert_eq!(
+            collected[1].segments,
+            vec![
+                GraphQLErrorPathSegment::String("users".into()),
+                GraphQLErrorPathSegment::Index(0),
+                GraphQLErrorPathSegment::String("posts".into()),
+                GraphQLErrorPathSegment::Index(1),
+            ]
+        );
+        assert_eq!(
+            collected[2].segments,
+            vec![
+                GraphQLErrorPathSegment::String("users".into()),
+                GraphQLErrorPathSegment::Index(1),
+                GraphQLErrorPathSegment::String("posts".into()),
+                GraphQLErrorPathSegment::Index(0),
+            ]
+        );
+    }
 }

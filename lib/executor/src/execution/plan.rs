@@ -36,7 +36,9 @@ use crate::{
         response::project_by_operation,
     },
     response::{
-        graphql_error::GraphQLError, merge::deep_merge, subgraph_response::SubgraphResponse,
+        graphql_error::{GraphQLError, GraphQLErrorPath},
+        merge::deep_merge,
+        subgraph_response::SubgraphResponse,
         value::Value,
     },
     utils::{
@@ -509,20 +511,22 @@ impl<'exec> Executor<'exec> {
                         let mut index = 0;
                         let normalized_path = job.flatten_node_path.as_slice();
                         // If there is an error in the response, then collect the paths for normalizing the error
-                        let (initial_error_path_arr, mut entity_index_error_map) =
-                            if response.errors.is_some() {
-                                (
-                                    Some(Vec::with_capacity(normalized_path.len() + 2)),
-                                    Some(HashMap::with_capacity(entities.len())),
-                                )
-                            } else {
-                                (None, None)
-                            };
+                        let (initial_error_path, mut entity_index_error_map) = if response
+                            .errors
+                            .is_some()
+                        {
+                            (
+                                Some(GraphQLErrorPath::with_capacity(normalized_path.len() + 2)),
+                                Some(HashMap::with_capacity(entities.len())),
+                            )
+                        } else {
+                            (None, None)
+                        };
                         traverse_and_callback_mut(
                             &mut ctx.final_response,
                             normalized_path,
                             self.schema_metadata,
-                            initial_error_path_arr,
+                            initial_error_path,
                             &mut |target, error_path| {
                                 let hash = job.representation_hashes[index];
                                 if let Some(entity_index) =
@@ -734,7 +738,7 @@ fn select_fetch_variables<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::context::ExecutionContext;
+    use crate::{context::ExecutionContext, response::graphql_error::GraphQLErrorPath};
 
     use super::select_fetch_variables;
     use sonic_rs::Value;
@@ -800,37 +804,42 @@ mod tests {
         use crate::response::graphql_error::{GraphQLError, GraphQLErrorPathSegment};
         use std::collections::HashMap;
         let mut ctx = ExecutionContext::default();
-        let mut entity_index_error_map: HashMap<&usize, Vec<Vec<GraphQLErrorPathSegment>>> =
-            HashMap::new();
+        let mut entity_index_error_map: HashMap<&usize, Vec<GraphQLErrorPath>> = HashMap::new();
         entity_index_error_map.insert(
             &0,
             vec![
-                vec![
-                    GraphQLErrorPathSegment::String("a".to_string()),
-                    GraphQLErrorPathSegment::Index(0),
-                ],
-                vec![
-                    GraphQLErrorPathSegment::String("b".to_string()),
-                    GraphQLErrorPathSegment::Index(1),
-                ],
+                GraphQLErrorPath {
+                    segments: vec![
+                        GraphQLErrorPathSegment::String("a".to_string()),
+                        GraphQLErrorPathSegment::Index(0),
+                    ],
+                },
+                GraphQLErrorPath {
+                    segments: vec![
+                        GraphQLErrorPathSegment::String("b".to_string()),
+                        GraphQLErrorPathSegment::Index(1),
+                    ],
+                },
             ],
         );
         let response_errors = vec![GraphQLError {
             message: "Error 1".to_string(),
             locations: None,
-            path: Some(vec![
-                GraphQLErrorPathSegment::String("_entities".to_string()),
-                GraphQLErrorPathSegment::Index(0),
-                GraphQLErrorPathSegment::String("field1".to_string()),
-            ]),
+            path: Some(GraphQLErrorPath {
+                segments: vec![
+                    GraphQLErrorPathSegment::String("_entities".to_string()),
+                    GraphQLErrorPathSegment::Index(0),
+                    GraphQLErrorPathSegment::String("field1".to_string()),
+                ],
+            }),
             extensions: None,
         }];
         ctx.handle_errors(Some(response_errors), Some(entity_index_error_map));
         assert_eq!(ctx.errors.len(), 2);
         assert_eq!(ctx.errors[0].message, "Error 1");
         assert_eq!(
-            ctx.errors[0].path.as_ref().unwrap(),
-            &vec![
+            ctx.errors[0].path.as_ref().unwrap().segments,
+            vec![
                 GraphQLErrorPathSegment::String("a".to_string()),
                 GraphQLErrorPathSegment::Index(0),
                 GraphQLErrorPathSegment::String("field1".to_string())
@@ -838,8 +847,8 @@ mod tests {
         );
         assert_eq!(ctx.errors[1].message, "Error 1");
         assert_eq!(
-            ctx.errors[1].path.as_ref().unwrap(),
-            &vec![
+            ctx.errors[1].path.as_ref().unwrap().segments,
+            vec![
                 GraphQLErrorPathSegment::String("b".to_string()),
                 GraphQLErrorPathSegment::Index(1),
                 GraphQLErrorPathSegment::String("field1".to_string())

@@ -5,7 +5,7 @@ use hive_router_query_planner::planner::plan_nodes::{FetchNode, FetchRewrite, Qu
 use crate::{
     headers::plan::ResponseHeaderAggregator,
     response::{
-        graphql_error::{GraphQLError, GraphQLErrorPathSegment},
+        graphql_error::{GraphQLError, GraphQLErrorPath},
         storage::ResponsesStorage,
         value::Value,
     },
@@ -45,40 +45,16 @@ impl<'a> ExecutionContext<'a> {
     pub fn handle_errors(
         &mut self,
         errors: Option<Vec<GraphQLError>>,
-        entity_index_error_map: Option<HashMap<&usize, Vec<Vec<GraphQLErrorPathSegment>>>>,
+        entity_index_error_map: Option<HashMap<&usize, Vec<GraphQLErrorPath>>>,
     ) {
         if let Some(response_errors) = errors {
             for response_error in response_errors {
-                match &response_error.path.as_deref() {
-                    Some(
-                        [GraphQLErrorPathSegment::String(maybe_entities), GraphQLErrorPathSegment::Index(entity_index), rest_of_path @ ..],
-                    ) if maybe_entities == "_entities" => {
-                        if let Some(entity_error_paths) = entity_index_error_map
-                            .as_ref()
-                            .and_then(|m| m.get(entity_index))
-                        {
-                            for entity_error_path in entity_error_paths {
-                                let mut new_error_path = entity_error_path.clone();
-                                if !rest_of_path.is_empty() {
-                                    new_error_path.extend_from_slice(rest_of_path);
-                                }
-                                self.errors.push(GraphQLError {
-                                    path: Some(new_error_path),
-                                    ..response_error.clone()
-                                });
-                            }
-                        } else {
-                            // If we don't have the entity index in the map, just push the original error
-                            // without any path, because `_entities` is not a valid path in the final response.
-                            self.errors.push(GraphQLError {
-                                path: None,
-                                ..response_error
-                            });
-                        }
-                    }
-                    _ => {
-                        self.errors.push(response_error);
-                    }
+                if let Some(entity_index_error_map) = &entity_index_error_map {
+                    let normalized_errors =
+                        response_error.normalize_entity_error(entity_index_error_map);
+                    self.errors.extend(normalized_errors);
+                } else {
+                    self.errors.push(response_error);
                 }
             }
         }
