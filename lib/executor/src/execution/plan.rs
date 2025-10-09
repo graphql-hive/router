@@ -362,13 +362,7 @@ impl<'exec> Executor<'exec> {
                                 self.process_job_result(ctx, job)?;
                             }
                             Err(err) => {
-                                let service_name = if let PlanNode::Fetch(fetch_node) =
-                                    flatten_node.node.as_ref()
-                                {
-                                    Some(fetch_node.service_name.as_ref())
-                                } else {
-                                    None
-                                };
+                                let service_name = service_name_from_plan_node(node);
                                 ctx.errors.push(GraphQLError {
                                     message: err.to_string(),
                                     locations: None,
@@ -384,12 +378,7 @@ impl<'exec> Executor<'exec> {
                     }
                     Ok(None) => { /* do nothing */ }
                     Err(err) => {
-                        let service_name =
-                            if let PlanNode::Fetch(fetch_node) = flatten_node.node.as_ref() {
-                                Some(fetch_node.service_name.as_ref())
-                            } else {
-                                None
-                            };
+                        let service_name = service_name_from_plan_node(node);
                         ctx.errors.push(GraphQLError {
                             message: err.to_string(),
                             locations: None,
@@ -745,6 +734,23 @@ impl<'exec> Executor<'exec> {
                 .await
                 .into(),
         }))
+    }
+}
+
+fn service_name_from_plan_node(node: &PlanNode) -> Option<&str> {
+    match node {
+        PlanNode::Fetch(fetch_node) => Some(fetch_node.service_name.as_ref()),
+        PlanNode::Flatten(flatten_node) => service_name_from_plan_node(flatten_node.node.as_ref()),
+        PlanNode::Condition(condition_node) => {
+            if let Some(if_clause) = condition_node.if_clause.as_ref() {
+                service_name_from_plan_node(if_clause)
+            } else if let Some(else_clause) = condition_node.else_clause.as_ref() {
+                service_name_from_plan_node(else_clause)
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
