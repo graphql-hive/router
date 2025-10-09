@@ -1,7 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize, JsonSchema, Default)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct LoggingConfig {
     #[serde(default)]
     pub level: LogLevel,
@@ -17,7 +18,7 @@ impl LoggingConfig {
     }
 }
 
-#[derive(Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     Trace,
@@ -51,7 +52,7 @@ impl LogLevel {
     }
 }
 
-#[derive(Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub enum LogFormat {
     #[serde(rename = "pretty-tree")]
     PrettyTree,
