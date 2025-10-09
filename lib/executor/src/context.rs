@@ -4,7 +4,11 @@ use hive_router_query_planner::planner::plan_nodes::{FetchNode, FetchRewrite, Qu
 
 use crate::{
     headers::plan::ResponseHeaderAggregator,
-    response::{graphql_error::GraphQLError, storage::ResponsesStorage, value::Value},
+    response::{
+        graphql_error::{GraphQLError, GraphQLErrorPath},
+        storage::ResponsesStorage,
+        value::Value,
+    },
 };
 
 pub struct ExecutionContext<'a> {
@@ -38,10 +42,20 @@ impl<'a> ExecutionContext<'a> {
         }
     }
 
-    pub fn handle_errors(&mut self, errors: Option<Vec<GraphQLError>>) {
-        if let Some(errors) = errors {
-            for error in errors {
-                self.errors.push(error);
+    pub fn handle_errors(
+        &mut self,
+        errors: Option<Vec<GraphQLError>>,
+        entity_index_error_map: Option<HashMap<&usize, Vec<GraphQLErrorPath>>>,
+    ) {
+        if let Some(response_errors) = errors {
+            for response_error in response_errors {
+                if let Some(entity_index_error_map) = &entity_index_error_map {
+                    let normalized_errors =
+                        response_error.normalize_entity_error(entity_index_error_map);
+                    self.errors.extend(normalized_errors);
+                } else {
+                    self.errors.push(response_error);
+                }
             }
         }
     }
