@@ -1,3 +1,4 @@
+pub mod csrf;
 pub mod headers;
 pub mod http_server;
 pub mod log;
@@ -45,6 +46,10 @@ pub struct HiveRouterConfig {
     /// Configuration for the headers.
     #[serde(default)]
     pub headers: headers::HeadersConfig,
+
+    /// Configuration for CSRF prevention.
+    #[serde(default)]
+    pub csrf: csrf::CSRFPreventionConfig,
 }
 
 #[derive(Debug, thiserror::Error)]

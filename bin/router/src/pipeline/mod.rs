@@ -11,6 +11,7 @@ use ntex::{
 use crate::{
     pipeline::{
         coerce_variables::coerce_request_variables,
+        csrf_prevention::perform_csrf_prevention,
         error::PipelineError,
         execution::execute_plan,
         execution_request::get_execution_request,
@@ -28,6 +29,7 @@ use crate::{
 };
 
 pub mod coerce_variables;
+pub mod csrf_prevention;
 pub mod error;
 pub mod execution;
 pub mod execution_request;
@@ -85,6 +87,8 @@ pub async fn execute_pipeline(
     body_bytes: Bytes,
     state: &Arc<RouterSharedState>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
+    perform_csrf_prevention(req, &state.router_config.csrf)?;
+
     let execution_request = get_execution_request(req, body_bytes).await?;
     let parser_payload = parse_operation_with_cache(req, state, &execution_request).await?;
     validate_operation_with_cache(req, state, &parser_payload).await?;
