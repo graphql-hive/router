@@ -8,6 +8,8 @@ pub mod query_planner;
 pub mod supergraph;
 pub mod traffic_shaping;
 
+use std::collections::HashMap;
+
 use config::{Config, Environment, File, FileFormat, FileSourceFile};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -42,7 +44,7 @@ pub struct HiveRouterConfig {
 
     /// Configuration for the traffic-shaper executor. Use these configurations to control how requests are being executed to subgraphs.
     #[serde(default)]
-    pub traffic_shaping: TrafficShapingExecutorConfig,
+    pub traffic_shaping: TrafficShapingConfig,
 
     /// Configuration for the headers.
     #[serde(default)]
@@ -54,6 +56,16 @@ pub struct HiveRouterConfig {
     /// Configuration for CORS (Cross-Origin Resource Sharing).
     #[serde(default)]
     pub cors: cors::CORSConfig,
+}
+
+#[derive(Clone, Deserialize, Serialize, JsonSchema, Default)]
+pub struct TrafficShapingConfig {
+    /// The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.
+    #[serde(default)]
+    pub all: TrafficShapingExecutorConfig,
+    /// Optional per-subgraph configurations that will override the default configuration for specific subgraphs.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub subgraphs: HashMap<String, TrafficShapingExecutorConfig>,
 }
 
 #[derive(Debug, thiserror::Error)]

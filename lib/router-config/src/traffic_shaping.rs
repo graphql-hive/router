@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +19,34 @@ pub struct TrafficShapingExecutorConfig {
     /// be deduplicated by sharing the response of other in-flight requests.
     #[serde(default = "default_dedupe_enabled")]
     pub dedupe_enabled: bool,
+
+    /// Optional timeout configuration for requests to subgraphs.
+    ///
+    /// Example with a fixed duration:
+    /// ```yaml
+    ///   timeout:
+    ///     duration: 5s
+    /// ```
+    ///
+    /// Or with a VRL expression that can return a duration based on the operation kind:
+    /// ```yaml
+    ///   timeout:
+    ///     expression: |
+    ///      if (.operation.kind == "mutation") {
+    ///        10s
+    ///      } else {
+    ///        5s
+    ///      }
+    /// ```
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<HTTPTimeoutConfig>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(rename_all = "camelCase")]
+pub enum HTTPTimeoutConfig {
+    Expression(String),
+    Duration(Duration),
 }
 
 impl Default for TrafficShapingExecutorConfig {
@@ -25,6 +55,7 @@ impl Default for TrafficShapingExecutorConfig {
             max_connections_per_host: default_max_connections_per_host(),
             pool_idle_timeout_seconds: default_pool_idle_timeout_seconds(),
             dedupe_enabled: default_dedupe_enabled(),
+            timeout: None,
         }
     }
 }

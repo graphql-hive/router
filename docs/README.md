@@ -11,7 +11,7 @@
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>Default: `{"path":"supergraph.graphql","source":"file"}`<br/>||
-|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaper executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"dedupe_enabled":true,"max_connections_per_host":100,"pool_idle_timeout_seconds":50}`<br/>||
+|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaper executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"max_connections_per_host":100,"pool_idle_timeout_seconds":50}}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -64,9 +64,10 @@ supergraph:
   path: supergraph.graphql
   source: file
 traffic_shaping:
-  dedupe_enabled: true
-  max_connections_per_host: 100
-  pool_idle_timeout_seconds: 50
+  all:
+    dedupe_enabled: true
+    max_connections_per_host: 100
+    pool_idle_timeout_seconds: 50
 
 ```
 
@@ -1366,9 +1367,66 @@ Configuration for the traffic-shaper executor. Use these configurations to contr
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**all**](#traffic_shapingall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"dedupe_enabled":true,"max_connections_per_host":100,"pool_idle_timeout_seconds":50}`<br/>||
+|[**subgraphs**](#traffic_shapingsubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
+
+**Example**
+
+```yaml
+all:
+  dedupe_enabled: true
+  max_connections_per_host: 100
+  pool_idle_timeout_seconds: 50
+
+```
+
+<a name="traffic_shapingall"></a>
+### traffic\_shaping\.all: object
+
+The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
 |**dedupe\_enabled**|`boolean`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>Default: `true`<br/>||
 |**max\_connections\_per\_host**|`integer`|Limits the concurrent amount of requests/connections per host/subgraph.<br/>Default: `100`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
 |**pool\_idle\_timeout\_seconds**|`integer`|Timeout for idle sockets being kept-alive.<br/>Default: `50`<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>||
+|**timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.operation.kind == "mutation") {<br/>       10s<br/>     } else {<br/>       5s<br/>     }<br/>```<br/>||
+
+**Example**
+
+```yaml
+dedupe_enabled: true
+max_connections_per_host: 100
+pool_idle_timeout_seconds: 50
+
+```
+
+<a name="traffic_shapingsubgraphs"></a>
+### traffic\_shaping\.subgraphs: object
+
+Optional per-subgraph configurations that will override the default configuration for specific subgraphs.
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**Additional Properties**](#traffic_shapingsubgraphsadditionalproperties)|`object`|||
+
+<a name="traffic_shapingsubgraphsadditionalproperties"></a>
+#### traffic\_shaping\.subgraphs\.additionalProperties: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**dedupe\_enabled**|`boolean`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>Default: `true`<br/>||
+|**max\_connections\_per\_host**|`integer`|Limits the concurrent amount of requests/connections per host/subgraph.<br/>Default: `100`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|**pool\_idle\_timeout\_seconds**|`integer`|Timeout for idle sockets being kept-alive.<br/>Default: `50`<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>||
+|**timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.operation.kind == "mutation") {<br/>       10s<br/>     } else {<br/>       5s<br/>     }<br/>```<br/>||
 
 **Example**
 

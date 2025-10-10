@@ -726,6 +726,7 @@ impl<'exec> Executor<'exec> {
                         variables: variable_refs,
                         representations,
                         headers: headers_map,
+                        client_request: self.client_request,
                     },
                 )
                 .await
