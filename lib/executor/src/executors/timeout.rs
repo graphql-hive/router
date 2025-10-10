@@ -69,7 +69,14 @@ fn warn_unsupported_conversion_option<T>(type_name: &str) -> Option<T> {
 
 fn vrl_value_to_duration(value: VrlValue) -> Option<Duration> {
     match value {
-        VrlValue::Integer(i) => Some(Duration::from_millis(u64::from_ne_bytes(i.to_ne_bytes()))),
+        VrlValue::Integer(i) => {
+            if i < 0 {
+                warn!("Cannot convert negative integer ({}) to Duration.", i);
+                None
+            } else {
+                Some(Duration::from_millis(i as u64))
+            }
+        },
         VrlValue::Bytes(_) => warn_unsupported_conversion_option("Bytes"),
         VrlValue::Float(_) => warn_unsupported_conversion_option("Float"),
         VrlValue::Boolean(_) => warn_unsupported_conversion_option("Boolean"),
