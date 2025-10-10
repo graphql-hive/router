@@ -1,13 +1,18 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use bytes::Bytes;
+use futures::TryFutureExt;
 use hive_router_config::traffic_shaping::HTTPTimeoutConfig;
+use http::{Request, Response};
+use http_body_util::Full;
+use hyper::body::Incoming;
 use tracing::warn;
 use vrl::compiler::Program as VrlProgram;
 use vrl::diagnostic::DiagnosticList;
 
-use crate::execution::plan::ClientRequestDetails;
 use crate::executors::http::HTTPSubgraphExecutor;
+use crate::{execution::plan::ClientRequestDetails, executors::error::SubgraphExecutorError};
 use vrl::{
     compiler::TargetValue as VrlTargetValue,
     core::Value as VrlValue,
@@ -116,6 +121,18 @@ impl HTTPSubgraphExecutor {
     ) -> Option<Duration> {
         let expression_context = ExpressionContext { client_request };
         get_timeout_duration(&self.timeout, &expression_context)
+    }
+
+    pub async fn send_request_with_timeout(
+        &self,
+        req: Request<Full<Bytes>>,
+        timeout: Duration,
+    ) -> Result<Response<Incoming>, SubgraphExecutorError> {
+        let request_op = self.send_request_to_client(req);
+
+        tokio::time::timeout(timeout, request_op)
+            .map_err(|_| SubgraphExecutorError::RequestTimeout(self.endpoint.to_string(), timeout))
+            .await?
     }
 }
 
