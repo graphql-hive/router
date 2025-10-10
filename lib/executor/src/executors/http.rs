@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
-use crate::executors::timeout::{ExpressionContext, HTTPTimeout};
+use crate::executors::timeout::HTTPTimeout;
 use dashmap::DashMap;
 use futures::TryFutureExt;
 use hive_router_config::traffic_shaping::TrafficShapingExecutorConfig;
@@ -224,10 +224,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
-            let ctx = ExpressionContext {
-                client_request: execution_request.client_request,
-            };
-            let timeout = self.get_timeout_duration(&ctx);
+            let timeout = self.get_timeout_duration(execution_request.client_request);
             return match self._send_request(body, headers, timeout).await {
                 Ok(shared_response) => HttpExecutionResponse {
                     body: shared_response.body,
@@ -253,10 +250,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
         let response_result = cell
             .get_or_try_init(|| async {
-                let ctx = ExpressionContext {
-                    client_request: execution_request.client_request,
-                };
-                let timeout = self.get_timeout_duration(&ctx);
+                let timeout = self.get_timeout_duration(execution_request.client_request);
                 let res = {
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.

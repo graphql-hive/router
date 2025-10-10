@@ -32,7 +32,7 @@ pub struct TrafficShapingExecutorConfig {
     /// ```yaml
     ///   timeout:
     ///     expression: |
-    ///      if (.operation.kind == "mutation") {
+    ///      if (.operation.type == "mutation") {
     ///        10s
     ///      } else {
     ///        5s

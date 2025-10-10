@@ -79,33 +79,120 @@ fn vrl_value_to_duration(value: VrlValue) -> Option<Duration> {
     }
 }
 
+fn get_timeout_duration<'a>(
+    timeout: &Option<HTTPTimeout>,
+    expression_context: &ExpressionContext<'a>,
+) -> Option<Duration> {
+    timeout.as_ref().and_then(|timeout| match timeout {
+        HTTPTimeout::Duration(dur) => Some(*dur),
+        HTTPTimeout::Expression(program) => {
+            let mut target = VrlTargetValue {
+                value: VrlValue::from(expression_context),
+                metadata: VrlValue::Object(BTreeMap::new()),
+                secrets: VrlSecrets::default(),
+            };
+
+            let mut state = VrlState::default();
+            let timezone = VrlTimeZone::default();
+            let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
+            match program.resolve(&mut ctx) {
+                Ok(resolved) => vrl_value_to_duration(resolved),
+                Err(err) => {
+                    warn!(
+                        "Failed to evaluate timeout expression: {:#?}, falling back to no timeout.",
+                        err
+                    );
+                    None
+                }
+            }
+        }
+    })
+}
+
 impl HTTPSubgraphExecutor {
     pub fn get_timeout_duration<'a>(
         &self,
-        expression_context: &ExpressionContext<'a>,
+        client_request: &'a ClientRequestDetails<'a>,
     ) -> Option<Duration> {
-        self.timeout.as_ref().and_then(|timeout| {
-            match timeout {
-                HTTPTimeout::Duration(dur) => Some(*dur),
-                HTTPTimeout::Expression(program) => {
-                    let mut target = VrlTargetValue {
-                        value: VrlValue::from(expression_context),
-                        metadata: VrlValue::Object(BTreeMap::new()),
-                        secrets: VrlSecrets::default(),
-                    };
+        let expression_context = ExpressionContext { client_request };
+        get_timeout_duration(&self.timeout, &expression_context)
+    }
+}
 
-                    let mut state = VrlState::default();
-                    let timezone = VrlTimeZone::default();
-                    let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
-                    match program.resolve(&mut ctx) {
-                        Ok(resolved) => vrl_value_to_duration(resolved),
-                        Err(err) => {
-                            warn!("Failed to evaluate timeout expression: {:#?}, falling back to no timeout.", err);
-                            None
-                        }
-                    }
-                },
+#[cfg(test)]
+mod tests {
+    use http::Method;
+    use ntex_http::HeaderMap;
+
+    use crate::{
+        execution::plan::{ClientRequestDetails, OperationDetails},
+        executors::timeout::get_timeout_duration,
+    };
+
+    #[test]
+    fn get_timeout_duration_from_expression() {
+        use std::time::Duration;
+
+        use hive_router_config::traffic_shaping::HTTPTimeoutConfig;
+
+        use crate::executors::timeout::HTTPTimeout;
+
+        let timeout_config = HTTPTimeoutConfig::Expression(
+            r#"
+            if .request.operation.type == "mutation" {
+                10000
+            } else {
+                5000
             }
-        })
+            "#
+            .to_string(),
+        );
+
+        let timeout = HTTPTimeout::try_from(&timeout_config).expect("Failed to create timeout");
+        let headers = HeaderMap::new();
+
+        let client_request_mutation = crate::execution::plan::ClientRequestDetails {
+            operation: OperationDetails {
+                name: Some("TestMutation".to_string()),
+                kind: "mutation",
+                query: "mutation TestMutation { doSomething }".into(),
+            },
+            url: "http://example.com/graphql".parse().unwrap(),
+            headers: &headers,
+            method: Method::POST,
+        };
+
+        let timeout = Some(timeout);
+
+        let client_request_query = ClientRequestDetails {
+            operation: OperationDetails {
+                name: Some("TestQuery".to_string()),
+                kind: "query",
+                query: "query TestQuery { field }".into(),
+            },
+            url: "http://example.com/graphql".parse().unwrap(),
+            headers: &headers,
+            method: Method::POST,
+        };
+
+        let query_ctx = crate::executors::timeout::ExpressionContext {
+            client_request: &client_request_query,
+        };
+        let duration_query = get_timeout_duration(&timeout, &query_ctx);
+        assert_eq!(
+            duration_query,
+            Some(Duration::from_millis(5000)),
+            "Expected 5000ms for query"
+        );
+
+        let mutation_ctx = crate::executors::timeout::ExpressionContext {
+            client_request: &client_request_mutation,
+        };
+        let duration_mutation = get_timeout_duration(&timeout, &mutation_ctx);
+        assert_eq!(
+            duration_mutation,
+            Some(Duration::from_millis(10000)),
+            "Expected 10000ms for mutation"
+        );
     }
 }
