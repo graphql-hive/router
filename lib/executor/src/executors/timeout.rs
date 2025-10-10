@@ -85,7 +85,7 @@ fn vrl_value_to_duration(value: VrlValue) -> Option<Duration> {
         VrlValue::Timestamp(_) => warn_unsupported_conversion_option("Timestamp"),
         VrlValue::Object(_) => warn_unsupported_conversion_option("Object"),
         VrlValue::Null => {
-            warn!("Cannot convert VRL Null value to a url value.");
+            warn!("Cannot convert VRL Null value to a Duration value.");
             None
         }
     }
