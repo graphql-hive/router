@@ -121,7 +121,7 @@ impl SubgraphExecutorMap {
                     &global_client_arc,
                 );
 
-                // TODO: Maybe reuse the in-flight requests map if dedupe is the same
+                // TODO: Maybe reuse the in-flight requests map in some cases ???
                 let inflight_requests = subgraph_config
                     .map(|_| Arc::new(DashMap::with_hasher(ABuildHasher::default())))
                     .unwrap_or_else(|| global_in_flight_requests.clone());
