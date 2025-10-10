@@ -33,9 +33,9 @@ pub struct TrafficShapingExecutorConfig {
     ///   timeout:
     ///     expression: |
     ///      if (.request.operation.type == "mutation") {
-    ///        10s
+    ///        10000
     ///      } else {
-    ///        5s
+    ///        5000
     ///      }
     /// ```
     #[serde(default, skip_serializing_if = "Option::is_none")]
