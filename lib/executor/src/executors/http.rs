@@ -6,13 +6,14 @@ use crate::executors::timeout::HTTPTimeout;
 use dashmap::DashMap;
 use futures::TryFutureExt;
 use hive_router_config::traffic_shaping::TrafficShapingExecutorConfig;
+use hyper::body::Incoming;
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
 
 use bytes::{BufMut, Bytes, BytesMut};
-use http::HeaderMap;
 use http::HeaderValue;
+use http::{HeaderMap, Request, Response};
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::Version;
@@ -136,6 +137,18 @@ impl HTTPSubgraphExecutor {
         Ok(body)
     }
 
+    pub async fn send_request_to_client(
+        &self,
+        req: Request<Full<Bytes>>,
+    ) -> Result<Response<Incoming>, SubgraphExecutorError> {
+        self.http_client
+            .request(req)
+            .map_err(|e| {
+                SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
+            })
+            .await
+    }
+
     async fn _send_request(
         &self,
         body: Vec<u8>,
@@ -153,21 +166,13 @@ impl HTTPSubgraphExecutor {
 
         *req.headers_mut() = headers;
 
-        let request_op = self.http_client.request(req).map_err(|e| {
-            SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-        });
-
         let res = if let Some(timeout) = timeout {
-            tokio::time::timeout(timeout, request_op)
-                .await
-                .map_err(|_| {
-                    SubgraphExecutorError::RequestTimeout(self.endpoint.to_string(), timeout)
-                })?
+            self.send_request_with_timeout(req, timeout).await?
         } else {
-            request_op.await
+            self.send_request_to_client(req).await?
         };
 
-        let (parts, body) = res?.into_parts();
+        let (parts, body) = res.into_parts();
 
         Ok(SharedResponse {
             status: parts.status,
