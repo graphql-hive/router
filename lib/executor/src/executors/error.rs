@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum SubgraphExecutorError {
     #[error("Failed to parse endpoint \"{0}\" as URI: {1}")]
@@ -8,4 +10,6 @@ pub enum SubgraphExecutorError {
     RequestFailure(String, String),
     #[error("Failed to serialize variable \"{0}\": {1}")]
     VariablesSerializationFailure(String, String),
+    #[error("Request to subgraph \"{0}\" timed out after {1:?}")]
+    RequestTimeout(String, Duration),
 }

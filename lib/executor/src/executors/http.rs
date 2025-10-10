@@ -1,8 +1,10 @@
 use std::sync::Arc;
+use std::time::Duration;
 
-use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
+use crate::executors::timeout::{ExpressionContext, HTTPTimeout};
 use dashmap::DashMap;
+use futures::TryFutureExt;
 use hive_router_config::traffic_shaping::TrafficShapingExecutorConfig;
 use tokio::sync::OnceCell;
 
@@ -17,8 +19,9 @@ use hyper::Version;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
+use tracing::warn;
 
-use crate::executors::common::HttpExecutionRequest;
+use crate::executors::common::{HttpExecutionRequest, HttpExecutionResponse};
 use crate::executors::error::SubgraphExecutorError;
 use crate::response::graphql_error::GraphQLError;
 use crate::utils::consts::CLOSE_BRACE;
@@ -35,6 +38,7 @@ pub struct HTTPSubgraphExecutor {
     pub semaphore: Arc<Semaphore>,
     pub config: Arc<TrafficShapingExecutorConfig>,
     pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    pub timeout: Option<HTTPTimeout>,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -58,6 +62,21 @@ impl HTTPSubgraphExecutor {
             HeaderValue::from_static("keep-alive"),
         );
 
+        let timeout = if let Some(timeout_config) = &config.timeout {
+            match HTTPTimeout::try_from(timeout_config) {
+                Ok(timeout) => Some(timeout),
+                Err(diagnostic) => {
+                    warn!(
+                        "Failed to parse timeout expression for subgraph {}: {:#?}",
+                        endpoint, diagnostic
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Self {
             endpoint,
             http_client,
@@ -65,6 +84,7 @@ impl HTTPSubgraphExecutor {
             semaphore,
             config,
             in_flight_requests,
+            timeout,
         }
     }
 
@@ -120,6 +140,7 @@ impl HTTPSubgraphExecutor {
         &self,
         body: Vec<u8>,
         headers: HeaderMap,
+        timeout: Option<Duration>,
     ) -> Result<SharedResponse, SubgraphExecutorError> {
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
@@ -132,11 +153,21 @@ impl HTTPSubgraphExecutor {
 
         *req.headers_mut() = headers;
 
-        let res = self.http_client.request(req).await.map_err(|e| {
+        let request_op = self.http_client.request(req).map_err(|e| {
             SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-        })?;
+        });
 
-        let (parts, body) = res.into_parts();
+        let res = if let Some(timeout) = timeout {
+            tokio::time::timeout(timeout, request_op)
+                .await
+                .map_err(|_| {
+                    SubgraphExecutorError::RequestTimeout(self.endpoint.to_string(), timeout)
+                })?
+        } else {
+            request_op.await
+        };
+
+        let (parts, body) = res?.into_parts();
 
         Ok(SharedResponse {
             status: parts.status,
@@ -193,7 +224,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
-            return match self._send_request(body, headers).await {
+            let ctx = ExpressionContext {
+                client_request: execution_request.client_request,
+            };
+            let timeout = self.get_timeout_duration(&ctx);
+            return match self._send_request(body, headers, timeout).await {
                 Ok(shared_response) => HttpExecutionResponse {
                     body: shared_response.body,
                     headers: shared_response.headers,
@@ -218,11 +253,15 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
         let response_result = cell
             .get_or_try_init(|| async {
+                let ctx = ExpressionContext {
+                    client_request: execution_request.client_request,
+                };
+                let timeout = self.get_timeout_duration(&ctx);
                 let res = {
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
                     let _permit = self.semaphore.acquire().await.unwrap();
-                    self._send_request(body, headers).await
+                    self._send_request(body, headers, timeout).await
                 };
                 // It's important to remove the entry from the map before returning the result.
                 // This ensures that once the OnceCell is set, no future requests can join it.
