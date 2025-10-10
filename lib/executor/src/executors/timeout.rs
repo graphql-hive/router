@@ -76,7 +76,7 @@ fn vrl_value_to_duration(value: VrlValue) -> Option<Duration> {
             } else {
                 Some(Duration::from_millis(i as u64))
             }
-        },
+        }
         VrlValue::Bytes(_) => warn_unsupported_conversion_option("Bytes"),
         VrlValue::Float(_) => warn_unsupported_conversion_option("Float"),
         VrlValue::Boolean(_) => warn_unsupported_conversion_option("Boolean"),
