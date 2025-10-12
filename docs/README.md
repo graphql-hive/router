@@ -1377,12 +1377,6 @@ all:
   dedupe_enabled: true
   max_connections_per_host: 100
   pool_idle_timeout_seconds: 50
-subgraphs:
-  products:
-    timeout:
-      duration: 10s
-  reviews:
-    max_connections_per_host: 50
 
 ```
 
