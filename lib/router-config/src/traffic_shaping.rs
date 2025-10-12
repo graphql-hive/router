@@ -46,7 +46,15 @@ pub struct TrafficShapingExecutorConfig {
 #[serde(rename_all = "camelCase")]
 pub enum SubgraphTimeoutConfig {
     Expression(String),
+    #[serde(deserialize_with = "humantime_serde")]
     Duration(Duration),
+}
+
+fn humantime_serde<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    humantime_serde::deserialize(deserializer)
 }
 
 impl Default for TrafficShapingExecutorConfig {

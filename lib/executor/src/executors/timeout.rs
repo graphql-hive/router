@@ -169,6 +169,7 @@ impl SubgraphExecutor for TimeoutExecutor {
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
+    use hive_router_config::parse_yaml_config;
     use http::Method;
     use ntex_http::HeaderMap;
 
@@ -257,5 +258,37 @@ mod tests {
             Some(Duration::from_millis(10000)),
             "Expected 10000ms for mutation"
         );
+    }
+
+    #[test]
+    fn get_timeout_duration_from_fixed_duration() {
+        let yaml_str = r#"
+           traffic_shaping:
+             all:
+                timeout: 
+                    duration: 7s
+        "#;
+        let config = parse_yaml_config(yaml_str.to_string()).unwrap();
+        let mock_executor = MockExecutor {}.to_boxed_arc();
+        let timeout_executor = TimeoutExecutor::try_new(
+            "http://example.com/graphql".parse().unwrap(),
+            &config.traffic_shaping.all.timeout.unwrap(),
+            mock_executor,
+        )
+        .unwrap();
+
+        let headers = HeaderMap::new();
+        let client_request = ClientRequestDetails {
+            operation: OperationDetails {
+                name: Some("TestQuery".to_string()),
+                kind: "query",
+                query: "query TestQuery { field }".into(),
+            },
+            url: "http://example.com/graphql".parse().unwrap(),
+            headers: &headers,
+            method: Method::POST,
+        };
+        let duration = timeout_executor.get_timeout_duration(&client_request);
+        assert_eq!(duration, Some(std::time::Duration::from_millis(7000)));
     }
 }
