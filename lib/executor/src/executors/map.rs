@@ -20,6 +20,7 @@ use crate::{
         dedupe::{ABuildHasher, SharedResponse},
         error::SubgraphExecutorError,
         http::HTTPSubgraphExecutor,
+        timeout::TimeoutExecutor,
     },
     response::graphql_error::GraphQLError,
 };
@@ -130,15 +131,23 @@ impl SubgraphExecutorMap {
                     .map(|cfg| Arc::new(cfg.clone()))
                     .unwrap_or_else(|| global_config_arc.clone());
 
-                let executor = HTTPSubgraphExecutor::new(
-                    endpoint_uri,
+                let timeout_config = subgraph_config.and_then(|cfg| cfg.timeout.as_ref());
+
+                let mut executor = HTTPSubgraphExecutor::new(
+                    endpoint_uri.clone(),
                     http_client,
                     semaphore,
-                    config_arc,
+                    config_arc.clone(),
                     inflight_requests,
-                );
+                )
+                .to_boxed_arc();
 
-                Ok((subgraph_name, executor.to_boxed_arc()))
+                if let Some(timeout_config) = timeout_config {
+                    executor = TimeoutExecutor::try_new(endpoint_uri, timeout_config, executor)?
+                        .to_boxed_arc();
+                }
+
+                Ok((subgraph_name, executor))
             })
             .collect::<Result<HashMap<_, _>, SubgraphExecutorError>>()?;
 

@@ -1,30 +1,25 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
-use crate::executors::timeout::HTTPTimeout;
 use dashmap::DashMap;
 use futures::TryFutureExt;
 use hive_router_config::traffic_shaping::TrafficShapingExecutorConfig;
-use hyper::body::Incoming;
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes};
+use http::HeaderMap;
 use http::HeaderValue;
-use http::{HeaderMap, Request, Response};
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::Version;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
-use tracing::warn;
 
 use crate::executors::common::{HttpExecutionRequest, HttpExecutionResponse};
-use crate::executors::error::SubgraphExecutorError;
-use crate::response::graphql_error::GraphQLError;
+use crate::executors::error::{error_to_graphql_bytes, SubgraphExecutorError};
 use crate::utils::consts::CLOSE_BRACE;
 use crate::utils::consts::COLON;
 use crate::utils::consts::COMMA;
@@ -39,7 +34,6 @@ pub struct HTTPSubgraphExecutor {
     pub semaphore: Arc<Semaphore>,
     pub config: Arc<TrafficShapingExecutorConfig>,
     pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
-    pub timeout: Option<HTTPTimeout>,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -63,21 +57,6 @@ impl HTTPSubgraphExecutor {
             HeaderValue::from_static("keep-alive"),
         );
 
-        let timeout = if let Some(timeout_config) = &config.timeout {
-            match HTTPTimeout::try_from(timeout_config) {
-                Ok(timeout) => Some(timeout),
-                Err(diagnostic) => {
-                    warn!(
-                        "Failed to parse timeout expression for subgraph {}: {:#?}",
-                        endpoint, diagnostic
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
         Self {
             endpoint,
             http_client,
@@ -85,7 +64,6 @@ impl HTTPSubgraphExecutor {
             semaphore,
             config,
             in_flight_requests,
-            timeout,
         }
     }
 
@@ -137,23 +115,10 @@ impl HTTPSubgraphExecutor {
         Ok(body)
     }
 
-    pub async fn send_request_to_client(
-        &self,
-        req: Request<Full<Bytes>>,
-    ) -> Result<Response<Incoming>, SubgraphExecutorError> {
-        self.http_client
-            .request(req)
-            .map_err(|e| {
-                SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-            })
-            .await
-    }
-
     async fn _send_request(
         &self,
         body: Vec<u8>,
         headers: HeaderMap,
-        timeout: Option<Duration>,
     ) -> Result<SharedResponse, SubgraphExecutorError> {
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
@@ -166,11 +131,13 @@ impl HTTPSubgraphExecutor {
 
         *req.headers_mut() = headers;
 
-        let res = if let Some(timeout) = timeout {
-            self.send_request_with_timeout(req, timeout).await?
-        } else {
-            self.send_request_to_client(req).await?
-        };
+        let res = self
+            .http_client
+            .request(req)
+            .map_err(|e| {
+                SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
+            })
+            .await?;
 
         let (parts, body) = res.into_parts();
 
@@ -186,22 +153,6 @@ impl HTTPSubgraphExecutor {
             headers: parts.headers,
         })
     }
-
-    fn error_to_graphql_bytes(&self, e: SubgraphExecutorError) -> Bytes {
-        let graphql_error: GraphQLError = format!(
-            "Failed to execute request to subgraph {}: {}",
-            self.endpoint, e
-        )
-        .into();
-        let errors = vec![graphql_error];
-        // This unwrap is safe as GraphQLError serialization shouldn't fail.
-        let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
-        let mut buffer = BytesMut::new();
-        buffer.put_slice(b"{\"errors\":");
-        buffer.put_slice(&errors_bytes);
-        buffer.put_slice(b"}");
-        buffer.freeze()
-    }
 }
 
 #[async_trait]
@@ -214,7 +165,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             Ok(body) => body,
             Err(e) => {
                 return HttpExecutionResponse {
-                    body: self.error_to_graphql_bytes(e),
+                    body: error_to_graphql_bytes(&self.endpoint, e),
                     headers: Default::default(),
                 }
             }
@@ -229,14 +180,13 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
-            let timeout = self.get_timeout_duration(execution_request.client_request);
-            return match self._send_request(body, headers, timeout).await {
+            return match self._send_request(body, headers).await {
                 Ok(shared_response) => HttpExecutionResponse {
                     body: shared_response.body,
                     headers: shared_response.headers,
                 },
                 Err(e) => HttpExecutionResponse {
-                    body: self.error_to_graphql_bytes(e),
+                    body: error_to_graphql_bytes(&self.endpoint, e),
                     headers: Default::default(),
                 },
             };
@@ -255,12 +205,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
         let response_result = cell
             .get_or_try_init(|| async {
-                let timeout = self.get_timeout_duration(execution_request.client_request);
                 let res = {
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
                     let _permit = self.semaphore.acquire().await.unwrap();
-                    self._send_request(body, headers, timeout).await
+                    self._send_request(body, headers).await
                 };
                 // It's important to remove the entry from the map before returning the result.
                 // This ensures that once the OnceCell is set, no future requests can join it.
@@ -276,7 +225,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 headers: shared_response.headers.clone(),
             },
             Err(e) => HttpExecutionResponse {
-                body: self.error_to_graphql_bytes(e.clone()),
+                body: error_to_graphql_bytes(&self.endpoint, e.clone()),
                 headers: Default::default(),
             },
         }

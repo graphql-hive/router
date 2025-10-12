@@ -1,17 +1,15 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use bytes::Bytes;
-use futures::TryFutureExt;
-use hive_router_config::traffic_shaping::HTTPTimeoutConfig;
-use http::{Request, Response};
-use http_body_util::Full;
-use hyper::body::Incoming;
+use async_trait::async_trait;
+use hive_router_config::traffic_shaping::SubgraphTimeoutConfig;
 use tracing::warn;
 use vrl::compiler::Program as VrlProgram;
-use vrl::diagnostic::DiagnosticList;
 
-use crate::executors::http::HTTPSubgraphExecutor;
+use crate::executors::common::{
+    HttpExecutionRequest, HttpExecutionResponse, SubgraphExecutor, SubgraphExecutorBoxedArc,
+};
+use crate::executors::error::error_to_graphql_bytes;
 use crate::{execution::plan::ClientRequestDetails, executors::error::SubgraphExecutorError};
 use vrl::{
     compiler::TargetValue as VrlTargetValue,
@@ -23,26 +21,9 @@ use vrl::{
 use vrl::{compiler::compile as vrl_compile, stdlib::all as vrl_build_functions};
 
 #[derive(Debug)]
-pub enum HTTPTimeout {
+pub enum TimeoutSource {
     Expression(Box<VrlProgram>),
     Duration(Duration),
-}
-
-impl TryFrom<&HTTPTimeoutConfig> for HTTPTimeout {
-    type Error = DiagnosticList;
-    fn try_from(timeout_config: &HTTPTimeoutConfig) -> Result<HTTPTimeout, DiagnosticList> {
-        match timeout_config {
-            HTTPTimeoutConfig::Duration(dur) => Ok(HTTPTimeout::Duration(*dur)),
-            HTTPTimeoutConfig::Expression(expr) => {
-                // Compile the VRL expression into a Program
-                let functions = vrl_build_functions();
-                let compilation_result = vrl_compile(expr, &functions)?;
-                Ok(HTTPTimeout::Expression(Box::new(
-                    compilation_result.program,
-                )))
-            }
-        }
-    }
 }
 
 pub struct ExpressionContext<'a> {
@@ -91,77 +72,136 @@ fn vrl_value_to_duration(value: VrlValue) -> Option<Duration> {
     }
 }
 
-fn get_timeout_duration<'a>(
-    timeout: &Option<HTTPTimeout>,
-    expression_context: &ExpressionContext<'a>,
-) -> Option<Duration> {
-    timeout.as_ref().and_then(|timeout| match timeout {
-        HTTPTimeout::Duration(dur) => Some(*dur),
-        HTTPTimeout::Expression(program) => {
-            let mut target = VrlTargetValue {
-                value: VrlValue::from(expression_context),
-                metadata: VrlValue::Object(BTreeMap::new()),
-                secrets: VrlSecrets::default(),
-            };
-
-            let mut state = VrlState::default();
-            let timezone = VrlTimeZone::default();
-            let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
-            match program.resolve(&mut ctx) {
-                Ok(resolved) => vrl_value_to_duration(resolved),
-                Err(err) => {
-                    warn!(
-                        "Failed to evaluate timeout expression: {:#?}, falling back to no timeout.",
-                        err
-                    );
-                    None
-                }
-            }
-        }
-    })
+pub struct TimeoutExecutor {
+    pub endpoint: http::Uri,
+    pub timeout: TimeoutSource,
+    pub executor: SubgraphExecutorBoxedArc,
 }
 
-impl HTTPSubgraphExecutor {
+impl TimeoutExecutor {
+    pub fn try_new(
+        endpoint: http::Uri,
+        timeout_config: &SubgraphTimeoutConfig,
+        executor: SubgraphExecutorBoxedArc,
+    ) -> Result<Self, SubgraphExecutorError> {
+        let timeout = match timeout_config {
+            SubgraphTimeoutConfig::Duration(dur) => TimeoutSource::Duration(*dur),
+            SubgraphTimeoutConfig::Expression(expr) => {
+                // Compile the VRL expression into a Program
+                let functions = vrl_build_functions();
+                let compilation_result = vrl_compile(expr, &functions).map_err(|diagnostics| {
+                    SubgraphExecutorError::TimeoutExpressionParseFailure(
+                        diagnostics
+                            .errors()
+                            .into_iter()
+                            .map(|d| d.code.to_string() + ": " + &d.message)
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    )
+                })?;
+                TimeoutSource::Expression(Box::new(compilation_result.program))
+            }
+        };
+        Ok(Self {
+            endpoint,
+            timeout,
+            executor,
+        })
+    }
     pub fn get_timeout_duration<'a>(
         &self,
         client_request: &'a ClientRequestDetails<'a>,
     ) -> Option<Duration> {
         let expression_context = ExpressionContext { client_request };
-        get_timeout_duration(&self.timeout, &expression_context)
+
+        match &self.timeout {
+            TimeoutSource::Duration(dur) => Some(*dur),
+            TimeoutSource::Expression(program) => {
+                let mut target = VrlTargetValue {
+                    value: VrlValue::from(&expression_context),
+                    metadata: VrlValue::Object(BTreeMap::new()),
+                    secrets: VrlSecrets::default(),
+                };
+
+                let mut state = VrlState::default();
+                let timezone = VrlTimeZone::default();
+                let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
+                match program.resolve(&mut ctx) {
+                    Ok(resolved) => vrl_value_to_duration(resolved),
+                    Err(err) => {
+                        warn!(
+                        "Failed to evaluate timeout expression: {:#?}, falling back to no timeout.",
+                        err
+                    );
+                        None
+                    }
+                }
+            }
+        }
     }
+}
 
-    pub async fn send_request_with_timeout(
+#[async_trait]
+impl SubgraphExecutor for TimeoutExecutor {
+    async fn execute<'a>(
         &self,
-        req: Request<Full<Bytes>>,
-        timeout: Duration,
-    ) -> Result<Response<Incoming>, SubgraphExecutorError> {
-        let request_op = self.send_request_to_client(req);
-
-        tokio::time::timeout(timeout, request_op)
-            .map_err(|_| SubgraphExecutorError::RequestTimeout(self.endpoint.to_string(), timeout))
-            .await?
+        execution_request: HttpExecutionRequest<'a>,
+    ) -> HttpExecutionResponse {
+        let timeout = self.get_timeout_duration(execution_request.client_request);
+        let execution = self.executor.execute(execution_request);
+        if let Some(timeout) = timeout {
+            match tokio::time::timeout(timeout, execution).await {
+                Ok(response) => response,
+                Err(_) => HttpExecutionResponse {
+                    body: error_to_graphql_bytes(
+                        &self.endpoint,
+                        SubgraphExecutorError::RequestTimeout(timeout),
+                    ),
+                    headers: Default::default(),
+                },
+            }
+        } else {
+            execution.await
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
     use http::Method;
     use ntex_http::HeaderMap;
 
     use crate::{
         execution::plan::{ClientRequestDetails, OperationDetails},
-        executors::timeout::get_timeout_duration,
+        executors::{
+            common::{HttpExecutionRequest, HttpExecutionResponse, SubgraphExecutor},
+            timeout::TimeoutExecutor,
+        },
     };
+
+    struct MockExecutor {}
+
+    #[async_trait]
+    impl SubgraphExecutor for MockExecutor {
+        async fn execute<'a>(
+            &self,
+            _execution_request: HttpExecutionRequest<'a>,
+        ) -> HttpExecutionResponse {
+            HttpExecutionResponse {
+                body: Default::default(),
+                headers: Default::default(),
+            }
+        }
+    }
 
     #[test]
     fn get_timeout_duration_from_expression() {
         use std::time::Duration;
 
-        use hive_router_config::traffic_shaping::HTTPTimeoutConfig;
+        use hive_router_config::traffic_shaping::SubgraphTimeoutConfig;
 
-        use crate::executors::timeout::HTTPTimeout;
-
-        let timeout_config = HTTPTimeoutConfig::Expression(
+        let timeout_config = SubgraphTimeoutConfig::Expression(
             r#"
             if .request.operation.type == "mutation" {
                 10000
@@ -172,8 +212,33 @@ mod tests {
             .to_string(),
         );
 
-        let timeout = HTTPTimeout::try_from(&timeout_config).expect("Failed to create timeout");
+        let mock_executor = MockExecutor {}.to_boxed_arc();
+
+        let timeout_executor = TimeoutExecutor::try_new(
+            "http://example.com/graphql".parse().unwrap(),
+            &timeout_config,
+            mock_executor,
+        )
+        .unwrap();
+
         let headers = HeaderMap::new();
+
+        let client_request_query = ClientRequestDetails {
+            operation: OperationDetails {
+                name: Some("TestQuery".to_string()),
+                kind: "query",
+                query: "query TestQuery { field }".into(),
+            },
+            url: "http://example.com/graphql".parse().unwrap(),
+            headers: &headers,
+            method: Method::POST,
+        };
+        let duration_query = timeout_executor.get_timeout_duration(&client_request_query);
+        assert_eq!(
+            duration_query,
+            Some(Duration::from_millis(5000)),
+            "Expected 5000ms for query"
+        );
 
         let client_request_mutation = crate::execution::plan::ClientRequestDetails {
             operation: OperationDetails {
@@ -186,33 +251,7 @@ mod tests {
             method: Method::POST,
         };
 
-        let timeout = Some(timeout);
-
-        let client_request_query = ClientRequestDetails {
-            operation: OperationDetails {
-                name: Some("TestQuery".to_string()),
-                kind: "query",
-                query: "query TestQuery { field }".into(),
-            },
-            url: "http://example.com/graphql".parse().unwrap(),
-            headers: &headers,
-            method: Method::POST,
-        };
-
-        let query_ctx = crate::executors::timeout::ExpressionContext {
-            client_request: &client_request_query,
-        };
-        let duration_query = get_timeout_duration(&timeout, &query_ctx);
-        assert_eq!(
-            duration_query,
-            Some(Duration::from_millis(5000)),
-            "Expected 5000ms for query"
-        );
-
-        let mutation_ctx = crate::executors::timeout::ExpressionContext {
-            client_request: &client_request_mutation,
-        };
-        let duration_mutation = get_timeout_duration(&timeout, &mutation_ctx);
+        let duration_mutation = timeout_executor.get_timeout_duration(&client_request_mutation);
         assert_eq!(
             duration_mutation,
             Some(Duration::from_millis(10000)),

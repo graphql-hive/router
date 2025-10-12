@@ -39,12 +39,12 @@ pub struct TrafficShapingExecutorConfig {
     ///      }
     /// ```
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout: Option<HTTPTimeoutConfig>,
+    pub timeout: Option<SubgraphTimeoutConfig>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(rename_all = "camelCase")]
-pub enum HTTPTimeoutConfig {
+pub enum SubgraphTimeoutConfig {
     Expression(String),
     Duration(Duration),
 }
