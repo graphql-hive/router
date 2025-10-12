@@ -131,8 +131,6 @@ impl SubgraphExecutorMap {
                     .map(|cfg| Arc::new(cfg.clone()))
                     .unwrap_or_else(|| global_config_arc.clone());
 
-                let timeout_config = subgraph_config.and_then(|cfg| cfg.timeout.as_ref());
-
                 let mut executor = HTTPSubgraphExecutor::new(
                     endpoint_uri.clone(),
                     http_client,
@@ -142,7 +140,7 @@ impl SubgraphExecutorMap {
                 )
                 .to_boxed_arc();
 
-                if let Some(timeout_config) = timeout_config {
+                if let Some(timeout_config) = &config_arc.timeout {
                     executor = TimeoutExecutor::try_new(endpoint_uri, timeout_config, executor)?
                         .to_boxed_arc();
                 }
