@@ -168,7 +168,10 @@ impl SubgraphExecutor for TimeoutExecutor {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use async_trait::async_trait;
+    use axum::{extract::State, http::Response, Router};
     use hive_router_config::parse_yaml_config;
     use http::Method;
     use ntex_http::HeaderMap;
@@ -177,6 +180,7 @@ mod tests {
         execution::plan::{ClientRequestDetails, OperationDetails},
         executors::{
             common::{HttpExecutionRequest, HttpExecutionResponse, SubgraphExecutor},
+            map::from_traffic_shaping_config_to_client,
             timeout::TimeoutExecutor,
         },
     };
@@ -290,5 +294,135 @@ mod tests {
         };
         let duration = timeout_executor.get_timeout_duration(&client_request);
         assert_eq!(duration, Some(std::time::Duration::from_millis(7000)));
+    }
+
+    #[tokio::test]
+    async fn cancels_http_request_when_timeout_expires() {
+        /**
+         * We will test here that when the timeout expires, the request is cancelled on the server-end as well.
+         * For that, we will create a server that sets a flag when the request is dropped/cancelled.
+         */
+        use std::sync::Arc;
+
+        use http::Method;
+
+        let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+
+        struct AppState {
+            tx: Arc<tokio::sync::broadcast::Sender<Duration>>,
+        }
+
+        let app_state = AppState { tx: Arc::new(tx) };
+
+        let app_state_arc = Arc::new(app_state);
+
+        struct CancelOnDrop {
+            start: std::time::Instant,
+            tx: Arc<tokio::sync::broadcast::Sender<Duration>>,
+        }
+
+        impl Drop for CancelOnDrop {
+            fn drop(&mut self) {
+                self.tx.send(self.start.elapsed()).unwrap();
+            }
+        }
+
+        #[axum::debug_handler]
+        async fn handler(State(state): State<Arc<AppState>>) -> Response<String> {
+            let _cancel_on_drop = CancelOnDrop {
+                start: std::time::Instant::now(),
+                tx: state.tx.clone(),
+            };
+            // Never resolve the request, just wait until it's cancelled
+            let fut = futures::future::pending::<Response<String>>();
+            fut.await
+        }
+
+        println!("Starting server...");
+        let app = Router::new()
+            .fallback(handler)
+            .with_state(app_state_arc.clone());
+        println!("Router created, binding to port...");
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
+        println!("Listener bound, starting server...");
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(listener, app).await {
+                eprintln!("Server error: {}", e);
+            }
+        });
+        println!("Server started on {}", addr);
+        let graphql_path = "graphql";
+        let endpoint: http::Uri = format!("http://{}/{}", addr, graphql_path).parse().unwrap();
+        println!("Endpoint: {}", endpoint);
+
+        let config = r#"
+           traffic_shaping:
+             all:
+                timeout: 
+                    duration: 5s
+        "#;
+
+        let config = hive_router_config::parse_yaml_config(config.to_string()).unwrap();
+        let http_client = from_traffic_shaping_config_to_client(&config.traffic_shaping.all);
+        let http_executor = crate::executors::http::HTTPSubgraphExecutor::new(
+            endpoint.clone(),
+            http_client,
+            Arc::new(tokio::sync::Semaphore::new(10)),
+            Arc::new(config.traffic_shaping.all.clone()),
+            Default::default(),
+        );
+        let timeout_executor = TimeoutExecutor::try_new(
+            endpoint,
+            &config.traffic_shaping.all.timeout.unwrap(),
+            http_executor.to_boxed_arc(),
+        )
+        .unwrap();
+
+        let headers = HeaderMap::new();
+        let client_request = ClientRequestDetails {
+            operation: OperationDetails {
+                name: Some("TestQuery".to_string()),
+                kind: "query",
+                query: "query TestQuery { field }".into(),
+            },
+            url: "http://example.com/graphql".parse().unwrap(),
+            headers: &headers,
+            method: Method::POST,
+        };
+
+        let execution_request = HttpExecutionRequest {
+            operation_name: Some("TestQuery"),
+            query: r#"{ field }"#,
+            variables: None,
+            representations: None,
+            headers: http::HeaderMap::new(),
+            client_request: &client_request,
+            dedupe: true,
+        };
+
+        println!("Sending request to executor with 5s timeout...");
+        let response = timeout_executor.execute(execution_request).await;
+
+        println!("Received response from executor.");
+        assert!(
+            response
+                .body
+                .starts_with(b"{\"errors\":[{\"message\":\"Failed to execute request to subgraph"),
+            "Expected error response due to timeout"
+        );
+
+        println!("Waiting to see if server was notified of cancellation...");
+
+        // Wait for the server to be notified that the request was cancelled
+        let elapsed = rx.recv().await.unwrap();
+        println!("Server was notified of cancellation after {:?}", elapsed);
+        assert!(
+            elapsed >= Duration::from_secs_f32(4.9),
+            "Expected server to be notified of cancellation after at least 5s, but was {:?}",
+            elapsed
+        );
+
+        println!("Test completed.");
     }
 }

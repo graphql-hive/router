@@ -156,7 +156,7 @@ impl SubgraphExecutorMap {
 }
 
 // Create a new hyper client based on the traffic shaping config
-fn from_traffic_shaping_config_to_client(
+pub fn from_traffic_shaping_config_to_client(
     config: &TrafficShapingExecutorConfig,
 ) -> Arc<Client<HttpsConnector<HttpConnector>, Full<Bytes>>> {
     Arc::new(
