@@ -26,6 +26,7 @@
     "build:debug": "napi build --platform",
     "prepublishOnly": "napi prepublish -t npm",
     "universal": "napi universal",
+    "test": "node tests",
     "version": "napi version"
   },
   "packageManager": "yarn@4.10.3"
