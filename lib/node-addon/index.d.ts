@@ -5,5 +5,5 @@
 
 export declare class QueryPlanner {
   constructor(supergraphSdl: string)
-  plan(query: string, operationName?: string | undefined | null): string
+  plan(query: string, operationName?: string | undefined | null): JsonValue
 }

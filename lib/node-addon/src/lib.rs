@@ -1,6 +1,7 @@
 #![deny(clippy::all)]
 
 use hive_router_query_planner::ast::normalization::normalize_operation;
+use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::planner::Planner;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
 use hive_router_query_planner::utils::parsing::{parse_schema, safe_parse_operation};
@@ -30,7 +31,7 @@ impl QueryPlanner {
 
     // TODO: do we want the plan to be async? we're generally running the plan within an already async task
     #[napi]
-    pub fn plan(&self, query: String, operation_name: Option<String>) -> Result<String> {
+    pub fn plan(&self, query: String, operation_name: Option<String>) -> Result<QueryPlan> {
         let planner = &self.planner;
 
         let parsed_operation = safe_parse_operation(&query)
@@ -54,9 +55,6 @@ impl QueryPlanner {
             )
             .map_err(|e| napi::Error::from_reason(format!("Failed to plan query: {}", e)))?;
 
-        let json_string = serde_json::to_string(&query_plan)
-            .map_err(|e| napi::Error::from_reason(format!("Failed to serialize plan: {}", e)))?;
-
-        Ok(json_string)
+        Ok(query_plan)
     }
 }

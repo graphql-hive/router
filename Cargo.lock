@@ -1913,6 +1913,8 @@ dependencies = [
  "insta",
  "lazy-init",
  "lazy_static",
+ "napi",
+ "napi-derive",
  "petgraph 0.8.3",
  "rustc-hash",
  "serde",
@@ -2708,6 +2710,8 @@ dependencies = [
  "napi-derive",
  "napi-sys",
  "once_cell",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
