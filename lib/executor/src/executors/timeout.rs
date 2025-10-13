@@ -145,7 +145,7 @@ impl TimeoutExecutor {
 impl SubgraphExecutor for TimeoutExecutor {
     async fn execute<'a>(
         &self,
-        execution_request: HttpExecutionRequest<'a>,
+        execution_request: &'a HttpExecutionRequest<'a>,
     ) -> HttpExecutionResponse {
         let timeout = self.get_timeout_duration(execution_request.client_request);
         let execution = self.executor.execute(execution_request);
@@ -158,6 +158,7 @@ impl SubgraphExecutor for TimeoutExecutor {
                         SubgraphExecutorError::RequestTimeout(timeout),
                     ),
                     headers: Default::default(),
+                    status: http::StatusCode::GATEWAY_TIMEOUT,
                 },
             }
         } else {
@@ -191,11 +192,12 @@ mod tests {
     impl SubgraphExecutor for MockExecutor {
         async fn execute<'a>(
             &self,
-            _execution_request: HttpExecutionRequest<'a>,
+            _execution_request: &'a HttpExecutionRequest<'a>,
         ) -> HttpExecutionResponse {
             HttpExecutionResponse {
                 body: Default::default(),
                 headers: Default::default(),
+                status: http::StatusCode::OK,
             }
         }
     }
@@ -402,7 +404,7 @@ mod tests {
         };
 
         println!("Sending request to executor with 5s timeout...");
-        let response = timeout_executor.execute(execution_request).await;
+        let response = timeout_executor.execute(&execution_request).await;
 
         println!("Received response from executor.");
         assert!(

@@ -159,19 +159,20 @@ impl HTTPSubgraphExecutor {
 impl SubgraphExecutor for HTTPSubgraphExecutor {
     async fn execute<'a>(
         &self,
-        execution_request: HttpExecutionRequest<'a>,
+        execution_request: &'a HttpExecutionRequest<'a>,
     ) -> HttpExecutionResponse {
-        let body = match self.build_request_body(&execution_request) {
+        let body = match self.build_request_body(execution_request) {
             Ok(body) => body,
             Err(e) => {
                 return HttpExecutionResponse {
                     body: error_to_graphql_bytes(&self.endpoint, e),
                     headers: Default::default(),
+                    status: http::StatusCode::BAD_REQUEST,
                 }
             }
         };
 
-        let mut headers = execution_request.headers;
+        let mut headers = execution_request.headers.clone();
         self.header_map.iter().for_each(|(key, value)| {
             headers.insert(key, value.clone());
         });
@@ -184,10 +185,12 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 Ok(shared_response) => HttpExecutionResponse {
                     body: shared_response.body,
                     headers: shared_response.headers,
+                    status: shared_response.status,
                 },
                 Err(e) => HttpExecutionResponse {
                     body: error_to_graphql_bytes(&self.endpoint, e),
                     headers: Default::default(),
+                    status: http::StatusCode::BAD_REQUEST,
                 },
             };
         }
@@ -223,10 +226,12 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             Ok(shared_response) => HttpExecutionResponse {
                 body: shared_response.body.clone(),
                 headers: shared_response.headers.clone(),
+                status: shared_response.status,
             },
             Err(e) => HttpExecutionResponse {
                 body: error_to_graphql_bytes(&self.endpoint, e.clone()),
                 headers: Default::default(),
+                status: http::StatusCode::BAD_REQUEST,
             },
         }
     }

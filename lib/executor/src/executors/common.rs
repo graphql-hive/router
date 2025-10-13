@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use http::HeaderMap;
+use http::{HeaderMap, StatusCode};
 
 use crate::execution::plan::ClientRequestDetails;
 
@@ -10,7 +10,7 @@ use crate::execution::plan::ClientRequestDetails;
 pub trait SubgraphExecutor {
     async fn execute<'a>(
         &self,
-        execution_request: HttpExecutionRequest<'a>,
+        execution_request: &'a HttpExecutionRequest<'a>,
     ) -> HttpExecutionResponse;
     fn to_boxed_arc<'a>(self) -> Arc<Box<dyn SubgraphExecutor + Send + Sync + 'a>>
     where
@@ -38,4 +38,5 @@ pub struct HttpExecutionRequest<'a> {
 pub struct HttpExecutionResponse {
     pub body: Bytes,
     pub headers: HeaderMap,
+    pub status: StatusCode,
 }
