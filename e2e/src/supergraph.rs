@@ -29,14 +29,17 @@ mod supergraph_e2e_tests {
             .with_body("type Query { dummyNew: NewType } type NewType { id: ID! }")
             .create();
 
-        let test_app = init_router_from_config_inline(&format!(
-            r#"supergraph:
+        let test_app = init_router_from_config_inline(
+            &format!(
+                r#"supergraph:
               source: hive
               endpoint: http://{host}/supergraph
               key: dummy_key
               poll_interval: 500ms
         "#,
-        ))
+            ),
+            None,
+        )
         .await
         .expect("failed to start router");
 
@@ -56,7 +59,7 @@ mod supergraph_e2e_tests {
         assert!(resp.status().is_success(), "Expected 200 OK");
 
         // Flush the caches
-        test_app.flush_internal_cache().await;
+        test_app.shutdown().await;
 
         // Now it should have the record
         assert_eq!(test_app.schema_state.validate_cache.entry_count(), 1);
@@ -66,7 +69,7 @@ mod supergraph_e2e_tests {
         // Now let's wait a bit and let the service re-load and get the new supergraph
         time::sleep(Duration::from_millis(600)).await;
         mock2.assert();
-        test_app.flush_internal_cache().await;
+        test_app.shutdown().await;
 
         // Now cache should be empty again, if supergraph has changes
         assert_eq!(test_app.schema_state.validate_cache.entry_count(), 0);
@@ -191,14 +194,17 @@ mod supergraph_e2e_tests {
             .create();
 
         let test_app = Arc::new(
-            init_router_from_config_inline(&format!(
-                r#"supergraph:
+            init_router_from_config_inline(
+                &format!(
+                    r#"supergraph:
               source: hive
               endpoint: http://{host}/supergraph
               key: dummy_key
               poll_interval: 300ms
         "#,
-            ))
+                ),
+                None,
+            )
             .await
             .expect("failed to start router"),
         );

@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../supergraph.graphql
+override_subgraph_urls:
+  accounts:
+    url: "http://0.0.0.0:4100/accounts"
+  reviews:
+    url: "http://0.0.0.0:4100/reviews"
+  products:
+    url: "http://0.0.0.0:9876/products"

@@ -21,7 +21,7 @@ use crate::utils::consts::{
 pub fn project_by_operation(
     data: &Value,
     errors: Vec<GraphQLError>,
-    extensions: &Option<HashMap<String, sonic_rs::Value>>,
+    extensions: &HashMap<String, sonic_rs::Value>,
     operation_type_name: &str,
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
@@ -70,17 +70,15 @@ pub fn project_by_operation(
         );
     }
 
-    if let Some(ext) = extensions.as_ref() {
-        if !ext.is_empty() {
-            let serialized_extensions = sonic_rs::to_vec(ext)
-                .map_err(|e| ProjectionError::ExtensionsSerializationFailure(e.to_string()))?;
-            buffer.put(COMMA);
-            buffer.put(QUOTE);
-            buffer.put("extensions".as_bytes());
-            buffer.put(QUOTE);
-            buffer.put(COLON);
-            buffer.put_slice(&serialized_extensions);
-        }
+    if !extensions.is_empty() {
+        let serialized_extensions = sonic_rs::to_vec(extensions)
+            .map_err(|e| ProjectionError::ExtensionsSerializationFailure(e.to_string()))?;
+        buffer.put(COMMA);
+        buffer.put(QUOTE);
+        buffer.put("extensions".as_bytes());
+        buffer.put(QUOTE);
+        buffer.put(COLON);
+        buffer.put_slice(&serialized_extensions);
     }
 
     buffer.put(CLOSE_BRACE);
@@ -403,6 +401,8 @@ fn check(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use graphql_parser::query::Definition;
     use hive_router_query_planner::{
         ast::{document::NormalizedDocument, normalization::create_normalized_document},
@@ -483,7 +483,7 @@ mod tests {
         let projection = project_by_operation(
             &data,
             vec![],
-            &None,
+            &HashMap::new(),
             operation_type_name,
             &selections,
             &None,

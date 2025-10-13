@@ -100,6 +100,9 @@ pub struct HiveRouterConfig {
     /// Configuration for usage reporting to GraphQL Hive.
     #[serde(default)]
     pub usage_reporting: usage_reporting::UsageReportingConfig,
+    /// Configuration for custom plugins
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub plugins: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, thiserror::Error)]

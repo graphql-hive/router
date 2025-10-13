@@ -4,6 +4,7 @@ mod http_utils;
 mod jwt;
 mod logger;
 pub mod pipeline;
+pub mod plugins;
 mod schema_state;
 mod shared_state;
 mod supergraph;
@@ -21,10 +22,12 @@ use crate::{
     jwt::JwtAuthRuntime,
     logger::configure_logging,
     pipeline::{graphql_request_handler, usage_reporting::init_hive_user_agent},
+    plugins::plugins_service::PluginService,
 };
 
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
+pub use crate::plugins::registry::PluginRegistry;
 use hive_router_config::{load_config, HiveRouterConfig};
 use http::header::RETRY_AFTER;
 use ntex::{
@@ -46,7 +49,7 @@ async fn graphql_endpoint_handler(
         if let Some(early_response) = app_state
             .cors_runtime
             .as_ref()
-            .and_then(|cors| cors.get_early_response(&request))
+            .and_then(|cors| cors.get_early_response(&req))
         {
             return early_response;
         }
@@ -62,7 +65,7 @@ async fn graphql_endpoint_handler(
 
         // Apply CORS headers to the final response if CORS is configured.
         if let Some(cors) = app_state.cors_runtime.as_ref() {
-            cors.set_headers(&request, res.headers_mut());
+            cors.set_headers(&req, res.headers_mut());
         }
 
         res
@@ -75,7 +78,9 @@ async fn graphql_endpoint_handler(
     }
 }
 
-pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn router_entrypoint(
+    plugin_registry: Option<PluginRegistry>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
     configure_logging(&router_config.log);
@@ -83,10 +88,13 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
     let addr = router_config.http.address();
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let (shared_state, schema_state) =
-        configure_app_from_config(router_config, &mut bg_tasks_manager).await?;
+        configure_app_from_config(router_config, &mut bg_tasks_manager, plugin_registry).await?;
+
+    let shared_state_clone = shared_state.clone();
 
     let maybe_error = web::HttpServer::new(move || {
         web::App::new()
+            .wrap(PluginService)
             .state(shared_state.clone())
             .state(schema_state.clone())
             .configure(configure_ntex_app)
@@ -97,15 +105,27 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
     .await
     .map_err(|err| err.into());
 
-    info!("server stopped, clearning background tasks");
+    info!("server stopped, clearing background tasks");
     bg_tasks_manager.shutdown();
 
+    invoke_shutdown_hooks(&shared_state_clone).await;
+
     maybe_error
+}
+
+pub async fn invoke_shutdown_hooks(shared_state: &RouterSharedState) {
+    if let Some(plugins) = &shared_state.plugins {
+        info!("invoking plugin shutdown hooks");
+        for plugin in plugins.iter() {
+            plugin.on_shutdown().await;
+        }
+    }
 }
 
 pub async fn configure_app_from_config(
     router_config: HiveRouterConfig,
     bg_tasks_manager: &mut BackgroundTasksManager,
+    plugin_registry: Option<PluginRegistry>,
 ) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), Box<dyn std::error::Error>> {
     let jwt_runtime = match router_config.jwt.is_jwt_auth_enabled() {
         true => Some(JwtAuthRuntime::init(bg_tasks_manager, &router_config.jwt).await?),
@@ -119,16 +139,25 @@ pub async fn configure_app_from_config(
         )?),
         false => None,
     };
+    let plugins = match plugin_registry {
+        Some(plugin_registry) => plugin_registry.initialize_plugins(&router_config)?,
+        None => None,
+    };
 
     let router_config_arc = Arc::new(router_config);
-    let schema_state =
-        SchemaState::new_from_config(bg_tasks_manager, router_config_arc.clone()).await?;
-    let schema_state_arc = Arc::new(schema_state);
     let shared_state = Arc::new(RouterSharedState::new(
-        router_config_arc,
+        router_config_arc.clone(),
         jwt_runtime,
         hive_usage_agent,
+        plugins,
     )?);
+    let schema_state = SchemaState::new_from_config(
+        bg_tasks_manager,
+        router_config_arc.clone(),
+        shared_state.clone(),
+    )
+    .await?;
+    let schema_state_arc = Arc::new(schema_state);
 
     Ok((shared_state, schema_state_arc))
 }
