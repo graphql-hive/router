@@ -29,7 +29,7 @@ tokio-util = { workspace = true }
 regex-automata = { workspace = true }
 retry-policies = { workspace = true }
 recloser = "1.3.1"
-futures-util = "0.3.31"
+futures-util = { workspace = true }
 typify = "0.6.0"
 regress = "0.10.5"
 lazy_static = { workspace = true }

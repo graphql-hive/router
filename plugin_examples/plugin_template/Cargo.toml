@@ -1,0 +1,18 @@
+[package]
+name = "plugin-template"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+authors = ["The Guild"]
+repository = "https://github.com/graphql-hive/router"
+homepage = "https://github.com/graphql-hive/router"
+publish = false
+
+[lib]
+
+[[bin]]
+name = "hive_router_with_plugin"
+path = "src/main.rs"
+
+[dependencies]
+hive-router = { version = "*", path = "../../bin/router" }

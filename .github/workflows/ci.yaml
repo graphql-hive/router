@@ -48,6 +48,22 @@ jobs:
           RUST_BACKTRACE: full
           RUST_LOG: debug
 
+  plugin_examples:
+    name: test / plugin examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - name: test plugin examples
+        run: cargo test_plugin_examples
+        timeout-minutes: 60
+        env:
+          RUST_BACKTRACE: full
+          RUST_LOG: debug
+
   node-addon-test:
     name: test / node-addon
     runs-on: ubuntu-latest
@@ -142,7 +158,18 @@ jobs:
           path: ${{matrix.package}}/target/criterion
 
   router-benchmark:
-    name: benchmark / router
+    strategy:
+      matrix:
+        include:
+          - name: "default"
+            package: "hive-router"
+            binary: "hive_router"
+            config: "bench/configs/default.config.yaml"
+          - name: "plugins"
+            package: "plugin-template"
+            binary: "hive_router_with_plugin"
+            config: "bench/configs/plugins.config.yaml"
+    name: benchmark / router / ${{ matrix.name }}
     runs-on: ubuntu-latest
     env:
       NODE_NO_WARNINGS: true
@@ -166,14 +193,14 @@ jobs:
       - name: Run subgraphs
         run: ./target/release/subgraphs & sleep 5
       - name: Build router
-        run: cargo build --release -p hive-router
+        run: cargo build --release -p ${{ matrix.package }}
       - name: Run router
         run: |
-          ./target/release/hive_router &
+          ./target/release/${{ matrix.binary }} &
           echo "$!" > router.pid
           sleep 5
         env:
-          SUPERGRAPH_FILE_PATH: bench/supergraph.graphql
+          ROUTER_CONFIG_FILE_PATH: ${{matrix.config}}
       # run only on main
       - name: Run k6 benchmark for Pull Request
         if: github.event_name == 'push'
@@ -181,7 +208,7 @@ jobs:
       # run only on PR
       - name: Run k6 benchmark for Pull Request
         if: github.event_name == 'pull_request'
-        run: k6 run -e SUMMARY_PATH=./bench/results/pr bench/k6.js
+        run: k6 run -e SUMMARY_PATH=./bench/results/pr -e BENCH_NAME=${{ matrix.name }} bench/k6.js
       - name: Checkout main branch in a separate directory
         if: github.event_name == 'pull_request'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6

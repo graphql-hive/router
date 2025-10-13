@@ -1,11 +1,19 @@
-use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
+use std::{any::Any, collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
+use bollard::{
+    exec::{CreateExecOptions, StartExecResults},
+    query_parameters::CreateImageOptionsBuilder,
+    secret::{ContainerCreateBody, ContainerCreateResponse, CreateImageInfo, HostConfig, PortMap},
+    Docker,
+};
+use futures_util::TryStreamExt;
 use hive_router::{
-    background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    init_rustls_crypto_provider, telemetry::Telemetry, RouterSharedState, SchemaState,
+    configure_app_from_config, configure_ntex_app, init_rustls_crypto_provider,
+    invoke_shutdown_hooks, plugins::plugins_service::PluginService, telemetry::Telemetry, BoxError,
+    PluginRegistry, RouterSharedState, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
-
+use hive_router_internal::background_tasks::BackgroundTasksManager;
 use ntex::{
     http::Request,
     web::{
@@ -131,12 +139,26 @@ pub async fn init_router_from_config_file(
     TestRouterApp<
         impl ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
     >,
-    Box<dyn std::error::Error>,
+    BoxError,
 > {
     let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(config_path);
     let router_config = load_config(Some(supergraph_path.to_str().unwrap().to_string()))?;
 
-    init_router_from_config(router_config).await
+    _init_router_from_config(router_config, PluginRegistry::new()).await
+}
+
+pub async fn init_router_from_config_file_with_plugins(
+    config_path: &str,
+    plugin_registry: PluginRegistry,
+) -> Result<
+    TestRouterApp<
+        impl ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
+    >,
+    BoxError,
+> {
+    let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(config_path);
+    let router_config = load_config(Some(supergraph_path.to_str().unwrap().to_string()))?;
+    _init_router_from_config(router_config, plugin_registry).await
 }
 
 pub async fn init_router_from_config_inline(
@@ -145,15 +167,39 @@ pub async fn init_router_from_config_inline(
     TestRouterApp<
         impl ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
     >,
-    Box<dyn std::error::Error>,
+    BoxError,
+> {
+    _init_router_from_config_inline(config_yaml, PluginRegistry::new()).await
+}
+
+pub async fn init_router_from_config_inline_with_plugins(
+    config_yaml: &str,
+    plugin_registry: PluginRegistry,
+) -> Result<
+    TestRouterApp<
+        impl ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
+    >,
+    BoxError,
+> {
+    _init_router_from_config_inline(config_yaml, plugin_registry).await
+}
+
+async fn _init_router_from_config_inline(
+    config_yaml: &str,
+    plugin_registry: PluginRegistry,
+) -> Result<
+    TestRouterApp<
+        impl ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
+    >,
+    BoxError,
 > {
     let router_config = parse_yaml_config(config_yaml.to_string())?;
-    init_router_from_config(router_config).await
+    _init_router_from_config(router_config, plugin_registry).await
 }
 
 pub struct TestRouterApp<T> {
     pub app: Pipeline<T>,
-    pub _shared_state: Arc<RouterSharedState>,
+    pub shared_state: Arc<RouterSharedState>,
     pub schema_state: Arc<SchemaState>,
     pub bg_tasks_manager: BackgroundTasksManager,
     pub telemetry: Telemetry,
@@ -169,10 +215,11 @@ impl<S> TestRouterApp<S> {
         self.app.call(req).await
     }
 
-    pub async fn flush_internal_cache(&self) {
+    pub async fn shutdown(&self) {
         self.schema_state.normalize_cache.run_pending_tasks().await;
         self.schema_state.plan_cache.run_pending_tasks().await;
         self.schema_state.validate_cache.run_pending_tasks().await;
+        invoke_shutdown_hooks(&self.shared_state).await;
     }
 
     pub fn hold_until_shutdown(&mut self, dependency: Box<dyn Any>) {
@@ -180,13 +227,14 @@ impl<S> TestRouterApp<S> {
     }
 }
 
-pub async fn init_router_from_config(
+async fn _init_router_from_config(
     router_config: HiveRouterConfig,
+    plugin_registry: PluginRegistry,
 ) -> Result<
     TestRouterApp<
         impl ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
     >,
-    Box<dyn std::error::Error>,
+    BoxError,
 > {
     init_rustls_crypto_provider();
     let (telemetry, subscriber) = Telemetry::init_subscriber(&router_config)?;
@@ -195,26 +243,26 @@ pub async fn init_router_from_config(
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let http_config = router_config.http.clone();
     let graphql_path = http_config.graphql_endpoint();
-
     let (shared_state, schema_state) = configure_app_from_config(
         router_config,
         telemetry.context.clone(),
         &mut bg_tasks_manager,
+        plugin_registry,
     )
-    .await
-    .unwrap();
+    .await?;
 
     let ntex_app = test::init_service(
         web::App::new()
+            .wrap(PluginService)
             .state(shared_state.clone())
             .state(schema_state.clone())
-            .configure(|m| configure_ntex_app(m, &graphql_path)),
+            .configure(|m| configure_ntex_app(m, graphql_path)),
     )
     .await;
 
     Ok(TestRouterApp {
         app: ntex_app,
-        _shared_state: shared_state,
+        shared_state,
         schema_state,
         bg_tasks_manager,
         telemetry,
@@ -287,4 +335,132 @@ fn shutdown_telemetry_sync(telemetry: &Telemetry) {
         });
     });
     let _ = handle.join();
+}
+#[derive(Default)]
+pub struct TestDockerContainerOpts {
+    pub name: String,
+    pub image: String,
+    pub ports: HashMap<u16, u16>,
+    pub env: Vec<String>,
+}
+
+pub struct TestDockerContainer {
+    docker: Docker,
+    container: ContainerCreateResponse,
+}
+
+impl TestDockerContainer {
+    pub async fn async_new(opts: TestDockerContainerOpts) -> Result<Self, bollard::errors::Error> {
+        let docker =
+            Docker::connect_with_local_defaults().expect("Failed to connect to Docker daemon");
+        let mut port_bindings = PortMap::new();
+        for (container_port, host_port) in opts.ports.iter() {
+            port_bindings.insert(
+                format!("{}/tcp", container_port),
+                Some(vec![bollard::models::PortBinding {
+                    host_port: Some(host_port.to_string()),
+                    ..Default::default()
+                }]),
+            );
+        }
+        let _: Vec<CreateImageInfo> = docker
+            .create_image(
+                Some(
+                    CreateImageOptionsBuilder::default()
+                        .from_image(&opts.image)
+                        .build(),
+                ),
+                None,
+                None,
+            )
+            .try_collect()
+            .await
+            .expect("Failed to pull the image");
+        let container_exists = docker
+            .list_containers(Some(bollard::query_parameters::ListContainersOptions {
+                all: true,
+                ..Default::default()
+            }))
+            .await?
+            .into_iter()
+            .any(|c| {
+                c.names
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|name| name.trim_start_matches('/').eq(&opts.name))
+            });
+        if container_exists {
+            docker
+                .remove_container(
+                    &opts.name,
+                    Some(bollard::query_parameters::RemoveContainerOptions {
+                        force: true,
+                        ..Default::default()
+                    }),
+                )
+                .await
+                .expect("Failed to remove existing container");
+        }
+        let container = docker
+            .create_container(
+                Some(
+                    bollard::query_parameters::CreateContainerOptionsBuilder::default()
+                        .name(&opts.name)
+                        .build(),
+                ),
+                ContainerCreateBody {
+                    image: Some(opts.image.to_string()),
+                    host_config: Some(HostConfig {
+                        port_bindings: Some(port_bindings),
+                        ..Default::default()
+                    }),
+                    env: Some(opts.env),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("Failed to create the container");
+        docker
+            .start_container(
+                &container.id,
+                None::<bollard::query_parameters::StartContainerOptions>,
+            )
+            .await
+            .expect("Failed to start the container");
+        Ok(Self { docker, container })
+    }
+    pub async fn exec(&self, cmd: Vec<&str>) -> Result<(), bollard::errors::Error> {
+        let exec = self
+            .docker
+            .create_exec(
+                &self.container.id,
+                CreateExecOptions {
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    cmd: Some(cmd),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        if let StartExecResults::Attached { mut output, .. } =
+            self.docker.start_exec(&exec.id, None).await?
+        {
+            while let Some(msg) = output.try_next().await? {
+                print!("{}", msg);
+            }
+        }
+        Ok(())
+    }
+    pub async fn stop(&self) {
+        self.docker
+            .remove_container(
+                &self.container.id,
+                Some(bollard::query_parameters::RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .expect("Failed to remove the container");
+    }
 }
