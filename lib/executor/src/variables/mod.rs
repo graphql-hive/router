@@ -69,6 +69,9 @@ fn validate_runtime_value(
 ) -> Result<(), String> {
     match type_node {
         TypeNode::Named(name) => {
+            if let ValueRef::Null = value {
+                return Ok(());
+            }
             if let Some(enum_values) = schema_metadata.enum_values.get(name) {
                 if let ValueRef::String(ref s) = value {
                     if !enum_values.contains(&s.to_string()) {
@@ -179,6 +182,9 @@ fn validate_runtime_value(
             validate_runtime_value(value, inner_type, schema_metadata)?;
         }
         TypeNode::List(inner_type) => {
+            if let ValueRef::Null = value {
+                return Ok(());
+            }
             if let ValueRef::Array(arr) = value {
                 for item in arr.iter() {
                     validate_runtime_value(item.as_ref(), inner_type, schema_metadata)?;
@@ -189,4 +195,22 @@ fn validate_runtime_value(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn allow_null_values_for_scalar_non_nullable_types() {
+        let schema_metadata = crate::introspection::schema::SchemaMetadata::default();
+
+        let scalars = vec!["String", "Int", "Float", "Boolean", "ID"];
+        for scalar in scalars {
+            let type_node = crate::variables::TypeNode::Named(scalar.to_string());
+
+            let value = sonic_rs::ValueRef::Null;
+
+            let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
+            assert_eq!(result, Ok(()));
+        }
+    }
 }
