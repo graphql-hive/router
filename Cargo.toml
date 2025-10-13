@@ -4,6 +4,7 @@ members = [
   "lib/router-config",
   "lib/wasm-lib",
   "lib/executor",
+  "lib/node-addon",
   "bin/dev-cli",
   "bin/router",
   "e2e",
