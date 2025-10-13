@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../../e2e/supergraph.graphql
+plugins:
+  root_field_limit:
+      enabled: true
+      config:
+          max_root_fields: 1

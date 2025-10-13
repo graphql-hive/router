@@ -53,18 +53,20 @@ regex-automata = { workspace = true }
 ahash = { workspace = true }
 rustls = { workspace = true, features = ["aws-lc-rs"] }
 hyper-rustls = { workspace = true, features = ["aws-lc-rs"]}
+dashmap = { workspace = true }
+
+moka = { workspace = true }
+ulid = "1.2.1"
+tokio-util = { workspace = true }
+cookie = "0.18.1"
+arc-swap = { workspace = true }
+lasso2 = "0.8.2"
 anyhow = { workspace = true }
 combine = { workspace = true }
 strum = { workspace = true }
 insta = { workspace = true }
-moka = { workspace = true }
-tokio-util = { workspace = true }
 
 mimalloc = { version = "0.1.48", features = ["v3"] }
-ulid = "1.2.1"
-cookie = "0.18.1"
-arc-swap = "1.7.1"
-lasso2 = "0.8.2"
 mediatype = "0.21.0"
 headers-accept = "0.3.0"
 md5 = "0.8.0"

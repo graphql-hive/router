@@ -38,7 +38,8 @@ mod router_timeout;
 mod supergraph;
 #[cfg(test)]
 mod telemetry;
-#[cfg(test)]
-mod testkit;
+
 #[cfg(test)]
 mod timeout_per_subgraph;
+pub use mockito;
+pub mod testkit;

@@ -7,20 +7,19 @@ use async_trait::async_trait;
 use graphql_tools::parser::schema::Document;
 use hive_console_sdk::agent::usage_agent::{AgentError, UsageAgentExt};
 use hive_console_sdk::agent::usage_agent::{ExecutionReport, UsageAgent};
-use hive_router_config::telemetry::hive::{
-    is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig,
+use hive_router_config::{
+    telemetry::hive::{is_slug_target_ref, is_uuid_target_ref, HiveTelemetryConfig},
+    usage_reporting::UsageReportingConfig,
 };
-use hive_router_config::usage_reporting::UsageReportingConfig;
-use hive_router_internal::telemetry::resolve_value_or_expression;
+use hive_router_internal::{
+    background_tasks::{BackgroundTask, BackgroundTasksManager},
+    telemetry::resolve_value_or_expression,
+};
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
-
 use rand::Rng;
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    background_tasks::{BackgroundTask, BackgroundTasksManager},
-    consts::ROUTER_VERSION,
-};
+use crate::consts::ROUTER_VERSION;
 
 #[derive(Debug, thiserror::Error)]
 pub enum UsageReportingError {
@@ -77,7 +76,7 @@ pub fn init_hive_usage_agent(
 
     let agent = agent_builder.build()?;
 
-    bg_tasks_manager.register_task(agent.clone());
+    bg_tasks_manager.register_task(UsageAgentTask(agent.clone()));
     Ok(agent)
 }
 
@@ -130,13 +129,15 @@ pub async fn collect_usage_report<'a>(
     }
 }
 
+struct UsageAgentTask(UsageAgent);
+
 #[async_trait]
-impl BackgroundTask for UsageAgent {
+impl BackgroundTask for UsageAgentTask {
     fn id(&self) -> &str {
         "hive_console_usage_report_task"
     }
 
     async fn run(&self, token: CancellationToken) {
-        self.start_flush_interval(&token).await
+        self.0.start_flush_interval(&token).await
     }
 }

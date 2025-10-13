@@ -1,9 +1,9 @@
-pub mod background_tasks;
 mod consts;
 pub mod error;
 mod http_utils;
 mod jwt;
 pub mod pipeline;
+pub mod plugins;
 mod schema_state;
 mod shared_state;
 mod supergraph;
@@ -13,7 +13,6 @@ mod utils;
 use std::sync::Arc;
 
 use crate::{
-    background_tasks::BackgroundTasksManager,
     consts::ROUTER_VERSION,
     error::RouterInitError,
     http_utils::{
@@ -31,23 +30,41 @@ use crate::{
             max_directives_rule::MaxDirectivesRule,
         },
     },
+    plugins::plugins_service::PluginService,
     telemetry::HeaderExtractor,
 };
 
+pub use crate::plugins::registry::PluginRegistry;
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
-
+pub use arc_swap::ArcSwap;
+pub use async_trait::async_trait;
+pub use dashmap::DashMap;
+pub use graphql_tools;
 use graphql_tools::validation::rules::default_rules_validation_plan;
 use hive_router_config::{load_config, HiveRouterConfig};
+use hive_router_internal::background_tasks::BackgroundTasksManager;
 use hive_router_internal::telemetry::{
     otel::tracing_opentelemetry::OpenTelemetrySpanExt,
     traces::spans::http_request::HttpServerRequestSpan, TelemetryContext,
 };
+pub use hive_router_internal::BoxError;
+pub use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
+pub use hive_router_plan_executor::executors::http::SubgraphHttpResponse;
+pub use hive_router_plan_executor::response::graphql_error::GraphQLError;
+pub use hive_router_query_planner as query_planner;
+pub use http;
 use http::header::{CONTENT_TYPE, RETRY_AFTER};
-use ntex::util::{select, Either};
+pub use mimalloc::MiMalloc as DefaultGlobalAllocator;
+pub use ntex;
+pub use ntex::main;
 use ntex::{
     time::sleep,
+    util::{select, Either},
     web::{self, HttpRequest},
 };
+pub use sonic_rs;
+pub use tokio;
+pub use tracing;
 use tracing::{info, warn, Instrument};
 
 static GRAPHIQL_HTML: &str = include_str!("../static/graphiql.html");
@@ -148,7 +165,7 @@ async fn graphql_endpoint_handler(
     }
 }
 
-pub async fn router_entrypoint() -> Result<(), RouterInitError> {
+pub async fn router_entrypoint(plugin_registry: PluginRegistry) -> Result<(), RouterInitError> {
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
     let telemetry = telemetry::Telemetry::init_global(&router_config)?;
@@ -160,12 +177,16 @@ pub async fn router_entrypoint() -> Result<(), RouterInitError> {
         router_config,
         telemetry.context.clone(),
         &mut bg_tasks_manager,
+        plugin_registry,
     )
     .await?;
+
+    let shared_state_clone = shared_state.clone();
 
     let maybe_error = web::HttpServer::new(async move || {
         let lp_gql_path = http_config.graphql_endpoint().to_string();
         web::App::new()
+            .middleware(PluginService)
             .state(shared_state.clone())
             .state(schema_state.clone())
             .configure(|m| configure_ntex_app(m, http_config.graphql_endpoint()))
@@ -177,17 +198,29 @@ pub async fn router_entrypoint() -> Result<(), RouterInitError> {
     .await
     .map_err(RouterInitError::HttpServerStartError);
 
-    info!("server stopped, clearning background tasks");
+    info!("server stopped, clearing background tasks");
     bg_tasks_manager.shutdown();
     telemetry.graceful_shutdown().await;
 
+    invoke_shutdown_hooks(&shared_state_clone).await;
+
     maybe_error
+}
+
+pub async fn invoke_shutdown_hooks(shared_state: &RouterSharedState) {
+    if let Some(plugins) = &shared_state.plugins {
+        info!("invoking plugin shutdown hooks");
+        for plugin in plugins.as_ref() {
+            plugin.on_shutdown().await;
+        }
+    }
 }
 
 pub async fn configure_app_from_config(
     router_config: HiveRouterConfig,
     telemetry_context: TelemetryContext,
     bg_tasks_manager: &mut BackgroundTasksManager,
+    plugin_registry: PluginRegistry,
 ) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), RouterInitError> {
     let jwt_runtime = match router_config.jwt.is_jwt_auth_enabled() {
         true => Some(JwtAuthRuntime::init(bg_tasks_manager, &router_config.jwt).await?),
@@ -200,6 +233,7 @@ pub async fn configure_app_from_config(
         }
         _ => None,
     };
+    let plugins_arc = plugin_registry.initialize_plugins(&router_config, bg_tasks_manager)?;
 
     let router_config_arc = Arc::new(router_config);
     let telemetry_context_arc = Arc::new(telemetry_context);
@@ -207,6 +241,7 @@ pub async fn configure_app_from_config(
         bg_tasks_manager,
         telemetry_context_arc.clone(),
         router_config_arc.clone(),
+        plugins_arc.clone(),
     )
     .await?;
     let schema_state_arc = Arc::new(schema_state);
@@ -232,6 +267,7 @@ pub async fn configure_app_from_config(
         hive_usage_agent,
         validation_plan,
         telemetry_context_arc,
+        plugins_arc,
     )?);
 
     Ok((shared_state, schema_state_arc))

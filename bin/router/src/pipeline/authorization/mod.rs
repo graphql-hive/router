@@ -9,7 +9,7 @@
 mod tests;
 
 mod collector;
-mod metadata;
+pub mod metadata;
 mod rebuilder;
 mod tree;
 
@@ -18,6 +18,7 @@ use std::sync::Arc;
 use crate::pipeline::authorization::collector::{
     collect_authorization_statuses, propagate_null_bubbling,
 };
+use crate::pipeline::authorization::metadata::AuthorizationMetadataExt;
 use crate::pipeline::authorization::rebuilder::{
     rebuild_authorized_operation, rebuild_authorized_projection_plan,
 };
@@ -28,6 +29,7 @@ use crate::pipeline::normalize::GraphQLNormalizationPayload;
 
 use hive_router_config::authorization::UnauthorizedMode;
 use hive_router_config::HiveRouterConfig;
+use hive_router_internal::authorization::metadata::AuthorizationMetadata;
 use hive_router_plan_executor::execution::client_request_details::JwtRequestDetails;
 use hive_router_plan_executor::introspection::schema::SchemaMetadata;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
@@ -35,9 +37,7 @@ use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use hive_router_query_planner::ast::operation::OperationDefinition;
 
 use hive_router_internal::telemetry::traces::spans::graphql::GraphQLAuthorizeSpan;
-pub use metadata::{
-    AuthorizationMetadata, AuthorizationMetadataError, ScopeId, ScopeInterner, UserAuthContext,
-};
+pub use metadata::{AuthorizationMetadataError, UserAuthContext};
 
 /// Error representing an unauthorized field access.
 ///

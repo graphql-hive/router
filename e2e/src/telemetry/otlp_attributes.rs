@@ -354,7 +354,7 @@ async fn test_default_client_identification() {
       Kind: Server
       Status: message='' code='0'
       Attributes:
-        graphql.document.hash: 1237612228098794304
+        graphql.document.hash: 6258881170828510919
         graphql.operation.type: query
         hive.client.name: e2e
         hive.client.version: tests
@@ -433,7 +433,7 @@ async fn test_custom_client_identification() {
       Kind: Server
       Status: message='' code='0'
       Attributes:
-        graphql.document.hash: 1237612228098794304
+        graphql.document.hash: 6258881170828510919
         graphql.operation.type: query
         hive.client.name: e2e
         hive.client.version: tests

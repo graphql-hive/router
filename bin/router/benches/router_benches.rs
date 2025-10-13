@@ -1,9 +1,11 @@
 use criterion::{criterion_group, criterion_main, Criterion};
+use hive_router::pipeline::authorization::metadata::AuthorizationMetadataExt;
 use hive_router::pipeline::{
-    authorization::{apply_authorization_to_operation, AuthorizationMetadata},
+    authorization::apply_authorization_to_operation,
     coerce_variables::CoerceVariablesPayload,
     normalize::{GraphQLNormalizationPayload, OperationIdentity},
 };
+use hive_router_internal::authorization::metadata::AuthorizationMetadata;
 use hive_router_plan_executor::{
     execution::client_request_details::JwtRequestDetails,
     introspection::{

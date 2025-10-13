@@ -30,11 +30,11 @@ export function handleSummary(data) {
       pr: __ENV.GITHUB_PR,
       org: "graphql-hive",
       repo: "router",
-      commentKey: `k6-benchmark`,
+      commentKey: `k6-benchmark-${__ENV.BENCH_NAME}`,
       renderTitle({ passes }) {
         return passes
-          ? `✅ \`k6-benchmark\` results`
-          : `❌ \`k6-benchmark\` failed`;
+          ? `✅ \`k6-benchmark-${__ENV.BENCH_NAME}\` results`
+          : `❌ \`k6-benchmark-${__ENV.BENCH_NAME}\` failed`;
       },
       renderMessage({ passes, checks, thresholds }) {
         const result = [];
@@ -171,17 +171,11 @@ function handleBenchmarkSummary(data, additionalContext = {}) {
 }
 
 function sendGraphQLRequest() {
-  const res = http.post(
+  return http.post(
     endpoint,
     graphqlRequest.payload,
     graphqlRequest.params,
   );
-
-  if (res.status !== 200) {
-    console.log(`‼️ Failed to run HTTP request:`, res);
-  }
-
-  return res;
 }
 
 function makeGraphQLRequest() {
@@ -191,11 +185,10 @@ function makeGraphQLRequest() {
     "no graphql errors": (resp) => {
       let has_errors = resp.body.includes(`"errors"`);
       if (has_errors) {
-        printOnce(
-          "graphql_errors",
-          `‼️ Got GraphQL errors, here's a sample:`,
-          res.body,
-        );
+        const json = resp.json();
+        for (const error of json.errors) {
+          printOnce(error.message, `‼️ Got GraphQL error:`, error);
+        }
       }
 
       return !has_errors;
