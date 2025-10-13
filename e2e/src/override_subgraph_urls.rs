@@ -16,6 +16,7 @@ mod override_subgraph_urls_e2e_tests {
         let subgraphs_server = SubgraphsServer::start_with_port(4100).await;
         let app = init_router_from_config_file(
             "configs/override_subgraph_urls/override_static.router.yaml",
+            None,
         )
         .await
         .unwrap();
@@ -48,6 +49,7 @@ mod override_subgraph_urls_e2e_tests {
         let subgraphs_server = SubgraphsServer::start_with_port(4100).await;
         let app = init_router_from_config_file(
             "configs/override_subgraph_urls/override_dynamic_header.router.yaml",
+            None,
         )
         .await
         .unwrap();
@@ -73,17 +75,12 @@ mod override_subgraph_urls_e2e_tests {
         let req = init_graphql_request("{ users { id } }", None);
         let resp = test::call_service(&app.app, req.to_request()).await;
 
-        assert!(resp.status().is_success(), "Expected 200 OK");
         let body = test::read_body(resp).await;
         let json_body: Value = from_slice(&body).unwrap();
 
         assert_eq!(
-            json_body["errors"][0]["message"],
-            "Failed to execute request to subgraph"
-        );
-        assert_eq!(
-            json_body["errors"][0]["extensions"]["code"],
-            "SUBGRAPH_REQUEST_FAILURE"
+            json_body["errors"][0]["extensions"]["serviceName"],
+            "accounts"
         );
 
         let subgraph_requests = subgraphs_server

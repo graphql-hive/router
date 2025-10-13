@@ -14,7 +14,7 @@ use xxhash_rust::xxh3::Xxh3;
 
 use crate::{introspection::schema::PossibleTypes, utils::consts::TYPENAME_FIELD_NAME};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Value<'a> {
     Null,
     F64(f64),
@@ -42,7 +42,7 @@ impl Hash for Value<'_> {
 }
 
 impl<'a> Value<'a> {
-    pub fn take_entities<'b: 'a>(&'a mut self) -> Option<Vec<Value<'a>>> {
+    pub fn take_entities(&'a mut self) -> Option<Vec<Value<'a>>> {
         match self {
             Value::Object(data) => {
                 if let Ok(entities_idx) = data.binary_search_by_key(&"_entities", |(k, _)| *k) {

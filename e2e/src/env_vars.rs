@@ -20,7 +20,7 @@ mod env_vars_e2e_tests {
 
         // Makes the expression to evaluate to port 4200 (value of .default)
         {
-            let app = init_router_from_config_file("configs/env_vars.router.yaml")
+            let app = init_router_from_config_file("configs/env_vars.router.yaml", None)
                 .await
                 .unwrap();
             wait_for_readiness(&app.app).await;
@@ -51,7 +51,7 @@ mod env_vars_e2e_tests {
             let _env_guard =
                 EnvVarGuard::new("ACCOUNTS_URL_OVERRIDE", "http://0.0.0.0:4100/accounts");
 
-            let app = init_router_from_config_file("configs/env_vars.router.yaml")
+            let app = init_router_from_config_file("configs/env_vars.router.yaml", None)
                 .await
                 .unwrap();
             wait_for_readiness(&app.app).await;
@@ -59,17 +59,12 @@ mod env_vars_e2e_tests {
             let req = init_graphql_request("{ users { id } }", None);
             let resp = test::call_service(&app.app, req.to_request()).await;
 
-            assert!(resp.status().is_success(), "Expected 200 OK");
             let body = test::read_body(resp).await;
             let json_body: Value = from_slice(&body).unwrap();
 
             assert_eq!(
-                json_body["errors"][0]["message"],
-                "Failed to execute request to subgraph"
-            );
-            assert_eq!(
-                json_body["errors"][0]["extensions"]["code"],
-                "SUBGRAPH_REQUEST_FAILURE"
+                json_body["errors"][0]["extensions"]["serviceName"],
+                "accounts"
             );
 
             let subgraph_requests = subgraphs_server
@@ -88,11 +83,11 @@ mod env_vars_e2e_tests {
     /// Test that the `x-router-env` header value depends on the `ROUTER_ENV_HEADER` env var,
     /// with a fallback to "default".
     async fn should_insert_response_header_based_on_env_var() {
-        let _subgraphs_server = SubgraphsServer::start_with_port(4100).await;
+        let _subgraphs_server = SubgraphsServer::start().await;
 
         // Makes the expression to evaluate to "default" (default value provided)
         {
-            let app = init_router_from_config_file("configs/env_vars.router.yaml")
+            let app = init_router_from_config_file("configs/env_vars.router.yaml", None)
                 .await
                 .unwrap();
             wait_for_readiness(&app.app).await;
@@ -115,7 +110,7 @@ mod env_vars_e2e_tests {
         {
             let _env_guard = EnvVarGuard::new("ROUTER_ENV_HEADER", "e2e");
 
-            let app = init_router_from_config_file("configs/env_vars.router.yaml")
+            let app = init_router_from_config_file("configs/env_vars.router.yaml", None)
                 .await
                 .unwrap();
             wait_for_readiness(&app.app).await;
