@@ -14,6 +14,7 @@ pub struct QueryPlanner {
     planner: Planner,
 }
 
+// TODO: Did not find struct `QueryPlanner` parsed before expand #[napi] for impl?
 #[napi]
 impl QueryPlanner {
     #[napi(constructor)]
