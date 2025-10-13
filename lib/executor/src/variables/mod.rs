@@ -67,11 +67,15 @@ fn validate_runtime_value(
     type_node: &TypeNode,
     schema_metadata: &SchemaMetadata,
 ) -> Result<(), String> {
+    if let ValueRef::Null = value {
+        return if type_node.is_non_null() {
+            Err("Value cannot be null for non-nullable type".to_string())
+        } else {
+            Ok(())
+        };
+    }
     match type_node {
         TypeNode::Named(name) => {
-            if let ValueRef::Null = value {
-                return Ok(());
-            }
             if let Some(enum_values) = schema_metadata.enum_values.get(name) {
                 if let ValueRef::String(ref s) = value {
                     if !enum_values.contains(&s.to_string()) {
@@ -176,15 +180,10 @@ fn validate_runtime_value(
             }
         }
         TypeNode::NonNull(inner_type) => {
-            if let ValueRef::Null = value {
-                return Err("Value cannot be null for non-nullable type".to_string());
-            }
+            // The null check is now handled above, so we can just recurse.
             validate_runtime_value(value, inner_type, schema_metadata)?;
         }
         TypeNode::List(inner_type) => {
-            if let ValueRef::Null = value {
-                return Ok(());
-            }
             if let ValueRef::Array(arr) = value {
                 for item in arr.iter() {
                     validate_runtime_value(item.as_ref(), inner_type, schema_metadata)?;
