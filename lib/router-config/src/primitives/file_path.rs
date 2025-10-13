@@ -9,6 +9,7 @@ use serde::{
     de::{self, Visitor},
     Deserialize, Deserializer, Serialize,
 };
+use tracing::info;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FilePath {
@@ -70,6 +71,11 @@ impl<'de> Visitor<'de> for FilePathVisitor {
     {
         CONTEXT_START_PATH.with(|ctx| {
             if let Some(start_path) = ctx.borrow().as_ref() {
+                info!(
+                    "Deserializing FilePath '{}' with start path '{}'",
+                    v,
+                    start_path.display()
+                );
                 match FilePath::resolve_relative(start_path, v, true) {
                     Ok(file_path) => Ok(file_path),
                     Err(err) => Err(E::custom(format!("Failed to canonicalize path: {}", err))),

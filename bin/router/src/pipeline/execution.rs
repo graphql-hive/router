@@ -1,17 +1,17 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
+use crate::pipeline::error::PipelineErrorVariant;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
-use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
-use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
-use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionContext};
+use hive_router_plan_executor::execution::plan::QueryPlanExecutionContext;
+use hive_router_plan_executor::executors::http::HttpResponse;
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
+use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
 use ntex::web::HttpRequest;
@@ -25,21 +25,18 @@ enum ExposeQueryPlanMode {
     DryRun,
 }
 
-pub struct PlannedRequest<'req> {
-    pub normalized_payload: &'req GraphQLNormalizationPayload,
-    pub query_plan_payload: &'req Arc<QueryPlan>,
-    pub variable_payload: &'req CoerceVariablesPayload,
-    pub client_request_details: &'req ClientRequestDetails<'req, 'req>,
-    pub authorization_errors: &'req [AuthorizationError],
-}
-
+#[allow(clippy::too_many_arguments)]
 #[inline]
 pub async fn execute_plan(
     req: &HttpRequest,
     supergraph: &SupergraphData,
-    app_state: &Arc<RouterSharedState>,
-    planned_request: &PlannedRequest<'_>,
-) -> Result<PlanExecutionOutput, PipelineError> {
+    app_state: &RouterSharedState,
+    normalized_payload: &GraphQLNormalizationPayload,
+    query_plan_payload: &QueryPlan,
+    variable_payload: &CoerceVariablesPayload,
+    client_request_details: &ClientRequestDetails<'_, '_>,
+    plugin_req_state: &Option<PluginRequestState<'_>>,
+) -> Result<HttpResponse, PipelineErrorVariant> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
     if app_state.router_config.query_planner.allow_expose {
@@ -74,7 +71,7 @@ pub async fn execute_plan(
         metadata: &supergraph.metadata,
     };
 
-    let jwt_forward_plan: Option<JwtAuthForwardingPlan> = if app_state
+    let jwt_auth_forwarding: Option<JwtAuthForwardingPlan> = if app_state
         .router_config
         .jwt
         .is_jwt_extensions_forwarding_enabled()
@@ -89,31 +86,32 @@ pub async fn execute_plan(
                     .forward_claims_to_upstream_extensions
                     .field_name,
             )
-            .map_err(|e| req.new_pipeline_error(PipelineErrorVariant::JwtForwardingError(e)))?
+            .map_err(PipelineErrorVariant::JwtForwardingError)?
     } else {
         None
     };
 
-    execute_query_plan(QueryPlanExecutionContext {
-        query_plan: planned_request.query_plan_payload,
-        projection_plan: &planned_request.normalized_payload.projection_plan,
+    let ctx = QueryPlanExecutionContext {
+        plugin_req_state,
+        query_plan: query_plan_payload,
+        operation_for_plan: &normalized_payload.operation_for_plan,
+        projection_plan: &normalized_payload.projection_plan,
         headers_plan: &app_state.headers_plan,
         variable_values: &planned_request.variable_payload.variables_map,
         extensions,
         client_request: planned_request.client_request_details,
         introspection_context: &introspection_context,
-        operation_type_name: planned_request.normalized_payload.root_type_name,
-        jwt_auth_forwarding: &jwt_forward_plan,
+        operation_type_name: normalized_payload.root_type_name,
+        jwt_auth_forwarding,
         executors: &supergraph.subgraph_executor_map,
-        initial_errors: planned_request
-            .authorization_errors
+        initial_errors: authorization_errors
             .iter()
             .map(|e| e.into())
             .collect(),
-    })
-    .await
-    .map_err(|err| {
+    };
+
+    ctx.execute_query_plan().await.map_err(|err| {
         tracing::error!("Failed to execute query plan: {}", err);
-        req.new_pipeline_error(PipelineErrorVariant::PlanExecutionError(err))
+        PipelineErrorVariant::PlanExecutionError(err)
     })
 }

@@ -32,10 +32,15 @@ tokio = { workspace = true, features = ["sync"] }
 dashmap = { workspace = true }
 
 regex-automata = { workspace = true }
+vrl = { workspace = true }
+reqwest = { workspace = true, features = ["multipart"] }
+serde_json = { workspace = true }
 
 ahash = { workspace = true }
 strum = { version = "0.27.2", features = ["derive"] }
-ntex = { workspace = true }
+
+arc-swap = "1.7.1"
+ntex = { workspace = true, features = ["tokio"] }
 
 hyper-tls = { version = "0.6.0", features = ["vendored"] }
 hyper-util = { version = "0.1.16", features = [

@@ -2,9 +2,12 @@ use std::collections::{BTreeSet, HashMap};
 
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
-use hive_router_query_planner::planner::plan_nodes::{
-    ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
-    QueryPlan, SequenceNode,
+use hive_router_query_planner::{
+    ast::operation::OperationDefinition,
+    planner::plan_nodes::{
+        ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode,
+        PlanNode, QueryPlan, SequenceNode,
+    },
 };
 use http::HeaderMap;
 use serde::Deserialize;
@@ -18,19 +21,19 @@ use crate::{
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
     },
-    executors::{
-        common::{HttpExecutionResponse, SubgraphExecutionRequest},
-        map::SubgraphExecutorMap,
-    },
+    executors::{common::SubgraphExecutionRequest, http::HttpResponse, map::SubgraphExecutorMap},
     headers::{
         plan::HeaderRulesPlan,
         request::modify_subgraph_request_headers,
         response::{apply_subgraph_response_headers, modify_client_response_headers},
     },
+    hooks::on_execute::{OnExecuteEndHookPayload, OnExecuteStartHookPayload},
     introspection::{
         resolve::{resolve_introspection, IntrospectionContext},
         schema::SchemaMetadata,
     },
+    plugin_context::PluginRequestState,
+    plugin_trait::{EndControlFlow, StartControlFlow},
     projection::{
         plan::FieldProjectionPlan,
         request::{project_requires, RequestProjectionContext},
@@ -49,7 +52,9 @@ use crate::{
 };
 
 pub struct QueryPlanExecutionContext<'exec, 'req> {
+    pub plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
     pub query_plan: &'exec QueryPlan,
+    pub operation_for_plan: &'exec OperationDefinition,
     pub projection_plan: &'exec Vec<FieldProjectionPlan>,
     pub headers_plan: &'exec HeaderRulesPlan,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
@@ -58,73 +63,156 @@ pub struct QueryPlanExecutionContext<'exec, 'req> {
     pub introspection_context: &'exec IntrospectionContext<'exec, 'static>,
     pub operation_type_name: &'exec str,
     pub executors: &'exec SubgraphExecutorMap,
-    pub jwt_auth_forwarding: &'exec Option<JwtAuthForwardingPlan>,
+    pub jwt_auth_forwarding: Option<JwtAuthForwardingPlan>,
     pub initial_errors: Vec<GraphQLError>,
 }
 
-pub struct PlanExecutionOutput {
-    pub body: Vec<u8>,
-    pub headers: HeaderMap,
-    pub error_count: usize,
-}
+impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
+    pub async fn execute_query_plan(self) -> Result<(HttpResponse, usize), PlanExecutionError> {
+        let mut init_value = if let Some(introspection_query) = self.introspection_context.query {
+            resolve_introspection(introspection_query, self.introspection_context)
+        } else {
+            Value::Null
+        };
 
-pub async fn execute_query_plan<'exec, 'req>(
-    ctx: QueryPlanExecutionContext<'exec, 'req>,
-) -> Result<PlanExecutionOutput, PlanExecutionError> {
-    let init_value = if let Some(introspection_query) = ctx.introspection_context.query {
-        resolve_introspection(introspection_query, ctx.introspection_context)
-    } else if ctx.projection_plan.is_empty() {
-        Value::Null
-    } else {
-        Value::Object(Vec::new())
-    };
+        let mut initial_errors = self.initial_errors;
 
-    let mut exec_ctx = ExecutionContext::new(ctx.query_plan, init_value, ctx.initial_errors);
-    let executor = Executor::new(
-        ctx.variable_values,
-        ctx.executors,
-        ctx.introspection_context.metadata,
-        ctx.client_request,
-        ctx.headers_plan,
-        ctx.jwt_auth_forwarding,
-        // Deduplicate subgraph requests only if the operation type is a query
-        ctx.operation_type_name == "Query",
-    );
+        let mut query_plan = self.query_plan;
 
-    if ctx.query_plan.node.is_some() {
-        executor
-            .execute(&mut exec_ctx, ctx.query_plan.node.as_ref())
-            .await?;
-    }
+        let dedupe_subgraph_requests = self.operation_type_name == "Query";
+        let mut extensions = self.extensions;
 
-    let mut response_headers = HeaderMap::new();
-    modify_client_response_headers(exec_ctx.response_headers_aggregator, &mut response_headers)
+        let mut on_end_callbacks = vec![];
+
+        if let Some(plugin_req_state) = self.plugin_req_state.as_ref() {
+            let mut start_payload = OnExecuteStartHookPayload {
+                router_http_request: &plugin_req_state.router_http_request,
+                context: &plugin_req_state.context,
+                query_plan,
+                operation_for_plan: self.operation_for_plan,
+                data: init_value,
+                errors: initial_errors,
+                extensions,
+                variable_values: self.variable_values,
+                dedupe_subgraph_requests,
+            };
+
+            for plugin in plugin_req_state.plugins.iter() {
+                let result = plugin.on_execute(start_payload).await;
+                start_payload = result.payload;
+                match result.control_flow {
+                    StartControlFlow::Continue => { /* continue to next plugin */ }
+                    StartControlFlow::EndResponse(response) => {
+                        return Ok(response);
+                    }
+                    StartControlFlow::OnEnd(callback) => {
+                        on_end_callbacks.push(callback);
+                    }
+                }
+            }
+            query_plan = start_payload.query_plan;
+
+            init_value = start_payload.data;
+
+            initial_errors = start_payload.errors;
+
+            extensions = start_payload.extensions;
+        }
+
+        let mut exec_ctx = ExecutionContext::new(query_plan, init_value, initial_errors);
+        let executor = Executor::new(
+            self.variable_values,
+            self.executors,
+            self.introspection_context.metadata,
+            self.client_request,
+            self.headers_plan,
+            self.jwt_auth_forwarding,
+            // Deduplicate subgraph requests only if the operation type is a query
+            self.operation_type_name == "Query",
+            self.plugin_req_state,
+        );
+
+        if query_plan.node.is_some() {
+            executor
+                .execute(&mut exec_ctx, query_plan.node.as_ref())
+                .await?;
+        }
+
+        let mut response_headers = HeaderMap::new();
+        modify_client_response_headers(exec_ctx.response_headers_aggregator, &mut response_headers)
+            .with_plan_context(LazyPlanContext {
+                subgraph_name: || None,
+                affected_path: || None,
+            })?;
+
+        let mut data = exec_ctx.final_response;
+        let mut errors = exec_ctx.errors;
+        let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
+
+        if !on_end_callbacks.is_empty() {
+            let mut end_payload = OnExecuteEndHookPayload {
+                data,
+                errors,
+                extensions,
+                response_size_estimate,
+            };
+
+            for callback in on_end_callbacks {
+                let result = callback(end_payload);
+                end_payload = result.payload;
+                match result.control_flow {
+                    EndControlFlow::Continue => { /* continue to next callback */ }
+                    EndControlFlow::EndResponse(output) => {
+                        return Ok(output);
+                    }
+                }
+            }
+
+            data = end_payload.data;
+            errors = end_payload.errors;
+            extensions = end_payload.extensions;
+            response_size_estimate = end_payload.response_size_estimate;
+        }
+
+        let body = project_by_operation(
+            &data,
+            errors,
+            &extensions,
+            self.operation_type_name,
+            self.projection_plan,
+            self.variable_values,
+            response_size_estimate,
+        )
         .with_plan_context(LazyPlanContext {
             subgraph_name: || None,
             affected_path: || None,
         })?;
 
-    let final_response = &exec_ctx.final_response;
-    let error_count = exec_ctx.errors.len(); // Added for usage reporting
-    let body = project_by_operation(
-        final_response,
-        exec_ctx.errors,
-        &ctx.extensions,
-        ctx.operation_type_name,
-        ctx.projection_plan,
-        ctx.variable_values,
-        exec_ctx.response_storage.estimate_final_response_size(),
-    )
-    .with_plan_context(LazyPlanContext {
-        subgraph_name: || None,
-        affected_path: || None,
-    })?;
+        let final_response = &exec_ctx.final_response;
+        let error_count = exec_ctx.errors.len(); // Added for usage reporting
+        let body = project_by_operation(
+            final_response,
+            exec_ctx.errors,
+            &ctx.extensions,
+            ctx.operation_type_name,
+            ctx.projection_plan,
+            ctx.variable_values,
+            exec_ctx.response_storage.estimate_final_response_size(),
+        )
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || None,
+            affected_path: || None,
+        })?;
 
-    Ok(PlanExecutionOutput {
-        body,
-        headers: response_headers,
-        error_count,
-    })
+        Ok((
+            HttpResponse {
+                body,
+                headers: response_headers,
+                status: http::StatusCode::OK,
+            },
+            error_count,
+        ))
+    }
 }
 
 pub struct Executor<'exec, 'req> {
@@ -133,8 +221,9 @@ pub struct Executor<'exec, 'req> {
     executors: &'exec SubgraphExecutorMap,
     client_request: &'exec ClientRequestDetails<'exec, 'req>,
     headers_plan: &'exec HeaderRulesPlan,
-    jwt_forwarding_plan: &'exec Option<JwtAuthForwardingPlan>,
+    jwt_forwarding_plan: Option<JwtAuthForwardingPlan>,
     dedupe_subgraph_requests: bool,
+    plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
 }
 
 struct ConcurrencyScope<'exec, T> {
@@ -161,20 +250,15 @@ impl<'exec, T> ConcurrencyScope<'exec, T> {
     }
 }
 
-struct SubgraphOutput {
-    body: Bytes,
-    headers: HeaderMap,
-}
-
 struct FetchJob {
     fetch_node_id: i64,
     subgraph_name: String,
-    response: SubgraphOutput,
+    response: HttpResponse,
 }
 
 struct FlattenFetchJob {
     flatten_node_path: FlattenNodePath,
-    response: SubgraphOutput,
+    response: HttpResponse,
     fetch_node_id: i64,
     subgraph_name: String,
     representation_hashes: Vec<u64>,
@@ -187,30 +271,16 @@ enum ExecutionJob {
     None,
 }
 
-impl From<ExecutionJob> for SubgraphOutput {
+impl From<ExecutionJob> for HttpResponse {
     fn from(value: ExecutionJob) -> Self {
         match value {
-            ExecutionJob::Fetch(j) => Self {
-                body: j.response.body,
-                headers: j.response.headers,
-            },
-            ExecutionJob::FlattenFetch(j) => Self {
-                body: j.response.body,
-                headers: j.response.headers,
-            },
+            ExecutionJob::Fetch(j) => j.response,
+            ExecutionJob::FlattenFetch(j) => j.response,
             ExecutionJob::None => Self {
+                status: http::StatusCode::OK,
                 body: Bytes::new(),
                 headers: HeaderMap::new(),
             },
-        }
-    }
-}
-
-impl From<HttpExecutionResponse> for SubgraphOutput {
-    fn from(res: HttpExecutionResponse) -> Self {
-        Self {
-            body: res.body,
-            headers: res.headers,
         }
     }
 }
@@ -222,14 +292,16 @@ struct PreparedFlattenData {
 }
 
 impl<'exec, 'req> Executor<'exec, 'req> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
         executors: &'exec SubgraphExecutorMap,
         schema_metadata: &'exec SchemaMetadata,
         client_request: &'exec ClientRequestDetails<'exec, 'req>,
         headers_plan: &'exec HeaderRulesPlan,
-        jwt_forwarding_plan: &'exec Option<JwtAuthForwardingPlan>,
+        jwt_forwarding_plan: Option<JwtAuthForwardingPlan>,
         dedupe_subgraph_requests: bool,
+        plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
     ) -> Self {
         Executor {
             variable_values,
@@ -239,6 +311,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
             headers_plan,
             dedupe_subgraph_requests,
             jwt_forwarding_plan,
+            plugin_req_state,
         }
     }
 
@@ -728,9 +801,13 @@ impl<'exec, 'req> Executor<'exec, 'req> {
             subgraph_name: node.service_name.clone(),
             response: self
                 .executors
-                .execute(&node.service_name, subgraph_request, self.client_request)
-                .await
-                .into(),
+                .execute(
+                    &node.service_name,
+                    subgraph_request,
+                    self.client_request,
+                    self.plugin_req_state,
+                )
+                .await,
         }))
     }
 

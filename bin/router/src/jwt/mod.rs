@@ -270,7 +270,7 @@ impl JwtAuthRuntime {
         &self,
         request: &mut HttpRequest,
         cache: &JwtClaimsCache,
-    ) -> Result<(), JwtError> {
+    ) -> Result<JwtRequestContext, JwtError> {
         let (maybe_prefix, token) = match self.lookup(request) {
             Ok((p, t)) => (p, t),
             Err(e) => {
@@ -292,12 +292,11 @@ impl JwtAuthRuntime {
 
         match validation_result {
             Ok(token_payload) => {
-                request.extensions_mut().insert(JwtRequestContext {
+                Ok(JwtRequestContext {
                     token_payload,
                     token_raw: token,
                     token_prefix: maybe_prefix,
-                });
-                Ok(())
+                })
             }
             Err(err) => {
                 warn!("jwt token error: {:?}", err);
@@ -306,6 +305,8 @@ impl JwtAuthRuntime {
                 } else {
                     Ok(())
                 }
+
+                Ok(None)
             }
         }
     }

@@ -31,8 +31,13 @@ use crate::{
         },
         dedupe::{ABuildHasher, SharedResponse},
         error::SubgraphExecutorError,
-        http::{HTTPSubgraphExecutor, HttpClient},
+        http::{HTTPSubgraphExecutor, HttpClient, HttpResponse},
     },
+    hooks::on_subgraph_execute::{
+        OnSubgraphExecuteEndHookPayload, OnSubgraphExecuteStartHookPayload,
+    },
+    plugin_context::PluginRequestState,
+    plugin_trait::{EndControlFlow, StartControlFlow},
     response::graphql_error::GraphQLError,
 };
 
@@ -64,7 +69,7 @@ pub struct SubgraphExecutorMap {
     client: Arc<HttpClient>,
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
     max_connections_per_host: usize,
-    in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<HttpResponse>>, ABuildHasher>>,
 }
 
 impl SubgraphExecutorMap {
@@ -128,14 +133,15 @@ impl SubgraphExecutorMap {
         Ok(subgraph_executor_map)
     }
 
-    pub async fn execute<'a, 'req>(
+    pub async fn execute<'exec, 'req>(
         &self,
         subgraph_name: &str,
-        execution_request: SubgraphExecutionRequest<'a>,
-        client_request: &ClientRequestDetails<'a, 'req>,
-    ) -> HttpExecutionResponse {
-        match self.get_or_create_executor(subgraph_name, client_request) {
-            Ok(executor) => {
+        execution_request: SubgraphExecutionRequest<'exec>,
+        client_request: &ClientRequestDetails<'exec, 'req>,
+        plugin_req_state: &Option<PluginRequestState<'req>>,
+    ) -> HttpResponse {
+        let mut executor = match self.get_or_create_executor(subgraph_name, client_request) {
+            Ok(Some(executor)) => {
                 let timeout = self
                     .timeouts_by_subgraph
                     .get(subgraph_name)
@@ -161,22 +167,94 @@ impl SubgraphExecutorMap {
                         self.internal_server_error_response(err.into(), subgraph_name)
                     }
                 }
-            }
+            },
             Err(err) => {
                 error!(
                     "Subgraph executor error for subgraph '{}': {}",
                     subgraph_name, err,
                 );
-                self.internal_server_error_response(err.into(), subgraph_name)
+                return self.internal_server_error_response(err.into(), subgraph_name);
             }
+            Ok(None) => {
+                error!(
+                    "Subgraph executor not found for subgraph '{}'",
+                    subgraph_name
+                );
+                return self
+                    .internal_server_error_response("Internal server error".into(), subgraph_name);
+            }
+        };
+
+        let mut on_end_callbacks = vec![];
+
+        let mut execution_request = execution_request;
+        let mut execution_result = None;
+        if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+            let mut start_payload = OnSubgraphExecuteStartHookPayload {
+                router_http_request: &plugin_req_state.router_http_request,
+                context: &plugin_req_state.context,
+                subgraph_name,
+                executor,
+                execution_request,
+                execution_result,
+            };
+            for plugin in plugin_req_state.plugins.as_ref() {
+                let result = plugin.on_subgraph_execute(start_payload).await;
+                start_payload = result.payload;
+                match result.control_flow {
+                    StartControlFlow::Continue => {
+                        // continue to next plugin
+                    }
+                    StartControlFlow::EndResponse(response) => {
+                        // TODO: FFIX
+                        return response;
+                    }
+                    StartControlFlow::OnEnd(callback) => {
+                        on_end_callbacks.push(callback);
+                    }
+                }
+            }
+            execution_request = start_payload.execution_request;
+            execution_result = start_payload.execution_result;
+            executor = start_payload.executor;
         }
+
+        let mut execution_result = match execution_result {
+            Some(execution_result) => execution_result,
+            None => executor.execute(execution_request, plugin_req_state).await,
+        };
+
+        if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+            let mut end_payload = OnSubgraphExecuteEndHookPayload {
+                context: &plugin_req_state.context,
+                execution_result,
+            };
+
+            for callback in on_end_callbacks {
+                let result = callback(end_payload);
+                end_payload = result.payload;
+                match result.control_flow {
+                    EndControlFlow::Continue => {
+                        // continue to next callback
+                    }
+                    EndControlFlow::EndResponse(response) => {
+                        // TODO: FFIX
+                        return response;
+                    }
+                }
+            }
+
+            execution_result = end_payload.execution_result;
+        }
+
+        execution_result
     }
 
     fn internal_server_error_response(
         &self,
         graphql_error: GraphQLError,
         subgraph_name: &str,
-    ) -> HttpExecutionResponse {
+    ) -> HttpResponse {
         let errors = vec![graphql_error.add_subgraph_name(subgraph_name)];
         let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
         let mut buffer = BytesMut::new();
@@ -184,9 +262,10 @@ impl SubgraphExecutorMap {
         buffer.put_slice(&errors_bytes);
         buffer.put_slice(b"}");
 
-        HttpExecutionResponse {
+        HttpResponse {
             body: buffer.freeze(),
             headers: Default::default(),
+            status: http::StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
