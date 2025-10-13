@@ -25,6 +25,10 @@ bitflags = "2.9.1"
 lazy-init = "0.5.1"
 rustc-hash = "2.1.1"
 
+# Optional NAPI support
+napi = { version = "2.12.2" }
+napi-derive = { version = "2.12.2" }
+
 [dev-dependencies]
 insta = { workspace = true }
 criterion = { workspace = true }
