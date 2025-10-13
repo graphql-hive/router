@@ -213,4 +213,14 @@ mod tests {
             assert_eq!(result, Ok(()));
         }
     }
+    #[test]
+    fn allow_null_values_for_nullable_list_types() {
+        let schema_metadata = crate::introspection::schema::SchemaMetadata::default();
+        let type_node = crate::variables::TypeNode::List(Box::new(
+            crate::variables::TypeNode::Named("String".to_string()),
+        ));
+        let value = sonic_rs::ValueRef::Null;
+        let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
+        assert_eq!(result, Ok(()));
+    }
 }
