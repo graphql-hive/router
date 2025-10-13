@@ -34,6 +34,8 @@ vrl = { workspace = true }
 ahash = "0.8.12"
 regex-automata = "0.4.10"
 strum = { version = "0.27.2", features = ["derive"] }
+
+ntex = { version = "2", features = ["tokio"] }
 ntex-http = "0.1.15"
 ordered-float = "4.2.0"
 hyper-tls = { version = "0.6.0", features = ["vendored"] }
@@ -49,6 +51,7 @@ itoa = "1.0.15"
 ryu = "1.0.20"
 indexmap = "2.10.0"
 bumpalo = "3.19.0"
+redis = "0.32.7"
 
 [dev-dependencies]
 subgraphs = { path = "../../bench/subgraphs" }
