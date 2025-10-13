@@ -200,7 +200,7 @@ fn validate_runtime_value(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn allow_null_values_for_scalar_non_nullable_types() {
+    fn allow_null_values_for_nullable_scalar_types() {
         let schema_metadata = crate::introspection::schema::SchemaMetadata::default();
 
         let scalars = vec!["String", "Int", "Float", "Boolean", "ID"];
