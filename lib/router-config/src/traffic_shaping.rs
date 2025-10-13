@@ -3,12 +3,23 @@ use std::time::Duration;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-pub struct TrafficShapingExecutorConfig {
+use std::collections::HashMap;
+
+#[derive(Clone, Deserialize, Serialize, JsonSchema)]
+pub struct TrafficShapingConfig {
+    /// The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.
+    #[serde(default)]
+    pub all: TrafficShapingExecutorConfig,
+    /// Optional per-subgraph configurations that will override the default configuration for specific subgraphs.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub subgraphs: HashMap<String, TrafficShapingExecutorConfig>,
     /// Limits the concurrent amount of requests/connections per host/subgraph.
     #[serde(default = "default_max_connections_per_host")]
     pub max_connections_per_host: usize,
+}
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+pub struct TrafficShapingExecutorConfig {
     /// Timeout for idle sockets being kept-alive.
     #[serde(default = "default_pool_idle_timeout_seconds")]
     pub pool_idle_timeout_seconds: u64,
@@ -60,10 +71,19 @@ where
 impl Default for TrafficShapingExecutorConfig {
     fn default() -> Self {
         Self {
-            max_connections_per_host: default_max_connections_per_host(),
             pool_idle_timeout_seconds: default_pool_idle_timeout_seconds(),
             dedupe_enabled: default_dedupe_enabled(),
             timeout: None,
+        }
+    }
+}
+
+impl Default for TrafficShapingConfig {
+    fn default() -> Self {
+        Self {
+            all: TrafficShapingExecutorConfig::default(),
+            subgraphs: HashMap::new(),
+            max_connections_per_host: default_max_connections_per_host(),
         }
     }
 }

@@ -364,7 +364,7 @@ mod tests {
         "#;
 
         let config = hive_router_config::parse_yaml_config(config.to_string()).unwrap();
-        let http_client = from_traffic_shaping_config_to_client(&config.traffic_shaping.all);
+        let http_client = from_traffic_shaping_config_to_client(&config.traffic_shaping.all, 10);
         let http_executor = crate::executors::http::HTTPSubgraphExecutor::new(
             endpoint.clone(),
             http_client,
