@@ -27,6 +27,7 @@ impl QueryPlanner {
         Ok(QueryPlanner { planner: planner })
     }
 
+    // TODO: do we want the plan to be async? we're generally running the plan within an already async task
     #[napi]
     pub fn plan(&self, query: String, operation_name: Option<String>) -> Result<String> {
         let planner = &self.planner;
