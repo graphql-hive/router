@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn case_insensitive_header_names() {
         let config = super::CSRFPreventionConfig {
-            required_headers: vec!["x-csrf-token".to_string()],
+            required_headers: vec!["x-csRf-token".to_string()],
         };
         let mut req = ntex::web::test::TestRequest::with_uri("/graphql")
             .method(http::Method::GET)
