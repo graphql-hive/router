@@ -14,7 +14,6 @@ pub struct QueryPlanner {
     planner: Planner,
 }
 
-// TODO: cannot find function `execute_tokio_future` in module `napi::bindgen_prelude`
 #[napi]
 impl QueryPlanner {
     #[napi(constructor)]
