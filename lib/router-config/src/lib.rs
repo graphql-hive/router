@@ -112,6 +112,43 @@ pub struct HiveRouterConfig {
 
     #[serde(default)]
     pub telemetry: telemetry::TelemetryConfig,
+
+    /// Configuration for custom plugins
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub plugins: HashMap<String, PluginConfig>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PluginConfig {
+    #[serde(default = "default_plugin_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_plugin_warn_on_error")]
+    pub warn_on_error: bool,
+    #[serde(default = "default_plugin_user_config")]
+    pub config: serde_json::Value,
+}
+
+impl Default for PluginConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_plugin_enabled(),
+            warn_on_error: default_plugin_warn_on_error(),
+            config: default_plugin_user_config(),
+        }
+    }
+}
+
+pub fn default_plugin_user_config() -> serde_json::Value {
+    serde_json::Value::Object(serde_json::Map::new())
+}
+
+pub fn default_plugin_enabled() -> bool {
+    true
+}
+
+pub fn default_plugin_warn_on_error() -> bool {
+    false
 }
 
 #[derive(Debug, thiserror::Error)]

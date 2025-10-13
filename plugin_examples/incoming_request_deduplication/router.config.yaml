@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../../e2e/supergraph.graphql
+override_subgraph_urls:
+  accounts:
+    url:
+      expression: env("ACCOUNTS_URL_OVERRIDE", string!(.default))
+plugins:
+  incoming_request_deduplication:
+    enabled: true
+    config:
+      deduplicate_headers: [authorization]

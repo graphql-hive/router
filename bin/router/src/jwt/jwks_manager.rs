@@ -1,4 +1,5 @@
 use hive_router_config::jwt_auth::{JwksProviderSourceConfig, JwtAuthConfig};
+use hive_router_internal::background_tasks::{BackgroundTask, BackgroundTasksManager};
 use sonic_rs::from_str;
 use std::sync::{Arc, RwLock};
 use tokio::fs::read_to_string;
@@ -6,8 +7,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use jsonwebtoken::jwk::JwkSet;
-
-use crate::background_tasks::{BackgroundTask, BackgroundTasksManager};
 
 pub struct JwksManager {
     sources: Vec<Arc<JwksSource>>,
@@ -54,7 +53,7 @@ impl JwksManager {
     pub fn register_background_tasks(&self, background_tasks_mgr: &mut BackgroundTasksManager) {
         for source in &self.sources {
             if source.should_poll_in_background() {
-                background_tasks_mgr.register_task(source.clone());
+                background_tasks_mgr.register_task(JwksSourceTask(source.clone()));
             }
         }
     }
@@ -66,8 +65,10 @@ pub struct JwksSource {
     jwk: RwLock<Option<Arc<JwkSet>>>,
 }
 
+struct JwksSourceTask(Arc<JwksSource>);
+
 #[async_trait::async_trait]
-impl BackgroundTask for Arc<JwksSource> {
+impl BackgroundTask for JwksSourceTask {
     fn id(&self) -> &str {
         "jwt_auth_jwks"
     }
@@ -76,14 +77,17 @@ impl BackgroundTask for Arc<JwksSource> {
         if let JwksProviderSourceConfig::Remote {
             polling_interval: Some(interval),
             ..
-        } = &self.config
+        } = &self.0.config
         {
-            debug!("Starting remote jwks polling for source: {:?}", self.config);
+            debug!(
+                "Starting remote jwks polling for source: {:?}",
+                self.0.config
+            );
             let mut tokio_interval = tokio::time::interval(*interval);
 
             loop {
                 tokio::select! {
-                    _ = tokio_interval.tick() => { match self.load_and_store_jwks().await {
+                    _ = tokio_interval.tick() => { match self.0.load_and_store_jwks().await {
                         Ok(_) => {}
                         Err(err) => {
                             error!("Failed to load remote jwks: {}", err);

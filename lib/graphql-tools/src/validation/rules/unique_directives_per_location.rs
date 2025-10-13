@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
 use super::ValidationRule;
-use crate::ast::OperationDefinitionExtension;
 use crate::static_graphql::query::{
     Directive, Field, FragmentDefinition, FragmentSpread, InlineFragment, OperationDefinition,
 };

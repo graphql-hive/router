@@ -4,6 +4,7 @@ use graphql_tools::validation::utils::ValidationError;
 use hive_router_plan_executor::{
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
     headers::errors::HeaderRuleRuntimeError,
+    hooks::on_graphql_error::handle_graphql_errors_with_plugins,
     response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
@@ -23,6 +24,7 @@ use crate::{
         authorization::AuthorizationError, body_read::ReadBodyStreamError, header::RequestAccepts,
         progressive_override::LabelEvaluationError,
     },
+    RouterSharedState,
 };
 
 #[derive(Debug, thiserror::Error, IntoStaticStr)]
@@ -233,7 +235,7 @@ impl web::error::WebResponseError for PipelineError {
             res.content_type(single_content_type.as_ref());
         }
 
-        let errors = match self {
+        let mut errors = match self {
             Self::ValidationErrors(validation_errors) => {
                 validation_errors.iter().map(|error| error.into()).collect()
             }
@@ -251,6 +253,16 @@ impl web::error::WebResponseError for PipelineError {
                 vec![graphql_error]
             }
         };
+
+        if let Some(plugins) = req
+            .app_state::<Arc<RouterSharedState>>()
+            .and_then(|shared_state| shared_state.plugins.clone())
+        {
+            let (new_errors, new_status_code) =
+                handle_graphql_errors_with_plugins(&plugins, errors, status);
+            errors = new_errors;
+            res.status(new_status_code);
+        }
 
         res.json(&FailedExecutionResult { errors })
     }

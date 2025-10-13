@@ -1,6 +1,7 @@
 use std::{fmt::Display, sync::Arc};
 
 use graphql_tools::parser::parse_query;
+use hive_router_internal::authorization::metadata::AuthorizationMetadata;
 use hive_router_plan_executor::{
     execution::client_request_details::JwtRequestDetails,
     introspection::{
@@ -16,7 +17,7 @@ use hive_router_query_planner::{
 
 use crate::pipeline::{
     authorization::{
-        apply_authorization_to_operation, AuthorizationDecision, AuthorizationMetadata,
+        apply_authorization_to_operation, metadata::AuthorizationMetadataExt, AuthorizationDecision,
     },
     normalize::{GraphQLNormalizationPayload, OperationIdentity},
 };

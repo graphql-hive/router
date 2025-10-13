@@ -7,6 +7,7 @@ use hive_router_internal::telemetry::TelemetryContext;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
+use hive_router_plan_executor::plugin_trait::RouterPluginBoxed;
 use moka::future::Cache;
 use moka::Expiry;
 use std::sync::Arc;
@@ -61,7 +62,7 @@ impl Expiry<String, Arc<JwtTokenPayload>> for JwtClaimsExpiry {
     }
 }
 pub struct RouterSharedState {
-    pub validation_plan: ValidationPlan,
+    pub validation_plan: Arc<ValidationPlan>,
     pub parse_cache: Cache<u64, ParseCacheEntry>,
     pub router_config: Arc<HiveRouterConfig>,
     pub headers_plan: HeaderRulesPlan,
@@ -76,6 +77,7 @@ pub struct RouterSharedState {
     pub hive_usage_agent: Option<UsageAgent>,
     pub introspection_policy: BooleanOrProgram,
     pub telemetry_context: Arc<TelemetryContext>,
+    pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
 }
 
 impl RouterSharedState {
@@ -85,9 +87,10 @@ impl RouterSharedState {
         hive_usage_agent: Option<UsageAgent>,
         validation_plan: ValidationPlan,
         telemetry_context: Arc<TelemetryContext>,
+        plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
     ) -> Result<Self, SharedStateError> {
         Ok(Self {
-            validation_plan,
+            validation_plan: Arc::new(validation_plan),
             headers_plan: compile_headers_plan(&router_config.headers).map_err(Box::new)?,
             parse_cache: moka::future::Cache::new(1000),
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,
@@ -107,6 +110,7 @@ impl RouterSharedState {
             introspection_policy: compile_introspection_policy(&router_config.introspection)
                 .map_err(Box::new)?,
             telemetry_context,
+            plugins,
         })
     }
 }
