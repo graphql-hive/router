@@ -254,7 +254,7 @@ mod hive_cdn_supergraph_e2e_tests {
             .unwrap()
             .as_array()
             .unwrap();
-        assert_eq!(types_arr.len(), 17);
+        assert_eq!(types_arr.len(), 21);
     }
 
     #[ntex::test]

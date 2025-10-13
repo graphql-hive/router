@@ -19,7 +19,6 @@ use hyper_util::{
     rt::{TokioExecutor, TokioTimer},
 };
 use tokio::sync::{OnceCell, Semaphore};
-use tracing::error;
 
 use crate::{
     execution::client_request_details::ClientRequestDetails,
@@ -29,7 +28,12 @@ use crate::{
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClient, HttpResponse},
     },
-    response::{graphql_error::GraphQLError, subgraph_response::SubgraphResponse},
+    hooks::on_subgraph_execute::{
+        OnSubgraphExecuteEndHookPayload, OnSubgraphExecuteStartHookPayload,
+    },
+    plugin_context::PluginRequestState,
+    plugin_trait::{EndControlFlow, StartControlFlow},
+    response::subgraph_response::SubgraphResponse,
 };
 
 type SubgraphName = String;
@@ -138,57 +142,94 @@ impl SubgraphExecutorMap {
     pub async fn execute<'exec>(
         &self,
         subgraph_name: &'exec str,
-        execution_request: SubgraphExecutionRequest<'exec>,
+        mut execution_request: SubgraphExecutionRequest<'exec>,
         client_request: &ClientRequestDetails<'exec>,
-    ) -> SubgraphResponse<'exec> {
-        match self.get_or_create_executor(subgraph_name, client_request) {
-            Ok(executor) => {
-                let timeout = self
-                    .timeouts_by_subgraph
-                    .get(subgraph_name)
-                    .map(|t| {
-                        let global_timeout_duration =
-                            resolve_timeout(&self.global_timeout, client_request, None, "all")?;
-                        resolve_timeout(
-                            t.value(),
-                            client_request,
-                            Some(global_timeout_duration),
-                            subgraph_name,
-                        )
-                    })
-                    .transpose();
+        plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
+    ) -> Result<SubgraphResponse<'exec>, SubgraphExecutorError> {
+        let mut executor = self.get_or_create_executor(subgraph_name, client_request)?;
 
-                match timeout {
-                    Ok(timeout) => executor.execute(execution_request, timeout).await,
-                    Err(err) => {
-                        error!(
-                            "Failed to resolve timeout for subgraph '{}': {}",
-                            subgraph_name, err,
-                        );
-                        self.internal_server_error_response(err.into(), subgraph_name)
+        let timeout = self
+            .timeouts_by_subgraph
+            .get(subgraph_name)
+            .map(|t| {
+                let global_timeout_duration =
+                    resolve_timeout(&self.global_timeout, client_request, None, "all")?;
+                resolve_timeout(
+                    t.value(),
+                    client_request,
+                    Some(global_timeout_duration),
+                    subgraph_name,
+                )
+            })
+            .transpose()?;
+
+        let mut on_end_callbacks = vec![];
+
+        let mut execution_result: Option<SubgraphResponse<'exec>> = None;
+        if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+            let mut start_payload = OnSubgraphExecuteStartHookPayload {
+                router_http_request: &plugin_req_state.router_http_request,
+                context: &plugin_req_state.context,
+                subgraph_name,
+                executor,
+                execution_request,
+            };
+            for plugin in plugin_req_state.plugins.as_ref() {
+                let result = plugin.on_subgraph_execute(start_payload).await;
+                start_payload = result.payload;
+                match result.control_flow {
+                    StartControlFlow::Proceed => {
+                        // continue to next plugin
+                    }
+                    StartControlFlow::EndWithResponse(response) => {
+                        execution_result = Some(response);
+                        break;
+                    }
+                    StartControlFlow::OnEnd(callback) => {
+                        on_end_callbacks.push(callback);
                     }
                 }
             }
-            Err(err) => {
-                error!(
-                    "Subgraph executor error for subgraph '{}': {}",
-                    subgraph_name, err,
-                );
-                self.internal_server_error_response(err.into(), subgraph_name)
+            // Give the ownership back to variables
+            execution_request = start_payload.execution_request;
+            executor = start_payload.executor;
+        }
+
+        let mut execution_result = match execution_result {
+            Some(execution_result) => execution_result,
+            None => {
+                executor
+                    .execute(execution_request, timeout, plugin_req_state)
+                    .await?
+            }
+        };
+
+        if !on_end_callbacks.is_empty() {
+            if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+                let mut end_payload = OnSubgraphExecuteEndHookPayload {
+                    context: &plugin_req_state.context,
+                    execution_result,
+                };
+
+                for callback in on_end_callbacks {
+                    let result = callback(end_payload);
+                    end_payload = result.payload;
+                    match result.control_flow {
+                        EndControlFlow::Proceed => {
+                            // continue to next callback
+                        }
+                        EndControlFlow::EndWithResponse(response) => {
+                            end_payload.execution_result = response;
+                        }
+                    }
+                }
+
+                // Give the ownership back to variables
+                execution_result = end_payload.execution_result;
             }
         }
-    }
 
-    fn internal_server_error_response<'exec>(
-        &self,
-        graphql_error: GraphQLError,
-        subgraph_name: &'exec str,
-    ) -> SubgraphResponse<'exec> {
-        let error_with_subgraph_name = graphql_error.add_subgraph_name(subgraph_name);
-        SubgraphResponse {
-            errors: Some(vec![error_with_subgraph_name]),
-            ..Default::default()
-        }
+        Ok(execution_result)
     }
 
     /// Looks up a subgraph executor based on the subgraph name.
@@ -209,10 +250,9 @@ impl SubgraphExecutorMap {
                 )
             })
             .unwrap_or_else(|| {
-                self.get_executor_from_static_endpoint(subgraph_name)
-                    .ok_or_else(|| {
-                        SubgraphExecutorError::StaticEndpointNotFound(subgraph_name.to_string())
-                    })
+                self.get_executor_from_static_endpoint(subgraph_name).ok_or(
+                    SubgraphExecutorError::StaticEndpointNotFound(subgraph_name.to_string()),
+                )
             })
     }
 
@@ -352,6 +392,7 @@ impl SubgraphExecutorMap {
             subgraph_config.client,
             semaphore,
             subgraph_config.dedupe_enabled,
+            self.config.clone(),
             self.in_flight_requests.clone(),
         );
 

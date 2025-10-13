@@ -7,6 +7,8 @@ mod disable_introspection;
 #[cfg(test)]
 mod env_vars;
 #[cfg(test)]
+mod error_handling;
+#[cfg(test)]
 mod file_supergraph;
 #[cfg(test)]
 mod header_propagation;
@@ -24,6 +26,8 @@ mod max_directives;
 mod max_tokens;
 #[cfg(test)]
 mod override_subgraph_urls;
+#[cfg(test)]
+mod plugins;
 #[cfg(test)]
 mod probes;
 #[cfg(test)]

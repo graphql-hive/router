@@ -3,6 +3,7 @@ use std::sync::Arc;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_plan_executor::{
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
+    headers::errors::HeaderRuleRuntimeError,
     response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
@@ -85,7 +86,7 @@ pub enum PipelineError {
     PlanExecutionError(#[from] PlanExecutionError),
     #[error("Failed to produce a plan: {0}")]
     #[strum(serialize = "QUERY_PLAN_BUILD_FAILED")]
-    PlannerError(#[from] Arc<PlannerError>),
+    PlannerError(#[from] PlannerError),
     #[error(transparent)]
     #[strum(serialize = "OVERRIDE_LABEL_EVALUATION_FAILED")]
     LabelEvaluationError(#[from] LabelEvaluationError),
@@ -118,6 +119,14 @@ pub enum PipelineError {
     #[error("Subscriptions are not supported over accepted transport(s)")]
     #[strum(serialize = "SUBSCRIPTIONS_TRANSPORT_NOT_SUPPORTED")]
     SubscriptionsTransportNotSupported,
+
+    #[error(transparent)]
+    #[strum(serialize = "HEADER_PROPAGATION_FAILURE")]
+    HeaderPropagation(#[from] HeaderRuleRuntimeError),
+
+    #[error("Failed to serialize the query plan: {0}")]
+    #[strum(serialize = "QUERY_PLAN_SERIALIZATION_ERROR")]
+    QueryPlanSerializationError(sonic_rs::Error),
 }
 
 impl PipelineError {
@@ -169,6 +178,8 @@ impl PipelineError {
             (Self::IntrospectionDisabled, _) => StatusCode::FORBIDDEN,
             (Self::SubscriptionsNotSupported, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::SubscriptionsTransportNotSupported, _) => StatusCode::NOT_ACCEPTABLE,
+            (Self::HeaderPropagation(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::QueryPlanSerializationError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 

@@ -2,6 +2,7 @@ schema
   @link(url: "https://specs.apollo.dev/link/v1.0")
   @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
   query: Query
+  mutation: Mutation
 }
 
 directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
@@ -112,4 +113,32 @@ type User
     @join__field(graph: REVIEWS, external: true)
   birthday: Int @join__field(graph: ACCOUNTS)
   reviews: [Review] @join__field(graph: REVIEWS)
+}
+
+scalar Upload
+
+type Mutation
+  @join__type(graph: PRODUCTS) {
+  upload(file: Upload): String @join__field(graph: PRODUCTS)
+
+  oneofTest(input: OneOfTestInput!): OneOfTestResult
+    @join__field(graph: PRODUCTS)
+}
+
+directive @oneOf on INPUT_OBJECT
+
+input OneOfTestInput @oneOf @join__type(graph: PRODUCTS) {
+  string: String
+  int: Int
+  float: Float
+  boolean: Boolean
+  id: ID
+}
+
+type OneOfTestResult @join__type(graph: PRODUCTS) {
+  string: String @join__field(graph: PRODUCTS)
+  int: Int @join__field(graph: PRODUCTS)
+  float: Float @join__field(graph: PRODUCTS)
+  boolean: Boolean @join__field(graph: PRODUCTS)
+  id: ID @join__field(graph: PRODUCTS)
 }

@@ -6,6 +6,7 @@ use hive_router_internal::expressions::ExpressionCompileError;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
+use hive_router_plan_executor::plugin_trait::RouterPluginBoxed;
 use moka::future::Cache;
 use moka::Expiry;
 use std::sync::Arc;
@@ -74,6 +75,7 @@ pub struct RouterSharedState {
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
     pub hive_usage_agent: Option<UsageAgent>,
     pub introspection_policy: BooleanOrProgram,
+    pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
 }
 
 impl RouterSharedState {
@@ -82,6 +84,7 @@ impl RouterSharedState {
         jwt_auth_runtime: Option<JwtAuthRuntime>,
         hive_usage_agent: Option<UsageAgent>,
         validation_plan: ValidationPlan,
+        plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
     ) -> Result<Self, SharedStateError> {
         Ok(Self {
             validation_plan,
@@ -103,6 +106,7 @@ impl RouterSharedState {
             hive_usage_agent,
             introspection_policy: compile_introspection_policy(&router_config.introspection)
                 .map_err(Box::new)?,
+            plugins,
         })
     }
 }

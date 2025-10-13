@@ -1,13 +1,12 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::variables::collect_variables;
 use sonic_rs::{JsonValueTrait, Value};
 use tracing::{trace, warn};
 
 use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
-use crate::schema_state::SupergraphData;
 
 #[derive(Clone, Debug, Default)]
 pub struct CoerceVariablesPayload {
@@ -28,7 +27,7 @@ impl CoerceVariablesPayload {
 pub fn coerce_request_variables(
     supergraph: &SupergraphData,
     variables: &mut HashMap<String, Value>,
-    normalized_operation: &Arc<GraphQLNormalizationPayload>,
+    normalized_operation: &GraphQLNormalizationPayload,
 ) -> Result<CoerceVariablesPayload, PipelineError> {
     match collect_variables(
         &normalized_operation.operation_for_plan,

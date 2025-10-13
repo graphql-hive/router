@@ -7,7 +7,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 async fn main() -> Result<(), RouterInitError> {
     init_rustls_crypto_provider();
 
-    match router_entrypoint().await {
+    match router_entrypoint(None).await {
         Ok(_) => Ok(()),
         Err(err) => {
             eprintln!("Failed to start Hive Router:\n  {}", err);
