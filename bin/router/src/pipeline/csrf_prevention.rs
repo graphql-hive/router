@@ -120,4 +120,17 @@ mod tests {
         let result = super::perform_csrf_prevention(&mut req, &config);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn case_insensitive_header_names() {
+        let config = super::CSRFPreventionConfig {
+            required_headers: vec!["x-csrf-token".to_string()],
+        };
+        let mut req = ntex::web::test::TestRequest::with_uri("/graphql")
+            .method(http::Method::GET)
+            .header("X-CSrF-ToKEN", "header")
+            .to_http_request();
+        let result = super::perform_csrf_prevention(&mut req, &config);
+        assert!(result.is_ok());
+    }
 }

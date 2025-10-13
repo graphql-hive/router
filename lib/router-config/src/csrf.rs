@@ -3,7 +3,8 @@
 /// Cross-site request forgery (CSRF) is an attack that forces an end user to execute unwanted actions on a web application in which they're currently authenticated.
 /// By enabling CSRF prevention, the router will check for the presence of specific headers in incoming requests to the `/graphql` endpoint.
 /// If the required headers are not present, the router will reject the request with a `403 Forbidden` response.
-/// This helps to ensure that requests are coming from trusted sources and not from malicious third-party sites.
+/// This triggers the preflight checks in browsers, preventing the request from being sent.
+/// So you can ensure that only requests from trusted origins are processed.
 ///
 /// When CSRF prevention is enabled, the router only executes operations if at least one of the following conditions is true;
 ///
