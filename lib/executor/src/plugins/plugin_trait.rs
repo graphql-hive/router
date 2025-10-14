@@ -2,13 +2,12 @@ use ntex::web::HttpResponse;
 
 use crate::hooks::on_execute::OnExecutePayload;
 use crate::hooks::on_schema_reload::OnSchemaReloadPayload;
-use crate::hooks::on_subgraph_execute::OnSubgraphExecuteEndPayload;
-use crate::hooks::on_subgraph_execute::OnSubgraphExecuteStartPayload;
+use crate::hooks::on_subgraph_http_request::{OnSubgraphHttpRequestPayload, OnSubgraphHttpResponsePayload};
 
-pub enum ControlFlow<'a, TPayload> {
+pub enum ControlFlow<'exec, TPayload> {
     Continue,
     Break(HttpResponse),
-    OnEnd(Box<dyn FnOnce(TPayload) -> ControlFlow<'a, ()> + Send + 'a>),
+    OnEnd(Box<dyn FnOnce(TPayload) -> ControlFlow<'exec, ()> + 'exec>),
 }
 
 pub trait RouterPlugin {
@@ -18,10 +17,10 @@ pub trait RouterPlugin {
     ) -> ControlFlow<'exec, OnExecutePayload<'exec>> {
         ControlFlow::Continue
     }
-    fn on_subgraph_execute<'exec>(
-        &self, 
-        _payload: OnSubgraphExecuteStartPayload<'exec>,
-    ) -> ControlFlow<'exec, OnSubgraphExecuteEndPayload<'exec>> {
+    fn on_subgraph_http_request<'exec>(
+        &'static self, 
+        _payload: OnSubgraphHttpRequestPayload<'exec>,
+    ) -> ControlFlow<'exec, OnSubgraphHttpResponsePayload<'exec>> {
         ControlFlow::Continue
     }
     fn on_schema_reload(&self, _payload: OnSchemaReloadPayload) {}
