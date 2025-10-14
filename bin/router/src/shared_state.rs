@@ -16,7 +16,10 @@ use hive_router_query_planner::{
 };
 use moka::future::Cache;
 
-use crate::pipeline::normalize::GraphQLNormalizationPayload;
+use crate::pipeline::{
+    cors::{CORSConfigError, Cors},
+    normalize::GraphQLNormalizationPayload,
+};
 
 pub struct RouterSharedState {
     pub schema_metadata: SchemaMetadata,
@@ -29,6 +32,7 @@ pub struct RouterSharedState {
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
     pub router_config: HiveRouterConfig,
     pub headers_plan: HeaderRulesPlan,
+    pub cors: Option<Cors>,
 }
 
 impl RouterSharedState {
@@ -57,6 +61,7 @@ impl RouterSharedState {
             validate_cache: moka::future::Cache::new(1000),
             parse_cache: moka::future::Cache::new(1000),
             normalize_cache: moka::future::Cache::new(1000),
+            cors: Cors::from_config(&router_config.cors).map_err(Box::new)?,
             router_config,
         }))
     }
@@ -66,4 +71,6 @@ impl RouterSharedState {
 pub enum SharedStateError {
     #[error("invalid headers config: {0}")]
     HeaderRuleCompileError(#[from] Box<HeaderRuleCompileError>),
+    #[error("invalid regex in CORS config: {0}")]
+    CORSConfigError(#[from] Box<CORSConfigError>),
 }

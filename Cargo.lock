@@ -1821,6 +1821,7 @@ dependencies = [
  "moka",
  "ntex",
  "rand 0.9.2",
+ "regex-automata",
  "serde",
  "sonic-rs",
  "thiserror 2.0.17",

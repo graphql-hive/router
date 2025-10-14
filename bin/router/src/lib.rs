@@ -25,7 +25,23 @@ async fn graphql_endpoint_handler(
     body_bytes: Bytes,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> impl web::Responder {
-    graphql_request_handler(&mut request, body_bytes, app_state.get_ref()).await
+    // If an early CORS response is needed, return it immediately.
+    if let Some(early_response) = app_state
+        .cors
+        .as_ref()
+        .and_then(|cors| cors.get_early_response(&request))
+    {
+        return Some(early_response);
+    }
+
+    let mut res = graphql_request_handler(&mut request, body_bytes, app_state.get_ref()).await;
+
+    // Apply CORS headers to the final response if CORS is configured.
+    if let Some(cors) = app_state.cors.as_ref() {
+        cors.set_headers(&request, res.headers_mut());
+    }
+
+    Some(res)
 }
 
 pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {

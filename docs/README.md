@@ -4,6 +4,7 @@
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"required_headers":[]}`<br/>||
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"host":"0.0.0.0","port":4000}`<br/>||
@@ -16,6 +17,19 @@
 **Example**
 
 ```yaml
+cors:
+  allow_any_origin: false
+  allow_credentials: false
+  enabled: true
+  max_age: 120
+  methods:
+    - GET
+    - POST
+    - OPTIONS
+  policies:
+    - origins:
+        - https://example.com
+        - https://another.com
 csrf:
   required_headers:
     - x-csrf-token
@@ -56,6 +70,201 @@ traffic_shaping:
 
 ```
 
+<a name="cors"></a>
+## cors: object
+
+Configuration for CORS (Cross-Origin Resource Sharing).
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**allow\_any\_origin**|`boolean`|Set to true to allow any origin. If true, the `origins` and `match_origin` fields are ignored.<br/>Default: `false`<br/>|no|
+|**allow\_credentials**|`boolean`|Set to true to allow credentials (cookies, authorization headers, or TLS client certificates) in cross-origin requests.<br/>This will set the `Access-Control-Allow-Credentials` header to `true`.<br/>Default: `false`<br/>|no|
+|[**allow\_headers**](#corsallow_headers)|`string[]`|List of headers that the server allows the client to send in a cross-origin request.<br/>|no|
+|**enabled**|`boolean`|Default: `false`<br/>|no|
+|[**expose\_headers**](#corsexpose_headers)|`string[]`|List of headers that the client is allowed to access from the response.<br/>|no|
+|**max\_age**|`integer`, `null`|The maximum time (in seconds) that the results of a preflight request can be cached by the client.<br/>This will set the `Access-Control-Max-Age` header.<br/>If not set, the browser will not cache the preflight response.<br/>Example: 86400 (24 hours)<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>|no|
+|[**methods**](#corsmethods)|`string[]`|List of methods that the server allows for cross-origin requests.<br/>|no|
+|[**policies**](#corspolicies)|`object[]`|List of CORS policies. The first policy that matches the request origin will be applied.<br/>|yes|
+
+**Example**
+
+```yaml
+allow_any_origin: false
+allow_credentials: false
+enabled: true
+max_age: 120
+methods:
+  - GET
+  - POST
+  - OPTIONS
+policies:
+  - origins:
+      - https://example.com
+      - https://another.com
+
+```
+
+<a name="corsallow_headers"></a>
+### cors\.allow\_headers\[\]: array,null
+
+List of headers that the server allows the client to send in a cross-origin request.
+This will set the `Access-Control-Allow-Headers` header.
+If not set, the server will reflect the headers specified in the `Access-Control-Request-Headers` request header.
+Example: ["Content-Type", "Authorization"]
+
+
+**Items**
+
+**Item Type:** `string`  
+<a name="corsexpose_headers"></a>
+### cors\.expose\_headers\[\]: array,null
+
+List of headers that the client is allowed to access from the response.
+This will set the `Access-Control-Expose-Headers` header.
+If not set, no additional headers are exposed to the client.
+Example: ["X-Custom-Header", "X-Another-Header"]
+
+
+**Items**
+
+**Item Type:** `string`  
+<a name="corsmethods"></a>
+### cors\.methods\[\]: array,null
+
+List of methods that the server allows for cross-origin requests.
+This will set the `Access-Control-Allow-Methods` header.
+If not set, the server will reflect the method specified in the `Access-Control-Request-Method` request header.
+Example: ["GET", "POST", "OPTIONS"]
+
+
+**Items**
+
+**Item Type:** `string`  
+<a name="corspolicies"></a>
+### cors\.policies\[\]: array
+
+List of CORS policies. The first policy that matches the request origin will be applied.
+If no policies match, the request will be rejected.
+If `allow_any_origin` is true, this field is ignored.
+This allows you to define different CORS settings for different origins.
+For example, you might want to allow credentials for some origins but not others.
+If multiple policies match, the first one in the list will be applied.
+
+Example:
+```yaml
+allow_credentials: false
+policies:
+  - match_origin: ["^https://.*\.credentials-example\.com$"]
+    allow_credentials: true
+  - match_origin: ["^https://.*\.example\.com$"]
+```
+
+In this example, requests from any subdomain of `credentials-example.com` will be allowed to include credentials,
+while requests from any subdomain of `example.com` will not be allowed to include credentials.
+Requests from origins not matching either pattern will be rejected.
+
+## Policy Inheritance Rules
+
+Each policy defined in the `policies` array can provide its own CORS settings.
+If a setting is not specified within a policy, the corresponding global CORS setting is used as a fallback.
+
+Here's a breakdown of how inheritance works for each field:
+
+- `allow_credentials` and `max_age`: If a policy omits a value for these settings,
+  it automatically uses the value from the global configuration.
+- `allow_headers` and `expose_headers`: A policy's behavior for these header lists depends on the value provided:
+  - If a list with specific headers is provided (e.g., `["Content-Type"]`), it completely overrides the global list.
+  - If an empty list (`[]`) is provided, the policy will inherit the headers from the global configuration.
+- `methods`: This setting has three distinct states for inheritance:
+  - If `methods` is not specified at all (`null`), the policy inherits the global methods.
+  - If an empty list (`[]`) is provided, no methods are allowed for that policy.
+  - If the list contains specific methods (e.g., `["GET", "POST"]`), only those methods are used, overriding the global list.
+
+
+**Items**
+
+**Item Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**allow\_credentials**|`boolean`, `null`|Set to true to allow credentials (cookies, authorization headers, or TLS client certificates) in cross-origin requests.<br/>This will set the `Access-Control-Allow-Credentials` header to `true`.<br/>||
+|[**allow\_headers**](#corspoliciesallow_headers)|`string[]`|List of headers that the server allows the client to send in a cross-origin request.<br/>||
+|[**expose\_headers**](#corspoliciesexpose_headers)|`string[]`|List of headers that the client is allowed to access from the response.<br/>||
+|[**match\_origin**](#corspoliciesmatch_origin)|`string[]`|List of regex patterns to match allowed origins. If `allow_any_origin` is true, this field is ignored.<br/>||
+|**max\_age**|`integer`, `null`|The maximum time (in seconds) that the results of a preflight request can be cached by the client.<br/>This will set the `Access-Control-Max-Age` header.<br/>If not set, the browser will not cache the preflight response.<br/>Example: 86400 (24 hours)<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>||
+|[**methods**](#corspoliciesmethods)|`string[]`|List of methods that the server allows for cross-origin requests.<br/>||
+|[**origins**](#corspoliciesorigins)|`string[]`|List of allowed origins. If `allow_any_origin` is true, this field is ignored.<br/>||
+
+**Example**
+
+```yaml
+- {}
+
+```
+
+<a name="corspoliciesallow_headers"></a>
+#### cors\.policies\[\]\.allow\_headers\[\]: array,null
+
+List of headers that the server allows the client to send in a cross-origin request.
+This will set the `Access-Control-Allow-Headers` header.
+If not set, the server will reflect the headers specified in the `Access-Control-Request-Headers` request header.
+Example: ["Content-Type", "Authorization"]
+
+
+**Items**
+
+**Item Type:** `string`  
+<a name="corspoliciesexpose_headers"></a>
+#### cors\.policies\[\]\.expose\_headers\[\]: array,null
+
+List of headers that the client is allowed to access from the response.
+This will set the `Access-Control-Expose-Headers` header.
+If not set, no additional headers are exposed to the client.
+Example: ["X-Custom-Header", "X-Another-Header"]
+
+
+**Items**
+
+**Item Type:** `string`  
+<a name="corspoliciesmatch_origin"></a>
+#### cors\.policies\[\]\.match\_origin\[\]: array,null
+
+List of regex patterns to match allowed origins. If `allow_any_origin` is true, this field is ignored.
+If both `origins` and `match_origin` are set, the request origin must match one of the values in either list to be allowed.
+Each pattern should be a valid regex.
+Example: "^https://.*\.example\.com$", "^http://localhost:\d+$"
+
+
+**Items**
+
+**Item Type:** `string`  
+<a name="corspoliciesmethods"></a>
+#### cors\.policies\[\]\.methods\[\]: array,null
+
+List of methods that the server allows for cross-origin requests.
+This will set the `Access-Control-Allow-Methods` header.
+If not set, the server will reflect the method specified in the `Access-Control-Request-Method` request header.
+Example: ["GET", "POST", "OPTIONS"]
+
+
+**Items**
+
+**Item Type:** `string`  
+<a name="corspoliciesorigins"></a>
+#### cors\.policies\[\]\.origins\[\]: array,null
+
+List of allowed origins. If `allow_any_origin` is true, this field is ignored.
+If both `origins` and `match_origin` are set, the request origin must match one of the values in either list to be allowed.
+An origin is a combination of scheme, host, and port (if specified).
+Example: "https://example.com", "http://localhost:3000"
+
+
+**Items**
+
+**Item Type:** `string`  
 <a name="csrf"></a>
 ## csrf: object
 

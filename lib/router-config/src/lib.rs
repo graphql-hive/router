@@ -1,3 +1,4 @@
+pub mod cors;
 pub mod csrf;
 pub mod headers;
 pub mod http_server;
@@ -50,6 +51,9 @@ pub struct HiveRouterConfig {
     /// Configuration for CSRF prevention.
     #[serde(default)]
     pub csrf: csrf::CSRFPreventionConfig,
+    /// Configuration for CORS (Cross-Origin Resource Sharing).
+    #[serde(default)]
+    pub cors: cors::CORSConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
