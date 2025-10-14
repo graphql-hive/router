@@ -3,10 +3,9 @@ use ntex::web::HttpResponse;
 use redis::Commands;
 
 use crate::{
-    plugins::traits::{
-        ControlFlow, OnExecutePayload, OnSchemaReloadPayload, RouterPlugin
-    },
-    utils::consts::TYPENAME_FIELD_NAME,
+    hooks::{on_execute::OnExecutePayload, on_schema_reload::OnSchemaReloadPayload}, plugins::plugin_trait::{
+        ControlFlow, RouterPlugin
+    }, utils::consts::TYPENAME_FIELD_NAME
 };
 
 pub struct ResponseCachePlugin {
