@@ -76,6 +76,10 @@ pub enum PipelineErrorVariant {
     PlanExecutionError(PlanExecutionError),
     #[error("Failed to produce a plan: {0}")]
     PlannerError(Arc<PlannerError>),
+
+    // HTTP Security-related errors
+    #[error("Required CSRF header(s) not present")]
+    CsrfPreventionFailed,
 }
 
 impl PipelineErrorVariant {
@@ -129,6 +133,7 @@ impl PipelineErrorVariant {
             (Self::ValidationErrors(_), false) => StatusCode::BAD_REQUEST,
             (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
         }
     }
 }
