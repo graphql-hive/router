@@ -56,7 +56,7 @@ fn request_requires_preflight(req: &HttpRequest) -> bool {
     req.headers()
         .get(http::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
-        .map_or(false, |content_type| !is_simple_content_type(content_type))
+        .is_some_and(|content_type| !is_simple_content_type(content_type))
 }
 
 #[cfg(test)]
