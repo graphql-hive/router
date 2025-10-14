@@ -2137,8 +2137,6 @@ dependencies = [
  "insta",
  "lazy-init",
  "lazy_static",
- "napi",
- "napi-derive",
  "petgraph 0.8.3",
  "rustc-hash",
  "serde",

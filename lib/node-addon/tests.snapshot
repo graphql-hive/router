@@ -3,9 +3,9 @@ exports[`should plan simple query 1`] = `
   "kind": "QueryPlan",
   "node": {
     "kind": "Fetch",
-    "serviceName": "users",
+    "operation": "query{user(id: \\"1\\"){id name email}}",
     "operationKind": "query",
-    "operation": "query{user(id: \\"1\\"){id name email}}"
+    "serviceName": "users"
   }
 }
 `;
