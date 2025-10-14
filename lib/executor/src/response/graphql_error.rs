@@ -8,12 +8,16 @@ use std::{collections::HashMap, fmt};
 #[serde(rename_all = "camelCase")]
 pub struct GraphQLError {
     pub message: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub locations: Option<Vec<GraphQLErrorLocation>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<GraphQLErrorPath>,
     #[serde(default, skip_serializing_if = "GraphQLErrorExtensions::is_empty")]
     pub extensions: GraphQLErrorExtensions,
+}
+
+fn is_none_or_empty<T>(opt: &Option<Vec<T>>) -> bool {
+    opt.as_ref().is_none_or(|v| v.is_empty())
 }
 
 impl From<String> for GraphQLError {
