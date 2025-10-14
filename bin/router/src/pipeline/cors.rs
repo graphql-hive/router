@@ -147,12 +147,12 @@ impl CompiledOriginRule {
     }
 }
 
-pub enum CORS {
+pub enum Cors {
     AllowAll { policy: CompiledCORSPolicy },
     ByOrigin { rules: Vec<CompiledOriginRule> },
 }
 
-impl CORS {
+impl Cors {
     pub fn from_config(config: &CORSConfig) -> Result<Option<Self>, CORSConfigError> {
         if !config.enabled {
             return Ok(None);
@@ -174,7 +174,7 @@ impl CORS {
         };
 
         if config.allow_any_origin {
-            return Ok(Some(CORS::AllowAll { policy: global }));
+            return Ok(Some(Cors::AllowAll { policy: global }));
         }
 
         // Resolve all origin rules
@@ -186,14 +186,14 @@ impl CORS {
         if rules.is_empty() {
             Ok(None)
         } else {
-            Ok(Some(CORS::ByOrigin { rules }))
+            Ok(Some(Cors::ByOrigin { rules }))
         }
     }
 
     fn find_policy_for_origin(&self, origin: &str) -> Option<&CompiledCORSPolicy> {
         match self {
-            CORS::AllowAll { policy } => Some(policy),
-            CORS::ByOrigin { rules } => rules
+            Cors::AllowAll { policy } => Some(policy),
+            Cors::ByOrigin { rules } => rules
                 .iter()
                 .find(|r| r.matches_origin(origin))
                 .map(|r| &r.policy),
@@ -284,7 +284,7 @@ mod tests {
             allow_any_origin: true,
             ..CORSConfig::default()
         };
-        let engine = CORS::from_config(&cors_config).unwrap().unwrap();
+        let engine = Cors::from_config(&cors_config).unwrap().unwrap();
         let req = TestRequest::with_uri("/graphql")
             .method(Method::OPTIONS)
             .to_http_request();
@@ -305,7 +305,7 @@ mod tests {
                 allow_any_origin: true,
                 ..CORSConfig::default()
             };
-            let engine = CORS::from_config(&cors_config).unwrap().unwrap();
+            let engine = Cors::from_config(&cors_config).unwrap().unwrap();
             let req = TestRequest::with_uri("/graphql")
                 .method(Method::POST)
                 .header(header::CONTENT_TYPE, "application/json")
@@ -322,7 +322,7 @@ mod tests {
                 allow_any_origin: true,
                 ..CORSConfig::default()
             };
-            let engine = CORS::from_config(&cors_config).unwrap().unwrap();
+            let engine = Cors::from_config(&cors_config).unwrap().unwrap();
             let req = TestRequest::with_uri("/graphql")
                 .method(Method::POST)
                 .header(header::CONTENT_TYPE, "application/json")
@@ -351,7 +351,7 @@ mod tests {
                 }],
                 ..CORSConfig::default()
             };
-            let engine = CORS::from_config(&cors_config).unwrap().unwrap();
+            let engine = Cors::from_config(&cors_config).unwrap().unwrap();
             let req = TestRequest::with_uri("/graphql")
                 .method(Method::POST)
                 .header(header::CONTENT_TYPE, "application/json")
@@ -383,7 +383,7 @@ mod tests {
                 }],
                 ..CORSConfig::default()
             };
-            let engine = CORS::from_config(&cors_config).unwrap().unwrap();
+            let engine = Cors::from_config(&cors_config).unwrap().unwrap();
             let req = TestRequest::with_uri("/graphql")
                 .method(Method::POST)
                 .header(header::CONTENT_TYPE, "application/json")
@@ -411,7 +411,7 @@ mod tests {
                 }],
                 ..CORSConfig::default()
             };
-            let engine = CORS::from_config(&cors_config).unwrap().unwrap();
+            let engine = Cors::from_config(&cors_config).unwrap().unwrap();
             let req = TestRequest::with_uri("/graphql")
                 .method(Method::POST)
                 .header(header::CONTENT_TYPE, "application/json")
@@ -443,7 +443,7 @@ mod tests {
                 }],
                 ..CORSConfig::default()
             };
-            let engine = CORS::from_config(&cors_config).unwrap().unwrap();
+            let engine = Cors::from_config(&cors_config).unwrap().unwrap();
             let req = TestRequest::with_uri("/graphql")
                 .method(Method::POST)
                 .header(header::CONTENT_TYPE, "application/json")
@@ -485,8 +485,8 @@ mod tests {
                 ],
                 ..CORSConfig::default()
             };
-            let cors = CORS::from_config(&cors_config).unwrap().unwrap();
-            if let CORS::ByOrigin { rules } = &cors {
+            let cors = Cors::from_config(&cors_config).unwrap().unwrap();
+            if let Cors::ByOrigin { rules } = &cors {
                 assert_eq!(rules.len(), 2);
                 assert_eq!(rules[0].origins, vec!["https://example.com"]);
                 assert_eq!(rules[1].origins, vec!["https://another.com"]);
