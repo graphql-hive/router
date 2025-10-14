@@ -1,2 +1,3 @@
-pub mod response_cache;
-pub mod traits;
+pub mod examples;
+pub mod plugin_trait;
+pub mod hooks;
