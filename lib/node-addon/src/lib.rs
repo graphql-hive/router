@@ -11,6 +11,9 @@ use hive_router_query_planner::utils::parsing::{parse_schema, safe_parse_operati
 #[macro_use]
 extern crate napi_derive;
 
+mod converter;
+mod plan_nodes;
+
 #[napi]
 pub struct QueryPlanner {
     planner: Arc<Planner>,
@@ -48,7 +51,7 @@ impl QueryPlanner {
         // TODO: actually use the cacnellation token
         let cancellation_token = CancellationToken::new();
 
-        let query_plan = &self
+        let query_plan = self
             .planner
             .plan_from_normalized_operation(
                 &normalized_operation.operation,
@@ -57,8 +60,10 @@ impl QueryPlanner {
             )
             .map_err(|e| napi::Error::from_reason(format!("Failed to plan query: {}", e)))?;
 
-        // TODO: this generates wrong type definitions including QueryPlan which we dont want
-        serde_json::to_value(&query_plan)
+        // Convert to our custom QueryPlan type that includes operation_document_node
+        let converted_plan: plan_nodes::QueryPlan = query_plan.into();
+
+        serde_json::to_value(&converted_plan)
             .map_err(|e| napi::Error::from_reason(format!("Failed to serialize query plan: {}", e)))
     }
 
@@ -94,8 +99,10 @@ impl QueryPlanner {
                 )
                 .map_err(|e| napi::Error::from_reason(format!("Failed to plan query: {}", e)))?;
 
-            // TODO: this generates wrong type definitions including QueryPlan which we dont want
-            serde_json::to_value(&query_plan).map_err(|e| {
+            // Convert to our custom QueryPlan type that includes operation_document_node
+            let converted_plan: plan_nodes::QueryPlan = query_plan.into();
+
+            serde_json::to_value(&converted_plan).map_err(|e| {
                 napi::Error::from_reason(format!("Failed to serialize query plan: {}", e))
             })
         })
