@@ -1877,6 +1877,7 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
