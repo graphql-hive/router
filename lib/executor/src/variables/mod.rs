@@ -189,7 +189,7 @@ fn validate_runtime_value(
                     validate_runtime_value(item.as_ref(), inner_type, schema_metadata)?;
                 }
             } else {
-                return Err(format!("Expected an array for list type, got {:?}", value));
+                validate_runtime_value(value, inner_type, schema_metadata)?;
             }
         }
     }
@@ -221,5 +221,25 @@ mod tests {
         let value = sonic_rs::ValueRef::Null;
         let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
         assert_eq!(result, Ok(()));
+    }
+    #[test]
+    fn allow_matching_non_list_values_for_list_types() {
+        let schema_metadata = crate::introspection::schema::SchemaMetadata::default();
+        let type_node = crate::variables::TypeNode::List(Box::new(
+            crate::variables::TypeNode::Named("String".to_string()),
+        ));
+        let value = sonic_rs::ValueRef::String("not a list");
+        let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
+        assert_eq!(result, Ok(()));
+    }
+    #[test]
+    fn disallow_non_matching_non_list_values_for_list_types() {
+        let schema_metadata = crate::introspection::schema::SchemaMetadata::default();
+        let type_node = crate::variables::TypeNode::List(Box::new(
+            crate::variables::TypeNode::Named("String".to_string()),
+        ));
+        let value = sonic_rs::ValueRef::Number(sonic_rs::Number::from(123));
+        let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
+        assert!(result.is_err());
     }
 }
