@@ -15,6 +15,7 @@ pub struct QueryPlanner {
 }
 
 // TODO: Did not find struct `QueryPlanner` parsed before expand #[napi] for impl?
+//       fixed in vscode with `"rust-analyzer.procMacro.ignored": { "napi-derive": ["napi"] }`
 #[napi]
 impl QueryPlanner {
     #[napi(constructor)]
@@ -53,6 +54,7 @@ impl QueryPlanner {
             )
             .map_err(|e| napi::Error::from_reason(format!("Failed to plan query: {}", e)))?;
 
+        // TODO: this generates wrong type definitions including QueryPlan which we dont want
         serde_json::to_value(&query_plan)
             .map_err(|e| napi::Error::from_reason(format!("Failed to serialize query plan: {}", e)))
     }
