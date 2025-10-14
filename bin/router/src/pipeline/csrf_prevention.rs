@@ -22,11 +22,13 @@ pub fn perform_csrf_prevention(
         return Ok(());
     }
 
-    if was_the_request_already_preflight_checked(req) {
+    if request_requires_preflight(req) {
         return Ok(());
     }
 
     // Check for the presence of at least one required header.
+    // Requiring any headers others than the Content-Type header
+    // forces browsers to preflight check the request.
     let has_required_header = csrf_config
         .required_headers
         .iter()
@@ -39,19 +41,22 @@ pub fn perform_csrf_prevention(
     }
 }
 
-fn was_the_request_already_preflight_checked(req: &HttpRequest) -> bool {
-    match req
-        .headers()
+/// A content type is considered "simple" if it does not trigger a CORS preflight.
+/// See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS#preflighted_requests
+fn is_simple_content_type(content_type: &str) -> bool {
+    let lowercased_content_type = content_type.to_ascii_lowercase();
+    NON_PREFLIGHTED_CONTENT_TYPES
+        .iter()
+        .any(|&simple_type| lowercased_content_type.starts_with(simple_type))
+}
+
+/// Determines if the request was already preflight checked by looking at the Content-Type header.
+/// If the Content-Type is not one of the NON_PREFLIGHTED_CONTENT_TYPES, we assume it was preflight checked.
+fn request_requires_preflight(req: &HttpRequest) -> bool {
+    req.headers()
         .get(http::header::CONTENT_TYPE)
-        .and_then(|ct| ct.to_str().ok())
-    {
-        Some(content_type) => !NON_PREFLIGHTED_CONTENT_TYPES.iter().any(|&non_prefetched| {
-            content_type
-                .to_ascii_lowercase()
-                .starts_with(non_prefetched)
-        }),
-        None => false,
-    }
+        .and_then(|value| value.to_str().ok())
+        .map_or(false, |content_type| !is_simple_content_type(content_type))
 }
 
 #[cfg(test)]
