@@ -34,7 +34,36 @@ impl QueryPlanner {
     }
 
     #[napi]
-    pub async fn plan(
+    pub fn plan(&self, query: String, operation_name: Option<String>) -> Result<serde_json::Value> {
+        let parsed_operation = safe_parse_operation(&query)
+            .map_err(|e| napi::Error::from_reason(format!("Failed to parse query: {}", e)))?;
+
+        let normalized_operation = normalize_operation(
+            &self.planner.supergraph,
+            &parsed_operation,
+            operation_name.as_deref(),
+        )
+        .map_err(|e| napi::Error::from_reason(format!("Failed to normalize operation: {}", e)))?;
+
+        // TODO: actually use the cacnellation token
+        let cancellation_token = CancellationToken::new();
+
+        let query_plan = &self
+            .planner
+            .plan_from_normalized_operation(
+                &normalized_operation.operation,
+                Default::default(),
+                &cancellation_token,
+            )
+            .map_err(|e| napi::Error::from_reason(format!("Failed to plan query: {}", e)))?;
+
+        // TODO: this generates wrong type definitions including QueryPlan which we dont want
+        serde_json::to_value(&query_plan)
+            .map_err(|e| napi::Error::from_reason(format!("Failed to serialize query plan: {}", e)))
+    }
+
+    #[napi]
+    pub async fn plan_async(
         &self,
         query: String,
         operation_name: Option<String>,
