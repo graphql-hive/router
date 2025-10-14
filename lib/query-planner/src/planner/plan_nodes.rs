@@ -18,11 +18,8 @@ use std::{
     fmt::{Display, Formatter as FmtFormatter, Result as FmtResult},
 };
 
-use napi_derive::napi;
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-#[napi(object)]
 pub struct QueryPlan {
     pub kind: String, // "QueryPlan"
     #[serde(skip_serializing_if = "Option::is_none")]
