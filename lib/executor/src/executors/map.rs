@@ -18,11 +18,7 @@ use crate::{
     executors::{
         common::{
             HttpExecutionRequest, HttpExecutionResponse, SubgraphExecutor, SubgraphExecutorBoxedArc,
-        },
-        dedupe::{ABuildHasher, SharedResponse},
-        error::SubgraphExecutorError,
-        http::HTTPSubgraphExecutor,
-        timeout::TimeoutExecutor,
+        }, dedupe::{ABuildHasher, SharedResponse}, error::SubgraphExecutorError, http::HTTPSubgraphExecutor, retry::RetryExecutor, timeout::TimeoutExecutor
     },
     response::graphql_error::GraphQLError,
 };
@@ -50,7 +46,7 @@ impl SubgraphExecutorMap {
         execution_request: HttpExecutionRequest<'a>,
     ) -> HttpExecutionResponse {
         match self.inner.get(subgraph_name) {
-            Some(executor) => executor.execute(execution_request).await,
+            Some(executor) => executor.execute(&execution_request).await,
             None => {
                 let graphql_error: GraphQLError = format!(
                     "Subgraph executor not found for subgraph: {}",
@@ -67,6 +63,7 @@ impl SubgraphExecutorMap {
                 HttpExecutionResponse {
                     body: buffer.freeze(),
                     headers: Default::default(),
+                    status: http::StatusCode::BAD_REQUEST,
                 }
             }
         }
@@ -143,6 +140,11 @@ impl SubgraphExecutorMap {
 
                 if let Some(timeout_config) = &config_arc.timeout {
                     executor = TimeoutExecutor::try_new(endpoint_uri, timeout_config, executor)?
+                        .to_boxed_arc();
+                }
+
+                if config_arc.max_retries > 0 {
+                    executor = RetryExecutor::new(executor, &config_arc)
                         .to_boxed_arc();
                 }
 

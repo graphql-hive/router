@@ -51,6 +51,15 @@ pub struct TrafficShapingExecutorConfig {
     /// ```
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<SubgraphTimeoutConfig>,
+
+    #[serde(default = "default_max_retries")]
+    pub max_retries: usize,
+    
+    #[serde(deserialize_with = "humantime_serde", default = "default_retry_delay")]
+    pub retry_delay: Duration,
+
+    #[serde(default = "default_retry_factor")]
+    pub retry_factor: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -74,6 +83,9 @@ impl Default for TrafficShapingExecutorConfig {
             pool_idle_timeout_seconds: default_pool_idle_timeout_seconds(),
             dedupe_enabled: default_dedupe_enabled(),
             timeout: None,
+            max_retries: 0,
+            retry_delay: default_retry_delay(),
+            retry_factor: default_retry_factor(),
         }
     }
 }
@@ -98,4 +110,16 @@ fn default_pool_idle_timeout_seconds() -> u64 {
 
 fn default_dedupe_enabled() -> bool {
     true
+}
+
+fn default_max_retries() -> usize {
+    0
+}
+
+fn default_retry_delay() -> Duration {
+    Duration::from_secs(1)
+}
+
+fn default_retry_factor() -> u64 {
+    1
 }
