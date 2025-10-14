@@ -98,16 +98,8 @@ type Query
 type Review @join__type(graph: REVIEWS, key: "id") {
   id: ID!
   body: String
-  product(
-    some_arg: ReviewInput @deprecated(reason: "for testing purposes only")
-  ): Product
+  product: Product
   author: User @join__field(graph: REVIEWS, provides: "username")
-}
-
-input ReviewInput {
-  id: ID!
-  body: String
-  authorID: ID
 }
 
 type User
