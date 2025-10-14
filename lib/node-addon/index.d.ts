@@ -9,5 +9,5 @@ export interface QueryPlan {
 }
 export declare class QueryPlanner {
   constructor(supergraphSdl: string)
-  plan(query: string, operationName?: string | undefined | null): Record<string, any>
+  plan(query: string, operationName?: string | undefined | null): Promise<any>
 }
