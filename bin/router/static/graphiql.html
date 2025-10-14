@@ -2,10 +2,34 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Hive Router</title>
+    <title>Hive Router GraphiQL</title>
+    <link
+      rel="apple-touch-icon"
+      sizes="180x180"
+      href="https://the-guild.dev/apple-touch-icon.png"
+    />
     <link
       rel="icon"
-      href="https://raw.githubusercontent.com/graphql-hive/graphql-yoga/main/website/public/favicon.ico"
+      type="image/png"
+      sizes="32x32"
+      href="https://the-guild.dev/favicon-32x32.png"
+    />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="16x16"
+      href="https://the-guild.dev/favicon-16x16.png"
+    />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="16x16"
+      href="https://the-guild.dev/favicon-16x16.png"
+    />
+    <link
+      rel="shorcut icon"
+      type="image/x-icon"
+      href="https://the-guild.dev/favicon.ico"
     />
     <link
       crossorigin
@@ -15,13 +39,42 @@
   </head>
   <body id="body" class="no-focus-outline">
     <noscript>You need to enable JavaScript to run this app.</noscript>
-    <div id="root"></div>
-
-    <script type="module">
-      import { renderYogaGraphiQL } from "https://unpkg.com/@graphql-yoga/graphiql/dist/yoga-graphiql.es.js";
-
-      renderYogaGraphiQL(root, {
-        title: "Hive Router",
+    <div id="root">Loading GraphiQL...</div>
+    <script>
+      function prepareBlob(workerContent) {
+        const blob = new Blob([workerContent], { type: 'application/javascript' });
+        return URL.createObjectURL(blob);
+      }
+      const workers = {};
+      const workerUrls = {
+        editorWorkerService:
+          'https://unpkg.com/@graphql-yoga/graphiql/dist/monacoeditorwork/editor.worker.bundle.js',
+        json: 'https://unpkg.com/@graphql-yoga/graphiql/dist/monacoeditorwork/json.worker.bundle.js',
+        graphql:
+          'https://unpkg.com/@graphql-yoga/graphiql/dist/monacoeditorwork/graphql.worker..bundle.js',
+      };
+      function prepareWorkers() {
+        return Promise.all(
+          Object.entries(workerUrls).map(async ([label, url]) => {
+            const res = await fetch(url);
+            const text = await res.text();
+            workers[label] = prepareBlob(text);
+          }),
+        );
+      }
+      self['MonacoEnvironment'] = {
+        globalAPI: false,
+        getWorkerUrl: function (moduleId, label) {
+          return workers[label];
+        },
+      };
+    </script>
+    <script src="https://unpkg.com/@graphql-yoga/graphiql/dist/yoga-graphiql.umd.js"></script>
+    <script>
+      prepareWorkers().finally(() => {
+        YogaGraphiQL.renderYogaGraphiQL(root, {
+          title: "Hive Router GraphiQL",
+        });
       });
     </script>
   </body>

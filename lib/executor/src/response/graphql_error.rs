@@ -217,7 +217,9 @@ impl GraphQLErrorPath {
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphQLErrorExtensions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_name: Option<String>,
     #[serde(flatten)]
     pub extensions: HashMap<String, Value>,
