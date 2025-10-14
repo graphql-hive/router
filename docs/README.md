@@ -166,6 +166,23 @@ In this example, requests from any subdomain of `credentials-example.com` will b
 while requests from any subdomain of `example.com` will not be allowed to include credentials.
 Requests from origins not matching either pattern will be rejected.
 
+## Policy Inheritance Rules
+
+Each policy defined in the `policies` array can provide its own CORS settings.
+If a setting is not specified within a policy, the corresponding global CORS setting is used as a fallback.
+
+Here's a breakdown of how inheritance works for each field:
+
+- `allow_credentials` and `max_age`: If a policy omits a value for these settings,
+  it automatically uses the value from the global configuration.
+- `allow_headers` and `expose_headers`: A policy's behavior for these header lists depends on the value provided:
+  - If a list with specific headers is provided (e.g., `["Content-Type"]`), it completely overrides the global list.
+  - If an empty list (`[]`) is provided, the policy will inherit the headers from the global configuration.
+- `methods`: This setting has three distinct states for inheritance:
+  - If `methods` is not specified at all (`null`), the policy inherits the global methods.
+  - If an empty list (`[]`) is provided, no methods are allowed for that policy.
+  - If the list contains specific methods (e.g., `["GET", "POST"]`), only those methods are used, overriding the global list.
+
 
 **Items**
 
