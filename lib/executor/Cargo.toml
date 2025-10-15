@@ -53,6 +53,7 @@ subgraphs = { path = "../../bench/subgraphs" }
 criterion = { workspace = true }
 tokio = { workspace = true }
 insta = { workspace = true }
+axum = { version = "0.8.6", features = ["macros", "tokio", "json"]}
 
 [[bench]]
 name = "executor_benches"

@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
 use dashmap::DashMap;
+use futures::TryFutureExt;
 use hive_router_config::traffic_shaping::TrafficShapingExecutorConfig;
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes};
 use http::HeaderMap;
 use http::HeaderValue;
 use http_body_util::BodyExt;
@@ -18,9 +18,8 @@ use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
 
-use crate::executors::common::HttpExecutionRequest;
-use crate::executors::error::SubgraphExecutorError;
-use crate::response::graphql_error::GraphQLError;
+use crate::executors::common::{HttpExecutionRequest, HttpExecutionResponse};
+use crate::executors::error::{error_to_graphql_bytes, SubgraphExecutorError};
 use crate::utils::consts::CLOSE_BRACE;
 use crate::utils::consts::COLON;
 use crate::utils::consts::COMMA;
@@ -132,9 +131,13 @@ impl HTTPSubgraphExecutor {
 
         *req.headers_mut() = headers;
 
-        let res = self.http_client.request(req).await.map_err(|e| {
-            SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-        })?;
+        let res = self
+            .http_client
+            .request(req)
+            .map_err(|e| {
+                SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
+            })
+            .await?;
 
         let (parts, body) = res.into_parts();
 
@@ -150,22 +153,6 @@ impl HTTPSubgraphExecutor {
             headers: parts.headers,
         })
     }
-
-    fn error_to_graphql_bytes(&self, e: SubgraphExecutorError) -> Bytes {
-        let graphql_error: GraphQLError = format!(
-            "Failed to execute request to subgraph {}: {}",
-            self.endpoint, e
-        )
-        .into();
-        let errors = vec![graphql_error];
-        // This unwrap is safe as GraphQLError serialization shouldn't fail.
-        let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
-        let mut buffer = BytesMut::new();
-        buffer.put_slice(b"{\"errors\":");
-        buffer.put_slice(&errors_bytes);
-        buffer.put_slice(b"}");
-        buffer.freeze()
-    }
 }
 
 #[async_trait]
@@ -178,7 +165,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             Ok(body) => body,
             Err(e) => {
                 return HttpExecutionResponse {
-                    body: self.error_to_graphql_bytes(e),
+                    body: error_to_graphql_bytes(&self.endpoint, e),
                     headers: Default::default(),
                 }
             }
@@ -199,7 +186,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     headers: shared_response.headers,
                 },
                 Err(e) => HttpExecutionResponse {
-                    body: self.error_to_graphql_bytes(e),
+                    body: error_to_graphql_bytes(&self.endpoint, e),
                     headers: Default::default(),
                 },
             };
@@ -238,7 +225,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 headers: shared_response.headers.clone(),
             },
             Err(e) => HttpExecutionResponse {
-                body: self.error_to_graphql_bytes(e.clone()),
+                body: error_to_graphql_bytes(&self.endpoint, e.clone()),
                 headers: Default::default(),
             },
         }

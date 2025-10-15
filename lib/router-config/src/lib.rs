@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     http_server::HttpServerConfig, log::LoggingConfig, query_planner::QueryPlannerConfig,
-    supergraph::SupergraphSource, traffic_shaping::TrafficShapingExecutorConfig,
+    supergraph::SupergraphSource, traffic_shaping::TrafficShapingConfig,
 };
 
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -42,7 +42,7 @@ pub struct HiveRouterConfig {
 
     /// Configuration for the traffic-shaper executor. Use these configurations to control how requests are being executed to subgraphs.
     #[serde(default)]
-    pub traffic_shaping: TrafficShapingExecutorConfig,
+    pub traffic_shaping: TrafficShapingConfig,
 
     /// Configuration for the headers.
     #[serde(default)]
