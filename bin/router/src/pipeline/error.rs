@@ -15,7 +15,10 @@ use ntex::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::pipeline::header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR};
+use crate::{
+    jwt::errors::JwtForwardingError,
+    pipeline::header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR},
+};
 
 #[derive(Debug)]
 pub struct PipelineError {
@@ -80,6 +83,10 @@ pub enum PipelineErrorVariant {
     // HTTP Security-related errors
     #[error("Required CSRF header(s) not present")]
     CsrfPreventionFailed,
+
+    // JWT-auth plugin errors
+    #[error("Failed to forward jwt: {0}")]
+    JwtForwardingError(JwtForwardingError),
 }
 
 impl PipelineErrorVariant {
@@ -115,6 +122,7 @@ impl PipelineErrorVariant {
         match (self, prefer_ok) {
             (Self::PlannerError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::PlanExecutionError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::JwtForwardingError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::UnsupportedHttpMethod(_), _) => StatusCode::METHOD_NOT_ALLOWED,
             (Self::InvalidHeaderValue(_), _) => StatusCode::BAD_REQUEST,
             (Self::GetUnprocessableQueryParams(_), _) => StatusCode::BAD_REQUEST,

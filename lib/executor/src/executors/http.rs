@@ -111,6 +111,17 @@ impl HTTPSubgraphExecutor {
         if !first_variable {
             body.put(CLOSE_BRACE);
         }
+
+        if let Some(extensions) = &execution_request.extensions {
+            if !extensions.is_empty() {
+                let as_value = sonic_rs::to_value(extensions).unwrap();
+
+                body.put(COMMA);
+                body.put("\"extensions\":".as_bytes());
+                body.extend_from_slice(as_value.to_string().as_bytes());
+            }
+        }
+
         body.put(CLOSE_BRACE);
 
         Ok(body)

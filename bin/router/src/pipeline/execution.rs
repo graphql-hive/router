@@ -2,11 +2,13 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::jwt::context::JwtRequestContext;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::execute_query_plan;
+use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use hive_router_plan_executor::execution::plan::{
     ClientRequestDetails, OperationDetails, PlanExecutionOutput, QueryPlanExecutionContext,
 };
@@ -65,6 +67,17 @@ pub async fn execute_plan<'a>(
         metadata: &app_state.schema_metadata,
     };
 
+    let jwt_context = {
+        let req_extensions = req.extensions();
+        req_extensions.get::<JwtRequestContext>().cloned()
+    };
+    let jwt_forward_plan: Option<JwtAuthForwardingPlan> = match jwt_context {
+        Some(jwt_context) => jwt_context
+            .try_into()
+            .map_err(|e| req.new_pipeline_error(PipelineErrorVariant::JwtForwardingError(e)))?,
+        None => None,
+    };
+
     execute_query_plan(QueryPlanExecutionContext {
         query_plan: query_plan_payload,
         projection_plan: &normalized_payload.projection_plan,
@@ -89,6 +102,7 @@ pub async fn execute_plan<'a>(
         introspection_context: &introspection_context,
         operation_type_name: normalized_payload.root_type_name,
         executors: &app_state.subgraph_executor_map,
+        jwt_auth_forwarding: &jwt_forward_plan,
     })
     .await
     .map_err(|err| {

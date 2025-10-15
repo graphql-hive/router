@@ -16,7 +16,9 @@ use sonic_rs::ValueRef;
 
 use crate::{
     context::ExecutionContext,
-    execution::{error::PlanExecutionError, rewrites::FetchRewriteExt},
+    execution::{
+        error::PlanExecutionError, jwt_forward::JwtAuthForwardingPlan, rewrites::FetchRewriteExt,
+    },
     executors::{
         common::{HttpExecutionRequest, HttpExecutionResponse},
         map::SubgraphExecutorMap,
@@ -70,6 +72,7 @@ pub struct QueryPlanExecutionContext<'exec> {
     pub introspection_context: &'exec IntrospectionContext<'exec, 'static>,
     pub operation_type_name: &'exec str,
     pub executors: &'exec SubgraphExecutorMap,
+    pub jwt_auth_forwarding: &'exec Option<JwtAuthForwardingPlan>,
 }
 
 pub struct PlanExecutionOutput {
@@ -93,6 +96,7 @@ pub async fn execute_query_plan<'exec>(
         ctx.introspection_context.metadata,
         &ctx.client_request,
         ctx.headers_plan,
+        ctx.jwt_auth_forwarding,
         // Deduplicate subgraph requests only if the operation type is a query
         ctx.operation_type_name == "Query",
     );
@@ -129,6 +133,7 @@ pub struct Executor<'exec> {
     executors: &'exec SubgraphExecutorMap,
     client_request: &'exec ClientRequestDetails<'exec>,
     headers_plan: &'exec HeaderRulesPlan,
+    jwt_forwarding_plan: &'exec Option<JwtAuthForwardingPlan>,
     dedupe_subgraph_requests: bool,
 }
 
@@ -223,6 +228,7 @@ impl<'exec> Executor<'exec> {
         schema_metadata: &'exec SchemaMetadata,
         client_request: &'exec ClientRequestDetails<'exec>,
         headers_plan: &'exec HeaderRulesPlan,
+        jwt_forwarding_plan: &'exec Option<JwtAuthForwardingPlan>,
         dedupe_subgraph_requests: bool,
     ) -> Self {
         Executor {
@@ -232,6 +238,7 @@ impl<'exec> Executor<'exec> {
             client_request,
             headers_plan,
             dedupe_subgraph_requests,
+            jwt_forwarding_plan,
         }
     }
 
@@ -712,22 +719,29 @@ impl<'exec> Executor<'exec> {
         let variable_refs =
             select_fetch_variables(self.variable_values, node.variable_usages.as_ref());
 
+        let mut subgraph_request = HttpExecutionRequest {
+            query: node.operation.document_str.as_str(),
+            dedupe: self.dedupe_subgraph_requests,
+            operation_name: node.operation_name.as_deref(),
+            variables: variable_refs,
+            representations,
+            headers: headers_map,
+            extensions: None,
+        };
+
+        if let Some(jwt_forwarding_plan) = &self.jwt_forwarding_plan {
+            subgraph_request.add_request_extensions_field(
+                jwt_forwarding_plan.extension_field_name.clone(),
+                jwt_forwarding_plan.extension_field_value.clone(),
+            );
+        }
+
         Ok(ExecutionJob::Fetch(FetchJob {
             fetch_node_id: node.id,
             subgraph_name: node.service_name.clone(),
             response: self
                 .executors
-                .execute(
-                    &node.service_name,
-                    HttpExecutionRequest {
-                        query: node.operation.document_str.as_str(),
-                        dedupe: self.dedupe_subgraph_requests,
-                        operation_name: node.operation_name.as_deref(),
-                        variables: variable_refs,
-                        representations,
-                        headers: headers_map,
-                    },
-                )
+                .execute(&node.service_name, subgraph_request)
                 .await
                 .into(),
         }))

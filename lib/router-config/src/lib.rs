@@ -2,6 +2,7 @@ pub mod cors;
 pub mod csrf;
 pub mod headers;
 pub mod http_server;
+pub mod jwt_auth;
 pub mod log;
 pub mod primitives;
 pub mod query_planner;
@@ -11,15 +12,20 @@ pub mod traffic_shaping;
 use config::{Config, Environment, File, FileFormat, FileSourceFile};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 use crate::{
-    http_server::HttpServerConfig, log::LoggingConfig, query_planner::QueryPlannerConfig,
+    http_server::HttpServerConfig, jwt_auth::JwtAuthConfig, log::LoggingConfig,
+    primitives::file_path::with_start_path, query_planner::QueryPlannerConfig,
     supergraph::SupergraphSource, traffic_shaping::TrafficShapingExecutorConfig,
 };
 
-#[derive(Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HiveRouterConfig {
+    #[serde(skip)]
+    root_directory: PathBuf,
+
     /// The router logger configuration.
     ///
     /// The router is configured to be mostly silent (`info`) level, and will print only important messages, warnings, and errors.
@@ -52,8 +58,13 @@ pub struct HiveRouterConfig {
     #[serde(default)]
     pub csrf: csrf::CSRFPreventionConfig,
     /// Configuration for CORS (Cross-Origin Resource Sharing).
+
     #[serde(default)]
     pub cors: cors::CORSConfig,
+    /// Configuration for JWT authentication plugin.
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jwt: Option<JwtAuthConfig>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -62,34 +73,49 @@ pub enum RouterConfigError {
     ConfigLoadError(config::ConfigError),
 }
 
+static DEFAULT_FILE_NAMES: &[&str] = &[
+    "hive-router.config.yaml",
+    "hive-router.config.yml",
+    "hive-router.config.json",
+    "hive-router.config.json5",
+];
+
 pub fn load_config(
     overide_config_path: Option<String>,
 ) -> Result<HiveRouterConfig, config::ConfigError> {
     let mut config = Config::builder();
+    let mut config_root_path = std::env::current_dir().expect("failed to get current directory");
 
     if let Some(path_str) = overide_config_path {
         let path_buf = path_str
             .parse::<std::path::PathBuf>()
             .expect("failed to parse config file path");
+        let path_dupe = path_buf.clone();
+        let parent_dir = path_dupe.parent().unwrap();
         let as_file: File<FileSourceFile, _> = path_buf.into();
 
         config = config.add_source(as_file.required(true));
+        config_root_path = config_root_path.clone().join(parent_dir);
     } else {
-        config = config
-            .add_source(File::with_name("hive-router.config.yaml").required(false))
-            .add_source(File::with_name("hive-router.config.yml").required(false))
-            .add_source(File::with_name("hive-router.config.json").required(false))
-            .add_source(File::with_name("hive-router.config.json5").required(false))
+        for name in DEFAULT_FILE_NAMES {
+            config = config.add_source(File::with_name(name).required(false));
+        }
     }
 
-    config
-        .add_source(
-            Environment::with_prefix("HIVE")
-                .separator("__")
-                .prefix_separator("__"),
-        )
-        .build()?
-        .try_deserialize::<HiveRouterConfig>()
+    let mut base_cfg = with_start_path(&config_root_path, || {
+        config
+            .add_source(
+                Environment::with_prefix("HIVE")
+                    .separator("__")
+                    .prefix_separator("__"),
+            )
+            .build()?
+            .try_deserialize::<HiveRouterConfig>()
+    })?;
+
+    base_cfg.root_directory = config_root_path;
+
+    Ok(base_cfg)
 }
 
 pub fn parse_yaml_config(config_raw: String) -> Result<HiveRouterConfig, config::ConfigError> {

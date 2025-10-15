@@ -55,6 +55,13 @@ pub async fn graphql_request_handler(
             .body(GRAPHIQL_HTML);
     }
 
+    if let Some(jwt) = &state.jwt_auth_runtime {
+        match jwt.validate_request(req) {
+            Ok(_) => (),
+            Err(err) => return err.make_response(),
+        }
+    }
+
     match execute_pipeline(req, body_bytes, state).await {
         Ok(response) => {
             let response_bytes = Bytes::from(response.body);

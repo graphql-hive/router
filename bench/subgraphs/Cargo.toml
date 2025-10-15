@@ -16,6 +16,7 @@ path = "lib.rs"
 lazy_static = { workspace = true }
 rand = { workspace = true }
 tokio = { workspace = true }
+sonic-rs = { workspace = true }
 
 async-graphql = "7.0.17"
 async-graphql-axum = "7.0.17"
