@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
 use dashmap::DashMap;
-use hive_router_config::traffic_shaping::TrafficShapingExecutorConfig;
+use hive_router_config::HiveRouterConfig;
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
@@ -29,23 +29,27 @@ use crate::{executors::common::SubgraphExecutor, json_writer::write_and_escape_s
 
 #[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
+    pub subgraph_name: String,
     pub endpoint: http::Uri,
     pub http_client: Arc<Client<HttpsConnector<HttpConnector>, Full<Bytes>>>,
     pub header_map: HeaderMap,
     pub semaphore: Arc<Semaphore>,
-    pub config: Arc<TrafficShapingExecutorConfig>,
+    pub config: Arc<HiveRouterConfig>,
     pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
 const FIRST_QUOTE_STR: &[u8] = b"{\"query\":";
 
+pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
+
 impl HTTPSubgraphExecutor {
     pub fn new(
+        subgraph_name: String,
         endpoint: http::Uri,
-        http_client: Arc<Client<HttpsConnector<HttpConnector>, Full<Bytes>>>,
+        http_client: Arc<HttpClient>,
         semaphore: Arc<Semaphore>,
-        config: Arc<TrafficShapingExecutorConfig>,
+        config: Arc<HiveRouterConfig>,
         in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
     ) -> Self {
         let mut header_map = HeaderMap::new();
@@ -59,6 +63,7 @@ impl HTTPSubgraphExecutor {
         );
 
         Self {
+            subgraph_name,
             endpoint,
             http_client,
             header_map,
@@ -162,12 +167,11 @@ impl HTTPSubgraphExecutor {
         })
     }
 
-    fn error_to_graphql_bytes(&self, e: SubgraphExecutorError) -> Bytes {
-        let graphql_error: GraphQLError = format!(
-            "Failed to execute request to subgraph {}: {}",
-            self.endpoint, e
-        )
-        .into();
+    fn error_to_graphql_bytes(&self, error: SubgraphExecutorError) -> Bytes {
+        let graphql_error: GraphQLError = error.into();
+        let mut graphql_error = graphql_error.add_subgraph_name(&self.subgraph_name);
+        graphql_error.message = "Failed to execute request to subgraph".to_string();
+
         let errors = vec![graphql_error];
         // This unwrap is safe as GraphQLError serialization shouldn't fail.
         let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
@@ -200,7 +204,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             headers.insert(key, value.clone());
         });
 
-        if !self.config.dedupe_enabled || !execution_request.dedupe {
+        if !self.config.traffic_shaping.dedupe_enabled || !execution_request.dedupe {
             // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();

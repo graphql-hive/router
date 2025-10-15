@@ -95,6 +95,7 @@ pub struct RequestLog {
 #[derive(Clone)]
 pub struct SubgraphsServiceState {
     pub request_log: Arc<Mutex<HashMap<String, Vec<RequestLog>>>>,
+    pub health_check_url: String,
 }
 
 pub fn start_subgraphs_server(
@@ -108,6 +109,7 @@ pub fn start_subgraphs_server(
 
     let shared_state = SubgraphsServiceState {
         request_log: Arc::new(Mutex::new(HashMap::new())),
+        health_check_url: format!("http://{}:{}/health", host, port),
     };
 
     let app = Router::new()

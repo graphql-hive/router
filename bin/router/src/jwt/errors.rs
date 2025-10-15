@@ -87,10 +87,7 @@ impl From<&JwtError> for StatusCode {
 impl From<&JwtError> for GraphQLError {
     fn from(val: &JwtError) -> Self {
         GraphQLError {
-            extensions: GraphQLErrorExtensions {
-                code: Some(val.error_code().to_string()),
-                ..Default::default()
-            },
+            extensions: GraphQLErrorExtensions::new_from_code(val.error_code()),
             message: val.to_string(),
             locations: None,
             path: None,

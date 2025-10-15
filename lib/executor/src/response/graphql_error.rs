@@ -31,6 +31,17 @@ impl From<String> for GraphQLError {
     }
 }
 
+impl From<&str> for GraphQLError {
+    fn from(message: &str) -> Self {
+        GraphQLError {
+            message: message.to_string(),
+            locations: None,
+            path: None,
+            extensions: GraphQLErrorExtensions::default(),
+        }
+    }
+}
+
 impl From<&ValidationError> for GraphQLError {
     fn from(val: &ValidationError) -> Self {
         GraphQLError {

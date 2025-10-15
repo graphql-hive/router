@@ -10,6 +10,7 @@
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"host":"0.0.0.0","port":4000}`<br/>||
 |[**jwt**](#jwt)|`object`, `null`|Configuration for JWT authentication plugin.<br/>|yes|
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
+|[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaper executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"dedupe_enabled":true,"max_connections_per_host":100,"pool_idle_timeout_seconds":50}`<br/>||
@@ -59,6 +60,21 @@ log:
   filter: null
   format: json
   level: info
+override_subgraph_urls:
+  accounts:
+    url: https://accounts.example.com/graphql
+  products:
+    url:
+      expression: |2-
+
+                if .request.headers."x-region" == "us-east" {
+                    "https://products-us-east.example.com/graphql"
+                } else if .request.headers."x-region" == "eu-west" {
+                    "https://products-eu-west.example.com/graphql"
+                } else {
+                  .original_url
+                }
+            
 query_planner:
   allow_expose: false
   timeout: 10s
@@ -1496,6 +1512,47 @@ format: json
 level: info
 
 ```
+
+<a name="override_subgraph_urls"></a>
+## override\_subgraph\_urls: object
+
+Configuration for overriding subgraph URLs.
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**Additional Properties**](#override_subgraph_urlsadditionalproperties)|`object`||yes|
+
+**Example**
+
+```yaml
+accounts:
+  url: https://accounts.example.com/graphql
+products:
+  url:
+    expression: |2-
+
+              if .request.headers."x-region" == "us-east" {
+                  "https://products-us-east.example.com/graphql"
+              } else if .request.headers."x-region" == "eu-west" {
+                  "https://products-eu-west.example.com/graphql"
+              } else {
+                .original_url
+              }
+          
+
+```
+
+<a name="override_subgraph_urlsadditionalproperties"></a>
+### override\_subgraph\_urls\.additionalProperties: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**url**||Overrides for the URL of the subgraph.<br/><br/>For convenience, a plain string in your configuration will be treated as a static URL.<br/><br/>### Static URL Example<br/>```yaml<br/>url: "https://api.example.com/graphql"<br/>```<br/><br/>### Dynamic Expression Example<br/><br/>The expression has access to the following variables:<br/>- `request`: The incoming HTTP request, including headers and other metadata.<br/>- `original_url`: The original URL of the subgraph (from supergraph sdl).<br/><br/>```yaml<br/>url:<br/>  expression: \|<br/>    if .request.headers."x-region" == "us-east" {<br/>      "https://products-us-east.example.com/graphql"<br/>    } else if .request.headers."x-region" == "eu-west" {<br/>      "https://products-eu-west.example.com/graphql"<br/>    } else {<br/>      .original_url<br/>    }<br/>|yes|
 
 <a name="query_planner"></a>
 ## query\_planner: object

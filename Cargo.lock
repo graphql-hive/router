@@ -1379,6 +1379,7 @@ dependencies = [
  "jsonwebtoken",
  "lazy_static",
  "ntex",
+ "reqwest",
  "sonic-rs",
  "subgraphs",
  "tokio",
