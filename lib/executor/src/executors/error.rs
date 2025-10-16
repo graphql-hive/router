@@ -53,7 +53,7 @@ impl SubgraphExecutorError {
         subgraph_name: String,
         error: ExpressionError,
     ) -> Self {
-        SubgraphExecutorError::EndpointExpressionBuild(subgraph_name, error.to_string())
+        SubgraphExecutorError::EndpointExpressionResolutionFailure(subgraph_name, error.to_string())
     }
 
     pub fn error_code(&self) -> &'static str {

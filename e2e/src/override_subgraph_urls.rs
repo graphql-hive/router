@@ -53,7 +53,6 @@ mod override_subgraph_urls_e2e_tests {
         let req = init_graphql_request("{ users { id } }", None).header("x-accounts-port", "4100");
         let resp = test::call_service(&app, req.to_request()).await;
 
-        println!("1 Response status: {}", resp.status());
         assert!(resp.status().is_success(), "Expected 200 OK");
 
         let subgraph_requests = subgraphs_server
