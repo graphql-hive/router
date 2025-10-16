@@ -31,7 +31,7 @@ pub struct RouterSharedState {
     pub validate_cache: Cache<u64, Arc<Vec<ValidationError>>>,
     pub parse_cache: Cache<u64, Arc<graphql_parser::query::Document<'static, String>>>,
     pub normalize_cache: Cache<u64, Arc<GraphQLNormalizationPayload>>,
-    pub router_config: HiveRouterConfig,
+    pub router_config: Arc<HiveRouterConfig>,
     pub headers_plan: HeaderRulesPlan,
     pub cors: Option<Cors>,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
@@ -47,10 +47,11 @@ impl RouterSharedState {
         let planner =
             Planner::new_from_supergraph(&parsed_supergraph_sdl).expect("failed to create planner");
         let schema_metadata = planner.consumer_schema.schema_metadata();
+        let router_config = Arc::new(router_config);
 
         let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(
             supergraph_state.subgraph_endpoint_map,
-            router_config.traffic_shaping.clone(),
+            router_config.clone(),
         )
         .expect("Failed to create subgraph executor map");
 

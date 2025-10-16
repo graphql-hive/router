@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=../../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../../supergraph.graphql
+override_subgraph_urls:
+  accounts:
+    url:
+      expression: |
+        if .request.headers."x-accounts-port" == "4100" {
+          "http://0.0.0.0:4100/accounts"
+        } else {
+          .original_url
+        }

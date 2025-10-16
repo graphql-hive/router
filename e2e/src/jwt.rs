@@ -24,7 +24,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn should_forward_claims_to_subgraph_via_extensions() {
-        let subgraphs_server = SubgraphsServer::start();
+        let subgraphs_server = SubgraphsServer::start().await;
         let app = init_router_from_config_file("configs/jwt_auth_forward.router.yaml")
             .await
             .unwrap();

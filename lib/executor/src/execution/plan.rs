@@ -741,7 +741,7 @@ impl<'exec> Executor<'exec> {
             subgraph_name: node.service_name.clone(),
             response: self
                 .executors
-                .execute(&node.service_name, subgraph_request)
+                .execute(&node.service_name, subgraph_request, self.client_request)
                 .await
                 .into(),
         }))

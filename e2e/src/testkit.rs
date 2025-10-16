@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Once};
+use std::{path::PathBuf, sync::Once, time::Duration};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
@@ -59,8 +59,28 @@ impl Drop for SubgraphsServer {
 }
 
 impl SubgraphsServer {
-    pub fn start() -> Self {
-        let (_server_handle, shutdown_tx, subgraph_shared_state) = start_subgraphs_server(None);
+    /// Port defaults to 4200 if None (as defined in supergraph.graphql)
+    pub async fn start() -> Self {
+        Self::start_with_port(4200).await
+    }
+
+    pub async fn start_with_port(port: u16) -> Self {
+        let (_server_handle, shutdown_tx, subgraph_shared_state) =
+            start_subgraphs_server(Some(port));
+
+        let health_check_url = subgraph_shared_state.health_check_url.clone();
+        loop {
+            match reqwest::get(&health_check_url).await {
+                Ok(response) if response.status().is_success() => {
+                    // Server is up and running.
+                    break;
+                }
+                _ => {
+                    // Server not ready yet, wait and retry.
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            }
+        }
 
         Self {
             shutdown_tx: Some(shutdown_tx),

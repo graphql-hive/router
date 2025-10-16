@@ -4,6 +4,7 @@ pub mod headers;
 pub mod http_server;
 pub mod jwt_auth;
 pub mod log;
+pub mod override_subgraph_urls;
 pub mod primitives;
 pub mod query_planner;
 pub mod supergraph;
@@ -65,6 +66,9 @@ pub struct HiveRouterConfig {
     /// Configuration for JWT authentication plugin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jwt: Option<jwt_auth::JwtAuthConfig>,
+    /// Configuration for overriding subgraph URLs.
+    #[serde(default)]
+    pub override_subgraph_urls: override_subgraph_urls::OverrideSubgraphUrlsConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
