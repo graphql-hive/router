@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use hive_router_query_planner::{
     ast::{document::Document, selection_set::SelectionSet},
     planner::plan_nodes::{DeferPrimary, DeferredNode, FetchRewrite, FlattenNodePath},
@@ -67,8 +69,8 @@ pub struct DeferNode {
 #[serde(rename_all = "camelCase")]
 pub struct FetchNode {
     pub service_name: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub variable_usages: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variable_usages: Option<BTreeSet<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_kind: Option<OperationKind>,
     #[serde(skip_serializing_if = "Option::is_none")]

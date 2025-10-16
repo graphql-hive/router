@@ -93,10 +93,7 @@ impl From<source::FetchNode> for FetchNode {
     fn from(source_node: source::FetchNode) -> Self {
         FetchNode {
             service_name: source_node.service_name,
-            variable_usages: source_node
-                .variable_usages
-                .map(|set| set.into_iter().collect())
-                .unwrap_or_default(),
+            variable_usages: source_node.variable_usages,
             operation_kind: source_node.operation_kind,
             operation_name: source_node.operation_name,
             operation: source_node.operation.document_str,
