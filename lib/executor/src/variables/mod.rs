@@ -67,6 +67,13 @@ fn validate_runtime_value(
     type_node: &TypeNode,
     schema_metadata: &SchemaMetadata,
 ) -> Result<(), String> {
+    if let ValueRef::Null = value {
+        return if type_node.is_non_null() {
+            Err("Value cannot be null for non-nullable type".to_string())
+        } else {
+            Ok(())
+        };
+    }
     match type_node {
         TypeNode::Named(name) => {
             if let Some(enum_values) = schema_metadata.enum_values.get(name) {
@@ -173,9 +180,7 @@ fn validate_runtime_value(
             }
         }
         TypeNode::NonNull(inner_type) => {
-            if let ValueRef::Null = value {
-                return Err("Value cannot be null for non-nullable type".to_string());
-            }
+            // The null check is now handled above, so we can just recurse.
             validate_runtime_value(value, inner_type, schema_metadata)?;
         }
         TypeNode::List(inner_type) => {
@@ -184,9 +189,57 @@ fn validate_runtime_value(
                     validate_runtime_value(item.as_ref(), inner_type, schema_metadata)?;
                 }
             } else {
-                return Err(format!("Expected an array for list type, got {:?}", value));
+                validate_runtime_value(value, inner_type, schema_metadata)?;
             }
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn allow_null_values_for_nullable_scalar_types() {
+        let schema_metadata = crate::introspection::schema::SchemaMetadata::default();
+
+        let scalars = vec!["String", "Int", "Float", "Boolean", "ID"];
+        for scalar in scalars {
+            let type_node = crate::variables::TypeNode::Named(scalar.to_string());
+
+            let value = sonic_rs::ValueRef::Null;
+
+            let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
+            assert_eq!(result, Ok(()));
+        }
+    }
+    #[test]
+    fn allow_null_values_for_nullable_list_types() {
+        let schema_metadata = crate::introspection::schema::SchemaMetadata::default();
+        let type_node = crate::variables::TypeNode::List(Box::new(
+            crate::variables::TypeNode::Named("String".to_string()),
+        ));
+        let value = sonic_rs::ValueRef::Null;
+        let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
+        assert_eq!(result, Ok(()));
+    }
+    #[test]
+    fn allow_matching_non_list_values_for_list_types() {
+        let schema_metadata = crate::introspection::schema::SchemaMetadata::default();
+        let type_node = crate::variables::TypeNode::List(Box::new(
+            crate::variables::TypeNode::Named("String".to_string()),
+        ));
+        let value = sonic_rs::ValueRef::String("not a list");
+        let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
+        assert_eq!(result, Ok(()));
+    }
+    #[test]
+    fn disallow_non_matching_non_list_values_for_list_types() {
+        let schema_metadata = crate::introspection::schema::SchemaMetadata::default();
+        let type_node = crate::variables::TypeNode::List(Box::new(
+            crate::variables::TypeNode::Named("String".to_string()),
+        ));
+        let value = sonic_rs::ValueRef::Number(sonic_rs::Number::from(123));
+        let result = super::validate_runtime_value(value, &type_node, &schema_metadata);
+        assert!(result.is_err());
+    }
 }
