@@ -15,9 +15,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::{
-    http_server::HttpServerConfig, jwt_auth::JwtAuthConfig, log::LoggingConfig,
-    primitives::file_path::with_start_path, query_planner::QueryPlannerConfig,
-    supergraph::SupergraphSource, traffic_shaping::TrafficShapingExecutorConfig,
+    http_server::HttpServerConfig, log::LoggingConfig, primitives::file_path::with_start_path,
+    query_planner::QueryPlannerConfig, supergraph::SupergraphSource,
+    traffic_shaping::TrafficShapingExecutorConfig,
 };
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -57,14 +57,14 @@ pub struct HiveRouterConfig {
     /// Configuration for CSRF prevention.
     #[serde(default)]
     pub csrf: csrf::CSRFPreventionConfig,
-    /// Configuration for CORS (Cross-Origin Resource Sharing).
 
+    /// Configuration for CORS (Cross-Origin Resource Sharing).
     #[serde(default)]
     pub cors: cors::CORSConfig,
-    /// Configuration for JWT authentication plugin.
 
+    /// Configuration for JWT authentication plugin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub jwt: Option<JwtAuthConfig>,
+    pub jwt: Option<jwt_auth::JwtAuthConfig>,
 }
 
 #[derive(Debug, thiserror::Error)]
