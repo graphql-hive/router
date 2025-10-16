@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.7](https://github.com/graphql-hive/router/compare/hive-router-config-v0.0.6...hive-router-config-v0.0.7) - 2025-10-16
+
+### Added
+
+- *(router)* Subgraph endpoint overrides ([#488](https://github.com/graphql-hive/router/pull/488))
+- *(router)* jwt auth ([#455](https://github.com/graphql-hive/router/pull/455))
+- *(router)* CORS support ([#473](https://github.com/graphql-hive/router/pull/473))
+- *(router)* CSRF prevention for browser requests ([#472](https://github.com/graphql-hive/router/pull/472))
+
+### Fixed
+
+- *(router)* improve csrf and other configs  ([#487](https://github.com/graphql-hive/router/pull/487))
+
 ## [0.0.6](https://github.com/graphql-hive/router/compare/hive-router-config-v0.0.5...hive-router-config-v0.0.6) - 2025-10-08
 
 ### Added
