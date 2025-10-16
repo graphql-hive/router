@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.12](https://github.com/graphql-hive/router/compare/hive-router-v0.0.11...hive-router-v0.0.12) - 2025-10-16
+
+### Added
+
+- *(router)* Subgraph endpoint overrides ([#488](https://github.com/graphql-hive/router/pull/488))
+- *(router)* jwt auth ([#455](https://github.com/graphql-hive/router/pull/455))
+- *(router)* CORS support ([#473](https://github.com/graphql-hive/router/pull/473))
+- *(router)* CSRF prevention for browser requests ([#472](https://github.com/graphql-hive/router/pull/472))
+- *(executor)* include subgraph name and code to the errors ([#477](https://github.com/graphql-hive/router/pull/477))
+- *(executor)* normalize flatten errors for the final response ([#454](https://github.com/graphql-hive/router/pull/454))
+
+### Fixed
+
+- *(router)* fix graphiql autocompletion, and avoid serializing nulls for optional extension fields ([#485](https://github.com/graphql-hive/router/pull/485))
+- *(router)* improve csrf and other configs  ([#487](https://github.com/graphql-hive/router/pull/487))
+- *(router)* allow null value for nullable scalar types while validating variables ([#483](https://github.com/graphql-hive/router/pull/483))
+
 ## [0.0.11](https://github.com/graphql-hive/router/compare/hive-router-v0.0.10...hive-router-v0.0.11) - 2025-10-08
 
 ### Added

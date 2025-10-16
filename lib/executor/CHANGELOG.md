@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0](https://github.com/graphql-hive/router/compare/hive-router-plan-executor-v3.0.0...hive-router-plan-executor-v4.0.0) - 2025-10-16
+
+### Added
+
+- *(router)* Subgraph endpoint overrides ([#488](https://github.com/graphql-hive/router/pull/488))
+- *(router)* jwt auth ([#455](https://github.com/graphql-hive/router/pull/455))
+- *(executor)* include subgraph name and code to the errors ([#477](https://github.com/graphql-hive/router/pull/477))
+- *(executor)* normalize flatten errors for the final response ([#454](https://github.com/graphql-hive/router/pull/454))
+
+### Fixed
+
+- *(router)* allow null value for nullable scalar types while validating variables ([#483](https://github.com/graphql-hive/router/pull/483))
+- *(router)* fix graphiql autocompletion, and avoid serializing nulls for optional extension fields ([#485](https://github.com/graphql-hive/router/pull/485))
+
 ## [3.0.0](https://github.com/graphql-hive/router/compare/hive-router-plan-executor-v2.0.0...hive-router-plan-executor-v3.0.0) - 2025-10-08
 
 ### Added
