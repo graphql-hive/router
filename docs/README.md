@@ -5,7 +5,7 @@
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
-|[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"required_headers":[]}`<br/>||
+|[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"host":"0.0.0.0","port":4000}`<br/>||
 |[**jwt**](#jwt)|`object`, `null`|Configuration for JWT authentication plugin.<br/>|yes|
@@ -32,6 +32,7 @@ cors:
         - https://example.com
         - https://another.com
 csrf:
+  enabled: true
   required_headers:
     - x-csrf-token
 headers:
@@ -274,11 +275,13 @@ Configuration for CSRF prevention.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|**enabled**|`boolean`|Enables CSRF prevention.<br/><br/>By enabling CSRF prevention, the router will check for the presence of specific headers in incoming requests to the `/graphql` endpoint.<br/>If the required headers are not present, the router will reject the request with a `403 Forbidden` response.<br/>This triggers the preflight checks in browsers, preventing the request from being sent.<br/>So you can ensure that only requests from trusted origins are processed.<br/><br/>When CSRF prevention is enabled, the router only executes operations if one of the following conditions is true;<br/><br/>- The incoming request includes a `Content-Type` header other than a value of<br/>  - `text/plain`<br/>  - `application/x-www-form-urlencoded`<br/>  - `multipart/form-data`<br/><br/>- The incoming request includes at least one of the headers specified in the `required_headers` configuration.<br/>Default: `true`<br/>||
 |[**required\_headers**](#csrfrequired_headers)|`string[]`|A list of required header names for CSRF protection.<br/>Default: <br/>||
 
 **Example**
 
 ```yaml
+enabled: true
 required_headers:
   - x-csrf-token
 
@@ -289,10 +292,16 @@ required_headers:
 
 A list of required header names for CSRF protection.
 
+Header names are case-insensitive.
+
 
 **Items**
 
+
+A valid HTTP header name, according to RFC 7230.
+
 **Item Type:** `string`  
+**Item Pattern:** `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`  
 <a name="headers"></a>
 ## headers: object
 

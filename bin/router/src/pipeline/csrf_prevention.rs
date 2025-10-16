@@ -13,15 +13,17 @@ const NON_PREFLIGHTED_CONTENT_TYPES: [&str; 3] = [
     "text/plain",
 ];
 
+#[inline]
 pub fn perform_csrf_prevention(
     req: &mut HttpRequest,
     csrf_config: &CSRFPreventionConfig,
 ) -> Result<(), PipelineError> {
-    // If CSRF prevention is not configured, skip the checks.
-    if csrf_config.required_headers.is_empty() {
+    // If CSRF prevention is not configured or disabled, skip the checks.
+    if !csrf_config.enabled || csrf_config.required_headers.is_empty() {
         return Ok(());
     }
 
+    // If the request is considered preflighted, skip the check
     if request_requires_preflight(req) {
         return Ok(());
     }
@@ -32,7 +34,7 @@ pub fn perform_csrf_prevention(
     let has_required_header = csrf_config
         .required_headers
         .iter()
-        .any(|header_name| req.headers().contains_key(header_name));
+        .any(|header_name| req.headers().contains_key(header_name.get_header_ref()));
 
     if has_required_header {
         Ok(())
@@ -64,7 +66,8 @@ mod tests {
     #[test]
     fn do_not_allow_requests_without_the_necessary_header() {
         let config = super::CSRFPreventionConfig {
-            required_headers: vec!["x-csrf-token".to_string()],
+            enabled: true,
+            required_headers: vec!["x-csrf-token".into()],
         };
         let mut req = ntex::web::test::TestRequest::with_uri("/graphql")
             .method(http::Method::GET)
@@ -73,10 +76,12 @@ mod tests {
         let result = super::perform_csrf_prevention(&mut req, &config);
         assert!(result.is_err());
     }
+
     #[test]
     fn allow_requests_with_necessary_header() {
         let config = super::CSRFPreventionConfig {
-            required_headers: vec!["x-csrf-token".to_string()],
+            enabled: true,
+            required_headers: vec!["x-csrf-token".into()],
         };
         let mut req = ntex::web::test::TestRequest::with_uri("/graphql")
             .method(http::Method::GET)
@@ -89,7 +94,8 @@ mod tests {
     #[test]
     fn allow_post_requests_with_application_json_content_type() {
         let config = super::CSRFPreventionConfig {
-            required_headers: vec!["x-csrf-token".to_string()],
+            enabled: true,
+            required_headers: vec!["x-csrf-token".into()],
         };
         let mut req = ntex::web::test::TestRequest::with_uri("/graphql")
             .method(http::Method::POST)
@@ -102,7 +108,8 @@ mod tests {
     #[test]
     fn allow_post_multipart_requests_with_necessary_header() {
         let config = super::CSRFPreventionConfig {
-            required_headers: vec!["x-csrf-token".to_string()],
+            enabled: true,
+            required_headers: vec!["x-csrf-token".into()],
         };
         let mut req = ntex::web::test::TestRequest::with_uri("/graphql")
             .method(http::Method::POST)
@@ -116,7 +123,8 @@ mod tests {
     #[test]
     fn do_not_allow_post_multipart_requests_without_necessary_header() {
         let config = super::CSRFPreventionConfig {
-            required_headers: vec!["x-csrf-token".to_string()],
+            enabled: true,
+            required_headers: vec!["x-csrf-token".into()],
         };
         let mut req = ntex::web::test::TestRequest::with_uri("/graphql")
             .method(http::Method::POST)
@@ -129,7 +137,8 @@ mod tests {
     #[test]
     fn case_insensitive_header_names() {
         let config = super::CSRFPreventionConfig {
-            required_headers: vec!["x-csRf-token".to_string()],
+            enabled: true,
+            required_headers: vec!["x-csRf-token".into()],
         };
         let mut req = ntex::web::test::TestRequest::with_uri("/graphql")
             .method(http::Method::GET)
