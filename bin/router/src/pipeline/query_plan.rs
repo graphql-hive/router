@@ -5,6 +5,7 @@ use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, Pipel
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
 use crate::shared_state::RouterSharedState;
+use crate::supergraph_mgr::SupergraphData;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
 use ntex::web::HttpRequest;
@@ -13,13 +14,14 @@ use xxhash_rust::xxh3::Xxh3;
 #[inline]
 pub async fn plan_operation_with_cache(
     req: &HttpRequest,
+    supergraph: &Arc<SupergraphData>,
     app_state: &Arc<RouterSharedState>,
     normalized_operation: &Arc<GraphQLNormalizationPayload>,
     request_override_context: &RequestOverrideContext,
     cancellation_token: &CancellationToken,
 ) -> Result<Arc<QueryPlan>, PipelineError> {
     let stable_override_context =
-        StableOverrideContext::new(&app_state.planner.supergraph, request_override_context);
+        StableOverrideContext::new(&supergraph.planner.supergraph, request_override_context);
 
     let filtered_operation_for_plan = &normalized_operation.operation_for_plan;
     let plan_cache_key =
@@ -37,7 +39,7 @@ pub async fn plan_operation_with_cache(
                 }));
             }
 
-            app_state
+            supergraph
                 .planner
                 .plan_from_normalized_operation(
                     filtered_operation_for_plan,
