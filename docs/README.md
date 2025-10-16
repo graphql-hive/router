@@ -107,6 +107,16 @@ policies:
 
 ```
 
+**Example**
+
+```yaml
+allow_any_origin: true
+allow_credentials: false
+enabled: true
+policies: []
+
+```
+
 <a name="corsallow_headers"></a>
 ### cors\.allow\_headers\[\]: array,null
 

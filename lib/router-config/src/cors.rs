@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 /// Configuration for CORS (Cross-Origin Resource Sharing).
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[schemars(example = cors_example_1())]
+#[schemars(example = cors_example_2())]
 pub struct CORSConfig {
     #[serde(default = "default_cors_enabled")]
     pub enabled: bool,
@@ -168,5 +169,12 @@ fn cors_example_1() -> CORSConfig {
         ]),
         expose_headers: None,
         max_age: Some(120),
+    }
+}
+fn cors_example_2() -> CORSConfig {
+    CORSConfig {
+        enabled: true,
+        allow_any_origin: true,
+        ..Default::default()
     }
 }
