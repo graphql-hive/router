@@ -20,6 +20,7 @@ pub enum PlanNode {
     Condition(ConditionNode),
     Subscription(SubscriptionNode),
     Defer(DeferNode),
+    // we only modify the fetch node to include the operation document node
     Fetch(FetchNode),
 }
 
@@ -66,13 +67,19 @@ pub struct DeferNode {
 #[serde(rename_all = "camelCase")]
 pub struct FetchNode {
     pub service_name: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub variable_usages: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_kind: Option<OperationKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_name: Option<String>,
     pub operation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub requires: Option<SelectionSet>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub input_rewrites: Option<Vec<FetchRewrite>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub output_rewrites: Option<Vec<FetchRewrite>>,
-    // we added this, everything else is the same as from plan_nodes.rs
+    // we added this, everything else is the same as from query-planner/plan_nodes.rs
     pub operation_document_node: Document,
 }

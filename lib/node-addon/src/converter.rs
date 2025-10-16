@@ -20,14 +20,70 @@ impl From<source::PlanNode> for PlanNode {
     fn from(source_node: source::PlanNode) -> Self {
         match source_node {
             source::PlanNode::Fetch(node) => PlanNode::Fetch(node.into()),
-            source::PlanNode::Sequence(node) => PlanNode::Sequence(convert_sequence_node(node)),
-            source::PlanNode::Parallel(node) => PlanNode::Parallel(convert_parallel_node(node)),
-            source::PlanNode::Flatten(node) => PlanNode::Flatten(convert_flatten_node(node)),
-            source::PlanNode::Condition(node) => PlanNode::Condition(convert_condition_node(node)),
-            source::PlanNode::Subscription(node) => {
-                PlanNode::Subscription(convert_subscription_node(node))
-            }
-            source::PlanNode::Defer(node) => PlanNode::Defer(convert_defer_node(node)),
+            source::PlanNode::Sequence(node) => PlanNode::Sequence(node.into()),
+            source::PlanNode::Parallel(node) => PlanNode::Parallel(node.into()),
+            source::PlanNode::Flatten(node) => PlanNode::Flatten(node.into()),
+            source::PlanNode::Condition(node) => PlanNode::Condition(node.into()),
+            source::PlanNode::Subscription(node) => PlanNode::Subscription(node.into()),
+            source::PlanNode::Defer(node) => PlanNode::Defer(node.into()),
+        }
+    }
+}
+
+/// Convert from the query planner's SequenceNode to the node-addon's SequenceNode
+impl From<source::SequenceNode> for SequenceNode {
+    fn from(source_node: source::SequenceNode) -> Self {
+        SequenceNode {
+            nodes: source_node.nodes.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// Convert from the query planner's ParallelNode to the node-addon's ParallelNode
+impl From<source::ParallelNode> for ParallelNode {
+    fn from(source_node: source::ParallelNode) -> Self {
+        ParallelNode {
+            nodes: source_node.nodes.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// Convert from the query planner's FlattenNode to the node-addon's FlattenNode
+impl From<source::FlattenNode> for FlattenNode {
+    fn from(source_node: source::FlattenNode) -> Self {
+        FlattenNode {
+            path: source_node.path,
+            node: Box::new((*source_node.node).into()),
+        }
+    }
+}
+
+/// Convert from the query planner's ConditionNode to the node-addon's ConditionNode
+impl From<source::ConditionNode> for ConditionNode {
+    fn from(source_node: source::ConditionNode) -> Self {
+        ConditionNode {
+            condition: source_node.condition,
+            if_clause: source_node.if_clause.map(|node| Box::new((*node).into())),
+            else_clause: source_node.else_clause.map(|node| Box::new((*node).into())),
+        }
+    }
+}
+
+/// Convert from the query planner's SubscriptionNode to the node-addon's SubscriptionNode
+impl From<source::SubscriptionNode> for SubscriptionNode {
+    fn from(source_node: source::SubscriptionNode) -> Self {
+        SubscriptionNode {
+            primary: Box::new((*source_node.primary).into()),
+        }
+    }
+}
+
+/// Convert from the query planner's DeferNode to the node-addon's DeferNode
+impl From<source::DeferNode> for DeferNode {
+    fn from(source_node: source::DeferNode) -> Self {
+        DeferNode {
+            primary: source_node.primary,
+            deferred: source_node.deferred,
         }
     }
 }
@@ -49,51 +105,5 @@ impl From<source::FetchNode> for FetchNode {
             output_rewrites: source_node.output_rewrites,
             operation_document_node: source_node.operation.document,
         }
-    }
-}
-
-/// Convert FlattenNode by recursively converting the inner node
-fn convert_flatten_node(source_node: source::FlattenNode) -> FlattenNode {
-    FlattenNode {
-        path: source_node.path,
-        node: Box::new((*source_node.node).into()),
-    }
-}
-
-/// Convert ConditionNode by recursively converting if/else clauses
-fn convert_condition_node(source_node: source::ConditionNode) -> ConditionNode {
-    ConditionNode {
-        condition: source_node.condition,
-        if_clause: source_node.if_clause.map(|node| Box::new((*node).into())),
-        else_clause: source_node.else_clause.map(|node| Box::new((*node).into())),
-    }
-}
-
-/// Convert SubscriptionNode by recursively converting the primary node
-fn convert_subscription_node(source_node: source::SubscriptionNode) -> SubscriptionNode {
-    SubscriptionNode {
-        primary: Box::new((*source_node.primary).into()),
-    }
-}
-
-/// Convert SequenceNode by recursively converting all child nodes
-fn convert_sequence_node(source_node: source::SequenceNode) -> SequenceNode {
-    SequenceNode {
-        nodes: source_node.nodes.into_iter().map(Into::into).collect(),
-    }
-}
-
-/// Convert ParallelNode by recursively converting all child nodes
-fn convert_parallel_node(source_node: source::ParallelNode) -> ParallelNode {
-    ParallelNode {
-        nodes: source_node.nodes.into_iter().map(Into::into).collect(),
-    }
-}
-
-/// Convert DeferNode by recursively converting primary and deferred nodes
-fn convert_defer_node(source_node: source::DeferNode) -> DeferNode {
-    DeferNode {
-        primary: source_node.primary,
-        deferred: source_node.deferred,
     }
 }
