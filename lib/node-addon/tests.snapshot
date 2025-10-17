@@ -10,12 +10,127 @@ exports[`should plan simple query 1`] = `
           {
             "kind": "Fetch",
             "operation": "query{topProducts{__typename upc name price weight}}",
+            "operationDocumentNode": {
+              "fragments": [],
+              "operation": {
+                "kind": "OperationDefinition",
+                "name": null,
+                "operation": "query",
+                "selectionSet": {
+                  "kind": "SelectionSet",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": {
+                        "kind": "Name",
+                        "value": "topProducts"
+                      },
+                      "selectionSet": {
+                        "kind": "SelectionSet",
+                        "selections": [
+                          {
+                            "kind": "Field",
+                            "name": {
+                              "kind": "Name",
+                              "value": "__typename"
+                            }
+                          },
+                          {
+                            "kind": "Field",
+                            "name": {
+                              "kind": "Name",
+                              "value": "upc"
+                            }
+                          },
+                          {
+                            "kind": "Field",
+                            "name": {
+                              "kind": "Name",
+                              "value": "name"
+                            }
+                          },
+                          {
+                            "kind": "Field",
+                            "name": {
+                              "kind": "Name",
+                              "value": "price"
+                            }
+                          },
+                          {
+                            "kind": "Field",
+                            "name": {
+                              "kind": "Name",
+                              "value": "weight"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "variableDefinitions": null
+              }
+            },
             "operationKind": "query",
             "serviceName": "products"
           },
           {
             "kind": "Fetch",
             "operation": "query{users{__typename id username name}}",
+            "operationDocumentNode": {
+              "fragments": [],
+              "operation": {
+                "kind": "OperationDefinition",
+                "name": null,
+                "operation": "query",
+                "selectionSet": {
+                  "kind": "SelectionSet",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": {
+                        "kind": "Name",
+                        "value": "users"
+                      },
+                      "selectionSet": {
+                        "kind": "SelectionSet",
+                        "selections": [
+                          {
+                            "kind": "Field",
+                            "name": {
+                              "kind": "Name",
+                              "value": "__typename"
+                            }
+                          },
+                          {
+                            "kind": "Field",
+                            "name": {
+                              "kind": "Name",
+                              "value": "id"
+                            }
+                          },
+                          {
+                            "kind": "Field",
+                            "name": {
+                              "kind": "Name",
+                              "value": "username"
+                            }
+                          },
+                          {
+                            "kind": "Field",
+                            "name": {
+                              "kind": "Name",
+                              "value": "name"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "variableDefinitions": null
+              }
+            },
             "operationKind": "query",
             "serviceName": "accounts"
           }
@@ -29,6 +144,105 @@ exports[`should plan simple query 1`] = `
             "node": {
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate inStock}}}",
+              "operationDocumentNode": {
+                "fragments": [],
+                "operation": {
+                  "kind": "OperationDefinition",
+                  "name": null,
+                  "operation": "query",
+                  "selectionSet": {
+                    "kind": "SelectionSet",
+                    "selections": [
+                      {
+                        "arguments": [
+                          {
+                            "kind": "Argument",
+                            "name": {
+                              "kind": "Name",
+                              "value": "representations"
+                            },
+                            "value": {
+                              "kind": "Variable",
+                              "name": {
+                                "kind": "Name",
+                                "value": "representations"
+                              }
+                            }
+                          }
+                        ],
+                        "kind": "Field",
+                        "name": {
+                          "kind": "Name",
+                          "value": "_entities"
+                        },
+                        "selectionSet": {
+                          "kind": "SelectionSet",
+                          "selections": [
+                            {
+                              "kind": "InlineFragment",
+                              "selectionSet": {
+                                "kind": "SelectionSet",
+                                "selections": [
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "shippingEstimate"
+                                    }
+                                  },
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "inStock"
+                                    }
+                                  }
+                                ]
+                              },
+                              "typeCondition": {
+                                "kind": "NamedType",
+                                "name": {
+                                  "kind": "Name",
+                                  "value": "Product"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "variableDefinitions": [
+                    {
+                      "defaultValue": null,
+                      "kind": "VariableDefinition",
+                      "type": {
+                        "kind": "NonNullType",
+                        "type": {
+                          "kind": "ListType",
+                          "type": {
+                            "kind": "NonNullType",
+                            "type": {
+                              "kind": "NamedType",
+                              "name": {
+                                "kind": "Name",
+                                "value": "_Any"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "variable": {
+                        "kind": "Variable",
+                        "name": {
+                          "kind": "Name",
+                          "value": "representations"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
               "operationKind": "query",
               "requires": [
                 {
@@ -68,6 +282,202 @@ exports[`should plan simple query 1`] = `
             "node": {
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reviews{id body author{__typename id reviews{id body product{__typename upc}} username}}}}}",
+              "operationDocumentNode": {
+                "fragments": [],
+                "operation": {
+                  "kind": "OperationDefinition",
+                  "name": null,
+                  "operation": "query",
+                  "selectionSet": {
+                    "kind": "SelectionSet",
+                    "selections": [
+                      {
+                        "arguments": [
+                          {
+                            "kind": "Argument",
+                            "name": {
+                              "kind": "Name",
+                              "value": "representations"
+                            },
+                            "value": {
+                              "kind": "Variable",
+                              "name": {
+                                "kind": "Name",
+                                "value": "representations"
+                              }
+                            }
+                          }
+                        ],
+                        "kind": "Field",
+                        "name": {
+                          "kind": "Name",
+                          "value": "_entities"
+                        },
+                        "selectionSet": {
+                          "kind": "SelectionSet",
+                          "selections": [
+                            {
+                              "kind": "InlineFragment",
+                              "selectionSet": {
+                                "kind": "SelectionSet",
+                                "selections": [
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "reviews"
+                                    },
+                                    "selectionSet": {
+                                      "kind": "SelectionSet",
+                                      "selections": [
+                                        {
+                                          "kind": "Field",
+                                          "name": {
+                                            "kind": "Name",
+                                            "value": "id"
+                                          }
+                                        },
+                                        {
+                                          "kind": "Field",
+                                          "name": {
+                                            "kind": "Name",
+                                            "value": "body"
+                                          }
+                                        },
+                                        {
+                                          "kind": "Field",
+                                          "name": {
+                                            "kind": "Name",
+                                            "value": "author"
+                                          },
+                                          "selectionSet": {
+                                            "kind": "SelectionSet",
+                                            "selections": [
+                                              {
+                                                "kind": "Field",
+                                                "name": {
+                                                  "kind": "Name",
+                                                  "value": "__typename"
+                                                }
+                                              },
+                                              {
+                                                "kind": "Field",
+                                                "name": {
+                                                  "kind": "Name",
+                                                  "value": "id"
+                                                }
+                                              },
+                                              {
+                                                "kind": "Field",
+                                                "name": {
+                                                  "kind": "Name",
+                                                  "value": "reviews"
+                                                },
+                                                "selectionSet": {
+                                                  "kind": "SelectionSet",
+                                                  "selections": [
+                                                    {
+                                                      "kind": "Field",
+                                                      "name": {
+                                                        "kind": "Name",
+                                                        "value": "id"
+                                                      }
+                                                    },
+                                                    {
+                                                      "kind": "Field",
+                                                      "name": {
+                                                        "kind": "Name",
+                                                        "value": "body"
+                                                      }
+                                                    },
+                                                    {
+                                                      "kind": "Field",
+                                                      "name": {
+                                                        "kind": "Name",
+                                                        "value": "product"
+                                                      },
+                                                      "selectionSet": {
+                                                        "kind": "SelectionSet",
+                                                        "selections": [
+                                                          {
+                                                            "kind": "Field",
+                                                            "name": {
+                                                              "kind": "Name",
+                                                              "value": "__typename"
+                                                            }
+                                                          },
+                                                          {
+                                                            "kind": "Field",
+                                                            "name": {
+                                                              "kind": "Name",
+                                                              "value": "upc"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  ]
+                                                }
+                                              },
+                                              {
+                                                "kind": "Field",
+                                                "name": {
+                                                  "kind": "Name",
+                                                  "value": "username"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              },
+                              "typeCondition": {
+                                "kind": "NamedType",
+                                "name": {
+                                  "kind": "Name",
+                                  "value": "Product"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "variableDefinitions": [
+                    {
+                      "defaultValue": null,
+                      "kind": "VariableDefinition",
+                      "type": {
+                        "kind": "NonNullType",
+                        "type": {
+                          "kind": "ListType",
+                          "type": {
+                            "kind": "NonNullType",
+                            "type": {
+                              "kind": "NamedType",
+                              "name": {
+                                "kind": "Name",
+                                "value": "_Any"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "variable": {
+                        "kind": "Variable",
+                        "name": {
+                          "kind": "Name",
+                          "value": "representations"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
               "operationKind": "query",
               "requires": [
                 {
@@ -99,6 +509,254 @@ exports[`should plan simple query 1`] = `
             "node": {
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{reviews{id body product{__typename upc reviews{id body author{__typename id reviews{id body product{__typename upc}} username}}}}}}}",
+              "operationDocumentNode": {
+                "fragments": [],
+                "operation": {
+                  "kind": "OperationDefinition",
+                  "name": null,
+                  "operation": "query",
+                  "selectionSet": {
+                    "kind": "SelectionSet",
+                    "selections": [
+                      {
+                        "arguments": [
+                          {
+                            "kind": "Argument",
+                            "name": {
+                              "kind": "Name",
+                              "value": "representations"
+                            },
+                            "value": {
+                              "kind": "Variable",
+                              "name": {
+                                "kind": "Name",
+                                "value": "representations"
+                              }
+                            }
+                          }
+                        ],
+                        "kind": "Field",
+                        "name": {
+                          "kind": "Name",
+                          "value": "_entities"
+                        },
+                        "selectionSet": {
+                          "kind": "SelectionSet",
+                          "selections": [
+                            {
+                              "kind": "InlineFragment",
+                              "selectionSet": {
+                                "kind": "SelectionSet",
+                                "selections": [
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "reviews"
+                                    },
+                                    "selectionSet": {
+                                      "kind": "SelectionSet",
+                                      "selections": [
+                                        {
+                                          "kind": "Field",
+                                          "name": {
+                                            "kind": "Name",
+                                            "value": "id"
+                                          }
+                                        },
+                                        {
+                                          "kind": "Field",
+                                          "name": {
+                                            "kind": "Name",
+                                            "value": "body"
+                                          }
+                                        },
+                                        {
+                                          "kind": "Field",
+                                          "name": {
+                                            "kind": "Name",
+                                            "value": "product"
+                                          },
+                                          "selectionSet": {
+                                            "kind": "SelectionSet",
+                                            "selections": [
+                                              {
+                                                "kind": "Field",
+                                                "name": {
+                                                  "kind": "Name",
+                                                  "value": "__typename"
+                                                }
+                                              },
+                                              {
+                                                "kind": "Field",
+                                                "name": {
+                                                  "kind": "Name",
+                                                  "value": "upc"
+                                                }
+                                              },
+                                              {
+                                                "kind": "Field",
+                                                "name": {
+                                                  "kind": "Name",
+                                                  "value": "reviews"
+                                                },
+                                                "selectionSet": {
+                                                  "kind": "SelectionSet",
+                                                  "selections": [
+                                                    {
+                                                      "kind": "Field",
+                                                      "name": {
+                                                        "kind": "Name",
+                                                        "value": "id"
+                                                      }
+                                                    },
+                                                    {
+                                                      "kind": "Field",
+                                                      "name": {
+                                                        "kind": "Name",
+                                                        "value": "body"
+                                                      }
+                                                    },
+                                                    {
+                                                      "kind": "Field",
+                                                      "name": {
+                                                        "kind": "Name",
+                                                        "value": "author"
+                                                      },
+                                                      "selectionSet": {
+                                                        "kind": "SelectionSet",
+                                                        "selections": [
+                                                          {
+                                                            "kind": "Field",
+                                                            "name": {
+                                                              "kind": "Name",
+                                                              "value": "__typename"
+                                                            }
+                                                          },
+                                                          {
+                                                            "kind": "Field",
+                                                            "name": {
+                                                              "kind": "Name",
+                                                              "value": "id"
+                                                            }
+                                                          },
+                                                          {
+                                                            "kind": "Field",
+                                                            "name": {
+                                                              "kind": "Name",
+                                                              "value": "reviews"
+                                                            },
+                                                            "selectionSet": {
+                                                              "kind": "SelectionSet",
+                                                              "selections": [
+                                                                {
+                                                                  "kind": "Field",
+                                                                  "name": {
+                                                                    "kind": "Name",
+                                                                    "value": "id"
+                                                                  }
+                                                                },
+                                                                {
+                                                                  "kind": "Field",
+                                                                  "name": {
+                                                                    "kind": "Name",
+                                                                    "value": "body"
+                                                                  }
+                                                                },
+                                                                {
+                                                                  "kind": "Field",
+                                                                  "name": {
+                                                                    "kind": "Name",
+                                                                    "value": "product"
+                                                                  },
+                                                                  "selectionSet": {
+                                                                    "kind": "SelectionSet",
+                                                                    "selections": [
+                                                                      {
+                                                                        "kind": "Field",
+                                                                        "name": {
+                                                                          "kind": "Name",
+                                                                          "value": "__typename"
+                                                                        }
+                                                                      },
+                                                                      {
+                                                                        "kind": "Field",
+                                                                        "name": {
+                                                                          "kind": "Name",
+                                                                          "value": "upc"
+                                                                        }
+                                                                      }
+                                                                    ]
+                                                                  }
+                                                                }
+                                                              ]
+                                                            }
+                                                          },
+                                                          {
+                                                            "kind": "Field",
+                                                            "name": {
+                                                              "kind": "Name",
+                                                              "value": "username"
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  ]
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              },
+                              "typeCondition": {
+                                "kind": "NamedType",
+                                "name": {
+                                  "kind": "Name",
+                                  "value": "User"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "variableDefinitions": [
+                    {
+                      "defaultValue": null,
+                      "kind": "VariableDefinition",
+                      "type": {
+                        "kind": "NonNullType",
+                        "type": {
+                          "kind": "ListType",
+                          "type": {
+                            "kind": "NonNullType",
+                            "type": {
+                              "kind": "NamedType",
+                              "name": {
+                                "kind": "Name",
+                                "value": "_Any"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "variable": {
+                        "kind": "Variable",
+                        "name": {
+                          "kind": "Name",
+                          "value": "representations"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
               "operationKind": "query",
               "requires": [
                 {
@@ -135,6 +793,112 @@ exports[`should plan simple query 1`] = `
             "node": {
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price weight name}}}",
+              "operationDocumentNode": {
+                "fragments": [],
+                "operation": {
+                  "kind": "OperationDefinition",
+                  "name": null,
+                  "operation": "query",
+                  "selectionSet": {
+                    "kind": "SelectionSet",
+                    "selections": [
+                      {
+                        "arguments": [
+                          {
+                            "kind": "Argument",
+                            "name": {
+                              "kind": "Name",
+                              "value": "representations"
+                            },
+                            "value": {
+                              "kind": "Variable",
+                              "name": {
+                                "kind": "Name",
+                                "value": "representations"
+                              }
+                            }
+                          }
+                        ],
+                        "kind": "Field",
+                        "name": {
+                          "kind": "Name",
+                          "value": "_entities"
+                        },
+                        "selectionSet": {
+                          "kind": "SelectionSet",
+                          "selections": [
+                            {
+                              "kind": "InlineFragment",
+                              "selectionSet": {
+                                "kind": "SelectionSet",
+                                "selections": [
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "price"
+                                    }
+                                  },
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "weight"
+                                    }
+                                  },
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "name"
+                                    }
+                                  }
+                                ]
+                              },
+                              "typeCondition": {
+                                "kind": "NamedType",
+                                "name": {
+                                  "kind": "Name",
+                                  "value": "Product"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "variableDefinitions": [
+                    {
+                      "defaultValue": null,
+                      "kind": "VariableDefinition",
+                      "type": {
+                        "kind": "NonNullType",
+                        "type": {
+                          "kind": "ListType",
+                          "type": {
+                            "kind": "NonNullType",
+                            "type": {
+                              "kind": "NamedType",
+                              "name": {
+                                "kind": "Name",
+                                "value": "_Any"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "variable": {
+                        "kind": "Variable",
+                        "name": {
+                          "kind": "Name",
+                          "value": "representations"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
               "operationKind": "query",
               "requires": [
                 {
@@ -180,6 +944,98 @@ exports[`should plan simple query 1`] = `
             "node": {
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
+              "operationDocumentNode": {
+                "fragments": [],
+                "operation": {
+                  "kind": "OperationDefinition",
+                  "name": null,
+                  "operation": "query",
+                  "selectionSet": {
+                    "kind": "SelectionSet",
+                    "selections": [
+                      {
+                        "arguments": [
+                          {
+                            "kind": "Argument",
+                            "name": {
+                              "kind": "Name",
+                              "value": "representations"
+                            },
+                            "value": {
+                              "kind": "Variable",
+                              "name": {
+                                "kind": "Name",
+                                "value": "representations"
+                              }
+                            }
+                          }
+                        ],
+                        "kind": "Field",
+                        "name": {
+                          "kind": "Name",
+                          "value": "_entities"
+                        },
+                        "selectionSet": {
+                          "kind": "SelectionSet",
+                          "selections": [
+                            {
+                              "kind": "InlineFragment",
+                              "selectionSet": {
+                                "kind": "SelectionSet",
+                                "selections": [
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "name"
+                                    }
+                                  }
+                                ]
+                              },
+                              "typeCondition": {
+                                "kind": "NamedType",
+                                "name": {
+                                  "kind": "Name",
+                                  "value": "User"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "variableDefinitions": [
+                    {
+                      "defaultValue": null,
+                      "kind": "VariableDefinition",
+                      "type": {
+                        "kind": "NonNullType",
+                        "type": {
+                          "kind": "ListType",
+                          "type": {
+                            "kind": "NonNullType",
+                            "type": {
+                              "kind": "NamedType",
+                              "name": {
+                                "kind": "Name",
+                                "value": "_Any"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "variable": {
+                        "kind": "Variable",
+                        "name": {
+                          "kind": "Name",
+                          "value": "representations"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
               "operationKind": "query",
               "requires": [
                 {
@@ -218,6 +1074,112 @@ exports[`should plan simple query 1`] = `
             "node": {
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price weight name}}}",
+              "operationDocumentNode": {
+                "fragments": [],
+                "operation": {
+                  "kind": "OperationDefinition",
+                  "name": null,
+                  "operation": "query",
+                  "selectionSet": {
+                    "kind": "SelectionSet",
+                    "selections": [
+                      {
+                        "arguments": [
+                          {
+                            "kind": "Argument",
+                            "name": {
+                              "kind": "Name",
+                              "value": "representations"
+                            },
+                            "value": {
+                              "kind": "Variable",
+                              "name": {
+                                "kind": "Name",
+                                "value": "representations"
+                              }
+                            }
+                          }
+                        ],
+                        "kind": "Field",
+                        "name": {
+                          "kind": "Name",
+                          "value": "_entities"
+                        },
+                        "selectionSet": {
+                          "kind": "SelectionSet",
+                          "selections": [
+                            {
+                              "kind": "InlineFragment",
+                              "selectionSet": {
+                                "kind": "SelectionSet",
+                                "selections": [
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "price"
+                                    }
+                                  },
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "weight"
+                                    }
+                                  },
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "name"
+                                    }
+                                  }
+                                ]
+                              },
+                              "typeCondition": {
+                                "kind": "NamedType",
+                                "name": {
+                                  "kind": "Name",
+                                  "value": "Product"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "variableDefinitions": [
+                    {
+                      "defaultValue": null,
+                      "kind": "VariableDefinition",
+                      "type": {
+                        "kind": "NonNullType",
+                        "type": {
+                          "kind": "ListType",
+                          "type": {
+                            "kind": "NonNullType",
+                            "type": {
+                              "kind": "NamedType",
+                              "name": {
+                                "kind": "Name",
+                                "value": "_Any"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "variable": {
+                        "kind": "Variable",
+                        "name": {
+                          "kind": "Name",
+                          "value": "representations"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
               "operationKind": "query",
               "requires": [
                 {
@@ -256,6 +1218,112 @@ exports[`should plan simple query 1`] = `
             "node": {
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price weight name}}}",
+              "operationDocumentNode": {
+                "fragments": [],
+                "operation": {
+                  "kind": "OperationDefinition",
+                  "name": null,
+                  "operation": "query",
+                  "selectionSet": {
+                    "kind": "SelectionSet",
+                    "selections": [
+                      {
+                        "arguments": [
+                          {
+                            "kind": "Argument",
+                            "name": {
+                              "kind": "Name",
+                              "value": "representations"
+                            },
+                            "value": {
+                              "kind": "Variable",
+                              "name": {
+                                "kind": "Name",
+                                "value": "representations"
+                              }
+                            }
+                          }
+                        ],
+                        "kind": "Field",
+                        "name": {
+                          "kind": "Name",
+                          "value": "_entities"
+                        },
+                        "selectionSet": {
+                          "kind": "SelectionSet",
+                          "selections": [
+                            {
+                              "kind": "InlineFragment",
+                              "selectionSet": {
+                                "kind": "SelectionSet",
+                                "selections": [
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "price"
+                                    }
+                                  },
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "weight"
+                                    }
+                                  },
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "name"
+                                    }
+                                  }
+                                ]
+                              },
+                              "typeCondition": {
+                                "kind": "NamedType",
+                                "name": {
+                                  "kind": "Name",
+                                  "value": "Product"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "variableDefinitions": [
+                    {
+                      "defaultValue": null,
+                      "kind": "VariableDefinition",
+                      "type": {
+                        "kind": "NonNullType",
+                        "type": {
+                          "kind": "ListType",
+                          "type": {
+                            "kind": "NonNullType",
+                            "type": {
+                              "kind": "NamedType",
+                              "name": {
+                                "kind": "Name",
+                                "value": "_Any"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "variable": {
+                        "kind": "Variable",
+                        "name": {
+                          "kind": "Name",
+                          "value": "representations"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
               "operationKind": "query",
               "requires": [
                 {
@@ -308,6 +1376,98 @@ exports[`should plan simple query 1`] = `
             "node": {
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
+              "operationDocumentNode": {
+                "fragments": [],
+                "operation": {
+                  "kind": "OperationDefinition",
+                  "name": null,
+                  "operation": "query",
+                  "selectionSet": {
+                    "kind": "SelectionSet",
+                    "selections": [
+                      {
+                        "arguments": [
+                          {
+                            "kind": "Argument",
+                            "name": {
+                              "kind": "Name",
+                              "value": "representations"
+                            },
+                            "value": {
+                              "kind": "Variable",
+                              "name": {
+                                "kind": "Name",
+                                "value": "representations"
+                              }
+                            }
+                          }
+                        ],
+                        "kind": "Field",
+                        "name": {
+                          "kind": "Name",
+                          "value": "_entities"
+                        },
+                        "selectionSet": {
+                          "kind": "SelectionSet",
+                          "selections": [
+                            {
+                              "kind": "InlineFragment",
+                              "selectionSet": {
+                                "kind": "SelectionSet",
+                                "selections": [
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "name"
+                                    }
+                                  }
+                                ]
+                              },
+                              "typeCondition": {
+                                "kind": "NamedType",
+                                "name": {
+                                  "kind": "Name",
+                                  "value": "User"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "variableDefinitions": [
+                    {
+                      "defaultValue": null,
+                      "kind": "VariableDefinition",
+                      "type": {
+                        "kind": "NonNullType",
+                        "type": {
+                          "kind": "ListType",
+                          "type": {
+                            "kind": "NonNullType",
+                            "type": {
+                              "kind": "NamedType",
+                              "name": {
+                                "kind": "Name",
+                                "value": "_Any"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "variable": {
+                        "kind": "Variable",
+                        "name": {
+                          "kind": "Name",
+                          "value": "representations"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
               "operationKind": "query",
               "requires": [
                 {
@@ -358,6 +1518,105 @@ exports[`should plan simple query 1`] = `
             "node": {
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{inStock shippingEstimate}}}",
+              "operationDocumentNode": {
+                "fragments": [],
+                "operation": {
+                  "kind": "OperationDefinition",
+                  "name": null,
+                  "operation": "query",
+                  "selectionSet": {
+                    "kind": "SelectionSet",
+                    "selections": [
+                      {
+                        "arguments": [
+                          {
+                            "kind": "Argument",
+                            "name": {
+                              "kind": "Name",
+                              "value": "representations"
+                            },
+                            "value": {
+                              "kind": "Variable",
+                              "name": {
+                                "kind": "Name",
+                                "value": "representations"
+                              }
+                            }
+                          }
+                        ],
+                        "kind": "Field",
+                        "name": {
+                          "kind": "Name",
+                          "value": "_entities"
+                        },
+                        "selectionSet": {
+                          "kind": "SelectionSet",
+                          "selections": [
+                            {
+                              "kind": "InlineFragment",
+                              "selectionSet": {
+                                "kind": "SelectionSet",
+                                "selections": [
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "inStock"
+                                    }
+                                  },
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "shippingEstimate"
+                                    }
+                                  }
+                                ]
+                              },
+                              "typeCondition": {
+                                "kind": "NamedType",
+                                "name": {
+                                  "kind": "Name",
+                                  "value": "Product"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "variableDefinitions": [
+                    {
+                      "defaultValue": null,
+                      "kind": "VariableDefinition",
+                      "type": {
+                        "kind": "NonNullType",
+                        "type": {
+                          "kind": "ListType",
+                          "type": {
+                            "kind": "NonNullType",
+                            "type": {
+                              "kind": "NamedType",
+                              "name": {
+                                "kind": "Name",
+                                "value": "_Any"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "variable": {
+                        "kind": "Variable",
+                        "name": {
+                          "kind": "Name",
+                          "value": "representations"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
               "operationKind": "query",
               "requires": [
                 {
@@ -411,6 +1670,105 @@ exports[`should plan simple query 1`] = `
             "node": {
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{inStock shippingEstimate}}}",
+              "operationDocumentNode": {
+                "fragments": [],
+                "operation": {
+                  "kind": "OperationDefinition",
+                  "name": null,
+                  "operation": "query",
+                  "selectionSet": {
+                    "kind": "SelectionSet",
+                    "selections": [
+                      {
+                        "arguments": [
+                          {
+                            "kind": "Argument",
+                            "name": {
+                              "kind": "Name",
+                              "value": "representations"
+                            },
+                            "value": {
+                              "kind": "Variable",
+                              "name": {
+                                "kind": "Name",
+                                "value": "representations"
+                              }
+                            }
+                          }
+                        ],
+                        "kind": "Field",
+                        "name": {
+                          "kind": "Name",
+                          "value": "_entities"
+                        },
+                        "selectionSet": {
+                          "kind": "SelectionSet",
+                          "selections": [
+                            {
+                              "kind": "InlineFragment",
+                              "selectionSet": {
+                                "kind": "SelectionSet",
+                                "selections": [
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "inStock"
+                                    }
+                                  },
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "shippingEstimate"
+                                    }
+                                  }
+                                ]
+                              },
+                              "typeCondition": {
+                                "kind": "NamedType",
+                                "name": {
+                                  "kind": "Name",
+                                  "value": "Product"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "variableDefinitions": [
+                    {
+                      "defaultValue": null,
+                      "kind": "VariableDefinition",
+                      "type": {
+                        "kind": "NonNullType",
+                        "type": {
+                          "kind": "ListType",
+                          "type": {
+                            "kind": "NonNullType",
+                            "type": {
+                              "kind": "NamedType",
+                              "name": {
+                                "kind": "Name",
+                                "value": "_Any"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "variable": {
+                        "kind": "Variable",
+                        "name": {
+                          "kind": "Name",
+                          "value": "representations"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
               "operationKind": "query",
               "requires": [
                 {
@@ -457,6 +1815,105 @@ exports[`should plan simple query 1`] = `
             "node": {
               "kind": "Fetch",
               "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{inStock shippingEstimate}}}",
+              "operationDocumentNode": {
+                "fragments": [],
+                "operation": {
+                  "kind": "OperationDefinition",
+                  "name": null,
+                  "operation": "query",
+                  "selectionSet": {
+                    "kind": "SelectionSet",
+                    "selections": [
+                      {
+                        "arguments": [
+                          {
+                            "kind": "Argument",
+                            "name": {
+                              "kind": "Name",
+                              "value": "representations"
+                            },
+                            "value": {
+                              "kind": "Variable",
+                              "name": {
+                                "kind": "Name",
+                                "value": "representations"
+                              }
+                            }
+                          }
+                        ],
+                        "kind": "Field",
+                        "name": {
+                          "kind": "Name",
+                          "value": "_entities"
+                        },
+                        "selectionSet": {
+                          "kind": "SelectionSet",
+                          "selections": [
+                            {
+                              "kind": "InlineFragment",
+                              "selectionSet": {
+                                "kind": "SelectionSet",
+                                "selections": [
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "inStock"
+                                    }
+                                  },
+                                  {
+                                    "kind": "Field",
+                                    "name": {
+                                      "kind": "Name",
+                                      "value": "shippingEstimate"
+                                    }
+                                  }
+                                ]
+                              },
+                              "typeCondition": {
+                                "kind": "NamedType",
+                                "name": {
+                                  "kind": "Name",
+                                  "value": "Product"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "variableDefinitions": [
+                    {
+                      "defaultValue": null,
+                      "kind": "VariableDefinition",
+                      "type": {
+                        "kind": "NonNullType",
+                        "type": {
+                          "kind": "ListType",
+                          "type": {
+                            "kind": "NonNullType",
+                            "type": {
+                              "kind": "NamedType",
+                              "name": {
+                                "kind": "Name",
+                                "value": "_Any"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "variable": {
+                        "kind": "Variable",
+                        "name": {
+                          "kind": "Name",
+                          "value": "representations"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
               "operationKind": "query",
               "requires": [
                 {
