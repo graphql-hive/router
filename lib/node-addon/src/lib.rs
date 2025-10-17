@@ -12,6 +12,7 @@ use hive_router_query_planner::utils::parsing::{parse_schema, safe_parse_operati
 extern crate napi_derive;
 
 mod converter;
+mod graphql_js_serializer;
 mod plan_nodes;
 
 #[napi]

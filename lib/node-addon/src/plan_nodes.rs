@@ -83,5 +83,6 @@ pub struct FetchNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_rewrites: Option<Vec<FetchRewrite>>,
     // we added this, everything else is the same as from query-planner/plan_nodes.rs
+    #[serde(serialize_with = "crate::graphql_js_serializer::serialize_document")]
     pub operation_document_node: Document,
 }
