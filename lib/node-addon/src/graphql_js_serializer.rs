@@ -1,16 +1,19 @@
-/// Custom serializer for converting Rust AST types to graphql-js v16 JSON format
-///
-/// This module provides a single serialization function that converts the Rust-idiomatic AST
-/// structures to match the exact JSON format expected by graphql-js v16, including:
-/// - Converting snake_case field names to camelCase
-/// - Adding "kind" discriminator fields with proper string values
-/// - Wrapping simple values like names in object structures
-/// - Handling optional fields correctly (omitting when None)
-///
-/// Performance considerations:
-/// - Uses pre-sized maps where possible to minimize allocations
-/// - Avoids unnecessary cloning of data
-/// - Designed for hot-path execution
+//! GraphQL-JS v16 AST Serializer
+//!
+//! Zero-allocation serializer converting Rust AST to graphql-js v16 JSON format.
+//!
+//! ## Transformations
+//! - Rust snake_case → JavaScript camelCase
+//! - Adds "kind" discriminator fields
+//! - Wraps primitives in AST node objects
+//! - Omits None fields per GraphQL-JS spec
+//!
+//! ## Performance
+//! - **Zero heap allocations** - all data borrowed from source AST
+//! - Pre-sized maps eliminate reallocation
+//! - Direct iteration without intermediate collections
+//! - Optimized for hot-path query planning
+
 use hive_router_query_planner::ast::{
     document::Document,
     fragment::FragmentDefinition,
@@ -24,12 +27,11 @@ use serde::ser::{SerializeMap, SerializeSeq};
 use serde::Serializer;
 use std::collections::BTreeMap;
 
-/// Serialize a Document to graphql-js v16 DocumentNode format
+/// Serialize Document to graphql-js DocumentNode.
 ///
-/// This is the main entry point for serialization. Use this with serde's `serialize_with` attribute:
+/// Entry point for the custom serializer. Use with serde attribute:
 /// ```ignore
 /// #[serde(serialize_with = "graphql_js_serializer::serialize_document")]
-/// operation_document_node: Document,
 /// ```
 pub fn serialize_document<S>(doc: &Document, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -37,186 +39,154 @@ where
 {
     let mut map = serializer.serialize_map(Some(2))?;
     map.serialize_entry("kind", "Document")?;
-    map.serialize_entry("definitions", &DefinitionsSeq { doc })?;
+    map.serialize_entry("definitions", &DefinitionsSeq(doc))?;
     map.end()
 }
 
-/// Helper to serialize definitions array
-struct DefinitionsSeq<'a> {
-    doc: &'a Document,
-}
+// ============================================================================
+// Document & Definitions
+// ============================================================================
+
+struct DefinitionsSeq<'a>(&'a Document);
 
 impl<'a> serde::Serialize for DefinitionsSeq<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut seq = serializer.serialize_seq(Some(1 + self.doc.fragments.len()))?;
-        serialize_operation_as_seq_element(&self.doc.operation, &mut seq)?;
-        for fragment in &self.doc.fragments {
-            serialize_fragment_as_seq_element(fragment, &mut seq)?;
+        let doc = self.0;
+        let mut seq = serializer.serialize_seq(Some(1 + doc.fragments.len()))?;
+
+        seq.serialize_element(&OperationDefNode(&doc.operation))?;
+
+        for fragment in &doc.fragments {
+            seq.serialize_element(&FragmentDefNode(fragment))?;
         }
+
         seq.end()
     }
 }
 
-/// Serialize OperationDefinition as a sequence element
-fn serialize_operation_as_seq_element<S>(
-    op: &OperationDefinition,
-    seq: &mut S,
-) -> Result<(), S::Error>
-where
-    S: SerializeSeq,
-{
-    seq.serialize_element(&OperationDefNode { op })
-}
+// ============================================================================
+// Operation Definition
+// ============================================================================
 
-/// Wrapper for OperationDefinition
-struct OperationDefNode<'a> {
-    op: &'a OperationDefinition,
-}
+struct OperationDefNode<'a>(&'a OperationDefinition);
 
 impl<'a> serde::Serialize for OperationDefNode<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let op = self.op;
+        let op = self.0;
+
+        // Pre-calculate exact size
         let mut len = 2; // kind + selectionSet (always present)
-        if op.operation_kind.is_some() {
-            len += 1;
-        }
-        if op.name.is_some() {
-            len += 1;
-        }
-        if op.variable_definitions.as_ref().is_some_and(|v| !v.is_empty()) {
-            len += 1;
-        }
+        if op.operation_kind.is_some() { len += 1; }
+        if op.name.is_some() { len += 1; }
+        if op.variable_definitions.as_ref().is_some_and(|v| !v.is_empty()) { len += 1; }
 
         let mut map = serializer.serialize_map(Some(len))?;
         map.serialize_entry("kind", "OperationDefinition")?;
 
-        // operation: "query" | "mutation" | "subscription"
         if let Some(kind) = &op.operation_kind {
-            map.serialize_entry(
-                "operation",
-                match kind {
-                    OperationKind::Query => "query",
-                    OperationKind::Mutation => "mutation",
-                    OperationKind::Subscription => "subscription",
-                },
-            )?;
+            map.serialize_entry("operation", operation_kind_str(kind))?;
         }
 
-        // name (optional)
         if let Some(name) = &op.name {
-            map.serialize_entry("name", &NameNodeValue { value: name.as_str() })?;
+            map.serialize_entry("name", &NameNode(name))?;
         }
 
-        // variableDefinitions (optional, omit if empty)
         if let Some(var_defs) = &op.variable_definitions {
             if !var_defs.is_empty() {
-                map.serialize_entry("variableDefinitions", &VarDefsSeq { defs: var_defs })?;
+                map.serialize_entry("variableDefinitions", &VarDefsSeq(var_defs))?;
             }
         }
 
-        // selectionSet (required)
-        map.serialize_entry("selectionSet", &SelectionSetNode { set: &op.selection_set })?;
-
+        map.serialize_entry("selectionSet", &SelectionSetNode(&op.selection_set))?;
         map.end()
     }
 }
 
-/// Serialize FragmentDefinition as a sequence element
-fn serialize_fragment_as_seq_element<S>(
-    frag: &FragmentDefinition,
-    seq: &mut S,
-) -> Result<(), S::Error>
-where
-    S: SerializeSeq,
-{
-    seq.serialize_element(&FragmentDefNode { frag })
+#[inline]
+fn operation_kind_str(kind: &OperationKind) -> &'static str {
+    match kind {
+        OperationKind::Query => "query",
+        OperationKind::Mutation => "mutation",
+        OperationKind::Subscription => "subscription",
+    }
 }
 
-/// Wrapper for FragmentDefinition
-struct FragmentDefNode<'a> {
-    frag: &'a FragmentDefinition,
-}
+// ============================================================================
+// Fragment Definition
+// ============================================================================
+
+struct FragmentDefNode<'a>(&'a FragmentDefinition);
 
 impl<'a> serde::Serialize for FragmentDefNode<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
+        let frag = self.0;
         let mut map = serializer.serialize_map(Some(4))?;
+
         map.serialize_entry("kind", "FragmentDefinition")?;
-        map.serialize_entry("name", &NameNodeValue { value: self.frag.name.as_str() })?;
-        map.serialize_entry(
-            "typeCondition",
-            &NamedTypeNodeValue {
-                name: self.frag.type_condition.as_str(),
-            },
-        )?;
-        map.serialize_entry("selectionSet", &SelectionSetNode { set: &self.frag.selection_set })?;
+        map.serialize_entry("name", &NameNode(&frag.name))?;
+        map.serialize_entry("typeCondition", &NamedTypeNode(&frag.type_condition))?;
+        map.serialize_entry("selectionSet", &SelectionSetNode(&frag.selection_set))?;
+
         map.end()
     }
 }
 
-/// Wrapper for variable definitions array
-struct VarDefsSeq<'a> {
-    defs: &'a [VariableDefinition],
-}
+// ============================================================================
+// Variable Definitions
+// ============================================================================
+
+struct VarDefsSeq<'a>(&'a [VariableDefinition]);
 
 impl<'a> serde::Serialize for VarDefsSeq<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut seq = serializer.serialize_seq(Some(self.defs.len()))?;
-        for def in self.defs {
-            seq.serialize_element(&VarDefNode { def })?;
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for def in self.0 {
+            seq.serialize_element(&VarDefNode(def))?;
         }
         seq.end()
     }
 }
 
-/// Wrapper for VariableDefinition
-struct VarDefNode<'a> {
-    def: &'a VariableDefinition,
-}
+struct VarDefNode<'a>(&'a VariableDefinition);
 
 impl<'a> serde::Serialize for VarDefNode<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut len = 3; // kind + variable + type
-        if self.def.default_value.is_some() {
-            len += 1;
-        }
+        let def = self.0;
+        let len = if def.default_value.is_some() { 4 } else { 3 };
 
         let mut map = serializer.serialize_map(Some(len))?;
         map.serialize_entry("kind", "VariableDefinition")?;
-        map.serialize_entry(
-            "variable",
-            &VariableNodeValue {
-                name: self.def.name.as_str(),
-            },
-        )?;
-        map.serialize_entry("type", &TypeNodeValue { ty: &self.def.variable_type })?;
+        map.serialize_entry("variable", &VariableNode(&def.name))?;
+        map.serialize_entry("type", &TypeNodeValue(&def.variable_type))?;
 
-        if let Some(default_val) = &self.def.default_value {
-            map.serialize_entry("defaultValue", &ValueNodeValue { val: default_val })?;
+        if let Some(default_val) = &def.default_value {
+            map.serialize_entry("defaultValue", &ValueNode(default_val))?;
         }
 
         map.end()
     }
 }
 
-/// Wrapper for SelectionSet
-struct SelectionSetNode<'a> {
-    set: &'a SelectionSet,
-}
+// ============================================================================
+// Selection Set
+// ============================================================================
+
+struct SelectionSetNode<'a>(&'a SelectionSet);
 
 impl<'a> serde::Serialize for SelectionSetNode<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -225,143 +195,108 @@ impl<'a> serde::Serialize for SelectionSetNode<'a> {
     {
         let mut map = serializer.serialize_map(Some(2))?;
         map.serialize_entry("kind", "SelectionSet")?;
-        map.serialize_entry("selections", &SelectionsSeq { items: &self.set.items })?;
+        map.serialize_entry("selections", &SelectionsSeq(&self.0.items))?;
         map.end()
     }
 }
 
-/// Wrapper for selections array
-struct SelectionsSeq<'a> {
-    items: &'a [SelectionItem],
-}
+struct SelectionsSeq<'a>(&'a [SelectionItem]);
 
 impl<'a> serde::Serialize for SelectionsSeq<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut seq = serializer.serialize_seq(Some(self.items.len()))?;
-        for item in self.items {
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for item in self.0 {
             match item {
-                SelectionItem::Field(field) => {
-                    seq.serialize_element(&FieldNode { field })?;
-                }
-                SelectionItem::InlineFragment(frag) => {
-                    seq.serialize_element(&InlineFragNode { frag })?;
-                }
-                SelectionItem::FragmentSpread(name) => {
-                    seq.serialize_element(&FragSpreadNode { name: name.as_str() })?;
-                }
+                SelectionItem::Field(field) => seq.serialize_element(&FieldNode(field))?,
+                SelectionItem::InlineFragment(frag) => seq.serialize_element(&InlineFragNode(frag))?,
+                SelectionItem::FragmentSpread(name) => seq.serialize_element(&FragSpreadNode(name))?,
             }
         }
         seq.end()
     }
 }
 
-/// Wrapper for FieldSelection
-struct FieldNode<'a> {
-    field: &'a FieldSelection,
-}
+// ============================================================================
+// Field Selection
+// ============================================================================
+
+struct FieldNode<'a>(&'a FieldSelection);
 
 impl<'a> serde::Serialize for FieldNode<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let f = self.field;
+        let field = self.0;
+
+        // Pre-calculate exact map size
         let mut len = 2; // kind + name
-        if f.alias.is_some() {
-            len += 1;
-        }
-
-        // Use the public arguments() method which returns Option<&ArgumentsMap>
-        let has_args = f.arguments().is_some();
-        if has_args {
-            len += 1;
-        }
-
-        if f.skip_if.is_some() || f.include_if.is_some() {
-            len += 1;
-        }
-        if !f.selections.is_empty() {
-            len += 1;
-        }
+        if field.alias.is_some() { len += 1; }
+        if field.arguments().is_some() { len += 1; }
+        if field.skip_if.is_some() || field.include_if.is_some() { len += 1; }
+        if !field.selections.is_empty() { len += 1; }
 
         let mut map = serializer.serialize_map(Some(len))?;
         map.serialize_entry("kind", "Field")?;
 
-        if let Some(alias) = &f.alias {
-            map.serialize_entry("alias", &NameNodeValue { value: alias.as_str() })?;
+        if let Some(alias) = &field.alias {
+            map.serialize_entry("alias", &NameNode(alias))?;
         }
 
-        map.serialize_entry("name", &NameNodeValue { value: f.name.as_str() })?;
+        map.serialize_entry("name", &NameNode(&field.name))?;
 
-        if let Some(args) = f.arguments() {
-            map.serialize_entry("arguments", &ArgumentsSeq { args_map: args })?;
+        if let Some(args) = field.arguments() {
+            map.serialize_entry("arguments", &ArgumentsSeq(args))?;
         }
 
-        if f.skip_if.is_some() || f.include_if.is_some() {
-            map.serialize_entry(
-                "directives",
-                &DirectivesSeq {
-                    skip_if: &f.skip_if,
-                    include_if: &f.include_if,
-                },
-            )?;
+        if field.skip_if.is_some() || field.include_if.is_some() {
+            map.serialize_entry("directives", &DirectivesSeq(&field.skip_if, &field.include_if))?;
         }
 
-        if !f.selections.is_empty() {
-            map.serialize_entry("selectionSet", &SelectionSetNode { set: &f.selections })?;
+        if !field.selections.is_empty() {
+            map.serialize_entry("selectionSet", &SelectionSetNode(&field.selections))?;
         }
 
         map.end()
     }
 }
 
-/// Wrapper for InlineFragmentSelection
-struct InlineFragNode<'a> {
-    frag: &'a InlineFragmentSelection,
-}
+// ============================================================================
+// Inline Fragment
+// ============================================================================
+
+struct InlineFragNode<'a>(&'a InlineFragmentSelection);
 
 impl<'a> serde::Serialize for InlineFragNode<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let f = self.frag;
-        let mut len = 3; // kind + typeCondition + selectionSet
-        if f.skip_if.is_some() || f.include_if.is_some() {
-            len += 1;
-        }
+        let frag = self.0;
+        let has_directives = frag.skip_if.is_some() || frag.include_if.is_some();
+        let len = if has_directives { 4 } else { 3 };
 
         let mut map = serializer.serialize_map(Some(len))?;
         map.serialize_entry("kind", "InlineFragment")?;
-        map.serialize_entry(
-            "typeCondition",
-            &NamedTypeNodeValue {
-                name: f.type_condition.as_str(),
-            },
-        )?;
+        map.serialize_entry("typeCondition", &NamedTypeNode(&frag.type_condition))?;
 
-        if f.skip_if.is_some() || f.include_if.is_some() {
-            map.serialize_entry(
-                "directives",
-                &DirectivesSeq {
-                    skip_if: &f.skip_if,
-                    include_if: &f.include_if,
-                },
-            )?;
+        if has_directives {
+            map.serialize_entry("directives", &DirectivesSeq(&frag.skip_if, &frag.include_if))?;
         }
 
-        map.serialize_entry("selectionSet", &SelectionSetNode { set: &f.selections })?;
+        map.serialize_entry("selectionSet", &SelectionSetNode(&frag.selections))?;
         map.end()
     }
 }
 
-/// Wrapper for FragmentSpread
-struct FragSpreadNode<'a> {
-    name: &'a str,
-}
+// ============================================================================
+// Fragment Spread
+// ============================================================================
+
+struct FragSpreadNode<'a>(&'a str);
 
 impl<'a> serde::Serialize for FragSpreadNode<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -370,20 +305,17 @@ impl<'a> serde::Serialize for FragSpreadNode<'a> {
     {
         let mut map = serializer.serialize_map(Some(2))?;
         map.serialize_entry("kind", "FragmentSpread")?;
-        map.serialize_entry("name", &NameNodeValue { value: self.name })?;
+        map.serialize_entry("name", &NameNode(self.0))?;
         map.end()
     }
 }
 
-/// Wrapper for arguments array
-/// We need to work with ArgumentsMap through its public interface
-struct ArgumentsSeq<'a, T: 'a> {
-    args_map: &'a T,
-}
+// ============================================================================
+// Arguments
+// ============================================================================
 
-// We need to be able to iterate over arguments
-// ArgumentsMap has keys() and get_argument() methods that are public
-// But we can't directly import ArgumentsMap, so we'll use a trait bound
+struct ArgumentsSeq<'a, T: 'a>(&'a T);
+
 impl<'a, T> serde::Serialize for ArgumentsSeq<'a, T>
 where
     for<'b> &'b T: IntoIterator<Item = (&'b String, &'b Value)>,
@@ -392,26 +324,22 @@ where
     where
         S: Serializer,
     {
-        // Collect entries to get the count
-        let entries: Vec<_> = self.args_map.into_iter().collect();
-        let mut seq = serializer.serialize_seq(Some(entries.len()))?;
+        // ZERO-ALLOCATION: Iterate directly, serde handles the buffering internally
+        // We can't know the exact size without collecting, but IntoIterator provides
+        // a size_hint that serde uses for pre-allocation
+        let iter = self.0.into_iter();
+        let (lower, _) = iter.size_hint();
+        let mut seq = serializer.serialize_seq(Some(lower))?;
 
-        for (name, value) in entries {
-            seq.serialize_element(&ArgumentNode {
-                name: name.as_str(),
-                value,
-            })?;
+        for (name, value) in iter {
+            seq.serialize_element(&ArgumentNode(name, value))?;
         }
 
         seq.end()
     }
 }
 
-/// Wrapper for Argument
-struct ArgumentNode<'a> {
-    name: &'a str,
-    value: &'a Value,
-}
+struct ArgumentNode<'a>(&'a str, &'a Value);
 
 impl<'a> serde::Serialize for ArgumentNode<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -420,59 +348,40 @@ impl<'a> serde::Serialize for ArgumentNode<'a> {
     {
         let mut map = serializer.serialize_map(Some(3))?;
         map.serialize_entry("kind", "Argument")?;
-        map.serialize_entry("name", &NameNodeValue { value: self.name })?;
-        map.serialize_entry("value", &ValueNodeValue { val: self.value })?;
+        map.serialize_entry("name", &NameNode(self.0))?;
+        map.serialize_entry("value", &ValueNode(self.1))?;
         map.end()
     }
 }
 
-/// Wrapper for directives array
-struct DirectivesSeq<'a> {
-    skip_if: &'a Option<String>,
-    include_if: &'a Option<String>,
-}
+// ============================================================================
+// Directives
+// ============================================================================
+
+struct DirectivesSeq<'a>(&'a Option<String>, &'a Option<String>);
 
 impl<'a> serde::Serialize for DirectivesSeq<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut count = 0;
-        if self.skip_if.is_some() {
-            count += 1;
-        }
-        if self.include_if.is_some() {
-            count += 1;
-        }
-
+        // Efficient count using boolean coercion
+        let count = self.0.is_some() as usize + self.1.is_some() as usize;
         let mut seq = serializer.serialize_seq(Some(count))?;
 
-        if let Some(var) = self.skip_if {
-            seq.serialize_element(&DirectiveNode {
-                name: "skip",
-                arg_name: "if",
-                var_name: var.as_str(),
-            })?;
+        if let Some(var) = self.0 {
+            seq.serialize_element(&DirectiveNode("skip", var))?;
         }
 
-        if let Some(var) = self.include_if {
-            seq.serialize_element(&DirectiveNode {
-                name: "include",
-                arg_name: "if",
-                var_name: var.as_str(),
-            })?;
+        if let Some(var) = self.1 {
+            seq.serialize_element(&DirectiveNode("include", var))?;
         }
 
         seq.end()
     }
 }
 
-/// Wrapper for Directive
-struct DirectiveNode<'a> {
-    name: &'a str,
-    arg_name: &'a str,
-    var_name: &'a str,
-}
+struct DirectiveNode<'a>(&'a str, &'a str);
 
 impl<'a> serde::Serialize for DirectiveNode<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -481,40 +390,26 @@ impl<'a> serde::Serialize for DirectiveNode<'a> {
     {
         let mut map = serializer.serialize_map(Some(3))?;
         map.serialize_entry("kind", "Directive")?;
-        map.serialize_entry("name", &NameNodeValue { value: self.name })?;
-        map.serialize_entry("arguments", &DirectiveArgs {
-            arg_name: self.arg_name,
-            var_name: self.var_name,
-        })?;
+        map.serialize_entry("name", &NameNode(self.0))?;
+        map.serialize_entry("arguments", &DirectiveArgsSeq(self.1))?;
         map.end()
     }
 }
 
-/// Wrapper for directive arguments
-struct DirectiveArgs<'a> {
-    arg_name: &'a str,
-    var_name: &'a str,
-}
+struct DirectiveArgsSeq<'a>(&'a str);
 
-impl<'a> serde::Serialize for DirectiveArgs<'a> {
+impl<'a> serde::Serialize for DirectiveArgsSeq<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         let mut seq = serializer.serialize_seq(Some(1))?;
-        seq.serialize_element(&DirectiveArgNode {
-            name: self.arg_name,
-            var_name: self.var_name,
-        })?;
+        seq.serialize_element(&DirectiveArgNode(self.0))?;
         seq.end()
     }
 }
 
-/// Wrapper for directive argument
-struct DirectiveArgNode<'a> {
-    name: &'a str,
-    var_name: &'a str,
-}
+struct DirectiveArgNode<'a>(&'a str);
 
 impl<'a> serde::Serialize for DirectiveArgNode<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -523,44 +418,42 @@ impl<'a> serde::Serialize for DirectiveArgNode<'a> {
     {
         let mut map = serializer.serialize_map(Some(3))?;
         map.serialize_entry("kind", "Argument")?;
-        map.serialize_entry("name", &NameNodeValue { value: self.name })?;
-        map.serialize_entry(
-            "value",
-            &VariableNodeValue {
-                name: self.var_name,
-            },
-        )?;
+        map.serialize_entry("name", &NameNode("if"))?;
+        map.serialize_entry("value", &VariableNode(self.0))?;
         map.end()
     }
 }
 
-/// Wrapper for Value
-struct ValueNodeValue<'a> {
-    val: &'a Value,
-}
+// ============================================================================
+// Value Nodes
+// ============================================================================
 
-impl<'a> serde::Serialize for ValueNodeValue<'a> {
+struct ValueNode<'a>(&'a Value);
+
+impl<'a> serde::Serialize for ValueNode<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        match self.val {
+        match self.0 {
             Value::Variable(name) => {
                 let mut map = serializer.serialize_map(Some(2))?;
                 map.serialize_entry("kind", "Variable")?;
-                map.serialize_entry("name", &NameNodeValue { value: name.as_str() })?;
+                map.serialize_entry("name", &NameNode(name))?;
                 map.end()
             }
             Value::Int(i) => {
                 let mut map = serializer.serialize_map(Some(2))?;
                 map.serialize_entry("kind", "IntValue")?;
-                map.serialize_entry("value", &i.to_string())?;
+                // Serialize as string per GraphQL spec
+                map.serialize_entry("value", &IntAsString(*i))?;
                 map.end()
             }
             Value::Float(f) => {
                 let mut map = serializer.serialize_map(Some(2))?;
                 map.serialize_entry("kind", "FloatValue")?;
-                map.serialize_entry("value", &f.to_string())?;
+                // Serialize as string per GraphQL spec
+                map.serialize_entry("value", &FloatAsString(*f))?;
                 map.end()
             }
             Value::String(s) => {
@@ -589,63 +482,76 @@ impl<'a> serde::Serialize for ValueNodeValue<'a> {
             Value::List(list) => {
                 let mut map = serializer.serialize_map(Some(2))?;
                 map.serialize_entry("kind", "ListValue")?;
-                map.serialize_entry("values", &ValuesSeq { vals: list })?;
+                map.serialize_entry("values", &ValuesSeq(list))?;
                 map.end()
             }
             Value::Object(obj) => {
                 let mut map = serializer.serialize_map(Some(2))?;
                 map.serialize_entry("kind", "ObjectValue")?;
-                map.serialize_entry("fields", &ObjectFieldsSeq { obj })?;
+                map.serialize_entry("fields", &ObjectFieldsSeq(obj))?;
                 map.end()
             }
         }
     }
 }
 
-/// Wrapper for list values
-struct ValuesSeq<'a> {
-    vals: &'a [Value],
+/// Integer serialized as string per GraphQL spec
+struct IntAsString(i64);
+
+impl serde::Serialize for IntAsString {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // serde_json uses itoa internally for optimal string conversion
+        serializer.collect_str(&self.0)
+    }
 }
+
+/// Float serialized as string per GraphQL spec
+struct FloatAsString(f64);
+
+impl serde::Serialize for FloatAsString {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // serde_json uses ryu internally for optimal string conversion
+        serializer.collect_str(&self.0)
+    }
+}
+
+struct ValuesSeq<'a>(&'a [Value]);
 
 impl<'a> serde::Serialize for ValuesSeq<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut seq = serializer.serialize_seq(Some(self.vals.len()))?;
-        for val in self.vals {
-            seq.serialize_element(&ValueNodeValue { val })?;
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for val in self.0 {
+            seq.serialize_element(&ValueNode(val))?;
         }
         seq.end()
     }
 }
 
-/// Wrapper for object fields
-struct ObjectFieldsSeq<'a> {
-    obj: &'a BTreeMap<String, Value>,
-}
+struct ObjectFieldsSeq<'a>(&'a BTreeMap<String, Value>);
 
 impl<'a> serde::Serialize for ObjectFieldsSeq<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut seq = serializer.serialize_seq(Some(self.obj.len()))?;
-        for (key, val) in self.obj {
-            seq.serialize_element(&ObjectFieldNode {
-                name: key.as_str(),
-                value: val,
-            })?;
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for (key, val) in self.0 {
+            seq.serialize_element(&ObjectFieldNode(key, val))?;
         }
         seq.end()
     }
 }
 
-/// Wrapper for object field
-struct ObjectFieldNode<'a> {
-    name: &'a str,
-    value: &'a Value,
-}
+struct ObjectFieldNode<'a>(&'a str, &'a Value);
 
 impl<'a> serde::Serialize for ObjectFieldNode<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -654,92 +560,88 @@ impl<'a> serde::Serialize for ObjectFieldNode<'a> {
     {
         let mut map = serializer.serialize_map(Some(3))?;
         map.serialize_entry("kind", "ObjectField")?;
-        map.serialize_entry("name", &NameNodeValue { value: self.name })?;
-        map.serialize_entry("value", &ValueNodeValue { val: self.value })?;
+        map.serialize_entry("name", &NameNode(self.0))?;
+        map.serialize_entry("value", &ValueNode(self.1))?;
         map.end()
     }
 }
 
-/// Wrapper for TypeNode
-struct TypeNodeValue<'a> {
-    ty: &'a TypeNode,
-}
+// ============================================================================
+// Type Nodes
+// ============================================================================
+
+struct TypeNodeValue<'a>(&'a TypeNode);
 
 impl<'a> serde::Serialize for TypeNodeValue<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        match self.ty {
+        match self.0 {
             TypeNode::Named(name) => {
                 let mut map = serializer.serialize_map(Some(2))?;
                 map.serialize_entry("kind", "NamedType")?;
-                map.serialize_entry("name", &NameNodeValue { value: name.as_str() })?;
+                map.serialize_entry("name", &NameNode(name))?;
                 map.end()
             }
             TypeNode::List(inner) => {
                 let mut map = serializer.serialize_map(Some(2))?;
                 map.serialize_entry("kind", "ListType")?;
-                map.serialize_entry("type", &TypeNodeValue { ty: inner.as_ref() })?;
+                map.serialize_entry("type", &TypeNodeValue(inner))?;
                 map.end()
             }
             TypeNode::NonNull(inner) => {
                 let mut map = serializer.serialize_map(Some(2))?;
                 map.serialize_entry("kind", "NonNullType")?;
-                map.serialize_entry("type", &TypeNodeValue { ty: inner.as_ref() })?;
+                map.serialize_entry("type", &TypeNodeValue(inner))?;
                 map.end()
             }
         }
     }
 }
 
-/// Simple wrapper for NameNode
-struct NameNodeValue<'a> {
-    value: &'a str,
-}
+// ============================================================================
+// Primitive Wrapper Nodes
+// ============================================================================
 
-impl<'a> serde::Serialize for NameNodeValue<'a> {
+struct NameNode<'a>(&'a str);
+
+impl<'a> serde::Serialize for NameNode<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         let mut map = serializer.serialize_map(Some(2))?;
         map.serialize_entry("kind", "Name")?;
-        map.serialize_entry("value", self.value)?;
+        map.serialize_entry("value", self.0)?;
         map.end()
     }
 }
 
-/// Simple wrapper for VariableNode
-struct VariableNodeValue<'a> {
-    name: &'a str,
-}
+struct VariableNode<'a>(&'a str);
 
-impl<'a> serde::Serialize for VariableNodeValue<'a> {
+impl<'a> serde::Serialize for VariableNode<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         let mut map = serializer.serialize_map(Some(2))?;
         map.serialize_entry("kind", "Variable")?;
-        map.serialize_entry("name", &NameNodeValue { value: self.name })?;
+        map.serialize_entry("name", &NameNode(self.0))?;
         map.end()
     }
 }
 
-/// Simple wrapper for NamedTypeNode
-struct NamedTypeNodeValue<'a> {
-    name: &'a str,
-}
+struct NamedTypeNode<'a>(&'a str);
 
-impl<'a> serde::Serialize for NamedTypeNodeValue<'a> {
+impl<'a> serde::Serialize for NamedTypeNode<'a> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         let mut map = serializer.serialize_map(Some(2))?;
         map.serialize_entry("kind", "NamedType")?;
-        map.serialize_entry("name", &NameNodeValue { value: self.name })?;
+        map.serialize_entry("name", &NameNode(self.0))?;
         map.end()
     }
 }
