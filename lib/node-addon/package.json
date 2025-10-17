@@ -27,6 +27,7 @@
     "prepublishOnly": "napi prepublish -t npm",
     "universal": "napi universal",
     "test": "node tests",
+    "test:updatesnaps": "node --test-update-snapshots tests",
     "version": "napi version"
   },
   "packageManager": "yarn@4.10.3"
