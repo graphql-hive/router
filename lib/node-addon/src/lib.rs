@@ -11,10 +11,6 @@ use hive_router_query_planner::utils::parsing::{parse_schema, safe_parse_operati
 #[macro_use]
 extern crate napi_derive;
 
-mod converter;
-mod graphql_js_serializer;
-mod plan_nodes;
-
 #[napi]
 pub struct QueryPlanner {
     planner: Arc<Planner>,
@@ -69,10 +65,7 @@ impl QueryPlanner {
                 )
                 .map_err(|e| napi::Error::from_reason(format!("Failed to plan query: {}", e)))?;
 
-            // Convert to our custom QueryPlan type that includes operation_document_node
-            let converted_plan: plan_nodes::QueryPlan = query_plan.into();
-
-            serde_json::to_value(&converted_plan).map_err(|e| {
+            serde_json::to_value(&query_plan).map_err(|e| {
                 napi::Error::from_reason(format!("Failed to serialize query plan: {}", e))
             })
         })
