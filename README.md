@@ -5,8 +5,8 @@
 A fully open-source MIT-licensed GraphQL API router that can act as a [GraphQL federation](https://the-guild.dev/graphql/hive/federation) Router, built with Rust for maximum performance and robustness.
 
 > [!TIP]
-> 🚀 [Blog post: Welcome Hive Router](https://the-guild.dev/graphql/hive/blog/welcome-hive-router) 
-> 
+> 🚀 [Blog post: Welcome Hive Router](https://the-guild.dev/graphql/hive/blog/welcome-hive-router)
+>
 > Interested in the benchmark results? Check out the [Federation Gateway Performance comparison](https://the-guild.dev/graphql/hive/federation-gateway-performance)
 
 It can be run as a standalone binary or a Docker Image. Query planner can be used as a standalone Crate library.
@@ -26,7 +26,7 @@ curl -o- https://raw.githubusercontent.com/graphql-hive/router/main/install.sh |
 Create a simple configuration file that points to your supergraph schema file:
 
 ```yaml
-# hive-router.config.yaml
+# router.config.yaml
 supergraph:
   source: file
   path: ./supergraph.graphql
@@ -42,7 +42,7 @@ HIVE__SUPERGRAPH__PATH=./supergraph.graphql
 Then, run the router:
 
 ```bash
-# By default, "hive-router.config.yaml" is used for configuration. Override it by setting "ROUTER_CONFIG_FILE_PATH=some-custom-file.yaml"
+# By default, "router.config.yaml" is used for configuration. Override it by setting "ROUTER_CONFIG_FILE_PATH=some-custom-file.yaml"
 # If you are using env vars, make sure to set the variables before running the router.
 ./hive_router
 ```
@@ -71,7 +71,7 @@ Alternativly, you can mount the configuration file using `-v` and pass all other
 ```bash
 docker run \
   -p 4000:4000 \
-  -v ./hive-router.config.yaml:/app/hive-router.config.yaml \
+  -v ./router.config.yaml:/app/router.config.yaml \
   ghcr.io/graphql-hive/router:latest
 ```
 

@@ -78,10 +78,10 @@ pub enum RouterConfigError {
 }
 
 static DEFAULT_FILE_NAMES: &[&str] = &[
-    "hive-router.config.yaml",
-    "hive-router.config.yml",
-    "hive-router.config.json",
-    "hive-router.config.json5",
+    "router.config.yaml",
+    "router.config.yml",
+    "router.config.json",
+    "router.config.json5",
 ];
 
 pub fn load_config(
