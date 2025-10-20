@@ -1,6 +1,6 @@
 use graphql_parser::Pos;
 use graphql_tools::validation::utils::ValidationError;
-use serde::{Deserialize, Deserializer, Serialize, de, ser::SerializeSeq};
+use serde::{de, ser::SerializeSeq, Deserialize, Deserializer, Serialize};
 use sonic_rs::Value;
 use std::{collections::HashMap, fmt};
 
