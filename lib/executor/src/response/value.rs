@@ -142,16 +142,18 @@ impl<'a> Value<'a> {
             ValueRef::Bool(b) => Value::Bool(b),
             ValueRef::String(s) => Value::String(s.into()),
             ValueRef::Number(num) => {
-                if let Some(num) = num.as_f64() {
-                    return Value::F64(num);
+                if let Some(num) = num.as_u64() {
+                    return Value::U64(num);
                 }
 
                 if let Some(num) = num.as_i64() {
                     return Value::I64(num);
                 }
 
-                if let Some(num) = num.as_u64() {
-                    return Value::U64(num);
+                // All integers are floats, so to prevent to add
+                // extra dots for integer numbers, we check for f64 last.
+                if let Some(num) = num.as_f64() {
+                    return Value::F64(num);
                 }
 
                 Value::Null
