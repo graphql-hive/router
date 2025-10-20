@@ -92,7 +92,7 @@ mod tests {
                 {
                     "message": "Random error from subgraph",
                     "extensions":{
-                        "statusCode": 400
+                        "statusCode": "400"
                     }
                 }
             ]
