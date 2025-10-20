@@ -177,15 +177,72 @@ impl GraphQLErrorPath {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[derive(Clone, Debug, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphQLErrorExtensions {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub service_name: Option<String>,
     #[serde(flatten)]
     pub extensions: HashMap<String, Value>,
+}
+
+// Workaround for https://github.com/cloudwego/sonic-rs/issues/114
+
+impl<'de> Deserialize<'de> for GraphQLErrorExtensions {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct GraphQLErrorExtensionsVisitor;
+
+        impl<'de> de::Visitor<'de> for GraphQLErrorExtensionsVisitor {
+            type Value = GraphQLErrorExtensions;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a map for GraphQLErrorExtensions")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::MapAccess<'de>,
+            {
+                let mut code = None;
+                let mut service_name = None;
+                let mut extensions = HashMap::new();
+
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "code" => {
+                            if code.is_some() {
+                                return Err(de::Error::duplicate_field("code"));
+                            }
+                            code = Some(map.next_value()?);
+                        }
+                        "serviceName" => {
+                            if service_name.is_some() {
+                                return Err(de::Error::duplicate_field("serviceName"));
+                            }
+                            service_name = Some(map.next_value()?);
+                        }
+                        other_key => {
+                            let value: Value = map.next_value()?;
+                            extensions.insert(other_key.to_string(), value);
+                        }
+                    }
+                }
+
+                Ok(GraphQLErrorExtensions {
+                    code,
+                    service_name,
+                    extensions,
+                })
+            }
+        }
+
+        deserializer.deserialize_map(GraphQLErrorExtensionsVisitor)
+    }
 }
 
 impl GraphQLErrorExtensions {
