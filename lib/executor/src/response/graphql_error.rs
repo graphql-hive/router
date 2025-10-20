@@ -184,7 +184,7 @@ pub struct GraphQLErrorPath {
     pub segments: Vec<GraphQLErrorPathSegment>,
 }
 
-impl<'de> Serialize for GraphQLErrorPath {
+impl Serialize for GraphQLErrorPath {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
