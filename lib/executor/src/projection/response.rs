@@ -102,9 +102,7 @@ fn project_without_selection_set(data: &Value, buffer: &mut Vec<u8>) {
                 if !first {
                     buffer.put(COMMA);
                 }
-                buffer.put(QUOTE);
-                buffer.put(key.as_bytes());
-                buffer.put(QUOTE);
+                write_and_escape_string(buffer, key);
                 buffer.put(COLON);
                 project_without_selection_set(val, buffer);
                 first = false;
