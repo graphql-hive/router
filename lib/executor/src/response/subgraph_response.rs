@@ -94,7 +94,7 @@ mod tests {
                 {
                     "message": "Random error from subgraph",
                     "extensions":{
-                        "statusCode": "400"
+                        "statusCode": 400
                     }
                 }
             ]
@@ -107,8 +107,8 @@ mod tests {
         let errors = response.errors.as_ref().unwrap();
         assert_eq!(errors.len(), 1);
         assert_eq!(
-            errors[0].extensions.get("statusCode").unwrap().as_str(),
-            Some("400")
+            errors[0].extensions.get("statusCode").unwrap().as_u64(),
+            Some(400)
         );
         assert!(response.extensions.is_none());
     }
