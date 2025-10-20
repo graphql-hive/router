@@ -83,6 +83,8 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
 
 #[cfg(test)]
 mod tests {
+    use sonic_rs::JsonValueTrait;
+
     // When subgraph returns an error with custom extensions but without `data` field
     #[test]
     fn deserialize_response_without_data_with_errors_with_extensions() {
@@ -92,7 +94,7 @@ mod tests {
                 {
                     "message": "Random error from subgraph",
                     "extensions":{
-                        "statusCode": 400
+                        "statusCode": "400"
                     }
                 }
             ]
@@ -104,7 +106,10 @@ mod tests {
         assert!(response.data.is_null());
         let errors = response.errors.as_ref().unwrap();
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].extensions.get("statusCode").unwrap().as_i64(), Some(400));
+        assert_eq!(
+            errors[0].extensions.get("statusCode").unwrap().as_str(),
+            Some("400")
+        );
         assert!(response.extensions.is_none());
     }
 }
