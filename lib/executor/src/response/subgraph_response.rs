@@ -102,8 +102,9 @@ mod tests {
             sonic_rs::from_str(json_response).expect("Failed to deserialize");
 
         assert!(response.data.is_null());
-        assert!(response.errors.is_some());
-        assert_eq!(response.errors.unwrap().len(), 1);
+        let errors = response.errors.as_ref().unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].extensions.get("statusCode").unwrap().as_i64(), Some(400));
         assert!(response.extensions.is_none());
     }
 }
