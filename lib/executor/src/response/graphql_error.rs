@@ -218,7 +218,7 @@ impl<'de> Deserialize<'de> for GraphQLErrorPath {
             where
                 A: de::SeqAccess<'de>,
             {
-                let mut segments = Vec::new();
+                let mut segments = Vec::with_capacity(seq.size_hint().unwrap_or(0));
                 while let Some(segment) = seq.next_element::<GraphQLErrorPathSegment>()? {
                     segments.push(segment);
                 }
