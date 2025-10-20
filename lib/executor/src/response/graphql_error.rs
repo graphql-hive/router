@@ -1,6 +1,6 @@
 use graphql_parser::Pos;
 use graphql_tools::validation::utils::ValidationError;
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de, ser::SerializeSeq};
 use sonic_rs::Value;
 use std::{collections::HashMap, fmt};
 
@@ -179,10 +179,55 @@ impl<'de> Deserialize<'de> for GraphQLErrorPathSegment {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct GraphQLErrorPath {
-    #[serde(flatten)]
     pub segments: Vec<GraphQLErrorPathSegment>,
+}
+
+impl<'de> Serialize for GraphQLErrorPath {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut seq = serializer.serialize_seq(Some(self.segments.len()))?;
+        for segment in &self.segments {
+            match segment {
+                GraphQLErrorPathSegment::String(s) => seq.serialize_element(s)?,
+                GraphQLErrorPathSegment::Index(i) => seq.serialize_element(i)?,
+            }
+        }
+        seq.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for GraphQLErrorPath {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PathVisitor;
+
+        impl<'de> de::Visitor<'de> for PathVisitor {
+            type Value = GraphQLErrorPath;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a list of strings and integers for a GraphQL error path")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::SeqAccess<'de>,
+            {
+                let mut segments = Vec::new();
+                while let Some(segment) = seq.next_element::<GraphQLErrorPathSegment>()? {
+                    segments.push(segment);
+                }
+                Ok(GraphQLErrorPath { segments })
+            }
+        }
+
+        deserializer.deserialize_seq(PathVisitor)
+    }
 }
 
 pub struct EntityIndexAndPath<'a> {
