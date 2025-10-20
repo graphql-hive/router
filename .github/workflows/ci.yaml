@@ -159,8 +159,8 @@ jobs:
           report_paths: "audits/reports/*.xml"
           group_reports: false
           annotate_only: true
-          fail_on_failure: true # do not fail the job if the report fails
-          fail_on_parse_error: true # do not fail the job if the report cannot be parsed
+          fail_on_failure: true
+          fail_on_parse_error: true
           job_summary: true
           verbose_summary: false
           skip_success_summary: true
@@ -211,8 +211,8 @@ jobs:
           job_name: federation-audit
           check_name: federation-audit
           check_title_template: "{{FILE_NAME}}"
-          fail_on_failure: false # do not fail the job if the report fails
-          fail_on_parse_error: false # do not fail the job if the report cannot be parsed
+          fail_on_failure: true
+          fail_on_parse_error: true
           annotate_only: true
           job_summary: true
           verbose_summary: false
