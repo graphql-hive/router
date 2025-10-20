@@ -186,9 +186,9 @@ impl GraphQLErrorPath {
 #[derive(Clone, Debug, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphQLErrorExtensions {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_name: Option<String>,
     /// Corresponds to a path of a Flatten(Fetch) node that caused the error.
     #[serde(default, skip_serializing_if = "Option::is_none")]
