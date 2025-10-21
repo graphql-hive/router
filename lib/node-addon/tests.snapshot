@@ -518,3 +518,15 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
   }
 }
 `;
+
+exports[`fixtures > should plan simple-inaccessible/test-2.graphql 1`] = `
+{
+  "kind": "QueryPlan",
+  "node": {
+    "kind": "Fetch",
+    "operation": "query{usersInFriends{id friends(type: FRIEND){id}}}",
+    "operationKind": "query",
+    "serviceName": "friends"
+  }
+}
+`;
