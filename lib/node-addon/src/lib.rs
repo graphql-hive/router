@@ -31,7 +31,9 @@ impl QueryPlanner {
         })
     }
 
-    #[napi]
+    // queryplan located in query-plan.d.ts and will be merged with index.d.ts on build
+    // because of napi-rs limitations, the queryplan from hive-query-planner cannot be used
+    #[napi(ts_return_type = "Promise<QueryPlan>")]
     pub async fn plan(
         &self,
         query: String,
