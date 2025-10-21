@@ -24,8 +24,8 @@
     "bun": "^1"
   },
   "scripts": {
-    "build": "napi build --platform --release",
-    "build:debug": "napi build --platform"
+    "build": "RELEASE=1 node build.js",
+    "build:debug": "node build.js"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.2.0"
