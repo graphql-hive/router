@@ -168,11 +168,6 @@ impl HTTPSubgraphExecutor {
     }
 
     fn error_to_graphql_bytes(&self, error: SubgraphExecutorError) -> Bytes {
-        tracing::error!(
-            "Subgraph executor error for subgraph '{}': {}",
-            self.subgraph_name,
-            error
-        );
         let graphql_error: GraphQLError = error.into();
         let mut graphql_error = graphql_error.add_subgraph_name(&self.subgraph_name);
         graphql_error.message = "Failed to execute request to subgraph".to_string();
@@ -186,6 +181,14 @@ impl HTTPSubgraphExecutor {
         buffer.put_slice(b"}");
         buffer.freeze()
     }
+
+    fn log_error(&self, error: &SubgraphExecutorError) {
+        tracing::error!(
+            subgraph_name = %self.subgraph_name,
+            error = error as &dyn std::error::Error,
+            "Subgraph executor error"
+        );
+    }
 }
 
 #[async_trait]
@@ -197,10 +200,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         let body = match self.build_request_body(&execution_request) {
             Ok(body) => body,
             Err(e) => {
+                self.log_error(&e);
                 return HttpExecutionResponse {
                     body: self.error_to_graphql_bytes(e),
                     headers: Default::default(),
-                }
+                };
             }
         };
 
@@ -218,10 +222,13 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     body: shared_response.body,
                     headers: shared_response.headers,
                 },
-                Err(e) => HttpExecutionResponse {
-                    body: self.error_to_graphql_bytes(e),
-                    headers: Default::default(),
-                },
+                Err(e) => {
+                    self.log_error(&e);
+                    HttpExecutionResponse {
+                        body: self.error_to_graphql_bytes(e),
+                        headers: Default::default(),
+                    }
+                }
             };
         }
 
@@ -257,10 +264,13 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 body: shared_response.body.clone(),
                 headers: shared_response.headers.clone(),
             },
-            Err(e) => HttpExecutionResponse {
-                body: self.error_to_graphql_bytes(e.clone()),
-                headers: Default::default(),
-            },
+            Err(e) => {
+                self.log_error(&e);
+                HttpExecutionResponse {
+                    body: self.error_to_graphql_bytes(e.clone()),
+                    headers: Default::default(),
+                }
+            }
         }
     }
 }
