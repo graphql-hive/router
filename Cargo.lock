@@ -1906,6 +1906,8 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -3021,6 +3023,9 @@ dependencies = [
  "napi-sys",
  "nohash-hasher",
  "rustc-hash",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
