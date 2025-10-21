@@ -1,0 +1,8 @@
+{
+  usersInFriends {
+    id
+    friends(type: FRIEND) {
+      id
+    }
+  }
+}
