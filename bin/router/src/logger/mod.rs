@@ -27,7 +27,6 @@ pub fn configure_logging(config: &LoggingConfig) {
         LogFormat::Json => fmt::Layer::<Registry>::default()
             .json()
             .with_timer(timer)
-            .with_span_events(FmtSpan::CLOSE)
             .boxed(),
         LogFormat::PrettyCompact => fmt::Layer::<Registry>::default()
             .compact()
