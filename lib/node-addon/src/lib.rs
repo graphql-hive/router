@@ -1,15 +1,13 @@
 #![deny(clippy::all)]
 
-use napi::bindgen_prelude::*;
-use std::sync::Arc;
-
 use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::planner::Planner;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
 use hive_router_query_planner::utils::parsing::{parse_schema, safe_parse_operation};
 
-#[macro_use]
-extern crate napi_derive;
+use napi::bindgen_prelude::*;
+use napi_derive::napi;
+use std::sync::Arc;
 
 #[napi]
 pub struct QueryPlanner {
