@@ -78,10 +78,11 @@ pub struct QueryPlanExecutionContext<'exec> {
 pub struct PlanExecutionOutput {
     pub body: Vec<u8>,
     pub headers: HeaderMap,
+    pub error_count: usize,
 }
 
-pub async fn execute_query_plan<'exec>(
-    ctx: QueryPlanExecutionContext<'exec>,
+pub async fn execute_query_plan(
+    ctx: QueryPlanExecutionContext<'_>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
     let init_value = if let Some(introspection_query) = ctx.introspection_context.query {
         resolve_introspection(introspection_query, ctx.introspection_context)
@@ -111,6 +112,7 @@ pub async fn execute_query_plan<'exec>(
     modify_client_response_headers(exec_ctx.response_headers_aggregator, &mut response_headers)?;
 
     let final_response = &exec_ctx.final_response;
+    let error_count = exec_ctx.errors.len(); // Added for usage reporting
     let body = project_by_operation(
         final_response,
         exec_ctx.errors,
@@ -124,6 +126,7 @@ pub async fn execute_query_plan<'exec>(
     Ok(PlanExecutionOutput {
         body,
         headers: response_headers,
+        error_count,
     })
 }
 

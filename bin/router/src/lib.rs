@@ -8,7 +8,7 @@ mod schema_state;
 mod shared_state;
 mod supergraph;
 
-use std::sync::Arc;
+use std::{sync::Arc};
 
 use crate::{
     background_tasks::BackgroundTasksManager,
@@ -110,12 +110,17 @@ pub async fn configure_app_from_config(
         Some(jwt_config) => Some(JwtAuthRuntime::init(bg_tasks_manager, jwt_config).await?),
         None => None,
     };
+    let usage_agent = pipeline::usage::from_config(&router_config).map(Arc::new);
+    
+    if let Some(usage_agent) = usage_agent.clone() {
+        bg_tasks_manager.register_task(usage_agent);
+    }
 
     let router_config_arc = Arc::new(router_config);
     let schema_state =
         SchemaState::new_from_config(bg_tasks_manager, router_config_arc.clone()).await?;
     let schema_state_arc = Arc::new(schema_state);
-    let shared_state = Arc::new(RouterSharedState::new(router_config_arc, jwt_runtime)?);
+    let shared_state = Arc::new(RouterSharedState::new(router_config_arc, jwt_runtime, usage_agent)?);
 
     Ok((shared_state, schema_state_arc))
 }

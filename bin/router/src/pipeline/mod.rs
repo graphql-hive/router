@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, sync::Arc, time::Instant};
 
 use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
@@ -40,6 +40,7 @@ pub mod normalize;
 pub mod parser;
 pub mod progressive_override;
 pub mod query_plan;
+pub mod usage;
 pub mod validation;
 
 static GRAPHIQL_HTML: &str = include_str!("../../static/graphiql.html");
@@ -100,6 +101,7 @@ pub async fn execute_pipeline(
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
+    let start = Instant::now();
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
     let execution_request = get_execution_request(req, body_bytes).await?;
@@ -117,6 +119,7 @@ pub async fn execute_pipeline(
     )
     .await?;
     let query = Cow::Owned(execution_request.query.clone());
+    let query_clone: Cow<'_, str> = Cow::Owned(execution_request.query.clone());
     let variable_payload =
         coerce_request_variables(req, supergraph, execution_request, &normalize_payload)?;
 
@@ -143,6 +146,23 @@ pub async fn execute_pipeline(
         &variable_payload,
     )
     .await?;
+
+    let operation_name = normalize_payload.operation_for_plan.name.as_ref();
+
+    shared_state.usage_agent.as_ref().and_then(|usage_agent| {
+        shared_state.router_config.usage.as_ref().map(|usage_config| {
+            usage::send_usage_report(
+                supergraph.schema.clone(),
+                start,
+                req,
+                operation_name,
+                &query_clone,
+                usage_agent,
+                usage_config,
+                &execution_result,
+            )
+        })
+    });
 
     Ok(execution_result)
 }

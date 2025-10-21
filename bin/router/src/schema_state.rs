@@ -1,6 +1,7 @@
 use arc_swap::{ArcSwap, Guard};
 use async_trait::async_trait;
-use graphql_tools::validation::utils::ValidationError;
+use graphql_parser::schema::Document;
+use graphql_tools::{validation::utils::ValidationError};
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
 use hive_router_plan_executor::{
     executors::error::SubgraphExecutorError,
@@ -21,7 +22,7 @@ use tracing::{debug, error, trace};
 
 use crate::{
     background_tasks::{BackgroundTask, BackgroundTasksManager},
-    pipeline::normalize::GraphQLNormalizationPayload,
+    pipeline::{normalize::GraphQLNormalizationPayload},
     supergraph::{
         base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
         resolve_from_config,
@@ -39,6 +40,7 @@ pub struct SupergraphData {
     pub metadata: SchemaMetadata,
     pub planner: Planner,
     pub subgraph_executor_map: SubgraphExecutorMap,
+    pub schema: Arc<Document<'static, String>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -124,6 +126,7 @@ impl SchemaState {
         )?;
 
         Ok(SupergraphData {
+            schema: Arc::new(parsed_supergraph_sdl),
             metadata,
             planner,
             subgraph_executor_map,
