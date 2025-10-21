@@ -1,4 +1,4 @@
-exports[`should plan simple query 1`] = `
+exports[`fixtures > should plan federation-example/query.graphql 1`] = `
 {
   "kind": "QueryPlan",
   "node": {
