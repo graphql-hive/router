@@ -168,6 +168,11 @@ impl HTTPSubgraphExecutor {
     }
 
     fn error_to_graphql_bytes(&self, error: SubgraphExecutorError) -> Bytes {
+        tracing::error!(
+            "Subgraph executor error for subgraph '{}': {}",
+            self.subgraph_name,
+            error
+        );
         let graphql_error: GraphQLError = error.into();
         let mut graphql_error = graphql_error.add_subgraph_name(&self.subgraph_name);
         graphql_error.message = "Failed to execute request to subgraph".to_string();
