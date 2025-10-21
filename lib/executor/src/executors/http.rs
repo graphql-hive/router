@@ -184,7 +184,6 @@ impl HTTPSubgraphExecutor {
 
     fn log_error(&self, error: &SubgraphExecutorError) {
         tracing::error!(
-            subgraph_name = %self.subgraph_name,
             error = error as &dyn std::error::Error,
             "Subgraph executor error"
         );
@@ -193,6 +192,7 @@ impl HTTPSubgraphExecutor {
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
+    #[tracing::instrument(skip_all, fields(subgraph_name = self.subgraph_name))]
     async fn execute<'a>(
         &self,
         execution_request: HttpExecutionRequest<'a>,
