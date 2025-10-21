@@ -25,7 +25,9 @@
   },
   "scripts": {
     "build": "RELEASE=1 node build.js",
-    "build:debug": "node build.js"
+    "build:debug": "node build.js",
+    "test": "node tests",
+    "test:updatesnaps": "node --test-update-snapshots tests"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.2.0"
