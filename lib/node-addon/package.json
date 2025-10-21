@@ -1,34 +1,33 @@
 {
   "name": "@graphql-hive/router",
   "version": "0.0.0",
+  "type": "module",
   "main": "index.js",
   "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts"
+  ],
   "napi": {
-    "name": "router",
-    "triples": {
-      "additional": [
-        "aarch64-apple-darwin",
-        "aarch64-unknown-linux-gnu",
-        "aarch64-pc-windows-msvc"
-      ]
-    }
-  },
-  "license": "MIT",
-  "devDependencies": {
-    "@napi-rs/cli": "^2.18.4"
+    "binaryName": "router",
+    "targets": [
+      "x86_64-pc-windows-msvc",
+      "x86_64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-apple-darwin",
+      "aarch64-pc-windows-msvc"
+    ]
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=20",
+    "bun": "^1"
   },
   "scripts": {
-    "artifacts": "napi artifacts",
     "build": "napi build --platform --release",
-    "build:debug": "napi build --platform",
-    "prepublishOnly": "napi prepublish -t npm",
-    "universal": "napi universal",
-    "test": "node tests",
-    "test:updatesnaps": "node --test-update-snapshots tests",
-    "version": "napi version"
+    "build:debug": "napi build --platform"
   },
-  "packageManager": "yarn@4.10.3"
+  "devDependencies": {
+    "@napi-rs/cli": "^3.2.0"
+  }
 }
