@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use hive_router_plan_executor::execution::{
     client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
@@ -46,6 +46,7 @@ pub mod normalize;
 pub mod parser;
 pub mod progressive_override;
 pub mod query_plan;
+pub mod usage_reporting;
 pub mod validation;
 
 static GRAPHIQL_HTML: &str = include_str!("../../static/graphiql.html");
@@ -111,6 +112,7 @@ pub async fn execute_pipeline(
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
+    let start = Instant::now();
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
     let mut execution_request = get_execution_request(req, body_bytes).await?;
@@ -189,6 +191,24 @@ pub async fn execute_pipeline(
         &client_request_details,
     )
     .await?;
+
+    shared_state.usage_agent.as_ref().and_then(|usage_agent| {
+        shared_state
+            .router_config
+            .usage_reporting
+            .as_ref()
+            .map(|usage_config| {
+                usage_reporting::send_usage_report(
+                    supergraph.schema.clone(),
+                    start,
+                    req,
+                    &client_request_details,
+                    usage_agent,
+                    usage_config,
+                    &execution_result,
+                )
+            })
+    });
 
     Ok(execution_result)
 }

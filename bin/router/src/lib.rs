@@ -110,12 +110,21 @@ pub async fn configure_app_from_config(
         true => Some(JwtAuthRuntime::init(bg_tasks_manager, &router_config.jwt).await?),
         false => None,
     };
+    let usage_agent = pipeline::usage_reporting::from_config(&router_config).map(Arc::new);
+
+    if let Some(usage_agent) = &usage_agent {
+        bg_tasks_manager.register_task(usage_agent.clone());
+    }
 
     let router_config_arc = Arc::new(router_config);
     let schema_state =
         SchemaState::new_from_config(bg_tasks_manager, router_config_arc.clone()).await?;
     let schema_state_arc = Arc::new(schema_state);
-    let shared_state = Arc::new(RouterSharedState::new(router_config_arc, jwt_runtime)?);
+    let shared_state = Arc::new(RouterSharedState::new(
+        router_config_arc,
+        jwt_runtime,
+        usage_agent,
+    )?);
 
     Ok((shared_state, schema_state_arc))
 }

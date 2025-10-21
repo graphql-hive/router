@@ -1,4 +1,5 @@
 use graphql_tools::validation::validate::ValidationPlan;
+use hive_console_sdk::agent::UsageAgent;
 use hive_router_config::HiveRouterConfig;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
@@ -18,12 +19,14 @@ pub struct RouterSharedState {
     pub override_labels_evaluator: OverrideLabelsEvaluator,
     pub cors_runtime: Option<Cors>,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
+    pub usage_agent: Option<Arc<UsageAgent>>,
 }
 
 impl RouterSharedState {
     pub fn new(
         router_config: Arc<HiveRouterConfig>,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
+        usage_agent: Option<Arc<UsageAgent>>,
     ) -> Result<Self, SharedStateError> {
         Ok(Self {
             validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
@@ -36,6 +39,7 @@ impl RouterSharedState {
             )
             .map_err(Box::new)?,
             jwt_auth_runtime,
+            usage_agent,
         })
     }
 }
@@ -48,4 +52,6 @@ pub enum SharedStateError {
     CORSConfig(#[from] Box<CORSConfigError>),
     #[error("invalid override labels config: {0}")]
     OverrideLabelsCompile(#[from] Box<OverrideLabelsCompileError>),
+    #[error("error creating usage agent: {0}")]
+    UsageAgent(#[from] Box<hive_console_sdk::agent::AgentError>),
 }
