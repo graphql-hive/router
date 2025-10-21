@@ -45,6 +45,7 @@ reqwest-retry = { workspace = true }
 reqwest-middleware = { workspace = true }
 vrl = { workspace = true }
 serde_json = { workspace = true }
+regex-automata = { workspace = true }
 
 mimalloc = { version = "0.1.48", features = ["v3"] }
 moka = { version = "0.12.10", features = ["future"] }
@@ -52,7 +53,6 @@ hive-console-sdk = "0.2.0"
 ulid = "1.2.1"
 tokio-util = "0.7.16"
 cookie = "0.18.1"
-regex-automata = "0.4.10"
 arc-swap = "1.7.1"
 lasso2 = "0.8.2"
 ahash = "0.8.12"
