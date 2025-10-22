@@ -1,6 +1,7 @@
+use core::fmt;
 use graphql_parser::Pos;
 use graphql_tools::validation::utils::ValidationError;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use sonic_rs::Value;
 use std::collections::HashMap;
 
@@ -180,9 +181,9 @@ impl GraphQLErrorPath {
 #[derive(Clone, Debug, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphQLErrorExtensions {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub service_name: Option<String>,
     #[serde(flatten)]
     pub extensions: HashMap<String, Value>,
@@ -259,6 +260,13 @@ impl GraphQLErrorExtensions {
             service_name: Some(service_name.to_string()),
             extensions: HashMap::new(),
         }
+    }
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.extensions.get(key)
+    }
+
+    pub fn set(&mut self, key: String, value: Value) {
+        self.extensions.insert(key, value);
     }
 
     pub fn is_empty(&self) -> bool {
