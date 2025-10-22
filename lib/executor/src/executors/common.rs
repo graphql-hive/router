@@ -11,6 +11,7 @@ pub trait SubgraphExecutor {
         &self,
         execution_request: HttpExecutionRequest<'a>,
     ) -> HttpExecutionResponse;
+
     fn to_boxed_arc<'a>(self) -> Arc<Box<dyn SubgraphExecutor + Send + Sync + 'a>>
     where
         Self: Sized + Send + Sync + 'a,

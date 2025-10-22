@@ -190,10 +190,18 @@ impl HTTPSubgraphExecutor {
         buffer.put_slice(b"}");
         buffer.freeze()
     }
+
+    fn log_error(&self, error: &SubgraphExecutorError) {
+        tracing::error!(
+            error = error as &dyn std::error::Error,
+            "Subgraph executor error"
+        );
+    }
 }
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
+    #[tracing::instrument(skip_all, fields(subgraph_name = self.subgraph_name))]
     async fn execute<'a>(
         &self,
         execution_request: HttpExecutionRequest<'a>,
@@ -201,10 +209,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         let body = match self.build_request_body(&execution_request) {
             Ok(body) => body,
             Err(e) => {
+                self.log_error(&e);
                 return HttpExecutionResponse {
                     body: self.error_to_graphql_bytes(e),
                     headers: Default::default(),
-                }
+                };
             }
         };
 
@@ -222,10 +231,13 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     body: shared_response.body,
                     headers: shared_response.headers,
                 },
-                Err(e) => HttpExecutionResponse {
-                    body: self.error_to_graphql_bytes(e),
-                    headers: Default::default(),
-                },
+                Err(e) => {
+                    self.log_error(&e);
+                    HttpExecutionResponse {
+                        body: self.error_to_graphql_bytes(e),
+                        headers: Default::default(),
+                    }
+                }
             };
         }
 
@@ -261,10 +273,13 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 body: shared_response.body.clone(),
                 headers: shared_response.headers.clone(),
             },
-            Err(e) => HttpExecutionResponse {
-                body: self.error_to_graphql_bytes(e.clone()),
-                headers: Default::default(),
-            },
+            Err(e) => {
+                self.log_error(&e);
+                HttpExecutionResponse {
+                    body: self.error_to_graphql_bytes(e.clone()),
+                    headers: Default::default(),
+                }
+            }
         }
     }
 }
