@@ -240,7 +240,7 @@ impl<'de> Deserialize<'de> for GraphQLErrorExtensions {
                             if affected_path.is_some() {
                                 return Err(de::Error::duplicate_field("affectedPath"));
                             }
-                            affected_path = Some(map.next_value()?);
+                            affected_path = map.next_value()?;
                         }
                         other_key => {
                             let value: Value = map.next_value()?;
