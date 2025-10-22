@@ -219,6 +219,7 @@ impl<'de> Deserialize<'de> for GraphQLErrorExtensions {
             {
                 let mut code = None;
                 let mut service_name = None;
+                let mut affected_path = None;
                 let mut extensions = HashMap::new();
 
                 while let Some(key) = map.next_key::<String>()? {
@@ -235,6 +236,12 @@ impl<'de> Deserialize<'de> for GraphQLErrorExtensions {
                             }
                             service_name = Some(map.next_value()?);
                         }
+                        "affectedPath" => {
+                            if affected_path.is_some() {
+                                return Err(de::Error::duplicate_field("affectedPath"));
+                            }
+                            affected_path = map.next_value()?;
+                        }
                         other_key => {
                             let value: Value = map.next_value()?;
                             extensions.insert(other_key.to_string(), value);
@@ -245,6 +252,7 @@ impl<'de> Deserialize<'de> for GraphQLErrorExtensions {
                 Ok(GraphQLErrorExtensions {
                     code,
                     service_name,
+                    affected_path,
                     extensions,
                 })
             }
