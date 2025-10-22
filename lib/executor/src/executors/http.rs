@@ -153,16 +153,24 @@ impl HTTPSubgraphExecutor {
         })?;
 
         let (parts, body) = res.into_parts();
+        let body = body
+            .collect()
+            .await
+            .map_err(|e| {
+                SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
+            })?
+            .to_bytes();
+
+        if body.is_empty() {
+            return Err(SubgraphExecutorError::RequestFailure(
+                self.endpoint.to_string(),
+                "Empty response body".to_string(),
+            ));
+        }
 
         Ok(SharedResponse {
             status: parts.status,
-            body: body
-                .collect()
-                .await
-                .map_err(|e| {
-                    SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-                })?
-                .to_bytes(),
+            body,
             headers: parts.headers,
         })
     }
