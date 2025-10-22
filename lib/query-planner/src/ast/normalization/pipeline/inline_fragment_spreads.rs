@@ -45,7 +45,7 @@ pub fn inline_fragment_spreads(ctx: &mut NormalizationContext) -> Result<(), Nor
 fn handle_selection_set<'a>(
     selection_set: &mut SelectionSet<'a, String>,
     fragment_map: &HashMap<String, FragmentDefinition<'a, String>>,
-    top_type_condition: Option<String>,
+    parent_type_condition: Option<String>,
 ) -> Result<(), NormalizationError> {
     let old_items = std::mem::take(&mut selection_set.items);
     let mut new_items = Vec::with_capacity(old_items.len());
@@ -67,14 +67,14 @@ fn handle_selection_set<'a>(
                 };
 
                 let mut new_selection_set = fragment_def.selection_set.clone();
-                if let Some(ref top_type_condition) = top_type_condition {
-                    if top_type_condition == &type_condition {
+                if let Some(ref parent_type_condition) = parent_type_condition {
+                    if parent_type_condition == &type_condition {
                         // If the fragment's type condition matches the top type condition,
                         // we can inline its selections directly.
                         handle_selection_set(
                             &mut new_selection_set,
                             fragment_map,
-                            Some(top_type_condition.clone()),
+                            Some(parent_type_condition.clone()),
                         )?;
                         new_items.extend(new_selection_set.items);
                         continue;
