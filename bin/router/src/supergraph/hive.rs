@@ -3,6 +3,7 @@ use http::{
     header::{ETAG, IF_NONE_MATCH, USER_AGENT},
     HeaderValue, StatusCode,
 };
+use lazy_static::lazy_static;
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::RetryTransientMiddleware;
 use retry_policies::policies::ExponentialBackoff;
@@ -10,9 +11,18 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 
-use crate::supergraph::base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader};
+use crate::{
+    consts::ROUTER_VERSION,
+    supergraph::base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
+};
 
-static USER_AGENT_VALUE: &str = "hive-router/{}";
+lazy_static! {
+    pub static ref USER_AGENT_VALUE: HeaderValue = {
+        HeaderValue::from_str(&format!("hive-router/{}", ROUTER_VERSION))
+            .expect("failed to construct user-agent")
+    };
+}
+
 static AUTH_HEADER_NAME: &str = "x-hive-cdn-key";
 
 pub struct SupergraphHiveConsoleLoader {
@@ -36,7 +46,7 @@ impl SupergraphLoader for SupergraphHiveConsoleLoader {
             .http_client
             .get(&self.endpoint)
             .header(AUTH_HEADER_NAME, &self.key)
-            .header(USER_AGENT, USER_AGENT_VALUE)
+            .header(USER_AGENT, USER_AGENT_VALUE.clone())
             .timeout(self.timeout);
 
         let mut etag_used = false;

@@ -1,4 +1,5 @@
 pub mod background_tasks;
+mod consts;
 mod http_utils;
 mod jwt;
 mod logger;
@@ -11,6 +12,7 @@ use std::sync::Arc;
 
 use crate::{
     background_tasks::BackgroundTasksManager,
+    consts::ROUTER_VERSION,
     http_utils::{
         landing_page::landing_page_handler,
         probes::{health_check_handler, readiness_check_handler},
@@ -76,6 +78,7 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
     configure_logging(&router_config.log);
+    info!("hive-router@{} starting...", ROUTER_VERSION);
     let addr = router_config.http.address();
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let (shared_state, schema_state) =
