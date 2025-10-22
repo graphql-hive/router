@@ -1,22 +1,22 @@
-use std::{path::PathBuf, sync::Once, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
+    RouterSharedState, SchemaState,
 };
-use hive_router_config::load_config;
-use lazy_static::lazy_static;
+use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use ntex::{
-    web::{self, test, test::TestRequest, WebResponse},
-    Pipeline,
+    http::Request,
+    web::{
+        self,
+        test::{self, TestRequest},
+        WebResponse,
+    },
+    Pipeline, Service,
 };
 use sonic_rs::json;
 use subgraphs::{start_subgraphs_server, RequestLog, SubgraphsServiceState};
-use tracing::subscriber::set_global_default;
-use tracing_subscriber::{
-    fmt::{self},
-    layer::SubscriberExt,
-    EnvFilter,
-};
+use tracing::{info, warn};
 
 pub fn init_graphql_request(op: &str, variables: Option<sonic_rs::Value>) -> TestRequest {
     let body = json!({
@@ -30,19 +30,46 @@ pub fn init_graphql_request(op: &str, variables: Option<sonic_rs::Value>) -> Tes
         .set_payload(body.to_string())
 }
 
-lazy_static! {
-    static ref TRACING_INIT: Once = Once::new();
-}
+pub async fn wait_for_readiness<S, E>(app: &Pipeline<S>)
+where
+    S: Service<Request, Response = WebResponse, Error = E>,
+    E: std::fmt::Debug,
+{
+    info!("waiting for health check to pass...");
 
-#[allow(dead_code)] // call this at the beginning of the test if you wish to see gw logs
-pub fn init_logger() {
-    TRACING_INIT.call_once(|| {
-        let subscriber = tracing_subscriber::registry()
-            .with(fmt::layer().with_test_writer())
-            .with(EnvFilter::from_default_env());
+    loop {
+        let req = test::TestRequest::get().uri("/health").to_request();
 
-        let _ = set_global_default(subscriber);
-    });
+        match app.call(req).await {
+            Ok(response) => {
+                if response.status() == 200 {
+                    break;
+                }
+            }
+            Err(err) => {
+                warn!("Server not healthy yet, retrying in 100ms: {:?}", err);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+
+    info!("waiting for readiness check to pass...");
+
+    loop {
+        let req = test::TestRequest::get().uri("/readiness").to_request();
+
+        match app.call(req).await {
+            Ok(response) => {
+                if response.status() == 200 {
+                    break;
+                }
+            }
+            Err(err) => {
+                warn!("Server not ready, retrying in 100ms: {:?}", err);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
 }
 
 pub struct SubgraphsServer {
@@ -98,24 +125,74 @@ impl SubgraphsServer {
 pub async fn init_router_from_config_file(
     config_path: &str,
 ) -> Result<
-    Pipeline<
+    TestRouterApp<
         impl ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
     >,
     Box<dyn std::error::Error>,
 > {
-    // init_logger();
-
     let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(config_path);
     let router_config = load_config(Some(supergraph_path.to_str().unwrap().to_string()))?;
+
+    init_router_from_config(router_config).await
+}
+
+pub async fn init_router_from_config_inline(
+    config_yaml: &str,
+) -> Result<
+    TestRouterApp<
+        impl ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
+    >,
+    Box<dyn std::error::Error>,
+> {
+    let router_config = parse_yaml_config(config_yaml.to_string())?;
+    init_router_from_config(router_config).await
+}
+
+pub struct TestRouterApp<T> {
+    pub app: Pipeline<T>,
+    #[allow(dead_code)]
+    pub shared_state: Arc<RouterSharedState>,
+    pub schema_state: Arc<SchemaState>,
+}
+
+impl<S> TestRouterApp<S> {
+    pub async fn call<R>(&self, req: R) -> Result<S::Response, S::Error>
+    where
+        S: Service<R>,
+    {
+        self.app.call(req).await
+    }
+
+    pub async fn flush_internal_cache(&self) {
+        self.schema_state.normalize_cache.run_pending_tasks().await;
+        self.schema_state.plan_cache.run_pending_tasks().await;
+        self.schema_state.validate_cache.run_pending_tasks().await;
+    }
+}
+
+pub async fn init_router_from_config(
+    router_config: HiveRouterConfig,
+) -> Result<
+    TestRouterApp<
+        impl ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
+    >,
+    Box<dyn std::error::Error>,
+> {
     let mut bg_tasks_manager = BackgroundTasksManager::new();
-    let shared_state = configure_app_from_config(router_config, &mut bg_tasks_manager).await?;
+    let (shared_state, schema_state) =
+        configure_app_from_config(router_config, &mut bg_tasks_manager).await?;
 
     let ntex_app = test::init_service(
         web::App::new()
             .state(shared_state.clone())
+            .state(schema_state.clone())
             .configure(configure_ntex_app),
     )
     .await;
 
-    Ok(ntex_app)
+    Ok(TestRouterApp {
+        app: ntex_app,
+        shared_state,
+        schema_state,
+    })
 }

@@ -11,7 +11,7 @@ use xxhash_rust::xxh3::Xxh3;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::execution_request::ExecutionRequest;
 use crate::pipeline::parser::GraphQLParserPayload;
-use crate::shared_state::RouterSharedState;
+use crate::schema_state::{SchemaState, SupergraphData};
 use tracing::{error, trace};
 
 #[derive(Debug)]
@@ -26,7 +26,8 @@ pub struct GraphQLNormalizationPayload {
 #[inline]
 pub async fn normalize_request_with_cache(
     req: &HttpRequest,
-    app_state: &Arc<RouterSharedState>,
+    supergraph: &SupergraphData,
+    schema_state: &Arc<SchemaState>,
     execution_params: &ExecutionRequest,
     parser_payload: &GraphQLParserPayload,
 ) -> Result<Arc<GraphQLNormalizationPayload>, PipelineError> {
@@ -40,7 +41,7 @@ pub async fn normalize_request_with_cache(
         None => parser_payload.cache_key,
     };
 
-    match app_state.normalize_cache.get(&cache_key).await {
+    match schema_state.normalize_cache.get(&cache_key).await {
         Some(payload) => {
             trace!(
                 "Found normalized GraphQL operation in cache (operation name={:?}): {}",
@@ -51,7 +52,7 @@ pub async fn normalize_request_with_cache(
             Ok(payload)
         }
         None => match normalize_operation(
-            &app_state.planner.supergraph,
+            &supergraph.planner.supergraph,
             &parser_payload.parsed_operation,
             execution_params.operation_name.as_deref(),
         ) {
@@ -64,7 +65,7 @@ pub async fn normalize_request_with_cache(
 
                 let operation = doc.operation;
                 let (root_type_name, projection_plan) =
-                    FieldProjectionPlan::from_operation(&operation, &app_state.schema_metadata);
+                    FieldProjectionPlan::from_operation(&operation, &supergraph.metadata);
                 let partitioned_operation = partition_operation(operation);
 
                 let payload = GraphQLNormalizationPayload {
@@ -74,7 +75,7 @@ pub async fn normalize_request_with_cache(
                     operation_for_introspection: partitioned_operation.introspection_operation,
                 };
                 let payload_arc = Arc::new(payload);
-                app_state
+                schema_state
                     .normalize_cache
                     .insert(cache_key, payload_arc.clone())
                     .await;

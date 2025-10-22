@@ -3,7 +3,7 @@ use sonic_rs::from_str;
 use std::sync::{Arc, RwLock};
 use tokio::fs::read_to_string;
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
+use tracing::{debug, error, info};
 
 use jsonwebtoken::jwk::JwkSet;
 
@@ -30,7 +30,7 @@ impl JwksManager {
             .filter_map(|v| match v.get_jwk_set() {
                 Ok(set) => Some(set),
                 Err(err) => {
-                    tracing::error!("Failed to use JWK set: {}, ignoring", err);
+                    error!("Failed to use JWK set: {}, ignoring", err);
 
                     None
                 }
@@ -86,10 +86,10 @@ impl BackgroundTask for JwksSource {
                     _ = tokio_interval.tick() => { match self.load_and_store_jwks().await {
                         Ok(_) => {}
                         Err(err) => {
-                            tracing::error!("Failed to load remote jwks: {}", err);
+                            error!("Failed to load remote jwks: {}", err);
                         }
                     } }
-                    _ = token.cancelled() => { println!("Shutting down."); return; }
+                    _ = token.cancelled() => { info!("Jwks source shutting down."); return; }
                 }
             }
         }
@@ -113,7 +113,7 @@ impl JwksSource {
         let jwks_str = match &self.config {
             JwksProviderSourceConfig::Remote { url, .. } => {
                 let client = reqwest::Client::new();
-                tracing::debug!("loading jwks from a remote source: {}", url);
+                debug!("loading jwks from a remote source: {}", url);
 
                 let response_text = client
                     .get(url)
@@ -127,7 +127,7 @@ impl JwksSource {
                 response_text
             }
             JwksProviderSourceConfig::File { file, .. } => {
-                tracing::debug!("loading jwks from a file source: {}", file.absolute);
+                debug!("loading jwks from a file source: {}", file.absolute);
 
                 let file_contents = read_to_string(&file.absolute)
                     .await

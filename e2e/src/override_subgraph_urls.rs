@@ -3,7 +3,9 @@ mod override_subgraph_urls_e2e_tests {
     use ntex::web::test;
     use sonic_rs::{from_slice, Value};
 
-    use crate::testkit::{init_graphql_request, init_router_from_config_file, SubgraphsServer};
+    use crate::testkit::{
+        init_graphql_request, init_router_from_config_file, wait_for_readiness, SubgraphsServer,
+    };
 
     #[ntex::test]
     /// Test that a static URL override for a subgraph is respected.
@@ -17,9 +19,10 @@ mod override_subgraph_urls_e2e_tests {
         )
         .await
         .unwrap();
+        wait_for_readiness(&app.app).await;
 
         let req = init_graphql_request("{ users { id } }", None);
-        let resp = test::call_service(&app, req.to_request()).await;
+        let resp = test::call_service(&app.app, req.to_request()).await;
 
         assert!(resp.status().is_success(), "Expected 200 OK");
 
@@ -48,10 +51,10 @@ mod override_subgraph_urls_e2e_tests {
         )
         .await
         .unwrap();
-
+        wait_for_readiness(&app.app).await;
         // Makes the expression to evaluate to port 4100
         let req = init_graphql_request("{ users { id } }", None).header("x-accounts-port", "4100");
-        let resp = test::call_service(&app, req.to_request()).await;
+        let resp = test::call_service(&app.app, req.to_request()).await;
 
         assert!(resp.status().is_success(), "Expected 200 OK");
 
@@ -68,7 +71,7 @@ mod override_subgraph_urls_e2e_tests {
         // Makes the expression to evaluate to port 4200 (value of .original_url)
         // which is not running, so the request fails
         let req = init_graphql_request("{ users { id } }", None);
-        let resp = test::call_service(&app, req.to_request()).await;
+        let resp = test::call_service(&app.app, req.to_request()).await;
 
         assert!(resp.status().is_success(), "Expected 200 OK");
         let body = test::read_body(resp).await;

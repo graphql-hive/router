@@ -25,6 +25,7 @@ futures = { workspace = true }
 graphql-parser = { workspace = true }
 graphql-tools = { workspace = true }
 serde = { workspace = true }
+reqwest = { workspace = true }
 sonic-rs = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -37,13 +38,16 @@ lazy_static = { workspace = true }
 async-trait = { workspace = true }
 xxhash-rust = { workspace = true }
 rand = { workspace = true }
-regex-automata = "0.4.10"
+ntex = { workspace = true }
 jsonwebtoken = { workspace = true }
+retry-policies = { workspace = true}
+reqwest-retry = { workspace = true }
+reqwest-middleware = { workspace = true }
 
 mimalloc = { version = "0.1.48", features = ["v3"] }
 moka = { version = "0.12.10", features = ["future"] }
 ulid = "1.2.1"
-ntex = { workspace = true }
 tokio-util = "0.7.16"
-reqwest = "0.12.23"
 cookie = "0.18.1"
+regex-automata = "0.4.10"
+arc-swap = "1.7.1"

@@ -16,9 +16,11 @@ sonic-rs = { workspace = true }
 lazy_static = { workspace = true }
 jsonwebtoken = { workspace = true }
 insta = { workspace = true }
-
-reqwest = "0.12.23"
+reqwest = { workspace = true }
 
 hive-router = { path = "../bin/router" }
 hive-router-config = { path = "../lib/router-config" }
 subgraphs = { path = "../bench/subgraphs" }
+
+mockito = "1.7.0"
+tempfile = "3.23.0"

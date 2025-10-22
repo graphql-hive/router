@@ -17,6 +17,7 @@ use hyper::Version;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
+use tracing::debug;
 
 use crate::executors::common::HttpExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
@@ -148,9 +149,17 @@ impl HTTPSubgraphExecutor {
 
         *req.headers_mut() = headers;
 
+        debug!("making http request to {}", self.endpoint.to_string());
+
         let res = self.http_client.request(req).await.map_err(|e| {
             SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
         })?;
+
+        debug!(
+            "http request to {} completed, status: {}",
+            self.endpoint.to_string(),
+            res.status()
+        );
 
         let (parts, body) = res.into_parts();
 

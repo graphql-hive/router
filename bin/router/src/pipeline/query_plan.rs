@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
-use crate::shared_state::RouterSharedState;
+use crate::schema_state::{SchemaState, SupergraphData};
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
 use ntex::web::HttpRequest;
@@ -13,13 +13,14 @@ use xxhash_rust::xxh3::Xxh3;
 #[inline]
 pub async fn plan_operation_with_cache(
     req: &HttpRequest,
-    app_state: &Arc<RouterSharedState>,
+    supergraph: &SupergraphData,
+    schema_state: &Arc<SchemaState>,
     normalized_operation: &Arc<GraphQLNormalizationPayload>,
     request_override_context: &RequestOverrideContext,
     cancellation_token: &CancellationToken,
 ) -> Result<Arc<QueryPlan>, PipelineError> {
     let stable_override_context =
-        StableOverrideContext::new(&app_state.planner.supergraph, request_override_context);
+        StableOverrideContext::new(&supergraph.planner.supergraph, request_override_context);
 
     let filtered_operation_for_plan = &normalized_operation.operation_for_plan;
     let plan_cache_key =
@@ -27,7 +28,7 @@ pub async fn plan_operation_with_cache(
     let is_pure_introspection = filtered_operation_for_plan.selection_set.is_empty()
         && normalized_operation.operation_for_introspection.is_some();
 
-    let plan_result = app_state
+    let plan_result = schema_state
         .plan_cache
         .try_get_with(plan_cache_key, async move {
             if is_pure_introspection {
@@ -37,7 +38,7 @@ pub async fn plan_operation_with_cache(
                 }));
             }
 
-            app_state
+            supergraph
                 .planner
                 .plan_from_normalized_operation(
                     filtered_operation_for_plan,
