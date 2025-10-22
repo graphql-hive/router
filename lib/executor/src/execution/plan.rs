@@ -509,7 +509,7 @@ impl<'exec> Executor<'exec> {
                     job.response.body,
                     job.fetch_node_id,
                 ) {
-                    ctx.handle_errors(&job.subgraph_name, response.errors, None);
+                    ctx.handle_errors(&job.subgraph_name, None, response.errors, None);
                     if let Some(output_rewrites) = output_rewrites {
                         for output_rewrite in output_rewrites {
                             output_rewrite
@@ -588,9 +588,18 @@ impl<'exec> Executor<'exec> {
                         );
                         ctx.handle_errors(
                             &job.subgraph_name,
+                            Some(job.flatten_node_path.to_string()),
                             response.errors,
                             entity_index_error_map,
                         );
+                    } else if let Some(errors) = response.errors {
+                        // No entities were returned, but there are errors to handle.
+                        // We associate them with the flattened path and subgraph.
+                        let affected_path = job.flatten_node_path.to_string();
+                        ctx.errors.extend(errors.into_iter().map(|e| {
+                            e.add_subgraph_name(&job.subgraph_name)
+                                .add_affected_path(affected_path.clone())
+                        }));
                     }
                 }
             }
@@ -902,6 +911,7 @@ mod tests {
         }];
         ctx.handle_errors(
             "subgraph_a",
+            None,
             Some(response_errors),
             Some(entity_index_error_map),
         );

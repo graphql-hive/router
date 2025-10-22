@@ -112,6 +112,11 @@ impl GraphQLError {
             .get_or_insert("DOWNSTREAM_SERVICE_ERROR".to_string());
         self
     }
+
+    pub fn add_affected_path(mut self, affected_path: String) -> Self {
+        self.extensions.affected_path = Some(affected_path);
+        self
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -236,6 +241,9 @@ pub struct GraphQLErrorExtensions {
     pub code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_name: Option<String>,
+    /// Corresponds to a path of a Flatten(Fetch) node that caused the error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub affected_path: Option<String>,
     #[serde(flatten)]
     pub extensions: HashMap<String, Value>,
 }
@@ -245,16 +253,20 @@ impl GraphQLErrorExtensions {
         GraphQLErrorExtensions {
             code: Some(code.to_string()),
             service_name: None,
+            affected_path: None,
             extensions: HashMap::new(),
         }
     }
+
     pub fn new_from_code_and_service_name(code: &str, service_name: &str) -> Self {
         GraphQLErrorExtensions {
             code: Some(code.to_string()),
             service_name: Some(service_name.to_string()),
+            affected_path: None,
             extensions: HashMap::new(),
         }
     }
+
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.extensions.get(key)
     }
