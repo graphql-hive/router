@@ -260,13 +260,6 @@ impl GraphQLErrorExtensions {
             extensions: HashMap::new(),
         }
     }
-    pub fn get(&self, key: &str) -> Option<&Value> {
-        self.extensions.get(key)
-    }
-
-    pub fn set(&mut self, key: String, value: Value) {
-        self.extensions.insert(key, value);
-    }
 
     pub fn is_empty(&self) -> bool {
         self.code.is_none() && self.service_name.is_none() && self.extensions.is_empty()

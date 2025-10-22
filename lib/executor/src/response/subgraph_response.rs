@@ -107,7 +107,12 @@ mod tests {
         let errors = response.errors.as_ref().unwrap();
         assert_eq!(errors.len(), 1);
         assert_eq!(
-            errors[0].extensions.get("statusCode").unwrap().as_u64(),
+            errors[0]
+                .extensions
+                .extensions
+                .get("statusCode")
+                .unwrap()
+                .as_u64(),
             Some(400)
         );
         assert!(response.extensions.is_none());
