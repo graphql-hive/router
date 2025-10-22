@@ -276,6 +276,9 @@ impl GraphQLErrorExtensions {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.code.is_none() && self.service_name.is_none() && self.extensions.is_empty()
+        self.code.is_none()
+            && self.service_name.is_none()
+            && self.affected_path.is_none()
+            && self.extensions.is_empty()
     }
 }
