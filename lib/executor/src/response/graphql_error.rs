@@ -1,8 +1,8 @@
 use graphql_parser::Pos;
 use graphql_tools::validation::utils::ValidationError;
-use serde::{de, ser::SerializeSeq, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use sonic_rs::Value;
-use std::{collections::HashMap, fmt};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -120,114 +120,17 @@ pub struct GraphQLErrorLocation {
     pub column: usize,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(untagged)]
 pub enum GraphQLErrorPathSegment {
     String(String),
     Index(usize),
 }
 
-impl<'de> Deserialize<'de> for GraphQLErrorPathSegment {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct PathSegmentVisitor;
-
-        impl<'de> de::Visitor<'de> for PathSegmentVisitor {
-            type Value = GraphQLErrorPathSegment;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a string or an integer for a GraphQL path segment")
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(GraphQLErrorPathSegment::String(value.to_owned()))
-            }
-
-            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(GraphQLErrorPathSegment::String(value))
-            }
-
-            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(GraphQLErrorPathSegment::Index(value as usize))
-            }
-
-            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                if value < 0 {
-                    return Err(E::custom(format!(
-                        "path segment must be a non-negative integer, but got {}",
-                        value
-                    )));
-                }
-                Ok(GraphQLErrorPathSegment::Index(value as usize))
-            }
-        }
-
-        deserializer.deserialize_any(PathSegmentVisitor)
-    }
-}
-
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(transparent)]
 pub struct GraphQLErrorPath {
     pub segments: Vec<GraphQLErrorPathSegment>,
-}
-
-impl Serialize for GraphQLErrorPath {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut seq = serializer.serialize_seq(Some(self.segments.len()))?;
-        for segment in &self.segments {
-            match segment {
-                GraphQLErrorPathSegment::String(s) => seq.serialize_element(s)?,
-                GraphQLErrorPathSegment::Index(i) => seq.serialize_element(i)?,
-            }
-        }
-        seq.end()
-    }
-}
-
-impl<'de> Deserialize<'de> for GraphQLErrorPath {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct PathVisitor;
-
-        impl<'de> de::Visitor<'de> for PathVisitor {
-            type Value = GraphQLErrorPath;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a list of strings and integers for a GraphQL error path")
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: de::SeqAccess<'de>,
-            {
-                let mut segments = Vec::with_capacity(seq.size_hint().unwrap_or(0));
-                while let Some(segment) = seq.next_element::<GraphQLErrorPathSegment>()? {
-                    segments.push(segment);
-                }
-                Ok(GraphQLErrorPath { segments })
-            }
-        }
-
-        deserializer.deserialize_seq(PathVisitor)
-    }
 }
 
 pub struct EntityIndexAndPath<'a> {
