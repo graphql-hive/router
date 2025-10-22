@@ -80,3 +80,37 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    // When subgraph returns an error with custom extensions but without `data` field
+    #[test]
+    fn deserialize_response_without_data_with_errors_with_extensions() {
+        let json_response = r#"
+        {
+            "errors": [
+                {
+                    "message": "Random error from subgraph",
+                    "extensions":{
+                        "statusCode": 400
+                    }
+                }
+            ]
+        }"#;
+
+        let response: super::SubgraphResponse =
+            sonic_rs::from_str(json_response).expect("Failed to deserialize");
+
+        assert!(response.data.is_null());
+        let errors = response.errors.as_ref().unwrap();
+        insta::assert_snapshot!(sonic_rs::to_string_pretty(&errors).unwrap(), @r###"
+        [
+          {
+            "message": "Random error from subgraph",
+            "extensions": {
+              "statusCode": 400
+            }
+          }
+        ]"###);
+    }
+}
