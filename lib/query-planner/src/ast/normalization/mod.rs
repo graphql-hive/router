@@ -92,9 +92,10 @@ mod tests {
     use crate::utils::parsing::parse_schema;
 
     fn pretty_query(query_str: String) -> String {
-        format!("{}", parse_query::<&str>(&query_str).expect(
-            &format!("failed to parse: {}", query_str),
-        ))
+        format!(
+            "{}",
+            parse_query::<&str>(&query_str).expect(&format!("failed to parse: {}", query_str),)
+        )
     }
 
     // TODO: remove unused variables

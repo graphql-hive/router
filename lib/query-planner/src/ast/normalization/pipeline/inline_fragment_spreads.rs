@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use graphql_parser::query::{
     Definition, FragmentDefinition, InlineFragment, Mutation, OperationDefinition, Query,
-    Selection, SelectionSet, Subscription, TypeCondition
+    Selection, SelectionSet, Subscription, TypeCondition,
 };
 
 use crate::ast::normalization::{context::NormalizationContext, error::NormalizationError};
@@ -71,7 +71,11 @@ fn handle_selection_set<'a>(
                     if top_type_condition == &type_condition {
                         // If the fragment's type condition matches the top type condition,
                         // we can inline its selections directly.
-                        handle_selection_set(&mut new_selection_set, fragment_map, Some(top_type_condition.clone()))?;
+                        handle_selection_set(
+                            &mut new_selection_set,
+                            fragment_map,
+                            Some(top_type_condition.clone()),
+                        )?;
                         new_items.extend(new_selection_set.items);
                         continue;
                     }
@@ -83,17 +87,26 @@ fn handle_selection_set<'a>(
                     selection_set: new_selection_set,
                 };
 
-                handle_selection_set(&mut inline_fragment.selection_set, fragment_map, Some(type_condition))?;
+                handle_selection_set(
+                    &mut inline_fragment.selection_set,
+                    fragment_map,
+                    Some(type_condition),
+                )?;
 
                 new_items.push(Selection::InlineFragment(inline_fragment));
             }
             Selection::InlineFragment(mut inline_fragment) => {
-                let type_condition = if let Some(TypeCondition::On(name)) = &inline_fragment.type_condition {
-                    Some(name.to_string())
-                } else {
-                    None
-                };
-                handle_selection_set(&mut inline_fragment.selection_set, fragment_map, type_condition)?;
+                let type_condition =
+                    if let Some(TypeCondition::On(name)) = &inline_fragment.type_condition {
+                        Some(name.to_string())
+                    } else {
+                        None
+                    };
+                handle_selection_set(
+                    &mut inline_fragment.selection_set,
+                    fragment_map,
+                    type_condition,
+                )?;
                 new_items.push(Selection::InlineFragment(inline_fragment));
             }
         }
