@@ -280,6 +280,7 @@ impl GraphQLErrorExtensions {
             extensions: HashMap::new(),
         }
     }
+
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.extensions.get(key)
     }
