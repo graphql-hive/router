@@ -86,13 +86,7 @@ pub fn project_by_operation(
     Ok(buffer)
 }
 
-fn project_selection_set(
-    data: &Value,
-    errors: &mut Vec<GraphQLError>,
-    selection: &FieldProjectionPlan,
-    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-    buffer: &mut Vec<u8>,
-) {
+fn project_without_selection_set(data: &Value, buffer: &mut Vec<u8>) {
     match data {
         Value::Null => buffer.put(NULL),
         Value::Bool(true) => buffer.put(TRUE),
@@ -101,6 +95,43 @@ fn project_selection_set(
         Value::I64(num) => write_i64(buffer, *num),
         Value::F64(num) => write_f64(buffer, *num),
         Value::String(value) => write_and_escape_string(buffer, value),
+        Value::Object(value) => {
+            buffer.put(OPEN_BRACE);
+            let mut first = true;
+            for (key, val) in value.iter() {
+                if !first {
+                    buffer.put(COMMA);
+                }
+                write_and_escape_string(buffer, key);
+                buffer.put(COLON);
+                project_without_selection_set(val, buffer);
+                first = false;
+            }
+            buffer.put(CLOSE_BRACE);
+        }
+        Value::Array(arr) => {
+            buffer.put(OPEN_BRACKET);
+            let mut first = true;
+            for item in arr.iter() {
+                if !first {
+                    buffer.put(COMMA);
+                }
+                project_without_selection_set(item, buffer);
+                first = false;
+            }
+            buffer.put(CLOSE_BRACKET);
+        }
+    };
+}
+
+fn project_selection_set(
+    data: &Value,
+    errors: &mut Vec<GraphQLError>,
+    selection: &FieldProjectionPlan,
+    variable_values: &Option<HashMap<String, sonic_rs::Value>>,
+    buffer: &mut Vec<u8>,
+) {
+    match data {
         Value::Array(arr) => {
             buffer.put(OPEN_BRACKET);
             let mut first = true;
@@ -139,10 +170,14 @@ fn project_selection_set(
                     }
                 }
                 None => {
-                    // If the selection set is not projected, we should return null
-                    buffer.put(NULL)
+                    // If the selection has no sub-selections, we serialize the whole object
+                    project_without_selection_set(data, buffer);
                 }
             }
+        }
+        _ => {
+            // If the data is not an object or array, we serialize it directly
+            project_without_selection_set(data, buffer);
         }
     };
 }
@@ -348,5 +383,100 @@ fn check(
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use graphql_parser::query::Definition;
+    use hive_router_query_planner::{
+        ast::{document::NormalizedDocument, normalization::create_normalized_document},
+        consumer_schema::ConsumerSchema,
+        utils::parsing::parse_operation,
+    };
+    use sonic_rs::json;
+
+    use crate::{
+        introspection::schema::SchemaWithMetadata,
+        projection::{plan::FieldProjectionPlan, response::project_by_operation},
+        response::value::Value,
+    };
+
+    #[test]
+    fn project_scalars_with_object_value() {
+        let supergraph = hive_router_query_planner::utils::parsing::parse_schema(
+            r#"
+            type Query {
+                metadatas: Metadata!
+            }
+
+            scalar JSON
+
+            type Metadata {
+                id: ID!
+                timestamp: String!
+                data: JSON
+            }
+        "#,
+        );
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let schema_metadata = consumer_schema.schema_metadata();
+        let mut operation = parse_operation(
+            r#"
+            query GetMetadata {
+                metadatas {
+                    id
+                    data
+                }
+            }
+            "#,
+        );
+        let operation_ast = operation
+            .definitions
+            .iter_mut()
+            .find_map(|def| match def {
+                Definition::Operation(op) => Some(op),
+                _ => None,
+            })
+            .unwrap();
+        let normalized_operation: NormalizedDocument =
+            create_normalized_document(operation_ast.clone(), Some("GetMetadata"));
+        let (operation_type_name, selections) =
+            FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
+        let data_json = json!({
+            "__typename": "Query",
+            "metadatas": [
+                {
+                    "__typename": "Metadata",
+                    "id": "meta1",
+                    "timestamp": "2024-01-01T00:00:00Z",
+                    "data": {
+                        "float": 41.5,
+                        "int": -42,
+                        "str": "value1",
+                        "unsigned": 123,
+                    }
+                },
+                {
+                    "__typename": "Metadata",
+                    "id": "meta2",
+                    "data": null
+                }
+            ]
+        });
+        let data = Value::from(data_json.as_ref());
+        let projection = project_by_operation(
+            &data,
+            vec![],
+            &None,
+            operation_type_name,
+            &selections,
+            &None,
+            1000,
+        );
+        let projected_bytes = projection.unwrap();
+        let projected_str = String::from_utf8(projected_bytes).unwrap();
+        let expected_response = r#"{"data":{"metadatas":[{"id":"meta1","data":{"float":41.5,"int":-42,"str":"value1","unsigned":123}},{"id":"meta2","data":null}]}}"#;
+        assert_eq!(projected_str, expected_response);
     }
 }
