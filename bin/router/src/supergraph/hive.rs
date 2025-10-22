@@ -96,7 +96,7 @@ impl SupergraphLoader for SupergraphHiveConsoleLoader {
 
 impl SupergraphHiveConsoleLoader {
     pub fn new(
-        endpoint: &str,
+        endpoint: String,
         key: &str,
         poll_interval: Duration,
         timeout: Duration,
@@ -114,7 +114,7 @@ impl SupergraphHiveConsoleLoader {
             .build();
 
         Ok(Box::new(Self {
-            endpoint: endpoint.to_string(),
+            endpoint,
             key: key.to_string(),
             http_client: client,
             poll_interval,
