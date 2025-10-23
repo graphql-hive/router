@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 
+use hive_router_config::override_labels::{LabelOverrideValue, OverrideLabelsConfig};
 use hive_router_query_planner::{
     graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
     state::supergraph_state::SupergraphState,
@@ -19,9 +20,24 @@ pub struct RequestOverrideContext {
 }
 
 #[inline]
-pub fn request_override_context() -> Result<RequestOverrideContext, PipelineError> {
+pub fn request_override_context(
+    override_labels_config: &OverrideLabelsConfig,
+) -> Result<RequestOverrideContext, PipelineError> {
     // No active flags by default - until we implement it
-    let active_flags = HashSet::new();
+    let mut active_flags = HashSet::new();
+
+    // looks for boolean values
+    for (flag_name, override_value) in override_labels_config.iter() {
+        match override_value {
+            LabelOverrideValue::Boolean(true) => {
+                active_flags.insert(flag_name.clone());
+            }
+            // For other cases, we currently do nothing
+            _ => {
+                // TODO: support expressions
+            }
+        }
+    }
 
     // Generate the random percentage value for this request.
     // Percentage is 0 - 100_000_000_000 (100*PERCENTAGE_SCALE_FACTOR)

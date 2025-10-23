@@ -107,7 +107,8 @@ pub async fn execute_pipeline(
     validate_operation_with_cache(req, supergraph, schema_state, shared_state, &parser_payload)
         .await?;
 
-    let progressive_override_ctx = request_override_context()?;
+    let progressive_override_ctx =
+        request_override_context(&shared_state.router_config.override_labels)?;
     let normalize_payload = normalize_request_with_cache(
         req,
         supergraph,

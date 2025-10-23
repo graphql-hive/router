@@ -4,6 +4,7 @@ pub mod headers;
 pub mod http_server;
 pub mod jwt_auth;
 pub mod log;
+pub mod override_labels;
 pub mod override_subgraph_urls;
 pub mod primitives;
 pub mod query_planner;
@@ -16,9 +17,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::{
-    http_server::HttpServerConfig, log::LoggingConfig, primitives::file_path::with_start_path,
-    query_planner::QueryPlannerConfig, supergraph::SupergraphSource,
-    traffic_shaping::TrafficShapingExecutorConfig,
+    http_server::HttpServerConfig, log::LoggingConfig, override_labels::OverrideLabelsConfig,
+    primitives::file_path::with_start_path, query_planner::QueryPlannerConfig,
+    supergraph::SupergraphSource, traffic_shaping::TrafficShapingExecutorConfig,
 };
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -69,6 +70,10 @@ pub struct HiveRouterConfig {
     /// Configuration for overriding subgraph URLs.
     #[serde(default)]
     pub override_subgraph_urls: override_subgraph_urls::OverrideSubgraphUrlsConfig,
+
+    /// Configuration for overriding labels.
+    #[serde(default)]
+    pub override_labels: OverrideLabelsConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
