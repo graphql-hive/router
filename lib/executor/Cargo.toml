@@ -32,6 +32,7 @@ dashmap = { workspace = true }
 ahash = "0.8.12"
 regex-automata = "0.4.10"
 vrl = { version = "0.27.0", features = ["compiler", "parser", "value", "diagnostic", "stdlib", "core"] }
+strum = { version = "0.27.2", features = ["derive"] }
 
 ntex-http = "0.1.15"
 hyper-tls = { version = "0.6.0", features = ["vendored"] }
