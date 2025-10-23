@@ -1850,10 +1850,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
-name = "graphql-parser"
-version = "0.4.1"
+name = "graphql-parser-hive-fork"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a818c0d883d7c0801df27be910917750932be279c7bc82dc541b8769425f409"
+checksum = "8a0137d5de726e9c6ddb3e6abcddc4fc3fd1c1cfcf23667388b6ccec9fa6433f"
 dependencies = [
  "combine",
  "thiserror 1.0.69",
@@ -1865,7 +1865,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68fb22726aceab7a8933cdcff4201e1cdbcc7c7394df5bc1ebdcf27b44376433"
 dependencies = [
- "graphql-parser",
+ "graphql-parser-hive-fork",
  "lazy_static",
  "serde",
  "serde_json",
@@ -1996,6 +1996,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "hive-console-sdk"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum-core",
+ "graphql-parser-hive-fork",
+ "graphql-tools",
+ "md5",
+ "moka",
+ "reqwest",
+ "reqwest-middleware",
+ "reqwest-retry",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.16",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "hive-router"
 version = "0.0.12"
 dependencies = [
@@ -2003,8 +2027,9 @@ dependencies = [
  "async-trait",
  "cookie",
  "futures",
- "graphql-parser",
+ "graphql-parser-hive-fork",
  "graphql-tools",
+ "hive-console-sdk",
  "hive-router-config",
  "hive-router-plan-executor",
  "hive-router-query-planner",
@@ -2060,7 +2085,7 @@ dependencies = [
  "criterion",
  "dashmap",
  "futures",
- "graphql-parser",
+ "graphql-parser-hive-fork",
  "graphql-tools",
  "hive-router-config",
  "hive-router-query-planner",
@@ -2091,7 +2116,7 @@ version = "2.0.0"
 dependencies = [
  "bitflags 2.9.4",
  "criterion",
- "graphql-parser",
+ "graphql-parser-hive-fork",
  "graphql-tools",
  "insta",
  "lazy-init",
@@ -2236,6 +2261,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -2803,6 +2829,12 @@ dependencies = [
  "cfg-if",
  "digest",
 ]
+
+[[package]]
+name = "md5"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 
 [[package]]
 name = "memchr"
@@ -4010,7 +4042,7 @@ dependencies = [
 name = "qp-dev-cli"
 version = "0.0.0"
 dependencies = [
- "graphql-parser",
+ "graphql-parser-hive-fork",
  "hive-router-query-planner",
  "serde_json",
  "tracing-subscriber",
@@ -4302,7 +4334,9 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
+ "futures-util",
  "h2",
  "http",
  "http-body",
@@ -4335,6 +4369,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -4637,6 +4672,7 @@ dependencies = [
  "schemars_derive",
  "serde",
  "serde_json",
+ "url",
 ]
 
 [[package]]
@@ -6199,6 +6235,15 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32b130c0d2d49f8b6889abc456e795e82525204f27c42cf767cf0d7734e089b8"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]
