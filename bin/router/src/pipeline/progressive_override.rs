@@ -151,21 +151,20 @@ impl OverrideLabelsEvaluator {
         }
 
         let client_request = get_client_request();
+        let mut target = VrlTargetValue {
+            value: VrlValue::Object(BTreeMap::from([(
+                "request".into(),
+                (&client_request).into(),
+            )])),
+            metadata: VrlValue::Object(BTreeMap::new()),
+            secrets: VrlSecrets::default(),
+        };
+
+        let mut state = VrlState::default();
+        let timezone = VrlTimeZone::default();
+        let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
 
         for (label, expression) in &self.expressions {
-            let mut target = VrlTargetValue {
-                value: VrlValue::Object(BTreeMap::from([(
-                    "request".into(),
-                    (&client_request).into(),
-                )])),
-                metadata: VrlValue::Object(BTreeMap::new()),
-                secrets: VrlSecrets::default(),
-            };
-
-            let mut state = VrlState::default();
-            let timezone = VrlTimeZone::default();
-            let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
-
             let evaluated_value = expression.resolve(&mut ctx).unwrap();
 
             match evaluated_value {
