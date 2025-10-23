@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0](https://github.com/graphql-hive/router/compare/hive-router-plan-executor-v4.0.0...hive-router-plan-executor-v5.0.0) - 2025-10-23
+
+### Added
+
+- *(router)* support `hive` as source for supergraph ([#400](https://github.com/graphql-hive/router/pull/400))
+
+### Fixed
+
+- *(executor)* handle subgraph errors with extensions correctly ([#494](https://github.com/graphql-hive/router/pull/494))
+- *(executor)* error logging in HTTP executor ([#498](https://github.com/graphql-hive/router/pull/498))
+- *(ci)* fail when audit tests failing ([#495](https://github.com/graphql-hive/router/pull/495))
+- *(executor)* project scalars with object values correctly ([#492](https://github.com/graphql-hive/router/pull/492))
+
+### Other
+
+- Add affectedPath to GraphQLErrorExtensions ([#510](https://github.com/graphql-hive/router/pull/510))
+- Handle empty responses from subgraphs and failed entity calls ([#500](https://github.com/graphql-hive/router/pull/500))
+
 ## [4.0.0](https://github.com/graphql-hive/router/compare/hive-router-plan-executor-v3.0.0...hive-router-plan-executor-v4.0.0) - 2025-10-16
 
 ### Added
