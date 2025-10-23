@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod jwt_e2e_tests {
+mod supergraph_e2e_tests {
     use std::{sync::Arc, time::Duration};
 
     use ntex::{time, web::test};
@@ -207,22 +207,15 @@ mod jwt_e2e_tests {
         mock1.assert();
 
         let app_clone = test_app.app.clone();
-        let resp_handle = ntex::rt::spawn(async move {
-            let response = test::call_service(
-                &app_clone.clone(),
-                init_graphql_request("{ users { id name reviews { id body } } }", None)
-                    .to_request(),
-            )
-            .await;
-            assert!(response.status().is_success(), "Expected 200 OK");
-            let body = test::read_body(response).await;
-            let json_body: Value = from_slice(&body).unwrap();
+        let response = test::call_service(
+            &app_clone.clone(),
+            init_graphql_request("{ users { id name reviews { id body } } }", None).to_request(),
+        )
+        .await;
+        assert!(response.status().is_success(), "Expected 200 OK");
+        let body = test::read_body(response).await;
+        let resp: Value = from_slice(&body).unwrap();
 
-            json_body
-        });
-
-        ntex::time::sleep(Duration::from_millis(100)).await;
-        let resp = resp_handle.await.unwrap();
         mock2.assert();
 
         assert!(resp["data"].is_object());
