@@ -166,7 +166,6 @@ impl OverrideLabelsEvaluator {
 
         for (label, expression) in &self.expressions {
             let evaluated_value = expression.resolve(&mut ctx).unwrap();
-
             match evaluated_value {
                 VrlValue::Boolean(true) => {
                     active_flags.insert(label.clone());
