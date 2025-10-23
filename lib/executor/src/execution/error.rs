@@ -36,7 +36,7 @@ pub struct PlanExecutionErrorContext {
     affected_path: Option<String>,
 }
 
-pub struct ErrorContext<SN, AP> {
+pub struct LazyPlanContext<SN, AP> {
     pub subgraph_name: SN,
     pub affected_path: AP,
 }
@@ -48,7 +48,7 @@ pub struct ErrorContext<SN, AP> {
 pub trait IntoPlanExecutionError<T> {
     fn with_plan_context<SN, AP>(
         self,
-        context: ErrorContext<SN, AP>,
+        context: LazyPlanContext<SN, AP>,
     ) -> Result<T, PlanExecutionError>
     where
         SN: FnOnce() -> Option<String>,
@@ -58,7 +58,7 @@ pub trait IntoPlanExecutionError<T> {
 impl<T> IntoPlanExecutionError<T> for Result<T, ProjectionError> {
     fn with_plan_context<SN, AP>(
         self,
-        context: ErrorContext<SN, AP>,
+        context: LazyPlanContext<SN, AP>,
     ) -> Result<T, PlanExecutionError>
     where
         SN: FnOnce() -> Option<String>,
@@ -74,7 +74,7 @@ impl<T> IntoPlanExecutionError<T> for Result<T, ProjectionError> {
 impl<T> IntoPlanExecutionError<T> for Result<T, HeaderRuleRuntimeError> {
     fn with_plan_context<SN, AP>(
         self,
-        context: ErrorContext<SN, AP>,
+        context: LazyPlanContext<SN, AP>,
     ) -> Result<T, PlanExecutionError>
     where
         SN: FnOnce() -> Option<String>,
@@ -87,10 +87,10 @@ impl<T> IntoPlanExecutionError<T> for Result<T, HeaderRuleRuntimeError> {
     }
 }
 
-impl<SN: FnOnce() -> Option<String>, AP: FnOnce() -> Option<String>> From<ErrorContext<SN, AP>>
+impl<SN: FnOnce() -> Option<String>, AP: FnOnce() -> Option<String>> From<LazyPlanContext<SN, AP>>
     for PlanExecutionErrorContext
 {
-    fn from(context: ErrorContext<SN, AP>) -> Self {
+    fn from(context: LazyPlanContext<SN, AP>) -> Self {
         PlanExecutionErrorContext {
             subgraph_name: (context.subgraph_name)(),
             affected_path: (context.affected_path)(),
@@ -101,7 +101,7 @@ impl<SN: FnOnce() -> Option<String>, AP: FnOnce() -> Option<String>> From<ErrorC
 impl PlanExecutionError {
     pub(crate) fn new<SN, AP>(
         kind: PlanExecutionErrorKind,
-        lazy_context: ErrorContext<SN, AP>,
+        lazy_context: LazyPlanContext<SN, AP>,
     ) -> Self
     where
         SN: FnOnce() -> Option<String>,
