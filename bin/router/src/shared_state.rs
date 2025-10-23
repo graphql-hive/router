@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::cors::{CORSConfigError, Cors};
-use crate::pipeline::progressive_override::OverrideLabelsEvaluator;
+use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 
 pub struct RouterSharedState {
     pub validation_plan: ValidationPlan,
@@ -31,9 +31,10 @@ impl RouterSharedState {
             parse_cache: moka::future::Cache::new(1000),
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,
             router_config: router_config.clone(),
-            override_labels_evaluator: Arc::new(OverrideLabelsEvaluator::from_config(
-                &router_config.override_labels,
-            )),
+            override_labels_evaluator: Arc::new(
+                OverrideLabelsEvaluator::from_config(&router_config.override_labels)
+                    .map_err(Box::new)?,
+            ),
             jwt_auth_runtime,
         })
     }
@@ -45,4 +46,6 @@ pub enum SharedStateError {
     HeaderRuleCompileError(#[from] Box<HeaderRuleCompileError>),
     #[error("invalid regex in CORS config: {0}")]
     CORSConfigError(#[from] Box<CORSConfigError>),
+    #[error("invalid override labels config: {0}")]
+    OverrideLabelsCompileError(#[from] Box<OverrideLabelsCompileError>),
 }

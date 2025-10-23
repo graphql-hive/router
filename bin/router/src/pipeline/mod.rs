@@ -16,7 +16,7 @@ use crate::{
     pipeline::{
         coerce_variables::coerce_request_variables,
         csrf_prevention::perform_csrf_prevention,
-        error::PipelineError,
+        error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant},
         execution::execute_plan,
         execution_request::get_execution_request,
         header::{
@@ -143,6 +143,9 @@ pub async fn execute_pipeline(
                     query: query.to_owned(),
                 },
             }
+        })
+        .map_err(|error| {
+            req.new_pipeline_error(PipelineErrorVariant::LabelEvaluationError(error))
         })?;
 
     let query_plan_payload = plan_operation_with_cache(

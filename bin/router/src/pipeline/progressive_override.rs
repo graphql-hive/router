@@ -8,16 +8,37 @@ use hive_router_query_planner::{
 };
 use rand::Rng;
 use vrl::{
-    compiler::compile as vrl_compile,
-    compiler::Program as VrlProgram,
-    compiler::TargetValue as VrlTargetValue,
+    compiler::{compile as vrl_compile, Program as VrlProgram, TargetValue as VrlTargetValue},
     core::Value as VrlValue,
-    prelude::{state::RuntimeState as VrlState, Context as VrlContext, TimeZone as VrlTimeZone},
+    prelude::{
+        state::RuntimeState as VrlState, Context as VrlContext, ExpressionError,
+        TimeZone as VrlTimeZone,
+    },
     stdlib::all as vrl_build_functions,
     value::Secrets as VrlSecrets,
 };
 
-use super::error::PipelineError;
+#[derive(thiserror::Error, Debug)]
+#[error("Failed to compile override label expression for label '{label}': {error}")]
+pub struct OverrideLabelsCompileError {
+    pub label: String,
+    pub error: String,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum LabelEvaluationError {
+    #[error(
+        "Failed to resolve VRL expression for override label '{label}'. Runtime error: {source}"
+    )]
+    ExpressionResolutionFailure {
+        label: String,
+        source: ExpressionError,
+    },
+    #[error(
+        "VRL expression for override label '{label}' did not evaluate to a boolean. Got: {got}"
+    )]
+    ExpressionWrongType { label: String, got: String },
+}
 
 /// Contains the request-specific context for progressive overrides.
 /// This is stored in the request extensions
@@ -33,24 +54,11 @@ pub struct RequestOverrideContext {
 pub fn request_override_context<'req, F>(
     override_labels_evaluator: &OverrideLabelsEvaluator,
     get_client_request: F,
-) -> Result<RequestOverrideContext, PipelineError>
+) -> Result<RequestOverrideContext, LabelEvaluationError>
 where
     F: FnOnce() -> ClientRequestDetails<'req>,
 {
-    // No active flags by default - until we implement it
-    let active_flags = override_labels_evaluator.evaluate(get_client_request);
-
-    // for (flag_name, override_value) in override_labels_config.iter() {
-    //     match override_value {
-    //         LabelOverrideValue::Boolean(true) => {
-    //             active_flags.insert(flag_name.clone());
-    //         }
-    //         // For other cases, we currently do nothing
-    //         _ => {
-    //             // TODO: support expressions
-    //         }
-    //     }
-    // }
+    let active_flags = override_labels_evaluator.evaluate(get_client_request)?;
 
     // Generate the random percentage value for this request.
     // Percentage is 0 - 100_000_000_000 (100*PERCENTAGE_SCALE_FACTOR)
@@ -116,7 +124,9 @@ pub struct OverrideLabelsEvaluator {
 }
 
 impl OverrideLabelsEvaluator {
-    pub(crate) fn from_config(override_labels_config: &OverrideLabelsConfig) -> Self {
+    pub(crate) fn from_config(
+        override_labels_config: &OverrideLabelsConfig,
+    ) -> Result<Self, OverrideLabelsCompileError> {
         let mut static_enabled_labels = HashSet::new();
         let mut expressions = HashMap::new();
         let vrl_functions = vrl_build_functions();
@@ -127,27 +137,41 @@ impl OverrideLabelsEvaluator {
                     static_enabled_labels.insert(label.clone());
                 }
                 LabelOverrideValue::Expression { expression } => {
-                    let compilation_result = vrl_compile(expression, &vrl_functions).unwrap();
+                    let compilation_result =
+                        vrl_compile(expression, &vrl_functions).map_err(|diagnostics| {
+                            OverrideLabelsCompileError {
+                                label: label.clone(),
+                                error: diagnostics
+                                    .errors()
+                                    .into_iter()
+                                    .map(|d| d.code.to_string() + ": " + &d.message)
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
+                            }
+                        })?;
                     expressions.insert(label.clone(), compilation_result.program);
                 }
                 _ => {} // Skip false booleans
             }
         }
 
-        Self {
+        Ok(Self {
             static_enabled_labels,
             expressions,
-        }
+        })
     }
 
-    pub fn evaluate<'req, F>(&self, get_client_request: F) -> HashSet<String>
+    pub(crate) fn evaluate<'req, F>(
+        &self,
+        get_client_request: F,
+    ) -> Result<HashSet<String>, LabelEvaluationError>
     where
         F: FnOnce() -> ClientRequestDetails<'req>,
     {
         let mut active_flags = self.static_enabled_labels.clone();
 
         if self.expressions.is_empty() {
-            return active_flags;
+            return Ok(active_flags);
         }
 
         let client_request = get_client_request();
@@ -165,20 +189,30 @@ impl OverrideLabelsEvaluator {
         let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
 
         for (label, expression) in &self.expressions {
-            let evaluated_value = expression.resolve(&mut ctx).unwrap();
-            match evaluated_value {
-                VrlValue::Boolean(true) => {
-                    active_flags.insert(label.clone());
-                }
-                VrlValue::Boolean(false) => {
-                    // Do nothing for false
-                }
-                _ => {
-                    // TODO: error handling for non-boolean results
+            match expression.resolve(&mut ctx) {
+                Ok(evaluated_value) => match evaluated_value {
+                    VrlValue::Boolean(true) => {
+                        active_flags.insert(label.clone());
+                    }
+                    VrlValue::Boolean(false) => {
+                        // Do nothing for false
+                    }
+                    invalid_value => {
+                        return Err(LabelEvaluationError::ExpressionWrongType {
+                            label: label.clone(),
+                            got: format!("{:?}", invalid_value),
+                        });
+                    }
+                },
+                Err(err) => {
+                    return Err(LabelEvaluationError::ExpressionResolutionFailure {
+                        label: label.clone(),
+                        source: err,
+                    });
                 }
             }
         }
 
-        active_flags
+        Ok(active_flags)
     }
 }
