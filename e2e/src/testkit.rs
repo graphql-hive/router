@@ -153,6 +153,7 @@ pub struct TestRouterApp<T> {
     #[allow(dead_code)]
     pub shared_state: Arc<RouterSharedState>,
     pub schema_state: Arc<SchemaState>,
+    pub bg_tasks_manager: BackgroundTasksManager,
 }
 
 impl<S> TestRouterApp<S> {
@@ -194,5 +195,12 @@ pub async fn init_router_from_config(
         app: ntex_app,
         shared_state,
         schema_state,
+        bg_tasks_manager,
     })
+}
+
+impl<T> Drop for TestRouterApp<T> {
+    fn drop(&mut self) {
+        self.bg_tasks_manager.shutdown();
+    }
 }
