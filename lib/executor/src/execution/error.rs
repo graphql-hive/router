@@ -37,7 +37,7 @@ pub struct ErrorContext<SN, AP> {
 }
 
 pub trait ResultExt<T> {
-    fn map_to_plan_err<SN, AP>(
+    fn with_plan_context<SN, AP>(
         self,
         context: ErrorContext<SN, AP>,
     ) -> Result<T, PlanExecutionError>
@@ -47,7 +47,10 @@ pub trait ResultExt<T> {
 }
 
 impl<T> ResultExt<T> for Result<T, ProjectionError> {
-    fn map_to_plan_err<SN, AP>(self, context: ErrorContext<SN, AP>) -> Result<T, PlanExecutionError>
+    fn with_plan_context<SN, AP>(
+        self,
+        context: ErrorContext<SN, AP>,
+    ) -> Result<T, PlanExecutionError>
     where
         SN: FnOnce() -> Option<String>,
         AP: FnOnce() -> Option<String>,
@@ -60,7 +63,10 @@ impl<T> ResultExt<T> for Result<T, ProjectionError> {
 }
 
 impl<T> ResultExt<T> for Result<T, HeaderRuleRuntimeError> {
-    fn map_to_plan_err<SN, AP>(self, context: ErrorContext<SN, AP>) -> Result<T, PlanExecutionError>
+    fn with_plan_context<SN, AP>(
+        self,
+        context: ErrorContext<SN, AP>,
+    ) -> Result<T, PlanExecutionError>
     where
         SN: FnOnce() -> Option<String>,
         AP: FnOnce() -> Option<String>,

@@ -111,7 +111,7 @@ pub async fn execute_query_plan<'exec>(
 
     let mut response_headers = HeaderMap::new();
     modify_client_response_headers(exec_ctx.response_headers_aggregator, &mut response_headers)
-        .map_to_plan_err(ErrorContext {
+        .with_plan_context(ErrorContext {
             subgraph_name: || None,
             affected_path: || None,
         })?;
@@ -126,7 +126,7 @@ pub async fn execute_query_plan<'exec>(
         ctx.variable_values,
         exec_ctx.response_storage.estimate_final_response_size(),
     )
-    .map_to_plan_err(ErrorContext {
+    .with_plan_context(ErrorContext {
         subgraph_name: || None,
         affected_path: || None,
     })?;
@@ -474,7 +474,7 @@ impl<'exec> Executor<'exec> {
                     self.client_request,
                     &mut ctx.response_headers_aggregator,
                 )
-                .map_to_plan_err(ErrorContext {
+                .with_plan_context(ErrorContext {
                     subgraph_name: || Some(job.subgraph_name.clone()),
                     affected_path: || None,
                 })?;
@@ -504,7 +504,7 @@ impl<'exec> Executor<'exec> {
                     self.client_request,
                     &mut ctx.response_headers_aggregator,
                 )
-                .map_to_plan_err(ErrorContext {
+                .with_plan_context(ErrorContext {
                     subgraph_name: || Some(job.subgraph_name.clone()),
                     affected_path: || Some(job.flatten_node_path.to_string()),
                 })?;
@@ -646,7 +646,7 @@ impl<'exec> Executor<'exec> {
                     filtered_representations_hashes.is_empty(),
                     None,
                 )
-                .map_to_plan_err(ErrorContext {
+                .with_plan_context(ErrorContext {
                     subgraph_name: || Some(fetch_node.service_name.clone()),
                     affected_path: || Some(flatten_node.path.to_string()),
                 })?;
@@ -709,7 +709,7 @@ impl<'exec> Executor<'exec> {
             self.client_request,
             &mut headers_map,
         )
-        .map_to_plan_err(ErrorContext {
+        .with_plan_context(ErrorContext {
             subgraph_name: || Some(node.service_name.clone()),
             affected_path: || None,
         })?;
