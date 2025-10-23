@@ -92,7 +92,10 @@ mod tests {
     use crate::utils::parsing::parse_schema;
 
     fn pretty_query(query_str: String) -> String {
-        format!("{}", parse_query::<&str>(&query_str).unwrap())
+        format!(
+            "{}",
+            parse_query::<&str>(&query_str).expect(&format!("failed to parse: {}", query_str),)
+        )
     }
 
     // TODO: remove unused variables
@@ -1129,6 +1132,161 @@ mod tests {
           }
         }
         ",
+        );
+    }
+    #[test]
+    fn nested_fragment_spreads_1() {
+        let schema_str =
+            std::fs::read_to_string("./fixture/tests/nested-fragments.supergraph.graphql")
+                .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query {
+                          results {
+                            __typename
+                            ...on Tshirt {
+                              ...TshirtResult
+                            }
+                          }
+                        }
+
+                        fragment TshirtResult on Tshirt {
+                          id
+                          name
+                          ...on MultipleColor {
+                            colorOptions {
+                              ...ColorDetails
+                            }
+                          }
+                          ...on SingleColor {
+                            colorOption {
+                              ...ColorDetails
+                            }
+                          }
+                        }
+
+                        fragment ColorDetails on TshirtColorOption {
+                          id
+                          color
+                        }
+                  "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .expect("to normalize")
+                .to_string()
+            ),
+            @r"
+        query {
+          results {
+            __typename
+            ... on MultipleColor {
+              id
+              name
+              colorOptions {
+                id
+                color
+              }
+            }
+            ... on SingleColor {
+              id
+              name
+              colorOption {
+                id
+                color
+              }
+            }
+          }
+        }
+        ",
+        );
+    }
+
+    #[test]
+    fn inlining_nested_fragments_with_same_type() {
+        let schema_str =
+            std::fs::read_to_string("./fixture/tests/nested-fragments.supergraph.graphql")
+                .expect("Unable to read supergraph");
+        let schema = parse_schema(&schema_str);
+        let supergraph = SupergraphState::new(&schema);
+
+        insta::assert_snapshot!(
+            &pretty_query(
+                normalize_operation(
+                    &supergraph,
+                    &parse_query(
+                        r#"
+                        query {
+                          results {
+                            __typename
+                            ... on Tshirt {
+                              ...TshirtResult1
+                            }
+                          }
+                        }
+
+                        fragment TshirtResult1 on Tshirt {
+                          ...TshirtResult2
+                        }
+
+                        fragment TshirtResult2 on Tshirt {
+                          id
+                          name
+                          ...on MultipleColor {
+                            colorOptions {
+                              ...ColorDetails
+                            }
+                          }
+                          ...on SingleColor {
+                            colorOption {
+                              ...ColorDetails
+                            }
+                          }
+                        }
+
+                        fragment ColorDetails on TshirtColorOption {
+                          id
+                          color
+                        }
+                  "#,
+                    )
+                    .expect("to parse"),
+                    None,
+                )
+                .unwrap()
+                .to_string()
+            ),
+            @r"
+            query {
+              results {
+                __typename
+                ... on MultipleColor {
+                  id
+                  name
+                  colorOptions {
+                    id
+                    color
+                  }
+                }
+                ... on SingleColor {
+                  id
+                  name
+                  colorOption {
+                    id
+                    color
+                  }
+                }
+              }
+            }
+        "
         );
     }
 }
