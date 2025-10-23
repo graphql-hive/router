@@ -87,17 +87,6 @@ impl<T> IntoPlanExecutionError<T> for Result<T, HeaderRuleRuntimeError> {
     }
 }
 
-impl<SN: FnOnce() -> Option<String>, AP: FnOnce() -> Option<String>> From<LazyPlanContext<SN, AP>>
-    for PlanExecutionErrorContext
-{
-    fn from(context: LazyPlanContext<SN, AP>) -> Self {
-        PlanExecutionErrorContext {
-            subgraph_name: (context.subgraph_name)(),
-            affected_path: (context.affected_path)(),
-        }
-    }
-}
-
 impl PlanExecutionError {
     pub(crate) fn new<SN, AP>(
         kind: PlanExecutionErrorKind,
@@ -143,11 +132,5 @@ impl From<PlanExecutionError> for GraphQLError {
             locations: None,
             path: None,
         }
-    }
-}
-
-impl From<&PlanExecutionError> for GraphQLError {
-    fn from(val: &PlanExecutionError) -> Self {
-        val.clone().into()
     }
 }
