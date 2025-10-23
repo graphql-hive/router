@@ -1,11 +1,21 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use hive_router_config::override_labels::{LabelOverrideValue, OverrideLabelsConfig};
+use hive_router_plan_executor::execution::plan::ClientRequestDetails;
 use hive_router_query_planner::{
     graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
     state::supergraph_state::SupergraphState,
 };
 use rand::Rng;
+use vrl::{
+    compiler::compile as vrl_compile,
+    compiler::Program as VrlProgram,
+    compiler::TargetValue as VrlTargetValue,
+    core::Value as VrlValue,
+    prelude::{state::RuntimeState as VrlState, Context as VrlContext, TimeZone as VrlTimeZone},
+    stdlib::all as vrl_build_functions,
+    value::Secrets as VrlSecrets,
+};
 
 use super::error::PipelineError;
 
@@ -20,23 +30,27 @@ pub struct RequestOverrideContext {
 }
 
 #[inline]
-pub fn request_override_context(
-    override_labels_config: &OverrideLabelsConfig,
-) -> Result<RequestOverrideContext, PipelineError> {
+pub fn request_override_context<'req, F>(
+    override_labels_evaluator: &OverrideLabelsEvaluator,
+    get_client_request: F,
+) -> Result<RequestOverrideContext, PipelineError>
+where
+    F: FnOnce() -> ClientRequestDetails<'req>,
+{
     // No active flags by default - until we implement it
-    let mut active_flags = HashSet::new();
+    let active_flags = override_labels_evaluator.evaluate(get_client_request);
 
-    for (flag_name, override_value) in override_labels_config.iter() {
-        match override_value {
-            LabelOverrideValue::Boolean(true) => {
-                active_flags.insert(flag_name.clone());
-            }
-            // For other cases, we currently do nothing
-            _ => {
-                // TODO: support expressions
-            }
-        }
-    }
+    // for (flag_name, override_value) in override_labels_config.iter() {
+    //     match override_value {
+    //         LabelOverrideValue::Boolean(true) => {
+    //             active_flags.insert(flag_name.clone());
+    //         }
+    //         // For other cases, we currently do nothing
+    //         _ => {
+    //             // TODO: support expressions
+    //         }
+    //     }
+    // }
 
     // Generate the random percentage value for this request.
     // Percentage is 0 - 100_000_000_000 (100*PERCENTAGE_SCALE_FACTOR)
@@ -90,5 +104,83 @@ impl StableOverrideContext {
             active_flags,
             percentage_outcomes,
         }
+    }
+}
+
+/// Evaluator for override labels based on configuration.
+/// This struct compiles and evaluates the override label expressions.
+/// It's intended to be used as a shared state in the router.
+pub struct OverrideLabelsEvaluator {
+    static_enabled_labels: HashSet<String>,
+    expressions: HashMap<String, VrlProgram>,
+}
+
+impl OverrideLabelsEvaluator {
+    pub(crate) fn from_config(override_labels_config: &OverrideLabelsConfig) -> Self {
+        let mut static_enabled_labels = HashSet::new();
+        let mut expressions = HashMap::new();
+        let vrl_functions = vrl_build_functions();
+
+        for (label, value) in override_labels_config.iter() {
+            match value {
+                LabelOverrideValue::Boolean(true) => {
+                    static_enabled_labels.insert(label.clone());
+                }
+                LabelOverrideValue::Expression { expression } => {
+                    let compilation_result = vrl_compile(expression, &vrl_functions).unwrap();
+                    expressions.insert(label.clone(), compilation_result.program);
+                }
+                _ => {} // Skip false booleans
+            }
+        }
+
+        Self {
+            static_enabled_labels,
+            expressions,
+        }
+    }
+
+    pub fn evaluate<'req, F>(&self, get_client_request: F) -> HashSet<String>
+    where
+        F: FnOnce() -> ClientRequestDetails<'req>,
+    {
+        let mut active_flags = self.static_enabled_labels.clone();
+
+        if self.expressions.is_empty() {
+            return active_flags;
+        }
+
+        let client_request = get_client_request();
+
+        for (label, expression) in &self.expressions {
+            let mut target = VrlTargetValue {
+                value: VrlValue::Object(BTreeMap::from([(
+                    "request".into(),
+                    (&client_request).into(),
+                )])),
+                metadata: VrlValue::Object(BTreeMap::new()),
+                secrets: VrlSecrets::default(),
+            };
+
+            let mut state = VrlState::default();
+            let timezone = VrlTimeZone::default();
+            let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
+
+            let evaluated_value = expression.resolve(&mut ctx).unwrap();
+
+            match evaluated_value {
+                VrlValue::Boolean(true) => {
+                    active_flags.insert(label.clone());
+                }
+                VrlValue::Boolean(false) => {
+                    // Do nothing for false
+                }
+                _ => {
+                    // TODO: error handling for non-boolean results
+                }
+            }
+        }
+
+        active_flags
     }
 }

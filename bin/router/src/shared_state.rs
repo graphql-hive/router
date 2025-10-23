@@ -8,12 +8,14 @@ use std::sync::Arc;
 
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::cors::{CORSConfigError, Cors};
+use crate::pipeline::progressive_override::OverrideLabelsEvaluator;
 
 pub struct RouterSharedState {
     pub validation_plan: ValidationPlan,
     pub parse_cache: Cache<u64, Arc<graphql_parser::query::Document<'static, String>>>,
     pub router_config: Arc<HiveRouterConfig>,
     pub headers_plan: HeaderRulesPlan,
+    pub override_labels_evaluator: Arc<OverrideLabelsEvaluator>,
     pub cors_runtime: Option<Cors>,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
 }
@@ -29,6 +31,9 @@ impl RouterSharedState {
             parse_cache: moka::future::Cache::new(1000),
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,
             router_config: router_config.clone(),
+            override_labels_evaluator: Arc::new(OverrideLabelsEvaluator::from_config(
+                &router_config.override_labels,
+            )),
             jwt_auth_runtime,
         })
     }
