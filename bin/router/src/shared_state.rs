@@ -43,9 +43,9 @@ impl RouterSharedState {
 #[derive(thiserror::Error, Debug)]
 pub enum SharedStateError {
     #[error("invalid headers config: {0}")]
-    HeaderRuleCompileError(#[from] Box<HeaderRuleCompileError>),
+    HeaderRuleCompile(#[from] Box<HeaderRuleCompileError>),
     #[error("invalid regex in CORS config: {0}")]
-    CORSConfigError(#[from] Box<CORSConfigError>),
+    CORSConfig(#[from] Box<CORSConfigError>),
     #[error("invalid override labels config: {0}")]
-    OverrideLabelsCompileError(#[from] Box<OverrideLabelsCompileError>),
+    OverrideLabelsCompile(#[from] Box<OverrideLabelsCompileError>),
 }
