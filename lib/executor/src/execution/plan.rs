@@ -17,7 +17,7 @@ use sonic_rs::ValueRef;
 use crate::{
     context::ExecutionContext,
     execution::{
-        error::{ErrorContext, PlanExecutionError, ResultExt},
+        error::{ErrorContext, IntoPlanExecutionError, PlanExecutionError},
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
     },
