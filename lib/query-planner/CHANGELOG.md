@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1](https://github.com/graphql-hive/router/compare/hive-router-query-planner-v2.0.0...hive-router-query-planner-v2.0.1) - 2025-10-23
+
+### Fixed
+
+- *(query-planner)* inline nested fragment spreads ([#502](https://github.com/graphql-hive/router/pull/502))
+
 ## [2.0.0](https://github.com/graphql-hive/router/compare/hive-router-query-planner-v1.0.0...hive-router-query-planner-v2.0.0) - 2025-10-05
 
 ### Other
