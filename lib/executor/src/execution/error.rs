@@ -7,21 +7,22 @@ use crate::{
 };
 
 #[derive(thiserror::Error, Debug, Clone, IntoStaticStr)]
-pub enum PlanExecutionError {
-    #[error("Projection faiure: {source}")]
+pub enum PlanExecutionErrorKind {
+    #[error("Projection faiure: {0}")]
     #[strum(serialize = "PROJECTION_FAILURE")]
-    ProjectionFailure {
-        #[source]
-        source: ProjectionError,
-        context: PlanExecutionErrorContext,
-    },
-    #[error("{source}")]
+    ProjectionFailure(#[from] ProjectionError),
+
+    #[error(transparent)]
     #[strum(serialize = "HEADER_PROPAGATION_FAILURE")]
-    HeaderPropagation {
-        #[source]
-        source: HeaderRuleRuntimeError,
-        context: PlanExecutionErrorContext,
-    },
+    HeaderPropagation(#[from] HeaderRuleRuntimeError),
+}
+
+#[derive(thiserror::Error, Debug, Clone)]
+#[error("{kind}")]
+pub struct PlanExecutionError {
+    #[source]
+    pub kind: PlanExecutionErrorKind,
+    pub context: PlanExecutionErrorContext,
 }
 
 #[derive(Debug, Clone)]
@@ -51,8 +52,8 @@ impl<T> ResultExt<T> for Result<T, ProjectionError> {
         SN: FnOnce() -> Option<String>,
         AP: FnOnce() -> Option<String>,
     {
-        self.map_err(|source| PlanExecutionError::ProjectionFailure {
-            source,
+        self.map_err(|source| PlanExecutionError {
+            kind: PlanExecutionErrorKind::ProjectionFailure(source),
             context: context.into(),
         })
     }
@@ -64,8 +65,8 @@ impl<T> ResultExt<T> for Result<T, HeaderRuleRuntimeError> {
         SN: FnOnce() -> Option<String>,
         AP: FnOnce() -> Option<String>,
     {
-        self.map_err(|source| PlanExecutionError::HeaderPropagation {
-            source,
+        self.map_err(|source| PlanExecutionError {
+            kind: PlanExecutionErrorKind::HeaderPropagation(source),
             context: context.into(),
         })
     }
@@ -84,22 +85,15 @@ impl<SN: FnOnce() -> Option<String>, AP: FnOnce() -> Option<String>> From<ErrorC
 
 impl PlanExecutionError {
     pub fn error_code(&self) -> &'static str {
-        self.into()
-    }
-
-    fn context(&self) -> &PlanExecutionErrorContext {
-        match self {
-            Self::ProjectionFailure { context, .. } => context,
-            Self::HeaderPropagation { context, .. } => context,
-        }
+        (&self.kind).into()
     }
 
     pub fn subgraph_name(&self) -> &Option<String> {
-        &self.context().subgraph_name
+        &self.context.subgraph_name
     }
 
     pub fn affected_path(&self) -> &Option<String> {
-        &self.context().affected_path
+        &self.context.affected_path
     }
 }
 
