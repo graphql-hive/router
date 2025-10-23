@@ -35,7 +35,6 @@ pub struct ErrorContext<SN, AP> {
     pub affected_path: AP,
 }
 
-// The trait and its implementation are unchanged and correct.
 pub trait ResultExt<T> {
     fn map_to_plan_err<SN, AP>(
         self,
