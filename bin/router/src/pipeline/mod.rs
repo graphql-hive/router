@@ -140,7 +140,7 @@ pub async fn execute_pipeline(
                         Some(OperationKind::Subscription) => "subscription",
                         None => "query",
                     },
-                    query: query.to_owned(),
+                    query: query.clone(),
                 },
             }
         })
