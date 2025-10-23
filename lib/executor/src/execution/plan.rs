@@ -315,7 +315,10 @@ impl<'exec> Executor<'exec> {
                 Ok(job) => {
                     self.process_job_result(ctx, job)?;
                 }
-                Err(err) => ctx.errors.push(err.into()),
+                Err(err) => {
+                    self.log_error(&err);
+                    ctx.errors.push(err.into())
+                }
             }
         }
 
