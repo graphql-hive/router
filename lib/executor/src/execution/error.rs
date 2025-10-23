@@ -41,52 +41,6 @@ pub struct LazyPlanContext<SN, AP> {
     pub affected_path: AP,
 }
 
-/// An extension trait for `Result` types that can be converted into a `PlanExecutionError`.
-///
-/// This trait provides a lazy, performant way to add contextual information to
-/// an error, only performing work (like cloning strings) if the `Result` is an `Err`.
-pub trait IntoPlanExecutionError<T> {
-    fn with_plan_context<SN, AP>(
-        self,
-        context: LazyPlanContext<SN, AP>,
-    ) -> Result<T, PlanExecutionError>
-    where
-        SN: FnOnce() -> Option<String>,
-        AP: FnOnce() -> Option<String>;
-}
-
-impl<T> IntoPlanExecutionError<T> for Result<T, ProjectionError> {
-    fn with_plan_context<SN, AP>(
-        self,
-        context: LazyPlanContext<SN, AP>,
-    ) -> Result<T, PlanExecutionError>
-    where
-        SN: FnOnce() -> Option<String>,
-        AP: FnOnce() -> Option<String>,
-    {
-        self.map_err(|source| {
-            let kind = PlanExecutionErrorKind::ProjectionFailure(source);
-            PlanExecutionError::new(kind, context)
-        })
-    }
-}
-
-impl<T> IntoPlanExecutionError<T> for Result<T, HeaderRuleRuntimeError> {
-    fn with_plan_context<SN, AP>(
-        self,
-        context: LazyPlanContext<SN, AP>,
-    ) -> Result<T, PlanExecutionError>
-    where
-        SN: FnOnce() -> Option<String>,
-        AP: FnOnce() -> Option<String>,
-    {
-        self.map_err(|source| {
-            let kind = PlanExecutionErrorKind::HeaderPropagation(source);
-            PlanExecutionError::new(kind, context)
-        })
-    }
-}
-
 impl PlanExecutionError {
     pub(crate) fn new<SN, AP>(
         kind: PlanExecutionErrorKind,
@@ -132,5 +86,51 @@ impl From<PlanExecutionError> for GraphQLError {
             locations: None,
             path: None,
         }
+    }
+}
+
+/// An extension trait for `Result` types that can be converted into a `PlanExecutionError`.
+///
+/// This trait provides a lazy, performant way to add contextual information to
+/// an error, only performing work (like cloning strings) if the `Result` is an `Err`.
+pub trait IntoPlanExecutionError<T> {
+    fn with_plan_context<SN, AP>(
+        self,
+        context: LazyPlanContext<SN, AP>,
+    ) -> Result<T, PlanExecutionError>
+    where
+        SN: FnOnce() -> Option<String>,
+        AP: FnOnce() -> Option<String>;
+}
+
+impl<T> IntoPlanExecutionError<T> for Result<T, ProjectionError> {
+    fn with_plan_context<SN, AP>(
+        self,
+        context: LazyPlanContext<SN, AP>,
+    ) -> Result<T, PlanExecutionError>
+    where
+        SN: FnOnce() -> Option<String>,
+        AP: FnOnce() -> Option<String>,
+    {
+        self.map_err(|source| {
+            let kind = PlanExecutionErrorKind::ProjectionFailure(source);
+            PlanExecutionError::new(kind, context)
+        })
+    }
+}
+
+impl<T> IntoPlanExecutionError<T> for Result<T, HeaderRuleRuntimeError> {
+    fn with_plan_context<SN, AP>(
+        self,
+        context: LazyPlanContext<SN, AP>,
+    ) -> Result<T, PlanExecutionError>
+    where
+        SN: FnOnce() -> Option<String>,
+        AP: FnOnce() -> Option<String>,
+    {
+        self.map_err(|source| {
+            let kind = PlanExecutionErrorKind::HeaderPropagation(source);
+            PlanExecutionError::new(kind, context)
+        })
     }
 }
