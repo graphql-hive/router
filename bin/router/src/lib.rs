@@ -97,7 +97,7 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
     .map_err(|err| err.into());
 
     info!("server stopped, clearning background tasks");
-    bg_tasks_manager.shutdown().await;
+    bg_tasks_manager.shutdown();
 
     maybe_error
 }
