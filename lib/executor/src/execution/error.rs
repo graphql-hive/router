@@ -17,6 +17,11 @@ pub enum PlanExecutionErrorKind {
     HeaderPropagation(#[from] HeaderRuleRuntimeError),
 }
 
+/// The central error type for all query plan execution failures.
+///
+/// This struct combines a specific `PlanExecutionErrorKind` with a
+/// `PlanExecutionErrorContext` that holds shared, dynamic information
+/// like the subgraph name or affected GraphQL path.
 #[derive(thiserror::Error, Debug, Clone)]
 #[error("{kind}")]
 pub struct PlanExecutionError {
@@ -36,6 +41,10 @@ pub struct ErrorContext<SN, AP> {
     pub affected_path: AP,
 }
 
+/// An extension trait for `Result` types that can be converted into a `PlanExecutionError`.
+///
+/// This trait provides a lazy, performant way to add contextual information to
+/// an error, only performing work (like cloning strings) if the `Result` is an `Err`.
 pub trait IntoPlanExecutionError<T> {
     fn with_plan_context<SN, AP>(
         self,
@@ -55,9 +64,9 @@ impl<T> IntoPlanExecutionError<T> for Result<T, ProjectionError> {
         SN: FnOnce() -> Option<String>,
         AP: FnOnce() -> Option<String>,
     {
-        self.map_err(|source| PlanExecutionError {
-            kind: PlanExecutionErrorKind::ProjectionFailure(source),
-            context: context.into(),
+        self.map_err(|source| {
+            let kind = PlanExecutionErrorKind::ProjectionFailure(source);
+            PlanExecutionError::new(kind, context)
         })
     }
 }
@@ -71,9 +80,9 @@ impl<T> IntoPlanExecutionError<T> for Result<T, HeaderRuleRuntimeError> {
         SN: FnOnce() -> Option<String>,
         AP: FnOnce() -> Option<String>,
     {
-        self.map_err(|source| PlanExecutionError {
-            kind: PlanExecutionErrorKind::HeaderPropagation(source),
-            context: context.into(),
+        self.map_err(|source| {
+            let kind = PlanExecutionErrorKind::HeaderPropagation(source);
+            PlanExecutionError::new(kind, context)
         })
     }
 }
@@ -90,6 +99,23 @@ impl<SN: FnOnce() -> Option<String>, AP: FnOnce() -> Option<String>> From<ErrorC
 }
 
 impl PlanExecutionError {
+    pub(crate) fn new<SN, AP>(
+        kind: PlanExecutionErrorKind,
+        lazy_context: ErrorContext<SN, AP>,
+    ) -> Self
+    where
+        SN: FnOnce() -> Option<String>,
+        AP: FnOnce() -> Option<String>,
+    {
+        Self {
+            kind,
+            context: PlanExecutionErrorContext {
+                subgraph_name: (lazy_context.subgraph_name)(),
+                affected_path: (lazy_context.affected_path)(),
+            },
+        }
+    }
+
     pub fn error_code(&self) -> &'static str {
         (&self.kind).into()
     }
@@ -103,24 +129,25 @@ impl PlanExecutionError {
     }
 }
 
-impl From<&PlanExecutionError> for GraphQLError {
-    fn from(val: &PlanExecutionError) -> Self {
+impl From<PlanExecutionError> for GraphQLError {
+    fn from(val: PlanExecutionError) -> Self {
+        let message = val.to_string();
         GraphQLError {
             extensions: GraphQLErrorExtensions {
                 code: Some(val.error_code().into()),
-                service_name: val.subgraph_name().clone(),
-                affected_path: val.affected_path().clone(),
+                service_name: val.context.subgraph_name,
+                affected_path: val.context.affected_path,
                 extensions: Default::default(),
             },
-            message: val.to_string(),
+            message,
             locations: None,
             path: None,
         }
     }
 }
 
-impl From<PlanExecutionError> for GraphQLError {
-    fn from(val: PlanExecutionError) -> Self {
-        (&val).into()
+impl From<&PlanExecutionError> for GraphQLError {
+    fn from(val: &PlanExecutionError) -> Self {
+        val.clone().into()
     }
 }
