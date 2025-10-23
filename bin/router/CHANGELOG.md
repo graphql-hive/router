@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.13](https://github.com/graphql-hive/router/compare/hive-router-v0.0.12...hive-router-v0.0.13) - 2025-10-23
+
+### Added
+
+- *(router)* support `hive` as source for supergraph ([#400](https://github.com/graphql-hive/router/pull/400))
+
+### Fixed
+
+- *(router)* use 503 instead of 500 when router is not ready ([#512](https://github.com/graphql-hive/router/pull/512))
+- *(executor)* error logging in HTTP executor ([#498](https://github.com/graphql-hive/router/pull/498))
+- *(executor)* handle subgraph errors with extensions correctly ([#494](https://github.com/graphql-hive/router/pull/494))
+- *(ci)* fail when audit tests failing ([#495](https://github.com/graphql-hive/router/pull/495))
+- *(executor)* project scalars with object values correctly ([#492](https://github.com/graphql-hive/router/pull/492))
+- *(query-planner)* inline nested fragment spreads ([#502](https://github.com/graphql-hive/router/pull/502))
+
+### Other
+
+- Remove mimalloc override feature and use v3 ([#497](https://github.com/graphql-hive/router/pull/497))
+- Add affectedPath to GraphQLErrorExtensions ([#510](https://github.com/graphql-hive/router/pull/510))
+- Handle empty responses from subgraphs and failed entity calls ([#500](https://github.com/graphql-hive/router/pull/500))
+- Rename default config file to router.config ([#493](https://github.com/graphql-hive/router/pull/493))
+
 ## [0.0.12](https://github.com/graphql-hive/router/compare/hive-router-v0.0.11...hive-router-v0.0.12) - 2025-10-16
 
 ### Added
