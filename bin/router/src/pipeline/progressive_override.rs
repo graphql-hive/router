@@ -26,7 +26,6 @@ pub fn request_override_context(
     // No active flags by default - until we implement it
     let mut active_flags = HashSet::new();
 
-    // looks for boolean values
     for (flag_name, override_value) in override_labels_config.iter() {
         match override_value {
             LabelOverrideValue::Boolean(true) => {
