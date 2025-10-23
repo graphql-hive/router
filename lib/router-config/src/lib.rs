@@ -6,6 +6,7 @@ pub mod headers;
 pub mod http_server;
 pub mod jwt_auth;
 pub mod log;
+pub mod override_labels;
 pub mod override_subgraph_urls;
 pub mod primitives;
 pub mod query_planner;
@@ -16,6 +17,7 @@ use config::{Config, File, FileFormat, FileSourceFile};
 use envconfig::Envconfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::{
@@ -23,6 +25,7 @@ use crate::{
     graphiql::GraphiQLConfig,
     http_server::HttpServerConfig,
     log::LoggingConfig,
+    override_labels::OverrideLabelsConfig,
     primitives::file_path::with_start_path,
     query_planner::QueryPlannerConfig,
     supergraph::SupergraphSource,
@@ -81,6 +84,10 @@ pub struct HiveRouterConfig {
     /// Configuration for overriding subgraph URLs.
     #[serde(default)]
     pub override_subgraph_urls: override_subgraph_urls::OverrideSubgraphUrlsConfig,
+
+    /// Configuration for overriding labels.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub override_labels: OverrideLabelsConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
