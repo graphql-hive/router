@@ -21,8 +21,8 @@ pub enum PlanExecutionErrorKind {
 #[error("{kind}")]
 pub struct PlanExecutionError {
     #[source]
-    pub kind: PlanExecutionErrorKind,
-    pub context: PlanExecutionErrorContext,
+    kind: PlanExecutionErrorKind,
+    context: PlanExecutionErrorContext,
 }
 
 #[derive(Debug, Clone)]
