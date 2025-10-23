@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod jwt_e2e_tests {
+mod supergraph_e2e_tests {
     use std::{sync::Arc, time::Duration};
 
     use ntex::{time, web::test};
