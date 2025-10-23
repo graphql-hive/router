@@ -315,10 +315,7 @@ impl<'exec> Executor<'exec> {
                 Ok(job) => {
                     self.process_job_result(ctx, job)?;
                 }
-                Err(err) => ctx.errors.push(GraphQLError::from_message_and_extensions(
-                    err.to_string(),
-                    GraphQLErrorExtensions::new_from_code("PLAN_EXECUTION_FAILED"),
-                )),
+                Err(err) => ctx.errors.push(err.into()),
             }
         }
 
