@@ -54,10 +54,7 @@ impl<T> ResultExt<T> for Result<T, ProjectionError> {
     {
         self.map_err(|source| PlanExecutionError::ProjectionFailure {
             source,
-            context: PlanExecutionErrorContext {
-                subgraph_name: (context.subgraph_name)(),
-                affected_path: (context.affected_path)(),
-            },
+            context: context.into(),
         })
     }
 }
@@ -70,11 +67,19 @@ impl<T> ResultExt<T> for Result<T, HeaderRuleRuntimeError> {
     {
         self.map_err(|source| PlanExecutionError::HeaderPropagation {
             source,
-            context: PlanExecutionErrorContext {
-                subgraph_name: (context.subgraph_name)(),
-                affected_path: (context.affected_path)(),
-            },
+            context: context.into(),
         })
+    }
+}
+
+impl<SN: FnOnce() -> Option<String>, AP: FnOnce() -> Option<String>> From<ErrorContext<SN, AP>>
+    for PlanExecutionErrorContext
+{
+    fn from(context: ErrorContext<SN, AP>) -> Self {
+        PlanExecutionErrorContext {
+            subgraph_name: (context.subgraph_name)(),
+            affected_path: (context.affected_path)(),
+        }
     }
 }
 
