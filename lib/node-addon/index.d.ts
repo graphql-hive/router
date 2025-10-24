@@ -79,7 +79,7 @@ export interface ParallelNode {
 export type FlattenNodePathSegment =
   | { kind: "Field"; name: string }
   | { kind: "Cast"; typeCondition: string }
-  | string;
+  | "@";
 
 export interface FlattenNode {
   kind: "Flatten";
