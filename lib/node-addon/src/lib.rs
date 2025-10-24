@@ -12,6 +12,7 @@ use std::sync::Arc;
 #[napi]
 pub struct QueryPlanner {
     planner: Arc<Planner>,
+    consumer_schema: String,
 }
 
 // TODO: Did not find struct `QueryPlanner` parsed before expand #[napi] for impl?
@@ -26,9 +27,17 @@ impl QueryPlanner {
             napi::Error::from_reason(format!("Failed to create query planner: {}", err))
         })?;
 
+        let consumer_schema = planner.consumer_schema.document.to_string();
+
         Ok(QueryPlanner {
             planner: Arc::new(planner),
+            consumer_schema: consumer_schema,
         })
+    }
+
+    #[napi(getter)]
+    pub fn consumer_schema(&self) -> String {
+        self.consumer_schema.clone()
     }
 
     // queryplan located in query-plan.d.ts and will be merged with index.d.ts on build
