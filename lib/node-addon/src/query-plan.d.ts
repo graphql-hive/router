@@ -68,9 +68,14 @@ export interface ParallelNode {
   nodes: PlanNode[];
 }
 
+export type FlattenNodePathSegment =
+  | { kind: "Field"; name: string }
+  | { kind: "Cast"; typeCondition: string }
+  | string;
+
 export interface FlattenNode {
   kind: "Flatten";
-  path: string[];
+  path: FlattenNodePathSegment[];
   node: PlanNode;
 }
 
