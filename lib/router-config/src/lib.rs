@@ -1,5 +1,6 @@
 pub mod cors;
 pub mod csrf;
+mod env_overrides;
 pub mod headers;
 pub mod http_server;
 pub mod jwt_auth;
@@ -10,14 +11,19 @@ pub mod query_planner;
 pub mod supergraph;
 pub mod traffic_shaping;
 
-use config::{Config, Environment, File, FileFormat, FileSourceFile};
+use config::{Config, File, FileFormat, FileSourceFile};
+use envconfig::Envconfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::{
-    http_server::HttpServerConfig, log::LoggingConfig, primitives::file_path::with_start_path,
-    query_planner::QueryPlannerConfig, supergraph::SupergraphSource,
+    env_overrides::{EnvVarOverrides, EnvVarOverridesError},
+    http_server::HttpServerConfig,
+    log::LoggingConfig,
+    primitives::file_path::with_start_path,
+    query_planner::QueryPlannerConfig,
+    supergraph::SupergraphSource,
     traffic_shaping::TrafficShapingExecutorConfig,
 };
 
@@ -74,7 +80,9 @@ pub struct HiveRouterConfig {
 #[derive(Debug, thiserror::Error)]
 pub enum RouterConfigError {
     #[error("Failed to load configuration: {0}")]
-    ConfigLoadError(config::ConfigError),
+    ConfigLoadError(#[from] config::ConfigError),
+    #[error("Failed to apply configuration overrides: {0}")]
+    EnvVarOverridesError(#[from] EnvVarOverridesError),
 }
 
 static DEFAULT_FILE_NAMES: &[&str] = &[
@@ -86,7 +94,8 @@ static DEFAULT_FILE_NAMES: &[&str] = &[
 
 pub fn load_config(
     overide_config_path: Option<String>,
-) -> Result<HiveRouterConfig, config::ConfigError> {
+) -> Result<HiveRouterConfig, RouterConfigError> {
+    let env_overrides = EnvVarOverrides::init_from_env().expect("failed to init env overrides");
     let mut config = Config::builder();
     let mut config_root_path = std::env::current_dir().expect("failed to get current directory");
 
@@ -106,15 +115,10 @@ pub fn load_config(
         }
     }
 
+    config = env_overrides.apply_overrides(config)?;
+
     let mut base_cfg = with_start_path(&config_root_path, || {
-        config
-            .add_source(
-                Environment::with_prefix("HIVE")
-                    .separator("__")
-                    .prefix_separator("__"),
-            )
-            .build()?
-            .try_deserialize::<HiveRouterConfig>()
+        config.build()?.try_deserialize::<HiveRouterConfig>()
     })?;
 
     base_cfg.root_directory = config_root_path;
