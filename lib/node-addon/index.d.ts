@@ -38,9 +38,11 @@ export interface SubscriptionNode {
 
 export type OutputRewrite = KeyRenamer;
 
+export type FetchNodePathSegment = { TypenameEquals: string } | { Key: string };
+
 export interface KeyRenamer {
   kind: "KeyRenamer";
-  path: string[];
+  path: FetchNodePathSegment[];
   renameKeyTo: string;
 }
 
@@ -48,7 +50,7 @@ export type InputRewrite = ValueSetter;
 
 export interface ValueSetter {
   kind: "ValueSetter";
-  path: string[];
+  path: FetchNodePathSegment[];
   setValueTo: any;
 }
 
@@ -76,10 +78,7 @@ export interface ParallelNode {
   nodes: PlanNode[];
 }
 
-export type FlattenNodePathSegment =
-  | { kind: "Field"; name: string }
-  | { kind: "Cast"; typeCondition: string }
-  | "@";
+export type FlattenNodePathSegment = { Field: string } | { Cast: string } | "@";
 
 export interface FlattenNode {
   kind: "Flatten";
