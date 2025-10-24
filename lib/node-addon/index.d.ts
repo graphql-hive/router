@@ -2,6 +2,7 @@
 /* eslint-disable */
 export declare class QueryPlanner {
   constructor(supergraphSdl: string)
+  get consumerSchema(): string
   plan(query: string, operationName?: string | undefined | null): Promise<QueryPlan>
 }
 
