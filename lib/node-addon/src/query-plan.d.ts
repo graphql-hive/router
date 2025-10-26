@@ -9,16 +9,17 @@ export type PlanNode =
   | ParallelNode
   | FlattenNode
   | ConditionNode
-  | SubscriptionNode;
+  | SubscriptionNode
+  | DeferNode;
 
 export interface FetchNode {
   kind: "Fetch";
   serviceName: string;
-  variableUsages: string[];
+  variableUsages?: string[];
   operationKind?: "query" | "mutation" | "subscription";
   operationName?: string;
   operation: string;
-  requires?: InlineFragmentRequiresNode[];
+  requires?: RequiresSelection[];
   inputRewrites?: InputRewrite[];
   outputRewrites?: OutputRewrite[];
 }
@@ -30,18 +31,19 @@ export interface SubscriptionNode {
 
 export type FetchNodePathSegment = { TypenameEquals: string } | { Key: string };
 
-export type InputRewrite =
-  | { [kind in "ValueSetter"]: ValueSetter }
-  | (ValueSetter & { kind: "ValueSetter" });
+export type FetchRewrite =
+  | { ValueSetter: ValueSetter }
+  | { KeyRenamer: KeyRenamer }
+  // TODO: why sometimes? see query plans of federation tests in hive gateway
+  | ({ kind: "ValueSetter" } & ValueSetter);
+
+export type InputRewrite = FetchRewrite;
+export type OutputRewrite = FetchRewrite;
 
 export interface ValueSetter {
   path: FetchNodePathSegment[];
   setValueTo: string;
 }
-
-export type OutputRewrite =
-  // TODO: why InputRewrite has `(ValueSetter & { kind: "ValueSetter" })` but OutputRewrite doesn't have `(KeyRenamer & { kind: "KeyRenamer" })`?
-  { [kind in "KeyRenamer"]: KeyRenamer };
 
 export interface KeyRenamer {
   path: FetchNodePathSegment[];
@@ -52,15 +54,26 @@ export interface InlineFragmentRequiresNode {
   kind: "InlineFragment";
   typeCondition: string;
   selections: RequiresSelection[];
+  skipIf?: string;
+  includeIf?: string;
 }
 
 export interface FieldRequiresNode {
   kind: "Field";
   name: string;
+  alias?: string;
   selections?: RequiresSelection[];
 }
 
-export type RequiresSelection = InlineFragmentRequiresNode | FieldRequiresNode;
+export interface FragmentSpreadRequiresNode {
+  kind: "FragmentSpread";
+  value: string;
+}
+
+export type RequiresSelection =
+  | InlineFragmentRequiresNode
+  | FieldRequiresNode
+  | FragmentSpreadRequiresNode;
 
 export interface SequenceNode {
   kind: "Sequence";
@@ -83,6 +96,30 @@ export interface FlattenNode {
 export interface ConditionNode {
   kind: "Condition";
   condition: string;
-  ifClause: PlanNode;
+  ifClause?: PlanNode;
   elseClause?: PlanNode;
+}
+
+export interface DeferNode {
+  kind: "Defer";
+  primary: DeferPrimary;
+  deferred: DeferredNode[];
+}
+
+export interface DeferPrimary {
+  subselection?: string;
+  node?: PlanNode;
+}
+
+export interface DeferredNode {
+  depends: DeferDependency[];
+  label?: string;
+  queryPath: string[];
+  subselection?: string;
+  node?: PlanNode;
+}
+
+export interface DeferDependency {
+  id: string;
+  deferLabel?: string;
 }
