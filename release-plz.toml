@@ -37,6 +37,5 @@ commit_parsers = [
     { message = "^chore\\(deps.*\\)", skip = true },
     { message = "^chore", skip = true },
     { message = "^ci", skip = true },
-    { message = "[skip changelog]", skip = true },
     { message = "^.*", group = "<!-- 5 -->Other" },
 ]
