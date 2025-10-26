@@ -182,8 +182,8 @@ jobs:
           mkdir -p ./target/linux/arm64
           mkdir -p ./target/linux/amd64
 
-          mv ./artifacts/${{ env.BINARY_NAME }}_linux_arm64/${{ env.BINARY_NAME }} ./target/linux/arm64/${{ env.BINARY_NAME }}
-          mv ./artifacts/${{ env.BINARY_NAME }}_linux_amd64/${{ env.BINARY_NAME }} ./target/linux/amd64/${{ env.BINARY_NAME }}
+          mv ./artifacts/target/aarch64-unknown-linux-gnu/release/${{ env.BINARY_NAME }} ./target/linux/arm64/${{ env.BINARY_NAME }}
+          mv ./artifacts/target/x86_64-unknown-linux-gnu/release/${{ env.BINARY_NAME }} ./target/linux/amd64/${{ env.BINARY_NAME }}
           ls -ltra ./target/linux/arm64/
           ls -ltra ./target/linux/amd64/
       - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
