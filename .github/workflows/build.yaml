@@ -155,7 +155,9 @@ jobs:
           cache-key: ${{ matrix.name }}
       - name: napi-rs build (${{ matrix.rust_target }})
         working-directory: lib/node-addon
-        run: npm run build
+        run: |
+          npm ci
+          npm run build
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         name: upload build artifact
         with:
