@@ -31,7 +31,7 @@ impl QueryPlanner {
 
         Ok(QueryPlanner {
             planner: Arc::new(planner),
-            consumer_schema: consumer_schema,
+            consumer_schema,
         })
     }
 
