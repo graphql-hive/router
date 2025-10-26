@@ -6,10 +6,21 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct LoggingConfig {
+    /// The level of logging to use.
+    ///
+    /// Can also be set via the `LOG_LEVEL` environment variable.
     #[serde(default)]
     pub level: LogLevel,
+
+    /// The format of the log messages.
+    ///
+    /// Can also be set via the `LOG_FORMAT` environment variable.
     #[serde(default)]
     pub format: LogFormat,
+
+    /// The filter to apply to log messages.
+    ///
+    /// Can also be set via the `LOG_FILTER` environment variable.
     #[serde(default)]
     pub filter: Option<String>,
 }

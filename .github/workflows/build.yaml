@@ -218,8 +218,7 @@ jobs:
           echo "Docker image: ${{ env.DOCKER_IMAGE_NAME }}@${{ needs.docker.outputs.docker_image_digest }}"
 
           docker run -d --name router -p 4000:4000 \
-          -e HIVE__SUPERGRAPH__SOURCE="file" \
-          -e HIVE__SUPERGRAPH__PATH="/app/supergraph.graphql" \
+          -e SUPERGRAPH_FILE_PATH="/app/supergraph.graphql" \
           -v ./bench/supergraph.graphql:/app/supergraph.graphql \
             ${{ env.DOCKER_IMAGE_NAME }}@${{ needs.docker.outputs.docker_image_digest }}
 

@@ -35,8 +35,7 @@ supergraph:
 Alternativly, you can use environment variables to configure the router:
 
 ```env
-HIVE__SUPERGRAPH__SOURCE=file
-HIVE__SUPERGRAPH__PATH=./supergraph.graphql
+SUPERGRAPH_FILE_PATH=./supergraph.graphql
 ```
 
 Then, run the router:
@@ -58,8 +57,7 @@ The router image is being published to [Docker to GitHub Container Registry](). 
 ```bash
 docker run \
   -p 4000:4000 \
-  -e HIVE__SUPERGRAPH__SOURCE="file" \
-  -e HIVE__SUPERGRAPH__PATH="/app/supergraph.graphql" \
+  -e SUPERGRAPH_FILE_PATH="/app/supergraph.graphql" \
   -v ./my-supergraph.graphql:/app/supergraph.graphql \
   ghcr.io/graphql-hive/router:latest
 ```

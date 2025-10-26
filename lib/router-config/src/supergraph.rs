@@ -12,6 +12,9 @@ pub enum SupergraphSource {
     /// The path can be either absolute or relative to the router's working directory.
     #[serde(rename = "file")]
     File {
+        /// The path to the supergraph file.
+        ///
+        /// Can also be set using the `SUPERGRAPH_FILE_PATH` environment variable.
         path: FilePath,
         /// Optional interval at which the file should be polled for changes.
         /// If not provided, the file will only be loaded once when the router starts.
@@ -26,10 +29,16 @@ pub enum SupergraphSource {
     #[serde(rename = "hive")]
     HiveConsole {
         /// The CDN endpoint from Hive Console target.
+        ///
+        /// Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.
         endpoint: String,
         /// The CDN Access Token with from the Hive Console target.
+        ///
+        /// Can also be set using the `HIVE_CDN_KEY` environment variable.
         key: String,
         /// Interval at which the Hive Console should be polled for changes.
+        ///
+        /// Can also be set using the `HIVE_CDN_POLL_INTERVAL` environment variable.
         #[serde(
             default = "default_hive_poll_interval",
             deserialize_with = "humantime_serde::deserialize",

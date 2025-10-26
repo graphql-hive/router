@@ -130,8 +130,7 @@ jobs:
       - name: Run router
         run: ./target/release/hive_router & sleep 5
         env:
-          HIVE__SUPERGRAPH__SOURCE: file
-          HIVE__SUPERGRAPH__PATH: bench/supergraph.graphql
+          SUPERGRAPH_FILE_PATH: bench/supergraph.graphql
       - name: Run k6 benchmark
         run: k6 run bench/k6.js
 

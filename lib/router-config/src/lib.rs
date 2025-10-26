@@ -1,6 +1,7 @@
 pub mod cors;
 pub mod csrf;
 mod env_overrides;
+pub mod graphiql;
 pub mod headers;
 pub mod http_server;
 pub mod jwt_auth;
@@ -19,6 +20,7 @@ use std::path::PathBuf;
 
 use crate::{
     env_overrides::{EnvVarOverrides, EnvVarOverridesError},
+    graphiql::GraphiQLConfig,
     http_server::HttpServerConfig,
     log::LoggingConfig,
     primitives::file_path::with_start_path,
@@ -38,6 +40,10 @@ pub struct HiveRouterConfig {
     /// The router is configured to be mostly silent (`info`) level, and will print only important messages, warnings, and errors.
     #[serde(default)]
     pub log: LoggingConfig,
+
+    /// Configuration for the GraphiQL interface.
+    #[serde(default)]
+    pub graphiql: GraphiQLConfig,
 
     /// Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).
     /// Each source has a different set of configuration, depending on the source type.

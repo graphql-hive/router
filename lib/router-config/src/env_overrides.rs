@@ -14,6 +14,10 @@ pub struct EnvVarOverrides {
     #[envconfig(from = "LOG_FILTER")]
     pub log_filter: Option<String>,
 
+    // GraphiQL overrides
+    #[envconfig(from = "GRAPHIQL_ENABLED")]
+    pub graphiql_enabled: Option<bool>,
+
     // HTTP overrides
     #[envconfig(from = "PORT")]
     pub http_port: Option<u64>,
@@ -27,6 +31,8 @@ pub struct EnvVarOverrides {
     pub hive_console_cdn_endpoint: Option<String>,
     #[envconfig(from = "HIVE_CDN_KEY")]
     pub hive_console_cdn_key: Option<String>,
+    #[envconfig(from = "HIVE_CDN_POLL_INTERVAL")]
+    pub hive_console_cdn_poll_interval: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -85,6 +91,17 @@ impl EnvVarOverrides {
             } else {
                 return Err(EnvVarOverridesError::MissingRequiredEnvVar("HIVE_CDN_KEY"));
             }
+
+            if let Some(hive_console_cdn_poll_interval) = self.hive_console_cdn_poll_interval.take()
+            {
+                config = config
+                    .set_override("supergraph.poll_interval", hive_console_cdn_poll_interval)?;
+            }
+        }
+
+        // GraphiQL overrides
+        if let Some(graphiql_enabled) = self.graphiql_enabled.take() {
+            config = config.set_override("graphiql.enabled", graphiql_enabled)?;
         }
 
         Ok(config)
