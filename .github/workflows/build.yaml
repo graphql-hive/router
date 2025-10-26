@@ -61,7 +61,7 @@ jobs:
         run: git diff --exit-code ./docs/README.md
 
   binary:
-    name: ${{ matrix.name }}
+    name: binary for ${{ matrix.name }}
     if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'hive-router-v'))
     runs-on: ${{ matrix.action_runner }}
     strategy:
@@ -127,7 +127,7 @@ jobs:
           tag: ${{ github.ref }}
 
   node-addon:
-    name: ${{ matrix.name }}
+    name: node-addon for ${{ matrix.name }}
     if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'hive-router-v'))
     runs-on: ${{ matrix.action_runner }}
     strategy:
