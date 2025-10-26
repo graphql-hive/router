@@ -3,6 +3,15 @@
   "extends": [
     "github>the-guild-org/shared-config:renovate",
     ":preserveSemverRanges",
-    "github>Turbo87/renovate-config"
+    "github>Turbo87/renovate-config//rust/updateToolchain"
+  ],
+  "packageRules": [
+    {
+      "description": "Auto-merge GitHub Actions digest updates",
+      "matchUpdateTypes": ["digest"],
+      "matchManagers": ["github-actions"],
+      "automerge": true,
+      "automergeType": "pr"
+    }
   ]
 }
