@@ -36,22 +36,24 @@ export interface SubscriptionNode {
   primary: PlanNode;
 }
 
-export type OutputRewrite = KeyRenamer;
-
 export type FetchNodePathSegment = { TypenameEquals: string } | { Key: string };
 
-export interface KeyRenamer {
-  kind: "KeyRenamer";
-  path: FetchNodePathSegment[];
-  renameKeyTo: string;
-}
-
-export type InputRewrite = ValueSetter;
+export type InputRewrite =
+  | { [kind in "ValueSetter"]: ValueSetter }
+  | (ValueSetter & { kind: "ValueSetter" });
 
 export interface ValueSetter {
-  kind: "ValueSetter";
   path: FetchNodePathSegment[];
-  setValueTo: any;
+  setValueTo: string;
+}
+
+export type OutputRewrite =
+  // TODO: why InputRewrite has `(ValueSetter & { kind: "ValueSetter" })` but OutputRewrite doesn't have `(KeyRenamer & { kind: "KeyRenamer" })`?
+  { [kind in "KeyRenamer"]: KeyRenamer };
+
+export interface KeyRenamer {
+  path: FetchNodePathSegment[];
+  renameKeyTo: string;
 }
 
 export interface InlineFragmentRequiresNode {
