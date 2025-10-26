@@ -61,7 +61,7 @@ jobs:
         run: git diff --exit-code ./docs/README.md
 
   binary:
-    name: binary for ${{ matrix.name }}
+    name: ${{ matrix.name }}
     if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'hive-router-v'))
     runs-on: ${{ matrix.action_runner }}
     strategy:
@@ -111,11 +111,23 @@ jobs:
         run: cargo build --release --target ${{ matrix.rust_target }}
         if: ${{ !matrix.zigbuild }}
 
+      # napi build will use zigbuild when cross compiling
+      - name: node-addon build (${{ matrix.rust_target }})
+        working-directory: lib/node-addon
+        env:
+          CROSS_COMPILE: ${{ matrix.zigbuild }}
+          TARGET: ${{ matrix.rust_target }}
+        run: |
+          npm ci
+          npm run build
+
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         name: upload build artifact
         with:
           name: hive_router_${{ matrix.name }}
-          path: target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
+          path: |
+            target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
+            lib/node-addon/${{ env.BINARY_NAME }}.*.node
           if-no-files-found: error
       - name: Upload binaries to release
         uses: svenstaro/upload-release-action@81c65b7cd4de9b2570615ce3aad67a41de5b1a13 # v2
@@ -125,57 +137,12 @@ jobs:
           file: target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
           asset_name: hive_router_${{ matrix.name }}
           tag: ${{ github.ref }}
-
-  node-addon:
-    name: node-addon for ${{ matrix.name }}
-    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'hive-router-v'))
-    runs-on: ${{ matrix.action_runner }}
-    strategy:
-      fail-fast: false # TODO: linux arm build fails
-      matrix:
-        include:
-          - name: linux_arm64
-            rust_target: aarch64-unknown-linux-gnu
-            action_runner: ubuntu-latest
-          - name: linux_amd64
-            rust_target: x86_64-unknown-linux-gnu
-            action_runner: ubuntu-latest
-          - name: macos_arm64
-            rust_target: aarch64-apple-darwin
-            action_runner: macos-15
-          - name: macos_amd64
-            rust_target: x86_64-apple-darwin
-            action_runner: macos-15
-    steps:
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
-        name: checkout
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-        name: rust toolchain (${{ matrix.rust_target }})
-        with:
-          target: ${{ matrix.rust_target }}
-          cache-key: ${{ matrix.name }}
-      - name: napi-rs build (${{ matrix.rust_target }})
-        working-directory: lib/node-addon
-        env:
-          TARGET: ${{ matrix.rust_target }}
-        run: |
-          npm ci
-          npm run build
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        name: upload build artifact
-        with:
-          name: hive_router_${{ matrix.name }}
-          # TODO: we dont use matrix.rust_target because napi-rs target is differenty named on output
-          path: lib/node-addon/${{ env.BINARY_NAME }}.*.node
-          if-no-files-found: error
-      - name: Upload binaries to release
+      - name: Upload node addons to release
         uses: svenstaro/upload-release-action@81c65b7cd4de9b2570615ce3aad67a41de5b1a13 # v2
         if: ${{ github.event_name == 'release' }}
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          # TODO: we dont use matrix.rust_target because napi-rs target is differenty named on output
           file: lib/node-addon/${{ env.BINARY_NAME }}.*.node
-          asset_name: hive_router_${{ matrix.name }}
           tag: ${{ github.ref }}
 
   docker:
