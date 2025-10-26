@@ -21,6 +21,9 @@
     "url": "https://the-guild.dev"
   },
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "napi": {
     "binaryName": "hive_router",
     "targets": [
