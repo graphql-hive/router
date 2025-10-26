@@ -131,6 +131,7 @@ jobs:
     if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'hive-router-v'))
     runs-on: ${{ matrix.action_runner }}
     strategy:
+      fail-fast: false # TODO: linux arm build fails
       matrix:
         include:
           - name: linux_arm64
