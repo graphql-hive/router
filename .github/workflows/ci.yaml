@@ -29,6 +29,11 @@ jobs:
         env:
           RUST_BACKTRACE: full
           RUST_LOG: debug
+      - working-directory: lib/node-addon
+        run: |
+          npm ci
+          npm run build:debug
+          npm test
 
   build-release:
     name: cargo build
