@@ -155,6 +155,8 @@ jobs:
           cache-key: ${{ matrix.name }}
       - name: napi-rs build (${{ matrix.rust_target }})
         working-directory: lib/node-addon
+        env:
+          TARGET: ${{ matrix.rust_target }}
         run: |
           npm ci
           npm run build
@@ -162,14 +164,16 @@ jobs:
         name: upload build artifact
         with:
           name: hive_router_${{ matrix.name }}
-          path: lib/node-addon/${{ env.BINARY_NAME }}.${{ matrix.rust_target }}.node
+          # TODO: we dont use matrix.rust_target because napi-rs target is differenty named on output
+          path: lib/node-addon/${{ env.BINARY_NAME }}.*.node
           if-no-files-found: error
       - name: Upload binaries to release
         uses: svenstaro/upload-release-action@81c65b7cd4de9b2570615ce3aad67a41de5b1a13 # v2
         if: ${{ github.event_name == 'release' }}
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: lib/node-addon/${{ env.BINARY_NAME }}.${{ matrix.rust_target }}.node
+          # TODO: we dont use matrix.rust_target because napi-rs target is differenty named on output
+          file: lib/node-addon/${{ env.BINARY_NAME }}.*.node
           asset_name: hive_router_${{ matrix.name }}
           tag: ${{ github.ref }}
 
