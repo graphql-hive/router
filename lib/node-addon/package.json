@@ -9,6 +9,18 @@
     "index.d.ts",
     "*.node"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/graphql-hive/router.git",
+    "directory": "lib/node-addon"
+  },
+  "homepage": "https://the-guild.dev/graphql/hive/docs/router",
+  "author": {
+    "email": "contact@the-guild.dev",
+    "name": "The Guild",
+    "url": "https://the-guild.dev"
+  },
+  "license": "MIT",
   "napi": {
     "binaryName": "hive_router",
     "targets": [
