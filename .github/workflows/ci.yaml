@@ -29,7 +29,8 @@ jobs:
         env:
           RUST_BACKTRACE: full
           RUST_LOG: debug
-      - working-directory: lib/node-addon
+      - name: node-addon test
+        working-directory: lib/node-addon
         run: |
           npm ci
           npm run build:debug
