@@ -10,6 +10,10 @@ release = false
 publish = false
 
 [[package]]
+name = "node-addon"
+publish = false
+
+[[package]]
 name = "query-planner-wasm"
 release = false
 publish = false

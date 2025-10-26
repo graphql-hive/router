@@ -1,6 +1,6 @@
 [package]
 edition = "2021"
-name = "graphql-hive_router"
+name = "node-addon"
 publish = false
 
 [lib]

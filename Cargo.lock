@@ -1899,18 +1899,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
-name = "graphql-hive_router"
-version = "0.0.0"
-dependencies = [
- "hive-router-query-planner",
- "napi",
- "napi-build",
- "napi-derive",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "graphql-parser"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3103,6 +3091,18 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
+]
+
+[[package]]
+name = "node-addon"
+version = "0.0.0"
+dependencies = [
+ "hive-router-query-planner",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
