@@ -22,7 +22,9 @@ thiserror = { workspace = true }
 http = { workspace = true }
 jsonwebtoken = { workspace = true }
 retry-policies = { workspace = true}
+tracing = { workspace = true }
 
 schemars = "1.0.4"
 humantime-serde = "1.1.1"
 config = { version = "0.15.14", features = ["yaml", "json", "json5"] }
+envconfig = "0.11.0"

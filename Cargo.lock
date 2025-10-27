@@ -1506,6 +1506,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "envconfig"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c1d02ec9fdd0a585580bdc8fb7ad01675eee5e3b7336cedbabe3aab4a026dbc"
+dependencies = [
+ "envconfig_derive",
+]
+
+[[package]]
+name = "envconfig_derive"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4291f0c7220b67ad15e9d5300ba2f215cee504f0924d60e77c9d1c77e7a69b1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.108",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2033,6 +2053,7 @@ name = "hive-router-config"
 version = "0.0.9"
 dependencies = [
  "config",
+ "envconfig",
  "http",
  "humantime-serde",
  "jsonwebtoken",
@@ -2041,6 +2062,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.17",
+ "tracing",
 ]
 
 [[package]]

@@ -53,9 +53,13 @@ pub async fn graphql_request_handler(
     schema_state: &Arc<SchemaState>,
 ) -> web::HttpResponse {
     if req.method() == Method::GET && req.accepts_content_type(*TEXT_HTML_CONTENT_TYPE) {
-        return web::HttpResponse::Ok()
-            .header(CONTENT_TYPE, *TEXT_HTML_CONTENT_TYPE)
-            .body(GRAPHIQL_HTML);
+        if shared_state.router_config.graphiql.enabled {
+            return web::HttpResponse::Ok()
+                .header(CONTENT_TYPE, *TEXT_HTML_CONTENT_TYPE)
+                .body(GRAPHIQL_HTML);
+        } else {
+            return web::HttpResponse::NotFound().into();
+        }
     }
 
     if let Some(jwt) = &shared_state.jwt_auth_runtime {
