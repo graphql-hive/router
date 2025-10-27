@@ -17,7 +17,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     jwt::errors::JwtForwardingError,
-    pipeline::header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR},
+    pipeline::{
+        header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR},
+        progressive_override::LabelEvaluationError,
+    },
 };
 
 #[derive(Debug)]
@@ -79,6 +82,8 @@ pub enum PipelineErrorVariant {
     PlanExecutionError(PlanExecutionError),
     #[error("Failed to produce a plan: {0}")]
     PlannerError(Arc<PlannerError>),
+    #[error(transparent)]
+    LabelEvaluationError(LabelEvaluationError),
 
     // HTTP Security-related errors
     #[error("Required CSRF header(s) not present")]
@@ -95,6 +100,7 @@ impl PipelineErrorVariant {
             Self::UnsupportedHttpMethod(_) => "METHOD_NOT_ALLOWED",
             Self::PlannerError(_) => "QUERY_PLAN_BUILD_FAILED",
             Self::PlanExecutionError(_) => "QUERY_PLAN_EXECUTION_FAILED",
+            Self::LabelEvaluationError(_) => "OVERRIDE_LABEL_EVALUATION_FAILED",
             Self::FailedToParseOperation(_) => "GRAPHQL_PARSE_FAILED",
             Self::ValidationErrors(_) => "GRAPHQL_VALIDATION_FAILED",
             Self::VariablesCoercionError(_) => "BAD_USER_INPUT",
@@ -122,6 +128,7 @@ impl PipelineErrorVariant {
         match (self, prefer_ok) {
             (Self::PlannerError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::PlanExecutionError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
+            (Self::LabelEvaluationError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::JwtForwardingError(_), _) => StatusCode::INTERNAL_SERVER_ERROR,
             (Self::UnsupportedHttpMethod(_), _) => StatusCode::METHOD_NOT_ALLOWED,
             (Self::InvalidHeaderValue(_), _) => StatusCode::BAD_REQUEST,

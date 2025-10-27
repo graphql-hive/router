@@ -2045,6 +2045,7 @@ dependencies = [
  "tracing-subscriber",
  "tracing-tree",
  "ulid",
+ "vrl",
  "xxhash-rust",
 ]
 

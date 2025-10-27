@@ -1,7 +1,11 @@
 use std::{borrow::Cow, sync::Arc};
 
-use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
-use hive_router_query_planner::utils::cancellation::CancellationToken;
+use hive_router_plan_executor::execution::plan::{
+    ClientRequestDetails, OperationDetails, PlanExecutionOutput,
+};
+use hive_router_query_planner::{
+    state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
+};
 use http::{header::CONTENT_TYPE, HeaderValue, Method};
 use ntex::{
     util::Bytes,
@@ -12,7 +16,7 @@ use crate::{
     pipeline::{
         coerce_variables::coerce_request_variables,
         csrf_prevention::perform_csrf_prevention,
-        error::PipelineError,
+        error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant},
         execution::execute_plan,
         execution_request::get_execution_request,
         header::{
@@ -111,7 +115,6 @@ pub async fn execute_pipeline(
     validate_operation_with_cache(req, supergraph, schema_state, shared_state, &parser_payload)
         .await?;
 
-    let progressive_override_ctx = request_override_context()?;
     let normalize_payload = normalize_request_with_cache(
         req,
         supergraph,
@@ -120,12 +123,34 @@ pub async fn execute_pipeline(
         &parser_payload,
     )
     .await?;
-    let query = Cow::Owned(execution_request.query.clone());
+    let query: Cow<'_, str> = Cow::Owned(execution_request.query.clone());
     let variable_payload =
         coerce_request_variables(req, supergraph, execution_request, &normalize_payload)?;
 
     let query_plan_cancellation_token =
         CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
+
+    let progressive_override_ctx =
+        request_override_context(&shared_state.override_labels_evaluator, || {
+            ClientRequestDetails {
+                method: req.method().clone(),
+                url: req.uri().clone(),
+                headers: req.headers(),
+                operation: OperationDetails {
+                    name: normalize_payload.operation_for_plan.name.clone(),
+                    kind: match normalize_payload.operation_for_plan.operation_kind {
+                        Some(OperationKind::Query) => "query",
+                        Some(OperationKind::Mutation) => "mutation",
+                        Some(OperationKind::Subscription) => "subscription",
+                        None => "query",
+                    },
+                    query: query.clone(),
+                },
+            }
+        })
+        .map_err(|error| {
+            req.new_pipeline_error(PipelineErrorVariant::LabelEvaluationError(error))
+        })?;
 
     let query_plan_payload = plan_operation_with_cache(
         req,

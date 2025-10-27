@@ -11,6 +11,7 @@
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"host":"0.0.0.0","port":4000}`<br/>||
 |[**jwt**](#jwt)|`object`, `null`|Configuration for JWT authentication plugin.<br/>|yes|
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
+|[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
@@ -63,6 +64,7 @@ log:
   filter: null
   format: json
   level: info
+override_labels: {}
 override_subgraph_urls:
   accounts:
     url: https://accounts.example.com/graphql
@@ -1535,6 +1537,18 @@ format: json
 level: info
 
 ```
+
+<a name="override_labels"></a>
+## override\_labels: object
+
+Configuration for overriding labels.
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||Defines the value for a label override.<br/><br/>It can be a simple boolean,<br/>or an object containing the expression that evaluates to a boolean.<br/>||
 
 <a name="override_subgraph_urls"></a>
 ## override\_subgraph\_urls: object
