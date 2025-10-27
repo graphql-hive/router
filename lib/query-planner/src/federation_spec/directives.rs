@@ -18,3 +18,9 @@ pub struct LinkDirective {}
 impl LinkDirective {
     pub const NAME: &str = "link";
 }
+
+pub struct CoreDirective {}
+
+impl CoreDirective {
+    pub const NAME: &str = "core";
+}

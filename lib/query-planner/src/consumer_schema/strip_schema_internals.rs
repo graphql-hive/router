@@ -3,12 +3,15 @@ use graphql_parser::schema::*;
 
 use crate::{
     federation_spec::{
-        definitions::{JoinFieldSetScalar, JoinGraphEnum, LinkImportScalar, LinkPurposeEnum},
-        directives::{
-            InaccessibleDirective, JoinEnumValueDirective, JoinFieldDirective, JoinGraphDirective,
-            JoinImplementsDirective, JoinTypeDirective, JoinUnionMemberDirective, LinkDirective,
-            TagDirective,
+        definitions::{
+            CorePurposesEnum, JoinFieldSetScalar, JoinGraphEnum, LinkImportScalar, LinkPurposeEnum,
         },
+        directives::{
+            CoreDirective, InaccessibleDirective, JoinEnumValueDirective, JoinFieldDirective,
+            JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective,
+            JoinUnionMemberDirective, LinkDirective, TagDirective,
+        },
+        join_owner::JoinOwnerDirective,
     },
     utils::schema_transformer::{SchemaTransformer, TransformedValue},
 };
@@ -16,23 +19,26 @@ use crate::{
 // directive @inaccessible on FIELD_DEFINITION | OBJECT | INTERFACE | UNION | ENUM | ENUM_VALUE | SCALAR | INPUT_OBJECT | INPUT_FIELD_DEFINITION | ARGUMENT_DEFINITION
 pub(crate) struct StripSchemaInternals;
 
-static DIRECTIVES_TO_STRIP: [&str; 9] = [
+static DIRECTIVES_TO_STRIP: [&str; 11] = [
     JoinTypeDirective::NAME,
     JoinEnumValueDirective::NAME,
     JoinFieldDirective::NAME,
     JoinImplementsDirective::NAME,
     JoinUnionMemberDirective::NAME,
     JoinGraphDirective::NAME,
+    JoinOwnerDirective::NAME,
     LinkDirective::NAME,
     TagDirective::NAME,
     InaccessibleDirective::NAME,
+    CoreDirective::NAME,
 ];
 
-static DEFINITIONS_TO_STRIP: [&str; 4] = [
+static DEFINITIONS_TO_STRIP: [&str; 5] = [
     LinkPurposeEnum::NAME,
     LinkImportScalar::NAME,
     JoinGraphEnum::NAME,
     JoinFieldSetScalar::NAME,
+    CorePurposesEnum::NAME,
 ];
 
 impl StripSchemaInternals {

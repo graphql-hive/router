@@ -21,3 +21,9 @@ pub struct JoinGraphEnum {}
 impl JoinGraphEnum {
     pub const NAME: &str = "join__Graph";
 }
+
+pub struct CorePurposesEnum {}
+
+impl CorePurposesEnum {
+    pub const NAME: &str = "core__Purpose";
+}
