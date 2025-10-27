@@ -5,6 +5,9 @@
     ":preserveSemverRanges",
     "github>Turbo87/renovate-config//rust/updateToolchain"
   ],
+  "lockFileMaintenance": {
+    "enabled": false
+  },
   "packageRules": [
     {
       "description": "Auto-merge GitHub Actions digest updates",
