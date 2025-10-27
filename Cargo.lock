@@ -2011,7 +2011,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hive-router"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -2051,7 +2051,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-config"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "config",
  "envconfig",
@@ -2068,7 +2068,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-plan-executor"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "ahash",
  "async-trait",
@@ -2105,7 +2105,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-query-planner"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "bitflags 2.10.0",
  "criterion",
