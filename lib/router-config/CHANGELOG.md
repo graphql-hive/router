@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10](https://github.com/graphql-hive/router/compare/hive-router-config-v0.0.9...hive-router-config-v0.0.10) - 2025-10-27
+
+### <!-- 0 -->New Features
+
+- *(router)* added support for label overrides with `@override` ([#518](https://github.com/graphql-hive/router/pull/518))
+- *(config)* configuration override using env vars, enable/disable graphiql via config ([#519](https://github.com/graphql-hive/router/pull/519))
+
 ## [0.0.8](https://github.com/graphql-hive/router/compare/hive-router-config-v0.0.7...hive-router-config-v0.0.8) - 2025-10-23
 
 ### Added
