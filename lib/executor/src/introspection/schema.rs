@@ -12,6 +12,7 @@ pub struct SchemaMetadata {
     pub enum_values: HashMap<String, HashSet<String>>,
     pub type_fields: HashMap<String, HashMap<String, String>>,
     pub object_types: HashSet<String>,
+    pub interface_types: HashSet<String>,
     pub scalar_types: HashSet<String>,
 }
 
@@ -22,6 +23,10 @@ impl SchemaMetadata {
 
     pub fn is_scalar_type(&self, name: &str) -> bool {
         self.scalar_types.contains(name)
+    }
+
+    pub fn get_type_fields(&self, type_name: &str) -> Option<&HashMap<String, String>> {
+        self.type_fields.get(type_name)
     }
 }
 
@@ -65,6 +70,7 @@ impl SchemaWithMetadata for ConsumerSchema {
             "String".to_string(),
         ]);
         let mut object_types: HashSet<String> = HashSet::new();
+        let mut interface_types: HashSet<String> = HashSet::new();
 
         for definition in &self.document.definitions {
             match definition {
@@ -94,6 +100,7 @@ impl SchemaWithMetadata for ConsumerSchema {
                 }
                 Definition::TypeDefinition(TypeDefinition::Interface(interface_type)) => {
                     let name = interface_type.name.to_string();
+                    interface_types.insert(name.clone());
                     let mut fields = HashMap::new();
                     for field in &interface_type.fields {
                         let field_type_name = field.field_type.type_name();
@@ -145,6 +152,7 @@ impl SchemaWithMetadata for ConsumerSchema {
             enum_values,
             type_fields,
             object_types,
+            interface_types,
             scalar_types,
         }
     }

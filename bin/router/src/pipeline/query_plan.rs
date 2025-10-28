@@ -15,7 +15,7 @@ pub async fn plan_operation_with_cache(
     req: &HttpRequest,
     supergraph: &SupergraphData,
     schema_state: &Arc<SchemaState>,
-    normalized_operation: &Arc<GraphQLNormalizationPayload>,
+    normalized_operation: &GraphQLNormalizationPayload,
     request_override_context: &RequestOverrideContext,
     cancellation_token: &CancellationToken,
 ) -> Result<Arc<QueryPlan>, PipelineError> {

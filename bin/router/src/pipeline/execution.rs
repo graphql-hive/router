@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
@@ -29,10 +30,11 @@ pub async fn execute_plan(
     req: &HttpRequest,
     supergraph: &SupergraphData,
     app_state: &Arc<RouterSharedState>,
-    normalized_payload: &Arc<GraphQLNormalizationPayload>,
+    normalized_payload: &GraphQLNormalizationPayload,
     query_plan_payload: &Arc<QueryPlan>,
     variable_payload: &CoerceVariablesPayload,
     client_request_details: &ClientRequestDetails<'_, '_>,
+    authorization_errors: &[AuthorizationError],
 ) -> Result<PlanExecutionOutput, PipelineError> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
@@ -60,7 +62,7 @@ pub async fn execute_plan(
     };
 
     let introspection_context = IntrospectionContext {
-        query: normalized_payload.operation_for_introspection.as_ref(),
+        query: normalized_payload.operation_for_introspection.as_deref(),
         schema: &supergraph.planner.consumer_schema.document,
         metadata: &supergraph.metadata,
     };
@@ -95,6 +97,7 @@ pub async fn execute_plan(
         operation_type_name: normalized_payload.root_type_name,
         jwt_auth_forwarding: &jwt_forward_plan,
         executors: &supergraph.subgraph_executor_map,
+        initial_errors: authorization_errors.iter().map(|e| e.into()).collect(),
     })
     .await
     .map_err(|err| {

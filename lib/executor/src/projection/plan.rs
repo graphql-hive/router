@@ -19,7 +19,7 @@ pub enum TypeCondition {
     OneOf(HashSet<String>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FieldProjectionPlan {
     pub field_name: String,
     pub field_type: String,

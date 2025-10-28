@@ -9,7 +9,7 @@ use graphql_parser::query::{Text as ParserText, Value as ParserValue};
 use serde::{Deserialize, Serialize};
 use sonic_rs::Value as SonicValue;
 
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum Value {
     Variable(String),
     Int(i64),
@@ -21,6 +21,34 @@ pub enum Value {
     List(Vec<Value>),
     Object(BTreeMap<String, Value>),
 }
+
+// We manually implement `PartialEq` and `Eq` for `Value` because the `f64` type,
+// used in the `Float` variant, does not implement `Eq`. According to the IEEE 754
+// standard, `f64::NAN != f64::NAN`, which violates the reflexivity rule
+// required for `Eq` (where `a == a` must always be true).
+//
+// To work around this, we compare the underlying bit patterns of the `f64` values
+// using `to_bits()`. This method provides a total ordering for all `f64` values,
+// including `NAN`, and ensures that our equality logic is consistent with the
+// `Hash` implementation, which uses the same technique.
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Variable(l), Self::Variable(r)) => l == r,
+            (Self::Int(l), Self::Int(r)) => l == r,
+            (Self::Float(l), Self::Float(r)) => l.to_bits() == r.to_bits(),
+            (Self::String(l), Self::String(r)) => l == r,
+            (Self::Boolean(l), Self::Boolean(r)) => l == r,
+            (Self::Enum(l), Self::Enum(r)) => l == r,
+            (Self::List(l), Self::List(r)) => l == r,
+            (Self::Object(l), Self::Object(r)) => l == r,
+            (Self::Null, Self::Null) => true,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Value {}
 
 impl Hash for Value {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

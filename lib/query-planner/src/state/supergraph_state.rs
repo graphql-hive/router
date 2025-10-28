@@ -11,8 +11,9 @@ use tracing::instrument;
 
 use crate::{
     federation_spec::directives::{
-        FederationDirective, InaccessibleDirective, JoinEnumValueDirective, JoinFieldDirective,
-        JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective, JoinUnionMemberDirective,
+        AuthenticatedDirective, FederationDirective, InaccessibleDirective, JoinEnumValueDirective,
+        JoinFieldDirective, JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective,
+        JoinUnionMemberDirective, RequiresScopesDirective,
     },
     graph::edge::{OverrideLabel, Percentage},
 };
@@ -310,6 +311,12 @@ impl SupergraphState {
         SupergraphScalarType {
             name: scalar_type.name.to_string(),
             join_type: Self::extract_directives::<JoinTypeDirective>(&scalar_type.directives),
+            authenticated: Self::extract_directives::<AuthenticatedDirective>(
+                &scalar_type.directives,
+            ),
+            requires_scopes: Self::extract_directives::<RequiresScopesDirective>(
+                &scalar_type.directives,
+            ),
         }
     }
 
@@ -330,6 +337,12 @@ impl SupergraphState {
         SupergraphEnumType {
             name: enum_type.name.to_string(),
             join_type: Self::extract_directives::<JoinTypeDirective>(&enum_type.directives),
+            authenticated: Self::extract_directives::<AuthenticatedDirective>(
+                &enum_type.directives,
+            ),
+            requires_scopes: Self::extract_directives::<RequiresScopesDirective>(
+                &enum_type.directives,
+            ),
             values: enum_type
                 .values
                 .iter()
@@ -354,6 +367,12 @@ impl SupergraphState {
                         name: field.name.to_string(),
                         field_type: (&field.field_type).into(),
                         join_field: Self::extract_directives::<JoinFieldDirective>(
+                            &field.directives,
+                        ),
+                        authenticated: Self::extract_directives::<AuthenticatedDirective>(
+                            &field.directives,
+                        ),
+                        requires_scopes: Self::extract_directives::<RequiresScopesDirective>(
                             &field.directives,
                         ),
                         inaccessible: !Self::extract_directives::<InaccessibleDirective>(
@@ -381,6 +400,12 @@ impl SupergraphState {
                         join_field: Self::extract_directives::<JoinFieldDirective>(
                             &field.directives,
                         ),
+                        authenticated: Self::extract_directives::<AuthenticatedDirective>(
+                            &field.directives,
+                        ),
+                        requires_scopes: Self::extract_directives::<RequiresScopesDirective>(
+                            &field.directives,
+                        ),
                         inaccessible: !Self::extract_directives::<InaccessibleDirective>(
                             &field.directives,
                         )
@@ -403,6 +428,12 @@ impl SupergraphState {
             fields,
             join_type: Self::extract_directives::<JoinTypeDirective>(&interface_type.directives),
             join_implements: Self::extract_directives::<JoinImplementsDirective>(
+                &interface_type.directives,
+            ),
+            authenticated: Self::extract_directives::<AuthenticatedDirective>(
+                &interface_type.directives,
+            ),
+            requires_scopes: Self::extract_directives::<RequiresScopesDirective>(
                 &interface_type.directives,
             ),
             used_in_subgraphs,
@@ -443,6 +474,12 @@ impl SupergraphState {
             ),
             root_type,
             used_in_subgraphs,
+            authenticated: Self::extract_directives::<AuthenticatedDirective>(
+                &object_type.directives,
+            ),
+            requires_scopes: Self::extract_directives::<RequiresScopesDirective>(
+                &object_type.directives,
+            ),
         }
     }
 
@@ -521,6 +558,8 @@ pub struct SupergraphObjectType {
     pub join_implements: Vec<JoinImplementsDirective>,
     pub root_type: Option<OperationKind>,
     pub used_in_subgraphs: HashSet<String>,
+    pub requires_scopes: Vec<RequiresScopesDirective>,
+    pub authenticated: Vec<AuthenticatedDirective>,
 }
 
 impl SupergraphObjectType {
@@ -581,6 +620,8 @@ pub struct SupergraphInterfaceType {
     pub join_type: Vec<JoinTypeDirective>,
     pub join_implements: Vec<JoinImplementsDirective>,
     pub used_in_subgraphs: HashSet<String>,
+    pub requires_scopes: Vec<RequiresScopesDirective>,
+    pub authenticated: Vec<AuthenticatedDirective>,
 }
 
 #[derive(Debug)]
@@ -600,6 +641,8 @@ pub struct SupergraphInputObjectType {
 pub struct SupergraphScalarType {
     pub name: String,
     pub join_type: Vec<JoinTypeDirective>,
+    pub requires_scopes: Vec<RequiresScopesDirective>,
+    pub authenticated: Vec<AuthenticatedDirective>,
 }
 
 #[derive(Debug)]
@@ -607,6 +650,8 @@ pub struct SupergraphEnumType {
     pub name: String,
     pub values: Vec<SupergraphEnumValueType>,
     pub join_type: Vec<JoinTypeDirective>,
+    pub requires_scopes: Vec<RequiresScopesDirective>,
+    pub authenticated: Vec<AuthenticatedDirective>,
 }
 
 impl SupergraphEnumType {
@@ -752,6 +797,8 @@ pub struct SupergraphField {
     pub field_type: TypeNode,
     pub inaccessible: bool,
     pub join_field: Vec<JoinFieldDirective>,
+    pub requires_scopes: Vec<RequiresScopesDirective>,
+    pub authenticated: Vec<AuthenticatedDirective>,
 }
 
 impl SupergraphField {
