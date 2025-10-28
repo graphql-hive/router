@@ -91,11 +91,11 @@ fn validate_runtime_value(
                 }
             } else if let Some(fields) = schema_metadata.type_fields.get(name) {
                 if let ValueRef::Object(obj) = value {
-                    for (field_name, field_type) in fields {
+                    for (field_name, field_info) in fields {
                         if let Some(field_value) = obj.get(field_name) {
                             validate_runtime_value(
                                 field_value.as_ref(),
-                                &TypeNode::Named(field_type.to_string()),
+                                &TypeNode::Named(field_info.output_type_name.to_string()),
                                 schema_metadata,
                             )?;
                         } else {

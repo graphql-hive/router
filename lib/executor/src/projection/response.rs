@@ -1,6 +1,7 @@
 use crate::projection::error::ProjectionError;
 use crate::projection::plan::{
-    FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan, TypeCondition,
+    FieldProjectionCondition, FieldProjectionConditionError, FieldProjectionPlan,
+    ProjectionValueSource, TypeCondition,
 };
 use crate::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use crate::response::value::Value;
@@ -145,8 +146,10 @@ fn project_selection_set(
             buffer.put(CLOSE_BRACKET);
         }
         Value::Object(obj) => {
-            match selection.selections.as_ref() {
-                Some(selections) => {
+            match &selection.value {
+                ProjectionValueSource::ResponseData {
+                    selections: Some(selections),
+                } => {
                     let mut first = true;
                     let type_name = obj
                         .iter()
@@ -169,9 +172,13 @@ fn project_selection_set(
                         buffer.put(EMPTY_OBJECT);
                     }
                 }
-                None => {
+                ProjectionValueSource::ResponseData { selections: None } => {
                     // If the selection has no sub-selections, we serialize the whole object
                     project_without_selection_set(data, buffer);
+                }
+                ProjectionValueSource::Null => {
+                    // This should not happen as we are in an object case, but just in case
+                    buffer.put(NULL);
                 }
             }
         }
@@ -187,16 +194,16 @@ fn project_selection_set(
 fn project_selection_set_with_map(
     obj: &Vec<(&str, Value)>,
     errors: &mut Vec<GraphQLError>,
-    selections: &Vec<FieldProjectionPlan>,
+    plans: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     parent_type_name: &str,
     buffer: &mut Vec<u8>,
     first: &mut bool,
 ) {
-    for selection in selections {
+    for plan in plans {
         let field_val = obj
             .iter()
-            .position(|(k, _)| k == &selection.response_key.as_str())
+            .position(|(k, _)| k == &plan.response_key.as_str())
             .map(|idx| &obj[idx].1);
         let typename_field = field_val
             .and_then(|value| value.as_object())
@@ -205,10 +212,10 @@ fn project_selection_set_with_map(
                     .position(|(k, _)| k == &TYPENAME_FIELD_NAME)
                     .and_then(|idx| obj[idx].1.as_str())
             })
-            .unwrap_or(&selection.field_type);
+            .unwrap_or(&plan.field_type);
 
         let res = check(
-            &selection.conditions,
+            &plan.conditions,
             parent_type_name,
             typename_field,
             field_val,
@@ -225,20 +232,28 @@ fn project_selection_set_with_map(
                 *first = false;
 
                 buffer.put(QUOTE);
-                buffer.put(selection.response_key.as_bytes());
+                buffer.put(plan.response_key.as_bytes());
                 buffer.put(QUOTE);
                 buffer.put(COLON);
 
-                if let Some(field_val) = field_val {
-                    project_selection_set(field_val, errors, selection, variable_values, buffer);
-                } else if selection.field_name == TYPENAME_FIELD_NAME {
-                    // If the field is TYPENAME_FIELD, we should set it to the parent type name
-                    buffer.put(QUOTE);
-                    buffer.put(parent_type_name.as_bytes());
-                    buffer.put(QUOTE);
-                } else {
-                    // If the field is not found in the object, set it to Null
-                    buffer.put(NULL);
+                match &plan.value {
+                    ProjectionValueSource::Null => {
+                        buffer.put(NULL);
+                        continue;
+                    }
+                    ProjectionValueSource::ResponseData { .. } => {
+                        if let Some(field_val) = field_val {
+                            project_selection_set(field_val, errors, plan, variable_values, buffer);
+                        } else if plan.field_name == TYPENAME_FIELD_NAME {
+                            // If the field is TYPENAME_FIELD, we should set it to the parent type name
+                            buffer.put(QUOTE);
+                            buffer.put(parent_type_name.as_bytes());
+                            buffer.put(QUOTE);
+                        } else {
+                            // If the field is not found in the object, set it to Null
+                            buffer.put(NULL);
+                        }
+                    }
                 }
             }
             Err(FieldProjectionConditionError::Skip) => {
@@ -258,7 +273,7 @@ fn project_selection_set_with_map(
                 *first = false;
 
                 buffer.put(QUOTE);
-                buffer.put(selection.response_key.as_bytes());
+                buffer.put(plan.response_key.as_bytes());
                 buffer.put(QUOTE);
                 buffer.put(COLON);
                 buffer.put(NULL);
@@ -279,7 +294,7 @@ fn project_selection_set_with_map(
 
                 // Skip this field as the field type does not match
                 buffer.put(QUOTE);
-                buffer.put(selection.response_key.as_bytes());
+                buffer.put(plan.response_key.as_bytes());
                 buffer.put(QUOTE);
                 buffer.put(COLON);
                 buffer.put(NULL);

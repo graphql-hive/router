@@ -5,7 +5,7 @@ use hive_router_plan_executor::variables::collect_variables;
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 use http::Method;
 use ntex::web::HttpRequest;
-use sonic_rs::Value;
+use sonic_rs::{JsonValueTrait, Value};
 use tracing::{error, trace, warn};
 
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
@@ -13,9 +13,19 @@ use crate::pipeline::execution_request::ExecutionRequest;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SupergraphData;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct CoerceVariablesPayload {
     pub variables_map: Option<HashMap<String, Value>>,
+}
+
+impl CoerceVariablesPayload {
+    pub fn variable_equals_true(&self, name: &str) -> bool {
+        self.variables_map
+            .as_ref()
+            .and_then(|vars| vars.get(name))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+    }
 }
 
 #[inline]

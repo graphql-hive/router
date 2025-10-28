@@ -1,18 +1,26 @@
-use std::collections::{HashMap, HashSet};
+use ahash::{HashMap, HashSet};
 
 use graphql_parser::{
     query::Type,
     schema::{Definition, TypeDefinition},
 };
+use graphql_tools::ast::TypeExtension;
 use hive_router_query_planner::consumer_schema::ConsumerSchema;
+
+#[derive(Debug, Default)]
+pub struct FieldTypeInfo {
+    pub output_type_name: String,
+    pub is_non_null: bool,
+}
 
 #[derive(Debug, Default)]
 pub struct SchemaMetadata {
     pub possible_types: PossibleTypes,
     pub enum_values: HashMap<String, HashSet<String>>,
-    pub type_fields: HashMap<String, HashMap<String, String>>,
+    pub type_fields: HashMap<String, HashMap<String, FieldTypeInfo>>,
     pub object_types: HashSet<String>,
     pub scalar_types: HashSet<String>,
+    pub union_types: HashSet<String>,
 }
 
 impl SchemaMetadata {
@@ -22,6 +30,20 @@ impl SchemaMetadata {
 
     pub fn is_scalar_type(&self, name: &str) -> bool {
         self.scalar_types.contains(name)
+    }
+
+    pub fn is_union_type(&self, name: &str) -> bool {
+        self.union_types.contains(name)
+    }
+
+    pub fn get_type_fields(&self, type_name: &str) -> Option<&HashMap<String, FieldTypeInfo>> {
+        self.type_fields.get(type_name)
+    }
+
+    /// Gets the list of types that implement an interface or are members of a union.
+    /// Returns None if the type is not an interface or has no implementors.
+    pub fn get_possible_types(&self, interface_name: &str) -> Option<&HashSet<String>> {
+        self.possible_types.map.get(interface_name)
     }
 }
 
@@ -54,9 +76,9 @@ pub trait SchemaWithMetadata {
 
 impl SchemaWithMetadata for ConsumerSchema {
     fn schema_metadata(&self) -> SchemaMetadata {
-        let mut first_possible_types: HashMap<String, Vec<String>> = HashMap::new();
-        let mut type_fields: HashMap<String, HashMap<String, String>> = HashMap::new();
-        let mut enum_values: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut first_possible_types: HashMap<String, Vec<String>> = HashMap::default();
+        let mut type_fields: HashMap<String, HashMap<String, FieldTypeInfo>> = HashMap::default();
+        let mut enum_values: HashMap<String, HashSet<String>> = HashMap::default();
         let mut scalar_types: HashSet<String> = HashSet::from_iter(vec![
             "Boolean".to_string(),
             "Float".to_string(),
@@ -64,13 +86,14 @@ impl SchemaWithMetadata for ConsumerSchema {
             "ID".to_string(),
             "String".to_string(),
         ]);
-        let mut object_types: HashSet<String> = HashSet::new();
+        let mut object_types: HashSet<String> = HashSet::default();
+        let mut union_types: HashSet<String> = HashSet::default();
 
         for definition in &self.document.definitions {
             match definition {
                 Definition::TypeDefinition(TypeDefinition::Enum(enum_type)) => {
                     let name = enum_type.name.to_string();
-                    let mut values = HashSet::new();
+                    let mut values = HashSet::default();
                     for enum_value in &enum_type.values {
                         values.insert(enum_value.name.to_string());
                     }
@@ -82,7 +105,13 @@ impl SchemaWithMetadata for ConsumerSchema {
                     let fields = type_fields.entry(name).or_default();
                     for field in &object_type.fields {
                         let field_type_name = field.field_type.type_name();
-                        fields.insert(field.name.to_string(), field_type_name);
+                        fields.insert(
+                            field.name.to_string(),
+                            FieldTypeInfo {
+                                output_type_name: field_type_name,
+                                is_non_null: field.field_type.is_non_null(),
+                            },
+                        );
                     }
 
                     for interface in &object_type.implements_interfaces {
@@ -94,10 +123,16 @@ impl SchemaWithMetadata for ConsumerSchema {
                 }
                 Definition::TypeDefinition(TypeDefinition::Interface(interface_type)) => {
                     let name = interface_type.name.to_string();
-                    let mut fields = HashMap::new();
+                    let mut fields = HashMap::default();
                     for field in &interface_type.fields {
                         let field_type_name = field.field_type.type_name();
-                        fields.insert(field.name.to_string(), field_type_name);
+                        fields.insert(
+                            field.name.to_string(),
+                            FieldTypeInfo {
+                                output_type_name: field_type_name,
+                                is_non_null: field.field_type.is_non_null(),
+                            },
+                        );
                     }
                     type_fields.insert(name, fields);
                     for interface_name in &interface_type.implements_interfaces {
@@ -109,6 +144,7 @@ impl SchemaWithMetadata for ConsumerSchema {
                 }
                 Definition::TypeDefinition(TypeDefinition::Union(union_type)) => {
                     let name = union_type.name.to_string();
+                    union_types.insert(name.clone());
                     let mut types = vec![];
                     for member in &union_type.types {
                         types.push(member.to_string());
@@ -122,10 +158,10 @@ impl SchemaWithMetadata for ConsumerSchema {
             }
         }
 
-        let mut final_possible_types: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut final_possible_types: HashMap<String, HashSet<String>> = HashMap::default();
         // Re-iterate over the possible_types
         for (definition_name_of_x, first_possible_types_of_x) in &first_possible_types {
-            let mut possible_types_of_x: HashSet<String> = HashSet::new();
+            let mut possible_types_of_x: HashSet<String> = HashSet::default();
             for definition_name_of_y in first_possible_types_of_x {
                 possible_types_of_x.insert(definition_name_of_y.to_string());
                 let possible_types_of_y = first_possible_types.get(definition_name_of_y);
@@ -146,6 +182,7 @@ impl SchemaWithMetadata for ConsumerSchema {
             type_fields,
             object_types,
             scalar_types,
+            union_types,
         }
     }
 }

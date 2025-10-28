@@ -15,6 +15,7 @@ use crate::{
 pub(crate) mod definitions;
 pub(crate) mod directives;
 
+pub mod authorization;
 pub(crate) mod directive_trait;
 pub(crate) mod inacessible;
 pub(crate) mod join_enum_value;
