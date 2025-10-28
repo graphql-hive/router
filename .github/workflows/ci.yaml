@@ -162,7 +162,7 @@ jobs:
         run: k6 run -e SUMMARY_PATH=./results/main bench/k6.js
       - name: Compare benchmark results
         if: github.event_name == 'pull_request'
-        run: ./bench/ci-detect-regressions.sh
+        run: ./bench/ci-detect-regression.sh
 
   graphql-over-http:
     runs-on: ubuntu-latest
