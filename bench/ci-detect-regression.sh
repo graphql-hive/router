@@ -59,7 +59,7 @@ printf "Difference: %.2f%%\n" "$diff"
 is_regression=$(echo "$diff < -5" | bc)
 
 if [ "$is_regression" -eq 1 ]; then
-    echo "Performance regression detected! The PR is more than 5% slower than main."
+    echo "Performance regression detected! The PR is more than 2% slower than main."
     exit 1
 else
     echo "No significant performance regression detected."
