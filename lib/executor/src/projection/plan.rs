@@ -1,5 +1,6 @@
+use ahash::HashSet;
 use indexmap::IndexMap;
-use std::collections::HashSet;
+use std::sync::Arc;
 use tracing::warn;
 
 use hive_router_query_planner::{
@@ -19,13 +20,23 @@ pub enum TypeCondition {
     OneOf(HashSet<String>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub enum ProjectionValueSource {
+    /// Represents the entire response data from subgraphs.
+    ResponseData {
+        selections: Option<Arc<Vec<FieldProjectionPlan>>>,
+    },
+    /// Represents a null value.
+    Null,
+}
+
+#[derive(Debug, Clone)]
 pub struct FieldProjectionPlan {
     pub field_name: String,
     pub field_type: String,
     pub response_key: String,
     pub conditions: FieldProjectionCondition,
-    pub selections: Option<Vec<FieldProjectionPlan>>,
+    pub value: ProjectionValueSource,
 }
 
 #[derive(Debug, Clone)]
@@ -158,10 +169,36 @@ impl FieldProjectionPlan {
                 Box::new(plan_to_merge.conditions),
             );
 
-            if let Some(new_selections) = plan_to_merge.selections {
-                match &mut existing_plan.selections {
-                    Some(selections) => selections.extend(new_selections),
-                    None => existing_plan.selections = Some(new_selections),
+            match (&mut existing_plan.value, plan_to_merge.value) {
+                (
+                    ProjectionValueSource::ResponseData {
+                        selections: existing_selections,
+                    },
+                    ProjectionValueSource::ResponseData {
+                        selections: new_selections,
+                    },
+                ) => {
+                    if let Some(new_selections) = new_selections {
+                        match existing_selections {
+                            Some(selections) => {
+                                Arc::make_mut(selections).extend(
+                                    Arc::try_unwrap(new_selections)
+                                        .unwrap_or_else(|arc| (*arc).clone()),
+                                );
+                            }
+                            None => *existing_selections = Some(new_selections),
+                        }
+                    }
+                }
+                (ProjectionValueSource::Null, ProjectionValueSource::Null) => {
+                    // Both plans have `Null` value source, so nothing to merge
+                }
+                _ => {
+                    // This case should not be reached during initial plan construction,
+                    // as `Null` is only introduced during the authorization step.
+                    // If we merge a plan, it's always to combine selections.
+                    warn!("Merging plans with `Null` value source is not supported during initial plan construction.");
+                    existing_plan.value = ProjectionValueSource::Null;
                 }
             }
         } else {
@@ -193,7 +230,7 @@ impl FieldProjectionPlan {
                 }
             };
             match field_map.get(field_name) {
-                Some(ft) => ft.clone(),
+                Some(f) => f.output_type_name.clone(),
                 None => {
                     warn!(
                         "Field `{}` not found in type `{}` in schema metadata.",
@@ -245,12 +282,15 @@ impl FieldProjectionPlan {
             field_type: field_type.clone(),
             response_key,
             conditions: condition_for_field,
-            selections: Self::from_selection_set(
-                &field.selections,
-                schema_metadata,
-                &field_type,
-                &conditions_for_selections,
-            ),
+            value: ProjectionValueSource::ResponseData {
+                selections: Self::from_selection_set(
+                    &field.selections,
+                    schema_metadata,
+                    &field_type,
+                    &conditions_for_selections,
+                )
+                .map(Arc::new),
+            },
         };
 
         Self::merge_plan(field_selections, new_plan);
@@ -295,6 +335,16 @@ impl FieldProjectionPlan {
             for selection in inline_fragment_selections {
                 Self::merge_plan(field_selections, selection);
             }
+        }
+    }
+
+    pub fn with_new_value(&self, new_value: ProjectionValueSource) -> FieldProjectionPlan {
+        FieldProjectionPlan {
+            field_name: self.field_name.clone(),
+            field_type: self.field_type.clone(),
+            response_key: self.response_key.clone(),
+            conditions: self.conditions.clone(),
+            value: new_value,
         }
     }
 }

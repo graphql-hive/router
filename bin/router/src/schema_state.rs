@@ -21,7 +21,10 @@ use tracing::{debug, error, trace};
 
 use crate::{
     background_tasks::{BackgroundTask, BackgroundTasksManager},
-    pipeline::normalize::GraphQLNormalizationPayload,
+    pipeline::{
+        authorization::{AuthorizationMetadata, AuthorizationMetadataError},
+        normalize::GraphQLNormalizationPayload,
+    },
     supergraph::{
         base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
         resolve_from_config,
@@ -38,6 +41,7 @@ pub struct SchemaState {
 pub struct SupergraphData {
     pub metadata: SchemaMetadata,
     pub planner: Planner,
+    pub authorization: AuthorizationMetadata,
     pub subgraph_executor_map: SubgraphExecutorMap,
 }
 
@@ -45,8 +49,11 @@ pub struct SupergraphData {
 pub enum SupergraphManagerError {
     #[error("Failed to load supergraph: {0}")]
     LoadSupergraphError(#[from] LoadSupergraphError),
+
     #[error("Failed to build planner: {0}")]
     PlannerBuilderError(#[from] PlannerError),
+    #[error("Failed to build authorization: {0}")]
+    AuthorizationMetadataError(#[from] AuthorizationMetadataError),
     #[error("Failed to init executor: {0}")]
     ExecutorInitError(#[from] SubgraphExecutorError),
     #[error("Unexpected: failed to load initial supergraph")]
@@ -118,6 +125,7 @@ impl SchemaState {
         let supergraph_state = SupergraphState::new(&parsed_supergraph_sdl);
         let planner = Planner::new_from_supergraph(&parsed_supergraph_sdl)?;
         let metadata = planner.consumer_schema.schema_metadata();
+        let authorization = AuthorizationMetadata::build(&planner.supergraph, &metadata)?;
         let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(
             supergraph_state.subgraph_endpoint_map,
             router_config,
@@ -126,6 +134,7 @@ impl SchemaState {
         Ok(SupergraphData {
             metadata,
             planner,
+            authorization,
             subgraph_executor_map,
         })
     }

@@ -136,6 +136,17 @@ impl PartialEq for FieldSelection {
 }
 
 impl FieldSelection {
+    pub fn with_new_selections(&self, selections: SelectionSet) -> Self {
+        FieldSelection {
+            name: self.name.clone(),
+            alias: self.alias.clone(),
+            selections,
+            arguments: self.arguments.clone(),
+            skip_if: self.skip_if.clone(),
+            include_if: self.include_if.clone(),
+        }
+    }
+
     /// Returns the unique identifier of the field within the selection set.
     /// This means, the alias or the field name if no alias is present.
     pub fn selection_identifier(&self) -> &str {
@@ -235,6 +246,15 @@ impl InlineFragmentSelection {
 
         usages.extend(self.selections.variable_usages());
         usages
+    }
+
+    pub fn with_new_selections(&self, selections: SelectionSet) -> Self {
+        InlineFragmentSelection {
+            type_condition: self.type_condition.clone(),
+            selections,
+            skip_if: self.skip_if.clone(),
+            include_if: self.include_if.clone(),
+        }
     }
 }
 

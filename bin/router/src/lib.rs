@@ -3,10 +3,11 @@ mod consts;
 mod http_utils;
 mod jwt;
 mod logger;
-mod pipeline;
+pub mod pipeline;
 mod schema_state;
 mod shared_state;
 mod supergraph;
+mod utils;
 
 use std::sync::Arc;
 

@@ -5,11 +5,12 @@ use crate::{
     federation_spec::{
         definitions::{
             CorePurposesEnum, JoinFieldSetScalar, JoinGraphEnum, LinkImportScalar, LinkPurposeEnum,
+            RequiresScopesScopeScalar,
         },
         directives::{
-            CoreDirective, InaccessibleDirective, JoinEnumValueDirective, JoinFieldDirective,
-            JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective,
-            JoinUnionMemberDirective, LinkDirective, TagDirective,
+            AuthenticatedDirective, CoreDirective, InaccessibleDirective, JoinEnumValueDirective,
+            JoinFieldDirective, JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective,
+            JoinUnionMemberDirective, LinkDirective, RequiresScopesDirective, TagDirective,
         },
         join_owner::JoinOwnerDirective,
     },
@@ -19,7 +20,7 @@ use crate::{
 // directive @inaccessible on FIELD_DEFINITION | OBJECT | INTERFACE | UNION | ENUM | ENUM_VALUE | SCALAR | INPUT_OBJECT | INPUT_FIELD_DEFINITION | ARGUMENT_DEFINITION
 pub(crate) struct StripSchemaInternals;
 
-static DIRECTIVES_TO_STRIP: [&str; 11] = [
+static DIRECTIVES_TO_STRIP: [&str; 13] = [
     JoinTypeDirective::NAME,
     JoinEnumValueDirective::NAME,
     JoinFieldDirective::NAME,
@@ -31,14 +32,17 @@ static DIRECTIVES_TO_STRIP: [&str; 11] = [
     TagDirective::NAME,
     InaccessibleDirective::NAME,
     CoreDirective::NAME,
+    AuthenticatedDirective::NAME,
+    RequiresScopesDirective::NAME,
 ];
 
-static DEFINITIONS_TO_STRIP: [&str; 5] = [
+static DEFINITIONS_TO_STRIP: [&str; 6] = [
     LinkPurposeEnum::NAME,
     LinkImportScalar::NAME,
     JoinGraphEnum::NAME,
     JoinFieldSetScalar::NAME,
     CorePurposesEnum::NAME,
+    RequiresScopesScopeScalar::NAME,
 ];
 
 impl StripSchemaInternals {
@@ -197,6 +201,13 @@ directive @tag(
 
 directive @inaccessible on FIELD_DEFINITION | OBJECT | INTERFACE | UNION | ENUM | ENUM_VALUE | SCALAR | INPUT_OBJECT | INPUT_FIELD_DEFINITION | ARGUMENT_DEFINITION
 
+directive @authenticated on FIELD_DEFINITION | OBJECT | INTERFACE | SCALAR | ENUM
+
+scalar requiresScopes__Scope
+directive @requiresScopes(
+  scopes: [[requiresScopes__Scope!]!]!
+) on FIELD_DEFINITION | OBJECT | INTERFACE | SCALAR | ENUM
+
 enum join__Graph {
   INVENTORY @join__graph(name: "inventory", url: "")
   PANDAS @join__graph(name: "pandas", url: "")
@@ -233,7 +244,7 @@ type Product implements ProductItf & SkuItf
   variation: ProductVariation @join__field(graph: PRODUCTS)
   name: String @hello @join__field(graph: PRODUCTS)
   createdBy: User @join__field(graph: PRODUCTS)
-  hidden: String @join__field(graph: PRODUCTS)
+  hidden: String @join__field(graph: PRODUCTS) @requiresScopes(scopes: ["read", "admin"])
   reviewsScore: Float! @join__field(graph: REVIEWS, override: "products")
   oldField: String @join__field(graph: PRODUCTS)
   reviewsCount: Int! @join__field(graph: REVIEWS)
@@ -258,7 +269,7 @@ type Query
   @join__type(graph: PRODUCTS)
   @join__type(graph: REVIEWS)
   @join__type(graph: USERS) {
-  allPandas: [Panda] @join__field(graph: PANDAS)
+  allPandas: [Panda] @join__field(graph: PANDAS) @authenticated
   panda(name: ID!): Panda @join__field(graph: PANDAS)
   allProducts: [ProductItf] @join__field(graph: PRODUCTS)
   product(id: ID!): ProductItf @join__field(graph: PRODUCTS)
