@@ -1,7 +1,4 @@
-use std::{
-    borrow::Cow,
-    collections::{BTreeSet, HashMap},
-};
+use std::collections::{BTreeSet, HashMap};
 
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
@@ -51,26 +48,26 @@ use crate::{
     },
 };
 
-pub struct OperationDetails<'a> {
-    pub name: Option<String>,
-    pub query: Cow<'a, str>,
-    pub kind: &'a str,
+pub struct OperationDetails<'exec> {
+    pub name: Option<&'exec str>,
+    pub query: &'exec str,
+    pub kind: &'static str,
 }
 
-pub struct ClientRequestDetails<'a> {
-    pub method: Method,
-    pub url: http::Uri,
-    pub headers: &'a NtexHeaderMap,
-    pub operation: OperationDetails<'a>,
+pub struct ClientRequestDetails<'exec, 'req> {
+    pub method: &'req Method,
+    pub url: &'req http::Uri,
+    pub headers: &'req NtexHeaderMap,
+    pub operation: OperationDetails<'exec>,
 }
 
-pub struct QueryPlanExecutionContext<'exec> {
+pub struct QueryPlanExecutionContext<'exec, 'req> {
     pub query_plan: &'exec QueryPlan,
     pub projection_plan: &'exec Vec<FieldProjectionPlan>,
     pub headers_plan: &'exec HeaderRulesPlan,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     pub extensions: Option<HashMap<String, sonic_rs::Value>>,
-    pub client_request: ClientRequestDetails<'exec>,
+    pub client_request: &'exec ClientRequestDetails<'exec, 'req>,
     pub introspection_context: &'exec IntrospectionContext<'exec, 'static>,
     pub operation_type_name: &'exec str,
     pub executors: &'exec SubgraphExecutorMap,
@@ -82,8 +79,8 @@ pub struct PlanExecutionOutput {
     pub headers: HeaderMap,
 }
 
-pub async fn execute_query_plan<'exec>(
-    ctx: QueryPlanExecutionContext<'exec>,
+pub async fn execute_query_plan<'exec, 'req>(
+    ctx: QueryPlanExecutionContext<'exec, 'req>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
     let init_value = if let Some(introspection_query) = ctx.introspection_context.query {
         resolve_introspection(introspection_query, ctx.introspection_context)
@@ -96,7 +93,7 @@ pub async fn execute_query_plan<'exec>(
         ctx.variable_values,
         ctx.executors,
         ctx.introspection_context.metadata,
-        &ctx.client_request,
+        ctx.client_request,
         ctx.headers_plan,
         ctx.jwt_auth_forwarding,
         // Deduplicate subgraph requests only if the operation type is a query
@@ -137,11 +134,11 @@ pub async fn execute_query_plan<'exec>(
     })
 }
 
-pub struct Executor<'exec> {
+pub struct Executor<'exec, 'req> {
     variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     schema_metadata: &'exec SchemaMetadata,
     executors: &'exec SubgraphExecutorMap,
-    client_request: &'exec ClientRequestDetails<'exec>,
+    client_request: &'exec ClientRequestDetails<'exec, 'req>,
     headers_plan: &'exec HeaderRulesPlan,
     jwt_forwarding_plan: &'exec Option<JwtAuthForwardingPlan>,
     dedupe_subgraph_requests: bool,
@@ -231,12 +228,12 @@ struct PreparedFlattenData {
     representation_hash_to_index: HashMap<u64, usize>,
 }
 
-impl<'exec> Executor<'exec> {
+impl<'exec, 'req> Executor<'exec, 'req> {
     pub fn new(
         variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
         executors: &'exec SubgraphExecutorMap,
         schema_metadata: &'exec SchemaMetadata,
-        client_request: &'exec ClientRequestDetails<'exec>,
+        client_request: &'exec ClientRequestDetails<'exec, 'req>,
         headers_plan: &'exec HeaderRulesPlan,
         jwt_forwarding_plan: &'exec Option<JwtAuthForwardingPlan>,
         dedupe_subgraph_requests: bool,

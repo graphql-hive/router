@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 
 use hive_router_plan_executor::execution::plan::{
     ClientRequestDetails, OperationDetails, PlanExecutionOutput,
@@ -110,7 +110,7 @@ pub async fn execute_pipeline(
 ) -> Result<PlanExecutionOutput, PipelineError> {
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
-    let execution_request = get_execution_request(req, body_bytes).await?;
+    let mut execution_request = get_execution_request(req, body_bytes).await?;
     let parser_payload = parse_operation_with_cache(req, shared_state, &execution_request).await?;
     validate_operation_with_cache(req, supergraph, schema_state, shared_state, &parser_payload)
         .await?;
@@ -123,34 +123,33 @@ pub async fn execute_pipeline(
         &parser_payload,
     )
     .await?;
-    let query: Cow<'_, str> = Cow::Owned(execution_request.query.clone());
     let variable_payload =
-        coerce_request_variables(req, supergraph, execution_request, &normalize_payload)?;
+        coerce_request_variables(req, supergraph, &mut execution_request, &normalize_payload)?;
 
     let query_plan_cancellation_token =
         CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
-    let progressive_override_ctx =
-        request_override_context(&shared_state.override_labels_evaluator, || {
-            ClientRequestDetails {
-                method: req.method().clone(),
-                url: req.uri().clone(),
-                headers: req.headers(),
-                operation: OperationDetails {
-                    name: normalize_payload.operation_for_plan.name.clone(),
-                    kind: match normalize_payload.operation_for_plan.operation_kind {
-                        Some(OperationKind::Query) => "query",
-                        Some(OperationKind::Mutation) => "mutation",
-                        Some(OperationKind::Subscription) => "subscription",
-                        None => "query",
-                    },
-                    query: query.clone(),
-                },
-            }
-        })
-        .map_err(|error| {
-            req.new_pipeline_error(PipelineErrorVariant::LabelEvaluationError(error))
-        })?;
+    let client_request_details = ClientRequestDetails {
+        method: req.method(),
+        url: req.uri(),
+        headers: req.headers(),
+        operation: OperationDetails {
+            name: normalize_payload.operation_for_plan.name.as_deref(),
+            kind: match normalize_payload.operation_for_plan.operation_kind {
+                Some(OperationKind::Query) => "query",
+                Some(OperationKind::Mutation) => "mutation",
+                Some(OperationKind::Subscription) => "subscription",
+                None => "query",
+            },
+            query: &execution_request.query,
+        },
+    };
+
+    let progressive_override_ctx = request_override_context(
+        &shared_state.override_labels_evaluator,
+        &client_request_details,
+    )
+    .map_err(|error| req.new_pipeline_error(PipelineErrorVariant::LabelEvaluationError(error)))?;
 
     let query_plan_payload = plan_operation_with_cache(
         req,
@@ -164,12 +163,12 @@ pub async fn execute_pipeline(
 
     let execution_result = execute_plan(
         req,
-        query,
         supergraph,
         shared_state,
         &normalize_payload,
         &query_plan_payload,
         &variable_payload,
+        &client_request_details,
     )
     .await?;
 
