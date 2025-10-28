@@ -19,8 +19,8 @@ then
     exit 1
 fi
 
-PR_SUMMARY="results/pr/k6_summary.json"
-MAIN_SUMMARY="results/main/k6_summary.json"
+PR_SUMMARY="./bench/results/pr/k6_summary.json"
+MAIN_SUMMARY="./bench/results/main/k6_summary.json"
 
 # Check if the summary files exist
 if [ ! -f "$PR_SUMMARY" ] || [ ! -f "$MAIN_SUMMARY" ]; then
