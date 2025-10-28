@@ -142,18 +142,21 @@ jobs:
       - name: Run k6 benchmark for Pull Request
         if: github.event_name == 'pull_request'
         run: k6 run -e SUMMARY_PATH=./results/pr bench/k6.js
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+      - name: Checkout main branch in a separate directory
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
           ref: main
-          clean: false # do not remove existing files
+          path: main-branch
       - name: Build router
         if: github.event_name == 'pull_request'
         run: cargo build --release -p hive-router
+        working-directory: main-branch
       - name: Run router
         if: github.event_name == 'pull_request'
         run: |
           kill $(cat router.pid)
-          ./target/release/hive_router &
+          ./main-branch/target/release/hive_router &
           sleep 5
         env:
           SUPERGRAPH_FILE_PATH: bench/supergraph.graphql
