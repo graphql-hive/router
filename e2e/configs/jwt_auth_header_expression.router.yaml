@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../supergraph.graphql
+jwt:
+  enabled: true
+  require_authentication: false
+  jwks_providers:
+    - source: file
+      path: ../jwks.rsa512.json
+headers:
+  all:
+    request:
+      - insert:
+          name: X-User-ID
+          expression: |
+            if .request.jwt.authenticated == true {
+              .request.jwt.claims.sub
+            } else {
+              "EMPTY"
+            }
+  subgraphs:
+    accounts:
+      request:
+        - insert:
+            name: X-Can-Read
+            expression: |
+              if .request.jwt.authenticated == true && includes!(.request.jwt.scopes, "read:accounts") {
+                "Yes"
+              } else {
+                "No"
+              }

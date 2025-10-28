@@ -6,14 +6,14 @@ use hive_router_query_planner::planner::plan_nodes::{
     ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
     QueryPlan, SequenceNode,
 };
-use http::{HeaderMap, Method};
-use ntex_http::HeaderMap as NtexHeaderMap;
+use http::HeaderMap;
 use serde::Deserialize;
 use sonic_rs::ValueRef;
 
 use crate::{
     context::ExecutionContext,
     execution::{
+        client_request_details::ClientRequestDetails,
         error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
@@ -47,19 +47,6 @@ use crate::{
         traverse::{traverse_and_callback, traverse_and_callback_mut},
     },
 };
-
-pub struct OperationDetails<'exec> {
-    pub name: Option<&'exec str>,
-    pub query: &'exec str,
-    pub kind: &'static str,
-}
-
-pub struct ClientRequestDetails<'exec, 'req> {
-    pub method: &'req Method,
-    pub url: &'req http::Uri,
-    pub headers: &'req NtexHeaderMap,
-    pub operation: OperationDetails<'exec>,
-}
 
 pub struct QueryPlanExecutionContext<'exec, 'req> {
     pub query_plan: &'exec QueryPlan,

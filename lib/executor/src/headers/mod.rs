@@ -9,7 +9,9 @@ pub mod sanitizer;
 #[cfg(test)]
 mod tests {
     use crate::{
-        execution::plan::{ClientRequestDetails, OperationDetails},
+        execution::client_request_details::{
+            ClientRequestDetails, JwtRequestDetails, OperationDetails,
+        },
         headers::{
             compile::compile_headers_plan,
             plan::ResponseHeaderAggregator,
@@ -80,6 +82,7 @@ mod tests {
                 query: "{ __typename }",
                 kind: "query",
             },
+            jwt: &JwtRequestDetails::Unauthenticated,
         };
 
         let mut out = HeaderMap::new();
@@ -113,6 +116,7 @@ mod tests {
                 query: "{ __typename }",
                 kind: "query",
             },
+            jwt: &JwtRequestDetails::Unauthenticated,
         };
         let mut out = HeaderMap::new();
         modify_subgraph_request_headers(&plan, "any", &client_details, &mut out).unwrap();
@@ -159,6 +163,7 @@ mod tests {
                 query: "{ __typename }",
                 kind: "query",
             },
+            jwt: &JwtRequestDetails::Unauthenticated,
         };
 
         let mut out = HeaderMap::new();
@@ -196,6 +201,7 @@ mod tests {
                 query: "{ __typename }",
                 kind: "query",
             },
+            jwt: &JwtRequestDetails::Unauthenticated,
         };
 
         let mut out = HeaderMap::new();
@@ -229,6 +235,7 @@ mod tests {
                 query: "{ __typename }",
                 kind: "query",
             },
+            jwt: &JwtRequestDetails::Unauthenticated,
         };
 
         let mut out = HeaderMap::new();
@@ -268,6 +275,7 @@ mod tests {
                 query: "{ __typename }",
                 kind: "query",
             },
+            jwt: &JwtRequestDetails::Unauthenticated,
         };
 
         // For "accounts" subgraph, the specific rule should apply.
@@ -311,6 +319,7 @@ mod tests {
                 query: "{ __typename }",
                 kind: "query",
             },
+            jwt: &JwtRequestDetails::Unauthenticated,
         };
 
         let mut accumulator = ResponseHeaderAggregator::default();
@@ -375,6 +384,7 @@ mod tests {
                 query: "{ __typename }",
                 kind: "query",
             },
+            jwt: &JwtRequestDetails::Unauthenticated,
         };
 
         let mut accumulator = ResponseHeaderAggregator::default();
@@ -438,6 +448,7 @@ mod tests {
                 query: "{ __typename }",
                 kind: "query",
             },
+            jwt: &JwtRequestDetails::Unauthenticated,
         };
         let mut accumulator = ResponseHeaderAggregator::default();
 
@@ -494,6 +505,7 @@ mod tests {
                 query: "{ __typename }",
                 kind: "query",
             },
+            jwt: &JwtRequestDetails::Unauthenticated,
         };
         let mut accumulator = ResponseHeaderAggregator::default();
 
@@ -551,6 +563,7 @@ mod tests {
                 query: "{ __typename }",
                 kind: "query",
             },
+            jwt: &JwtRequestDetails::Unauthenticated,
         };
 
         let mut accumulator = ResponseHeaderAggregator::default();
@@ -609,6 +622,7 @@ mod tests {
                 query: "{ __typename }",
                 kind: "query",
             },
+            jwt: &JwtRequestDetails::Unauthenticated,
         };
 
         let mut out = HeaderMap::new();

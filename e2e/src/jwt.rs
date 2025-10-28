@@ -67,6 +67,181 @@ mod jwt_e2e_tests {
     }
 
     #[ntex::test]
+    async fn should_allow_expressions_to_access_jwt_details() {
+        let subgraphs_server = SubgraphsServer::start().await;
+        let app = init_router_from_config_file("configs/jwt_auth_header_expression.router.yaml")
+            .await
+            .unwrap();
+        wait_for_readiness(&app.app).await;
+        let exp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600;
+        let claims = json!({
+            "sub": "user1",
+            "iat": 1516239022,
+            "exp": exp,
+        });
+        let token = generate_jwt(&claims);
+
+        // First request with a valid token
+        let req = init_graphql_request("{ users { id } }", None).header(
+            header::AUTHORIZATION,
+            header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
+        );
+        let resp = test::call_service(&app.app, req.to_request()).await;
+        assert!(resp.status().is_success(), "Expected 200 OK");
+
+        // Second request that is not authenticated at all
+        let req = init_graphql_request("{ users { id } }", None);
+        let resp = test::call_service(&app.app, req.to_request()).await;
+        assert!(resp.status().is_success(), "Expected 200 OK");
+
+        let subgraph_requests = subgraphs_server
+            .get_subgraph_requests_log("accounts")
+            .await
+            .expect("expected requests sent to accounts subgraph");
+        assert_eq!(
+            subgraph_requests.len(),
+            2,
+            "expected 2 request to accounts subgraph"
+        );
+
+        // First request should have the user id in the X-User-Id header
+        let user_id_subgraph = subgraph_requests[0]
+            .headers
+            .get("x-user-id")
+            .unwrap()
+            .to_str()
+            .unwrap();
+
+        assert_eq!(user_id_subgraph, &claims["sub"]);
+
+        // Second request should have "EMPTY"
+        let user_id_subgraph = subgraph_requests[1]
+            .headers
+            .get("x-user-id")
+            .unwrap()
+            .to_str()
+            .unwrap();
+
+        assert_eq!(user_id_subgraph, "EMPTY");
+    }
+
+    #[ntex::test]
+    async fn should_allow_expressions_to_access_jwt_scopes() {
+        let subgraphs_server = SubgraphsServer::start().await;
+        let app = init_router_from_config_file("configs/jwt_auth_header_expression.router.yaml")
+            .await
+            .unwrap();
+        wait_for_readiness(&app.app).await;
+
+        // First request with a token and "scope: read:accounts"
+        let req = init_graphql_request("{ users { id } }", None).header(
+            header::AUTHORIZATION,
+            header::HeaderValue::from_str(&format!(
+                "Bearer {}",
+                generate_jwt(&json!({
+                    "sub": "user1",
+                    "iat": 1516239022,
+                    "exp": SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                        + 3600,
+                    "scope": "read:accounts write:accounts"
+                }))
+            ))
+            .unwrap(),
+        );
+        let resp = test::call_service(&app.app, req.to_request()).await;
+        assert!(resp.status().is_success(), "Expected 200 OK");
+
+        // Second request with other scopes
+        let req = init_graphql_request("{ users { id } }", None).header(
+            header::AUTHORIZATION,
+            header::HeaderValue::from_str(&format!(
+                "Bearer {}",
+                generate_jwt(&json!({
+                    "sub": "user2",
+                    "iat": 1516239022,
+                    "exp": SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                        + 3600,
+                    "scope": "do:something_else"
+                }))
+            ))
+            .unwrap(),
+        );
+        let resp = test::call_service(&app.app, req.to_request()).await;
+        assert!(resp.status().is_success(), "Expected 200 OK");
+
+        // Third request with no scopes
+        let req = init_graphql_request("{ users { id } }", None).header(
+            header::AUTHORIZATION,
+            header::HeaderValue::from_str(&format!(
+                "Bearer {}",
+                generate_jwt(&json!({
+                    "sub": "user3",
+                    "iat": 1516239022,
+                    "exp": SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                        + 3600,
+                }))
+            ))
+            .unwrap(),
+        );
+        let resp = test::call_service(&app.app, req.to_request()).await;
+        assert!(resp.status().is_success(), "Expected 200 OK");
+
+        let subgraph_requests = subgraphs_server
+            .get_subgraph_requests_log("accounts")
+            .await
+            .expect("expected requests sent to accounts subgraph");
+        assert_eq!(
+            subgraph_requests.len(),
+            3,
+            "expected 3 request to accounts subgraph"
+        );
+
+        // First request should have the user id in the X-User-Id header
+        assert_eq!(
+            subgraph_requests[0]
+                .headers
+                .get("x-can-read")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "Yes"
+        );
+
+        // Second and third requests should have "No"
+        assert_eq!(
+            subgraph_requests[1]
+                .headers
+                .get("x-can-read")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "No"
+        );
+        assert_eq!(
+            subgraph_requests[2]
+                .headers
+                .get("x-can-read")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "No"
+        );
+    }
+
+    #[ntex::test]
     async fn rejects_request_without_token_when_auth_is_required() {
         let app = init_router_from_config_file("configs/jwt_auth.router.yaml")
             .await

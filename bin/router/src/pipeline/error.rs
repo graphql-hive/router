@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_plan_executor::{
-    execution::error::PlanExecutionError,
+    execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
     response::graphql_error::{GraphQLError, GraphQLErrorExtensions},
 };
 use hive_router_query_planner::{
@@ -15,12 +15,9 @@ use ntex::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    jwt::errors::JwtForwardingError,
-    pipeline::{
-        header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR},
-        progressive_override::LabelEvaluationError,
-    },
+use crate::pipeline::{
+    header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR},
+    progressive_override::LabelEvaluationError,
 };
 
 #[derive(Debug)]

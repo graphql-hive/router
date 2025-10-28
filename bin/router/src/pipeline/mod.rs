@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use hive_router_plan_executor::execution::plan::{
-    ClientRequestDetails, OperationDetails, PlanExecutionOutput,
+use hive_router_plan_executor::execution::{
+    client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
+    plan::PlanExecutionOutput,
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
@@ -13,6 +14,7 @@ use ntex::{
 };
 
 use crate::{
+    jwt::context::JwtRequestContext,
     pipeline::{
         coerce_variables::coerce_request_variables,
         csrf_prevention::perform_csrf_prevention,
@@ -101,6 +103,7 @@ pub async fn graphql_request_handler(
 }
 
 #[inline]
+#[allow(clippy::await_holding_refcell_ref)]
 pub async fn execute_pipeline(
     req: &mut HttpRequest,
     body_bytes: Bytes,
@@ -129,6 +132,20 @@ pub async fn execute_pipeline(
     let query_plan_cancellation_token =
         CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
+    let req_extensions = req.extensions();
+    let jwt_context = req_extensions.get::<JwtRequestContext>();
+    let jwt_request_details = match jwt_context {
+        Some(jwt_context) => JwtRequestDetails::Authenticated {
+            token: jwt_context.token_raw.as_str(),
+            prefix: jwt_context.token_prefix.as_deref(),
+            scopes: jwt_context.extract_scopes(),
+            claims: &jwt_context
+                .get_claims_value()
+                .map_err(|e| req.new_pipeline_error(PipelineErrorVariant::JwtForwardingError(e)))?,
+        },
+        None => JwtRequestDetails::Unauthenticated,
+    };
+
     let client_request_details = ClientRequestDetails {
         method: req.method(),
         url: req.uri(),
@@ -143,6 +160,7 @@ pub async fn execute_pipeline(
             },
             query: &execution_request.query,
         },
+        jwt: &jwt_request_details,
     };
 
     let progressive_override_ctx = request_override_context(

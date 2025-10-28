@@ -1,32 +1,44 @@
 use std::collections::HashMap;
 
-use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
+use hive_router_plan_executor::execution::jwt_forward::JwtForwardingError;
 use jsonwebtoken::TokenData;
 use serde::{Deserialize, Serialize};
-use sonic_rs::Value;
-
-use crate::jwt::errors::JwtForwardingError;
 
 pub type JwtTokenPayload = TokenData<JwtClaims>;
 
 #[derive(Debug, Clone)]
 pub struct JwtRequestContext {
-    // The payload extracted from the JWT token, and the extensions key to inject it into the request
-    pub token_payload: Option<(String, JwtTokenPayload)>,
+    pub token_prefix: Option<String>,
+    pub token_raw: String,
+    pub token_payload: JwtTokenPayload,
 }
 
-impl TryInto<Option<JwtAuthForwardingPlan>> for JwtRequestContext {
-    type Error = JwtForwardingError;
+impl JwtRequestContext {
+    pub fn get_claims_value(&self) -> Result<sonic_rs::Value, JwtForwardingError> {
+        Ok(sonic_rs::to_value(&self.token_payload.claims)?)
+    }
 
-    fn try_into(self) -> Result<Option<JwtAuthForwardingPlan>, Self::Error> {
-        if let Some((extension_field_name, payload)) = &self.token_payload {
-            return Ok(Some(JwtAuthForwardingPlan {
-                extension_field_name: extension_field_name.clone(),
-                extension_field_value: sonic_rs::to_value(&payload.claims)?,
-            }));
+    /// Extracts an optional "scope"/"scopes" field form the token's payload.
+    /// Supports both space-delimited and array formats.
+    pub fn extract_scopes(&self) -> Option<Vec<String>> {
+        let map = &self.token_payload.claims.additional_claims;
+        let maybe_scopes = map.get("scope").or_else(|| map.get("scopes"));
+
+        if let Some(serde_json::Value::String(scopes_str)) = maybe_scopes {
+            return Some(scopes_str.split(' ').map(String::from).collect());
         }
 
-        Ok(None)
+        if let Some(serde_json::Value::Array(scopes_arr)) = maybe_scopes {
+            return Some(
+                scopes_arr
+                    .iter()
+                    .filter_map(|s| s.as_str())
+                    .map(String::from)
+                    .collect::<Vec<_>>(),
+            );
+        }
+
+        None
     }
 }
 
@@ -61,6 +73,8 @@ pub struct JwtClaims {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jti: Option<String>,
 
+    // we are using serde to deserialize the additional claims
+    // because the jsonwebtoken crate is using `serde_json` internally, and the `sonic_rs::Value` is not recognized as valid type
     #[serde(flatten)]
-    pub additional_claims: HashMap<String, Value>,
+    pub additional_claims: HashMap<String, serde_json::Value>,
 }

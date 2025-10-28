@@ -79,8 +79,12 @@ pub struct HiveRouterConfig {
     pub cors: cors::CORSConfig,
 
     /// Configuration for JWT authentication plugin.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub jwt: Option<jwt_auth::JwtAuthConfig>,
+    #[serde(
+        default = "jwt_auth::JwtAuthConfig::default",
+        skip_serializing_if = "jwt_auth::JwtAuthConfig::is_jwt_auth_disabled"
+    )]
+    pub jwt: jwt_auth::JwtAuthConfig,
+
     /// Configuration for overriding subgraph URLs.
     #[serde(default)]
     pub override_subgraph_urls: override_subgraph_urls::OverrideSubgraphUrlsConfig,

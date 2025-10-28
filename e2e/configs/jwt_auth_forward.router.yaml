@@ -3,6 +3,7 @@ supergraph:
   source: file
   path: ../supergraph.graphql
 jwt:
+  enabled: true
   require_authentication: true
   forward_claims_to_upstream_extensions:
     enabled: true

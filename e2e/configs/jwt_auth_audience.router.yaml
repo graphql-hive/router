@@ -3,6 +3,7 @@ supergraph:
   source: file
   path: ../supergraph.graphql
 jwt:
+  enabled: true
   require_authentication: true
   audiences:
     - "my-app-audience"

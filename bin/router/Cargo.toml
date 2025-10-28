@@ -44,6 +44,7 @@ retry-policies = { workspace = true}
 reqwest-retry = { workspace = true }
 reqwest-middleware = { workspace = true }
 vrl = { workspace = true }
+serde_json = { workspace = true }
 
 mimalloc = { version = "0.1.48", features = ["v3"] }
 moka = { version = "0.12.10", features = ["future"] }
