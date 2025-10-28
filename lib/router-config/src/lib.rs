@@ -1,23 +1,34 @@
 pub mod cors;
 pub mod csrf;
+mod env_overrides;
+pub mod graphiql;
 pub mod headers;
 pub mod http_server;
 pub mod jwt_auth;
 pub mod log;
+pub mod override_labels;
 pub mod override_subgraph_urls;
 pub mod primitives;
 pub mod query_planner;
 pub mod supergraph;
 pub mod traffic_shaping;
 
-use config::{Config, Environment, File, FileFormat, FileSourceFile};
+use config::{Config, File, FileFormat, FileSourceFile};
+use envconfig::Envconfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::{
-    http_server::HttpServerConfig, log::LoggingConfig, primitives::file_path::with_start_path,
-    query_planner::QueryPlannerConfig, supergraph::SupergraphSource,
+    env_overrides::{EnvVarOverrides, EnvVarOverridesError},
+    graphiql::GraphiQLConfig,
+    http_server::HttpServerConfig,
+    log::LoggingConfig,
+    override_labels::OverrideLabelsConfig,
+    primitives::file_path::with_start_path,
+    query_planner::QueryPlannerConfig,
+    supergraph::SupergraphSource,
     traffic_shaping::TrafficShapingExecutorConfig,
 };
 
@@ -32,6 +43,10 @@ pub struct HiveRouterConfig {
     /// The router is configured to be mostly silent (`info`) level, and will print only important messages, warnings, and errors.
     #[serde(default)]
     pub log: LoggingConfig,
+
+    /// Configuration for the GraphiQL interface.
+    #[serde(default)]
+    pub graphiql: GraphiQLConfig,
 
     /// Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).
     /// Each source has a different set of configuration, depending on the source type.
@@ -69,12 +84,18 @@ pub struct HiveRouterConfig {
     /// Configuration for overriding subgraph URLs.
     #[serde(default)]
     pub override_subgraph_urls: override_subgraph_urls::OverrideSubgraphUrlsConfig,
+
+    /// Configuration for overriding labels.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub override_labels: OverrideLabelsConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum RouterConfigError {
     #[error("Failed to load configuration: {0}")]
-    ConfigLoadError(config::ConfigError),
+    ConfigLoadError(#[from] config::ConfigError),
+    #[error("Failed to apply configuration overrides: {0}")]
+    EnvVarOverridesError(#[from] EnvVarOverridesError),
 }
 
 static DEFAULT_FILE_NAMES: &[&str] = &[
@@ -86,7 +107,8 @@ static DEFAULT_FILE_NAMES: &[&str] = &[
 
 pub fn load_config(
     overide_config_path: Option<String>,
-) -> Result<HiveRouterConfig, config::ConfigError> {
+) -> Result<HiveRouterConfig, RouterConfigError> {
+    let env_overrides = EnvVarOverrides::init_from_env().expect("failed to init env overrides");
     let mut config = Config::builder();
     let mut config_root_path = std::env::current_dir().expect("failed to get current directory");
 
@@ -106,15 +128,10 @@ pub fn load_config(
         }
     }
 
+    config = env_overrides.apply_overrides(config)?;
+
     let mut base_cfg = with_start_path(&config_root_path, || {
-        config
-            .add_source(
-                Environment::with_prefix("HIVE")
-                    .separator("__")
-                    .prefix_separator("__"),
-            )
-            .build()?
-            .try_deserialize::<HiveRouterConfig>()
+        config.build()?.try_deserialize::<HiveRouterConfig>()
     })?;
 
     base_cfg.root_directory = config_root_path;

@@ -99,7 +99,7 @@ jobs:
         working-directory: ${{ matrix.package }}
       - name: Upload benchmark results
         if: always() # Upload results even if benchmarks fail
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: ${{matrix.package}}-benchmark-results
           path: ${{matrix.package}}/target/criterion
@@ -128,12 +128,46 @@ jobs:
       - name: Build router
         run: cargo build --release -p hive-router
       - name: Run router
-        run: ./target/release/hive_router & sleep 5
+        run: |
+          ./target/release/hive_router &
+          echo "$!" > router.pid
+          sleep 5
         env:
-          HIVE__SUPERGRAPH__SOURCE: file
-          HIVE__SUPERGRAPH__PATH: bench/supergraph.graphql
-      - name: Run k6 benchmark
+          SUPERGRAPH_FILE_PATH: bench/supergraph.graphql
+      # run only on main
+      - name: Run k6 benchmark for Pull Request
+        if: github.event_name == 'push'
         run: k6 run bench/k6.js
+      # run only on PR
+      - name: Run k6 benchmark for Pull Request
+        if: github.event_name == 'pull_request'
+        run: k6 run -e SUMMARY_PATH=./bench/results/pr bench/k6.js
+      - name: Checkout main branch in a separate directory
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: main
+          path: main-branch
+      - name: Build router
+        if: github.event_name == 'pull_request'
+        run: cargo build --release -p hive-router
+        working-directory: main-branch
+      - name: Run router
+        if: github.event_name == 'pull_request'
+        run: |
+          kill $(cat router.pid)
+          ./main-branch/target/release/hive_router &
+          sleep 5
+        env:
+          SUPERGRAPH_FILE_PATH: bench/supergraph.graphql
+      - name: Run k6 benchmark for main
+        if: github.event_name == 'pull_request'
+        run: k6 run -e SUMMARY_PATH=./bench/results/main bench/k6.js
+      - name: Compare benchmark results
+        if: github.event_name == 'pull_request'
+        run: |
+          chmod +x ./bench/ci-detect-regression.sh
+          ./bench/ci-detect-regression.sh
 
   graphql-over-http:
     runs-on: ubuntu-latest
@@ -191,7 +225,7 @@ jobs:
         continue-on-error: true # continue even if the test fails
       - name: Upload logs
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: federation-audit-logs
           path: |

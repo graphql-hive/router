@@ -37,8 +37,7 @@ Use the following command to run the Docker image locally:
 
 ```bash
 docker run -p 4000:4000 \
-  -e HIVE__SUPERGRAPH__SOURCE="file" \
-  -e HIVE__SUPERGRAPH__PATH="/app/supergraph.graphql" \
+  -e SUPERGRAPH_FILE_PATH="/app/supergraph.graphql" \
   -v ./bench/supergraph.graphql:/app/supergraph.graphql \
   <ID_OF_THE_LOCAL_IMAGE>
 ```

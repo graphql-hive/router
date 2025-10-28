@@ -22,7 +22,7 @@ pub struct CoerceVariablesPayload {
 pub fn coerce_request_variables(
     req: &HttpRequest,
     supergraph: &SupergraphData,
-    execution_params: ExecutionRequest,
+    execution_params: &mut ExecutionRequest,
     normalized_operation: &Arc<GraphQLNormalizationPayload>,
 ) -> Result<CoerceVariablesPayload, PipelineError> {
     if req.method() == Method::GET {
@@ -37,7 +37,7 @@ pub fn coerce_request_variables(
 
     match collect_variables(
         &normalized_operation.operation_for_plan,
-        execution_params.variables,
+        &mut execution_params.variables,
         &supergraph.metadata,
     ) {
         Ok(values) => {

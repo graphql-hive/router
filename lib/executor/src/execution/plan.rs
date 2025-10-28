@@ -1,7 +1,4 @@
-use std::{
-    borrow::Cow,
-    collections::{BTreeSet, HashMap},
-};
+use std::collections::{BTreeSet, HashMap};
 
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
@@ -17,7 +14,9 @@ use sonic_rs::ValueRef;
 use crate::{
     context::ExecutionContext,
     execution::{
-        error::PlanExecutionError, jwt_forward::JwtAuthForwardingPlan, rewrites::FetchRewriteExt,
+        error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
+        jwt_forward::JwtAuthForwardingPlan,
+        rewrites::FetchRewriteExt,
     },
     executors::{
         common::{HttpExecutionRequest, HttpExecutionResponse},
@@ -49,26 +48,26 @@ use crate::{
     },
 };
 
-pub struct OperationDetails<'a> {
-    pub name: Option<String>,
-    pub query: Cow<'a, str>,
-    pub kind: &'a str,
+pub struct OperationDetails<'exec> {
+    pub name: Option<&'exec str>,
+    pub query: &'exec str,
+    pub kind: &'static str,
 }
 
-pub struct ClientRequestDetails<'a> {
-    pub method: Method,
-    pub url: http::Uri,
-    pub headers: &'a NtexHeaderMap,
-    pub operation: OperationDetails<'a>,
+pub struct ClientRequestDetails<'exec, 'req> {
+    pub method: &'req Method,
+    pub url: &'req http::Uri,
+    pub headers: &'req NtexHeaderMap,
+    pub operation: OperationDetails<'exec>,
 }
 
-pub struct QueryPlanExecutionContext<'exec> {
+pub struct QueryPlanExecutionContext<'exec, 'req> {
     pub query_plan: &'exec QueryPlan,
     pub projection_plan: &'exec Vec<FieldProjectionPlan>,
     pub headers_plan: &'exec HeaderRulesPlan,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     pub extensions: Option<HashMap<String, sonic_rs::Value>>,
-    pub client_request: ClientRequestDetails<'exec>,
+    pub client_request: &'exec ClientRequestDetails<'exec, 'req>,
     pub introspection_context: &'exec IntrospectionContext<'exec, 'static>,
     pub operation_type_name: &'exec str,
     pub executors: &'exec SubgraphExecutorMap,
@@ -80,8 +79,8 @@ pub struct PlanExecutionOutput {
     pub headers: HeaderMap,
 }
 
-pub async fn execute_query_plan<'exec>(
-    ctx: QueryPlanExecutionContext<'exec>,
+pub async fn execute_query_plan<'exec, 'req>(
+    ctx: QueryPlanExecutionContext<'exec, 'req>,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
     let init_value = if let Some(introspection_query) = ctx.introspection_context.query {
         resolve_introspection(introspection_query, ctx.introspection_context)
@@ -94,7 +93,7 @@ pub async fn execute_query_plan<'exec>(
         ctx.variable_values,
         ctx.executors,
         ctx.introspection_context.metadata,
-        &ctx.client_request,
+        ctx.client_request,
         ctx.headers_plan,
         ctx.jwt_auth_forwarding,
         // Deduplicate subgraph requests only if the operation type is a query
@@ -108,7 +107,11 @@ pub async fn execute_query_plan<'exec>(
     }
 
     let mut response_headers = HeaderMap::new();
-    modify_client_response_headers(exec_ctx.response_headers_aggregator, &mut response_headers)?;
+    modify_client_response_headers(exec_ctx.response_headers_aggregator, &mut response_headers)
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || None,
+            affected_path: || None,
+        })?;
 
     let final_response = &exec_ctx.final_response;
     let body = project_by_operation(
@@ -119,7 +122,11 @@ pub async fn execute_query_plan<'exec>(
         ctx.projection_plan,
         ctx.variable_values,
         exec_ctx.response_storage.estimate_final_response_size(),
-    )?;
+    )
+    .with_plan_context(LazyPlanContext {
+        subgraph_name: || None,
+        affected_path: || None,
+    })?;
 
     Ok(PlanExecutionOutput {
         body,
@@ -127,11 +134,11 @@ pub async fn execute_query_plan<'exec>(
     })
 }
 
-pub struct Executor<'exec> {
+pub struct Executor<'exec, 'req> {
     variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     schema_metadata: &'exec SchemaMetadata,
     executors: &'exec SubgraphExecutorMap,
-    client_request: &'exec ClientRequestDetails<'exec>,
+    client_request: &'exec ClientRequestDetails<'exec, 'req>,
     headers_plan: &'exec HeaderRulesPlan,
     jwt_forwarding_plan: &'exec Option<JwtAuthForwardingPlan>,
     dedupe_subgraph_requests: bool,
@@ -221,12 +228,12 @@ struct PreparedFlattenData {
     representation_hash_to_index: HashMap<u64, usize>,
 }
 
-impl<'exec> Executor<'exec> {
+impl<'exec, 'req> Executor<'exec, 'req> {
     pub fn new(
         variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
         executors: &'exec SubgraphExecutorMap,
         schema_metadata: &'exec SchemaMetadata,
-        client_request: &'exec ClientRequestDetails<'exec>,
+        client_request: &'exec ClientRequestDetails<'exec, 'req>,
         headers_plan: &'exec HeaderRulesPlan,
         jwt_forwarding_plan: &'exec Option<JwtAuthForwardingPlan>,
         dedupe_subgraph_requests: bool,
@@ -267,14 +274,8 @@ impl<'exec> Executor<'exec> {
         match self.execute_fetch_node(node, None).await {
             Ok(result) => self.process_job_result(ctx, result),
             Err(err) => {
-                let extensions = GraphQLErrorExtensions::new_from_code_and_service_name(
-                    "PLAN_EXECUTION_ERROR",
-                    &node.service_name,
-                );
-                ctx.errors.push(GraphQLError::from_message_and_extensions(
-                    err.to_string(),
-                    extensions,
-                ));
+                self.log_error(&err);
+                ctx.errors.push(err.into());
                 Ok(())
             }
         }
@@ -311,10 +312,10 @@ impl<'exec> Executor<'exec> {
                 Ok(job) => {
                     self.process_job_result(ctx, job)?;
                 }
-                Err(err) => ctx.errors.push(GraphQLError::from_message_and_extensions(
-                    err.to_string(),
-                    GraphQLErrorExtensions::new_from_code("PLAN_EXECUTION_FAILED"),
-                )),
+                Err(err) => {
+                    self.log_error(&err);
+                    ctx.errors.push(err.into())
+                }
             }
         }
 
@@ -331,13 +332,10 @@ impl<'exec> Executor<'exec> {
                 Ok(job) => {
                     self.process_job_result(ctx, job)?;
                 }
-                Err(err) => ctx.errors.push(GraphQLError::from_message_and_extensions(
-                    err.to_string(),
-                    GraphQLErrorExtensions::new_from_code_and_service_name(
-                        "PLAN_EXECUTION_FAILED",
-                        &fetch_node.service_name,
-                    ),
-                )),
+                Err(err) => {
+                    self.log_error(&err);
+                    ctx.errors.push(err.into());
+                }
             },
             PlanNode::Parallel(parallel_node) => {
                 self.execute_parallel_wave(ctx, parallel_node).await?;
@@ -358,44 +356,15 @@ impl<'exec> Executor<'exec> {
                                 self.process_job_result(ctx, job)?;
                             }
                             Err(err) => {
-                                let service_name = service_name_from_plan_node(node);
-                                let extensions = service_name
-                                    .map(|name| {
-                                        GraphQLErrorExtensions::new_from_code_and_service_name(
-                                            "PLAN_EXECUTION_ERROR",
-                                            name,
-                                        )
-                                    })
-                                    .unwrap_or_else(|| {
-                                        GraphQLErrorExtensions::new_from_code(
-                                            "PLAN_EXECUTION_ERROR",
-                                        )
-                                    });
-                                ctx.errors.push(GraphQLError::from_message_and_extensions(
-                                    err.to_string(),
-                                    extensions,
-                                ));
+                                self.log_error(&err);
+                                ctx.errors.push(err.into());
                             }
                         }
                     }
                     Ok(None) => { /* do nothing */ }
                     Err(err) => {
-                        let service_name = service_name_from_plan_node(node);
-                        let extensions = service_name
-                            .map(|name| {
-                                GraphQLErrorExtensions::new_from_code_and_service_name(
-                                    "PLAN_EXECUTION_ERROR",
-                                    name,
-                                )
-                            })
-                            .unwrap_or_else(|| {
-                                GraphQLErrorExtensions::new_from_code("PLAN_EXECUTION_ERROR")
-                            });
-
-                        ctx.errors.push(GraphQLError::from_message_and_extensions(
-                            err.to_string(),
-                            extensions,
-                        ));
+                        self.log_error(&err);
+                        ctx.errors.push(err.into());
                     }
                 }
             }
@@ -501,7 +470,11 @@ impl<'exec> Executor<'exec> {
                     &job.response.headers,
                     self.client_request,
                     &mut ctx.response_headers_aggregator,
-                )?;
+                )
+                .with_plan_context(LazyPlanContext {
+                    subgraph_name: || Some(job.subgraph_name.clone()),
+                    affected_path: || None,
+                })?;
 
                 if let Some((mut response, output_rewrites)) = self.process_subgraph_response(
                     job.subgraph_name.as_ref(),
@@ -527,7 +500,11 @@ impl<'exec> Executor<'exec> {
                     &job.response.headers,
                     self.client_request,
                     &mut ctx.response_headers_aggregator,
-                )?;
+                )
+                .with_plan_context(LazyPlanContext {
+                    subgraph_name: || Some(job.subgraph_name.clone()),
+                    affected_path: || Some(job.flatten_node_path.to_string()),
+                })?;
 
                 if let Some((mut response, output_rewrites)) = self.process_subgraph_response(
                     &job.subgraph_name,
@@ -665,7 +642,11 @@ impl<'exec> Executor<'exec> {
                     &mut filtered_representations,
                     filtered_representations_hashes.is_empty(),
                     None,
-                )?;
+                )
+                .with_plan_context(LazyPlanContext {
+                    subgraph_name: || Some(fetch_node.service_name.clone()),
+                    affected_path: || Some(flatten_node.path.to_string()),
+                })?;
 
                 if is_projected {
                     filtered_representations_hashes.insert(hash, index);
@@ -724,7 +705,11 @@ impl<'exec> Executor<'exec> {
             &node.service_name,
             self.client_request,
             &mut headers_map,
-        )?;
+        )
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || Some(node.service_name.clone()),
+            affected_path: || None,
+        })?;
         let variable_refs =
             select_fetch_variables(self.variable_values, node.variable_usages.as_ref());
 
@@ -755,23 +740,13 @@ impl<'exec> Executor<'exec> {
                 .into(),
         }))
     }
-}
 
-fn service_name_from_plan_node(node: &PlanNode) -> Option<&str> {
-    match node {
-        PlanNode::Fetch(fetch_node) => Some(fetch_node.service_name.as_ref()),
-        PlanNode::Flatten(flatten_node) => service_name_from_plan_node(flatten_node.node.as_ref()),
-        PlanNode::Condition(condition_node) => condition_node
-            .if_clause
-            .as_deref()
-            .and_then(service_name_from_plan_node)
-            .or_else(|| {
-                condition_node
-                    .else_clause
-                    .as_deref()
-                    .and_then(service_name_from_plan_node)
-            }),
-        _ => None,
+    fn log_error(&self, error: &PlanExecutionError) {
+        tracing::error!(
+            subgraph_name = error.subgraph_name(),
+            error = error as &dyn std::error::Error,
+            "Plan execution error"
+        );
     }
 }
 

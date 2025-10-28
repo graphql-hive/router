@@ -4,7 +4,7 @@ use http::Method;
 use ntex::util::Bytes;
 use ntex::web::types::Query;
 use ntex::web::HttpRequest;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use sonic_rs::Value;
 use tracing::{trace, warn};
 
@@ -25,10 +25,20 @@ struct GETQueryParams {
 pub struct ExecutionRequest {
     pub query: String,
     pub operation_name: Option<String>,
-    pub variables: Option<HashMap<String, Value>>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    pub variables: HashMap<String, Value>,
     // TODO: We don't use extensions yet, but we definitely will in the future.
     #[allow(dead_code)]
     pub extensions: Option<HashMap<String, Value>>,
+}
+
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Default + Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    let opt = Option::<T>::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
 }
 
 impl TryInto<ExecutionRequest> for GETQueryParams {
@@ -42,12 +52,12 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
 
         let variables = match self.variables.as_deref() {
             Some(v_str) if !v_str.is_empty() => match sonic_rs::from_str(v_str) {
-                Ok(vars) => Some(vars),
+                Ok(vars) => vars,
                 Err(e) => {
                     return Err(PipelineErrorVariant::FailedToParseVariables(e));
                 }
             },
-            _ => None,
+            _ => HashMap::new(),
         };
 
         let extensions = match self.extensions.as_deref() {

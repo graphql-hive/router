@@ -155,6 +155,9 @@ function handleBenchmarkSummary(data, additionalContext = {}) {
   };
 
   if (__ENV.SUMMARY_PATH) {
+    console.log(
+      `Writing summary to ${__ENV.SUMMARY_PATH}/k6_summary.json and .txt`,
+    );
     out[`${__ENV.SUMMARY_PATH}/k6_summary.json`] = JSON.stringify(
       Object.assign(data, additionalContext),
     );

@@ -115,11 +115,11 @@ impl SubgraphExecutorMap {
         Ok(subgraph_executor_map)
     }
 
-    pub async fn execute<'a>(
+    pub async fn execute<'a, 'req>(
         &self,
         subgraph_name: &str,
         execution_request: HttpExecutionRequest<'a>,
-        client_request: &ClientRequestDetails<'a>,
+        client_request: &ClientRequestDetails<'a, 'req>,
     ) -> HttpExecutionResponse {
         match self.get_or_create_executor(subgraph_name, client_request) {
             Ok(Some(executor)) => executor.execute(execution_request).await,
@@ -164,7 +164,7 @@ impl SubgraphExecutorMap {
     fn get_or_create_executor(
         &self,
         subgraph_name: &str,
-        client_request: &ClientRequestDetails<'_>,
+        client_request: &ClientRequestDetails<'_, '_>,
     ) -> Result<Option<SubgraphExecutorBoxedArc>, SubgraphExecutorError> {
         let from_expression =
             self.get_or_create_executor_from_expression(subgraph_name, client_request)?;
@@ -183,7 +183,7 @@ impl SubgraphExecutorMap {
     fn get_or_create_executor_from_expression(
         &self,
         subgraph_name: &str,
-        client_request: &ClientRequestDetails<'_>,
+        client_request: &ClientRequestDetails<'_, '_>,
     ) -> Result<Option<SubgraphExecutorBoxedArc>, SubgraphExecutorError> {
         if let Some(expression) = self.expressions_by_subgraph.get(subgraph_name) {
             let original_url_value = VrlValue::Bytes(Bytes::from(

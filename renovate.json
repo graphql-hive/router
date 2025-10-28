@@ -2,6 +2,19 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "github>the-guild-org/shared-config:renovate",
-    ":preserveSemverRanges"
+    ":preserveSemverRanges",
+    "github>Turbo87/renovate-config//rust/updateToolchain"
+  ],
+  "lockFileMaintenance": {
+    "enabled": false
+  },
+  "packageRules": [
+    {
+      "description": "Auto-merge GitHub Actions digest updates",
+      "matchUpdateTypes": ["digest"],
+      "matchManagers": ["github-actions"],
+      "automerge": true,
+      "automergeType": "pr"
+    }
   ]
 }

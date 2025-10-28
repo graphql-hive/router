@@ -48,7 +48,7 @@ impl BackgroundTasksManager {
         self.arbiter.spawn(f);
     }
 
-    pub async fn shutdown(self) {
+    pub fn shutdown(&mut self) {
         info!("shutdown triggered, stopping all background tasks...");
 
         self.cancellation_token.cancel();

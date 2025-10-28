@@ -11,7 +11,7 @@ A fully open-source MIT-licensed GraphQL API router that can act as a [GraphQL f
 
 It can be run as a standalone binary or a Docker Image. Query planner can be used as a standalone Crate library.
 
-[Binary Releases](https://github.com/graphql-hive/router/releases) | [Docker Releases](https://github.com/graphql-hive/router/pkgs/container/router) | [Configuration reference](./docs/README.md)
+[Binary Releases](https://github.com/graphql-hive/router/releases) | [Docker Releases](https://github.com/graphql-hive/router/pkgs/container/router) | [Documentation]([./docs/README.md](https://the-guild.dev/graphql/hive/docs/router))
 
 ## Try it out
 
@@ -35,8 +35,7 @@ supergraph:
 Alternativly, you can use environment variables to configure the router:
 
 ```env
-HIVE__SUPERGRAPH__SOURCE=file
-HIVE__SUPERGRAPH__PATH=./supergraph.graphql
+SUPERGRAPH_FILE_PATH=./supergraph.graphql
 ```
 
 Then, run the router:
@@ -58,8 +57,7 @@ The router image is being published to [Docker to GitHub Container Registry](). 
 ```bash
 docker run \
   -p 4000:4000 \
-  -e HIVE__SUPERGRAPH__SOURCE="file" \
-  -e HIVE__SUPERGRAPH__PATH="/app/supergraph.graphql" \
+  -e SUPERGRAPH_FILE_PATH="/app/supergraph.graphql" \
   -v ./my-supergraph.graphql:/app/supergraph.graphql \
   ghcr.io/graphql-hive/router:latest
 ```

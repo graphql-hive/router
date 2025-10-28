@@ -204,7 +204,7 @@ mod hive_cdn_supergraph_e2e_tests {
               source: hive
               endpoint: http://{host}/supergraph
               key: dummy_key
-              poll_interval: 500ms
+              poll_interval: 800ms
         "#,
         ))
         .await
@@ -234,7 +234,7 @@ mod hive_cdn_supergraph_e2e_tests {
         assert_eq!(types_arr.len(), 14);
 
         // Now wait for the schema to be reloaded and updated
-        sleep(Duration::from_millis(600)).await;
+        sleep(Duration::from_millis(900)).await;
         mock2.assert();
 
         let resp = test::call_service(

@@ -43,7 +43,7 @@ jobs:
         run: |
           npm install
           npm run generate
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         name: upload config artifact
         with:
           name: router-config.schema.json
@@ -111,7 +111,7 @@ jobs:
         run: cargo build --release --target ${{ matrix.rust_target }}
         if: ${{ !matrix.zigbuild }}
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         name: upload build artifact
         with:
           name: hive_router_${{ matrix.name }}
@@ -154,7 +154,7 @@ jobs:
             type=sha
             type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
       - name: download binary artifacts
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
           path: artifacts
           pattern: hive_router_*
@@ -179,7 +179,7 @@ jobs:
           file: ./docker/router.Dockerfile
           context: .
           platforms: ${{ env.DOCKER_PLATFORMS }}
-          push: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          push: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'release' || github.event_name == 'push'  }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
       - name: docker pr comment
@@ -218,8 +218,7 @@ jobs:
           echo "Docker image: ${{ env.DOCKER_IMAGE_NAME }}@${{ needs.docker.outputs.docker_image_digest }}"
 
           docker run -d --name router -p 4000:4000 \
-          -e HIVE__SUPERGRAPH__SOURCE="file" \
-          -e HIVE__SUPERGRAPH__PATH="/app/supergraph.graphql" \
+          -e SUPERGRAPH_FILE_PATH="/app/supergraph.graphql" \
           -v ./bench/supergraph.graphql:/app/supergraph.graphql \
             ${{ env.DOCKER_IMAGE_NAME }}@${{ needs.docker.outputs.docker_image_digest }}
 

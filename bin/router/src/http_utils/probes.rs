@@ -14,6 +14,6 @@ pub async fn readiness_check_handler(
     if schema_state.is_ready() {
         web::HttpResponse::Ok()
     } else {
-        web::HttpResponse::InternalServerError()
+        web::HttpResponse::ServiceUnavailable()
     }
 }

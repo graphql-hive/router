@@ -6,10 +6,12 @@
 |----|----|-----------|--------|
 |[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
+|[**graphiql**](#graphiql)|`object`|Configuration for the GraphiQL interface.<br/>Default: `{"enabled":true}`<br/>||
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"host":"0.0.0.0","port":4000}`<br/>||
 |[**jwt**](#jwt)|`object`, `null`|Configuration for JWT authentication plugin.<br/>|yes|
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
+|[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
@@ -36,6 +38,8 @@ csrf:
   enabled: true
   required_headers:
     - x-csrf-token
+graphiql:
+  enabled: true
 headers:
   all:
     request:
@@ -60,6 +64,7 @@ log:
   filter: null
   format: json
   level: info
+override_labels: {}
 override_subgraph_urls:
   accounts:
     url: https://accounts.example.com/graphql
@@ -328,6 +333,26 @@ A valid HTTP header name, according to RFC 7230.
 
 **Item Type:** `string`  
 **Item Pattern:** `^[A-Za-z0-9!#$%&'*+\-.^_\`\|~]+$`  
+<a name="graphiql"></a>
+## graphiql: object
+
+Configuration for the GraphiQL interface.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`|Enables/disables the GraphiQL interface. By default, the GraphiQL interface is enabled.<br/><br/>You can override this setting by setting the `GRAPHIQL_ENABLED` environment variable to `true` or `false`.<br/>Default: `true`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+enabled: true
+
+```
+
 <a name="headers"></a>
 ## headers: object
 
@@ -1304,8 +1329,8 @@ Configuration for the HTTP server/listener.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**host**|`string`|The host address to bind the HTTP server to.<br/>Default: `"0.0.0.0"`<br/>||
-|**port**|`integer`|The port to bind the HTTP server to.<br/><br/>If you are running the router inside a Docker container, please ensure that the port is exposed correctly using `-p <host_port>:<container_port>` flag.<br/>Default: `4000`<br/>Format: `"uint16"`<br/>Minimum: `0`<br/>Maximum: `65535`<br/>||
+|**host**|`string`|The host address to bind the HTTP server to.<br/><br/>Can also be set via the `HOST` environment variable.<br/>Default: `"0.0.0.0"`<br/>||
+|**port**|`integer`|The port to bind the HTTP server to.<br/><br/>Can also be set via the `PORT` environment variable.<br/><br/>If you are running the router inside a Docker container, please ensure that the port is exposed correctly using `-p <host_port>:<container_port>` flag.<br/>Default: `4000`<br/>Format: `"uint16"`<br/>Minimum: `0`<br/>Maximum: `65535`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -1499,9 +1524,9 @@ The router is configured to be mostly silent (`info`) level, and will print only
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**filter**|`string`, `null`|||
-|**format**|`string`|Default: `"json"`<br/>Enum: `"pretty-tree"`, `"pretty-compact"`, `"json"`<br/>||
-|**level**|`string`|Default: `"info"`<br/>Enum: `"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`<br/>||
+|**filter**|`string`, `null`|The filter to apply to log messages.<br/><br/>Can also be set via the `LOG_FILTER` environment variable.<br/>||
+|**format**|`string`|The format of the log messages.<br/><br/>Can also be set via the `LOG_FORMAT` environment variable.<br/>Default: `"json"`<br/>Enum: `"pretty-tree"`, `"pretty-compact"`, `"json"`<br/>||
+|**level**|`string`|The level of logging to use.<br/><br/>Can also be set via the `LOG_LEVEL` environment variable.<br/>Default: `"info"`<br/>Enum: `"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -1512,6 +1537,18 @@ format: json
 level: info
 
 ```
+
+<a name="override_labels"></a>
+## override\_labels: object
+
+Configuration for overriding labels.
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||Defines the value for a label override.<br/><br/>It can be a simple boolean,<br/>or an object containing the expression that evaluates to a boolean.<br/>||
 
 <a name="override_subgraph_urls"></a>
 ## override\_subgraph\_urls: object
@@ -1593,7 +1630,7 @@ The path can be either absolute or relative to the router's working directory.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**path**|`string`|Format: `"path"`<br/>|yes|
+|**path**|`string`|The path to the supergraph file.<br/><br/>Can also be set using the `SUPERGRAPH_FILE_PATH` environment variable.<br/>Format: `"path"`<br/>|yes|
 |[**poll\_interval**](#option1poll_interval)|`object`, `null`|Optional interval at which the file should be polled for changes.<br/>|yes|
 |**source**|`string`|Constant Value: `"file"`<br/>|yes|
 
@@ -1615,8 +1652,8 @@ Loads a supergraph from Hive Console CDN.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**endpoint**|`string`|The CDN endpoint from Hive Console target.<br/>|yes|
-|**key**|`string`|The CDN Access Token with from the Hive Console target.<br/>|yes|
+|**endpoint**|`string`|The CDN endpoint from Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.<br/>|yes|
+|**key**|`string`|The CDN Access Token with from the Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_KEY` environment variable.<br/>|yes|
 |[**poll\_interval**](#option2poll_interval)|`object`|Interval at which the Hive Console should be polled for changes.<br/>Default: `"10s"`<br/>|yes|
 |[**retry\_policy**](#option2retry_policy)|`object`|Interval at which the Hive Console should be polled for changes.<br/>Default: `{"max_retries":10}`<br/>|yes|
 |**source**|`string`|Constant Value: `"hive"`<br/>|yes|
@@ -1659,6 +1696,8 @@ If not provided, the file will only be loaded once when the router starts.
 ## Option 2: poll\_interval: object
 
 Interval at which the Hive Console should be polled for changes.
+
+Can also be set using the `HIVE_CDN_POLL_INTERVAL` environment variable.
 
 
 **Properties**

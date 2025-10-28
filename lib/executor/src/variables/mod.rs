@@ -8,20 +8,19 @@ use crate::introspection::schema::SchemaMetadata;
 #[inline]
 pub fn collect_variables(
     operation: &hive_router_query_planner::ast::operation::OperationDefinition,
-    mut variables: Option<HashMap<String, Value>>,
+    variables_map: &mut HashMap<String, Value>,
     schema_metadata: &SchemaMetadata,
 ) -> Result<Option<HashMap<String, Value>>, String> {
     if operation.variable_definitions.is_none() {
         return Ok(None);
     }
     let variable_definitions = operation.variable_definitions.as_ref().unwrap();
-    let mut incoming_variables_map = variables.take().unwrap_or_default();
 
     let collected_variables: Result<Vec<Option<(String, Value)>>, String> = variable_definitions
         .iter()
         .map(|variable_definition| {
             let variable_name = variable_definition.name.as_str();
-            if let Some(variable_value) = incoming_variables_map.remove(variable_name) {
+            if let Some(variable_value) = variables_map.remove(variable_name) {
                 validate_runtime_value(
                     variable_value.as_ref(),
                     &variable_definition.variable_type,
