@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -11,11 +10,10 @@ use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use hive_router_plan_executor::execution::plan::{
-    ClientRequestDetails, OperationDetails, PlanExecutionOutput, QueryPlanExecutionContext,
+    ClientRequestDetails, PlanExecutionOutput, QueryPlanExecutionContext,
 };
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
-use hive_router_query_planner::state::supergraph_state::OperationKind;
 use http::HeaderName;
 use ntex::web::HttpRequest;
 
@@ -29,14 +27,14 @@ enum ExposeQueryPlanMode {
 }
 
 #[inline]
-pub async fn execute_plan<'a>(
-    req: &mut HttpRequest,
-    query: Cow<'a, str>,
+pub async fn execute_plan(
+    req: &HttpRequest,
     supergraph: &SupergraphData,
     app_state: &Arc<RouterSharedState>,
     normalized_payload: &Arc<GraphQLNormalizationPayload>,
     query_plan_payload: &Arc<QueryPlan>,
     variable_payload: &CoerceVariablesPayload,
+    client_request_details: &ClientRequestDetails<'_, '_>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
@@ -86,21 +84,7 @@ pub async fn execute_plan<'a>(
         headers_plan: &app_state.headers_plan,
         variable_values: &variable_payload.variables_map,
         extensions,
-        client_request: ClientRequestDetails {
-            method: req.method().clone(),
-            url: req.uri().clone(),
-            headers: req.headers(),
-            operation: OperationDetails {
-                name: normalized_payload.operation_for_plan.name.clone(),
-                kind: match normalized_payload.operation_for_plan.operation_kind {
-                    Some(OperationKind::Query) => "query",
-                    Some(OperationKind::Mutation) => "mutation",
-                    Some(OperationKind::Subscription) => "subscription",
-                    None => "query",
-                },
-                query,
-            },
-        },
+        client_request: client_request_details,
         introspection_context: &introspection_context,
         operation_type_name: normalized_payload.root_type_name,
         jwt_auth_forwarding: &jwt_forward_plan,

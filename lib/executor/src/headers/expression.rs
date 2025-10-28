@@ -62,7 +62,7 @@ fn client_header_map_to_vrl_value(headers: &ntex_http::HeaderMap) -> Value {
     Value::Object(obj)
 }
 
-impl From<&RequestExpressionContext<'_>> for Value {
+impl From<&RequestExpressionContext<'_, '_>> for Value {
     /// NOTE: If performance becomes an issue, consider pre-computing parts of this context that do not change
     fn from(ctx: &RequestExpressionContext) -> Self {
         // .subgraph
@@ -81,7 +81,7 @@ impl From<&RequestExpressionContext<'_>> for Value {
     }
 }
 
-impl From<&ResponseExpressionContext<'_>> for Value {
+impl From<&ResponseExpressionContext<'_, '_>> for Value {
     /// NOTE: If performance becomes an issue, consider pre-computing parts of this context that do not change
     fn from(ctx: &ResponseExpressionContext) -> Self {
         // .subgraph
@@ -102,7 +102,7 @@ impl From<&ResponseExpressionContext<'_>> for Value {
     }
 }
 
-impl From<&ClientRequestDetails<'_>> for Value {
+impl From<&ClientRequestDetails<'_, '_>> for Value {
     fn from(details: &ClientRequestDetails) -> Self {
         // .request.headers
         let headers_value = client_header_map_to_vrl_value(details.headers);
@@ -132,9 +132,9 @@ impl From<&ClientRequestDetails<'_>> for Value {
 
         // .request.operation
         let operation_value = Self::Object(BTreeMap::from([
-            ("name".into(), details.operation.name.clone().into()),
+            ("name".into(), details.operation.name.into()),
             ("type".into(), details.operation.kind.into()),
-            ("query".into(), details.operation.query.clone().into()),
+            ("query".into(), details.operation.query.into()),
         ]));
 
         Self::Object(BTreeMap::from([
