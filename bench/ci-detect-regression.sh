@@ -4,7 +4,7 @@
 #
 # It's a script to detect performance regression between two k6 benchmark summary files.
 # It compares the 'http_reqs' rate metric from the PR summary against the main branch
-# summary and determines if there is a regression of more than 5%.
+# summary and determines if there is a regression of more than 2%.
 # If a regression is detected, the script exits with a non-zero status code.
 
 # Ensure jq and bc are installed
