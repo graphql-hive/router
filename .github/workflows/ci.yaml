@@ -141,7 +141,7 @@ jobs:
       # run only on PR
       - name: Run k6 benchmark for Pull Request
         if: github.event_name == 'pull_request'
-        run: k6 run -e SUMMARY_PATH=./results/pr bench/k6.js
+        run: k6 run -e SUMMARY_PATH=./bench/results/pr bench/k6.js
       - name: Checkout main branch in a separate directory
         if: github.event_name == 'pull_request'
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
@@ -162,7 +162,7 @@ jobs:
           SUPERGRAPH_FILE_PATH: bench/supergraph.graphql
       - name: Run k6 benchmark for main
         if: github.event_name == 'pull_request'
-        run: k6 run -e SUMMARY_PATH=./results/main bench/k6.js
+        run: k6 run -e SUMMARY_PATH=./bench/results/main bench/k6.js
       - name: Compare benchmark results
         if: github.event_name == 'pull_request'
         run: |
