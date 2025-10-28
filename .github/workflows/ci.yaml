@@ -137,11 +137,11 @@ jobs:
       # run only on main
       - name: Run k6 benchmark for Pull Request
         if: github.event_name == 'push'
-        run: k6 run bench/k6.js --env
+        run: k6 run bench/k6.js
       # run only on PR
       - name: Run k6 benchmark for Pull Request
         if: github.event_name == 'pull_request'
-        run: k6 run -e SUMMARY_PATH=./results/pr bench/k6.js --env
+        run: k6 run -e SUMMARY_PATH=./results/pr bench/k6.js
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
           ref: main
@@ -159,7 +159,7 @@ jobs:
           SUPERGRAPH_FILE_PATH: bench/supergraph.graphql
       - name: Run k6 benchmark for main
         if: github.event_name == 'pull_request'
-        run: k6 run -e SUMMARY_PATH=./results/main bench/k6.js --env
+        run: k6 run -e SUMMARY_PATH=./results/main bench/k6.js
       - name: Compare benchmark results
         if: github.event_name == 'pull_request'
         run: ./bench/ci-detect-regressions.sh
