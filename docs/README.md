@@ -9,7 +9,7 @@
 |[**graphiql**](#graphiql)|`object`|Configuration for the GraphiQL interface.<br/>Default: `{"enabled":true}`<br/>||
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"host":"0.0.0.0","port":4000}`<br/>||
-|[**jwt**](#jwt)|`object`, `null`|Configuration for JWT authentication plugin.<br/>|yes|
+|[**jwt**](#jwt)|`object`|Configuration for JWT authentication plugin.<br/>|yes|
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
@@ -60,6 +60,28 @@ headers:
 http:
   host: 0.0.0.0
   port: 4000
+jwt:
+  allowed_algorithms:
+    - HS256
+    - HS384
+    - HS512
+    - RS256
+    - RS384
+    - RS512
+    - ES256
+    - ES384
+    - PS256
+    - PS384
+    - PS512
+    - EdDSA
+  enabled: false
+  forward_claims_to_upstream_extensions:
+    enabled: false
+    field_name: jwt
+  lookup_locations:
+    - name: authorization
+      prefix: Bearer
+      source: header
 log:
   filter: null
   format: json
@@ -1342,7 +1364,7 @@ port: 4000
 ```
 
 <a name="jwt"></a>
-## jwt: object,null
+## jwt: object
 
 Configuration for JWT authentication plugin.
 
@@ -1353,6 +1375,7 @@ Configuration for JWT authentication plugin.
 |----|----|-----------|--------|
 |[**allowed\_algorithms**](#jwtallowed_algorithms)|`string[]`|List of allowed algorithms for verifying the JWT signature.<br/>Default: `"HS256"`, `"HS384"`, `"HS512"`, `"RS256"`, `"RS384"`, `"RS512"`, `"ES256"`, `"ES384"`, `"PS256"`, `"PS384"`, `"PS512"`, `"EdDSA"`<br/>|no|
 |[**audiences**](#jwtaudiences)|`string[]`|The list of [JWT audiences](https://tools.ietf.org/html/rfc7519#section-4.1.3) are allowed to access.<br/>|no|
+|**enabled**|`boolean`|Default: `false`<br/>|no|
 |[**forward\_claims\_to\_upstream\_extensions**](#jwtforward_claims_to_upstream_extensions)|`object`|Forward the JWT claims to the upstream service using GraphQL's `.extensions`.<br/>Default: `{"enabled":false,"field_name":"jwt"}`<br/>|yes|
 |[**issuers**](#jwtissuers)|`string[]`|Specify the [principal](https://tools.ietf.org/html/rfc7519#section-4.1.1) that issued the JWT, usually a URL or an email address.<br/>|no|
 |[**jwks\_providers**](#jwtjwks_providers)|`array`|A list of JWKS providers to use for verifying the JWT signature.<br/>|yes|
@@ -1360,6 +1383,33 @@ Configuration for JWT authentication plugin.
 |**require\_authentication**|`boolean`, `null`|If set to `true`, the entire request will be rejected if the JWT token is not present in the request.<br/>|no|
 
 **Additional Properties:** not allowed  
+**Example**
+
+```yaml
+allowed_algorithms:
+  - HS256
+  - HS384
+  - HS512
+  - RS256
+  - RS384
+  - RS512
+  - ES256
+  - ES384
+  - PS256
+  - PS384
+  - PS512
+  - EdDSA
+enabled: false
+forward_claims_to_upstream_extensions:
+  enabled: false
+  field_name: jwt
+lookup_locations:
+  - name: authorization
+    prefix: Bearer
+    source: header
+
+```
+
 <a name="jwtallowed_algorithms"></a>
 ### jwt\.allowed\_algorithms\[\]: array,null
 

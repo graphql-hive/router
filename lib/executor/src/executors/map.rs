@@ -27,7 +27,7 @@ use vrl::{
 };
 
 use crate::{
-    execution::plan::ClientRequestDetails,
+    execution::client_request_details::ClientRequestDetails,
     executors::{
         common::{
             HttpExecutionRequest, HttpExecutionResponse, SubgraphExecutor, SubgraphExecutorBoxedArc,

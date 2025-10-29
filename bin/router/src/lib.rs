@@ -106,9 +106,9 @@ pub async fn configure_app_from_config(
     router_config: HiveRouterConfig,
     bg_tasks_manager: &mut BackgroundTasksManager,
 ) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), Box<dyn std::error::Error>> {
-    let jwt_runtime = match &router_config.jwt {
-        Some(jwt_config) => Some(JwtAuthRuntime::init(bg_tasks_manager, jwt_config).await?),
-        None => None,
+    let jwt_runtime = match router_config.jwt.is_jwt_auth_enabled() {
+        true => Some(JwtAuthRuntime::init(bg_tasks_manager, &router_config.jwt).await?),
+        false => None,
     };
 
     let router_config_arc = Arc::new(router_config);

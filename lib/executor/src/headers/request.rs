@@ -9,7 +9,7 @@ use vrl::{
 };
 
 use crate::{
-    execution::plan::ClientRequestDetails,
+    execution::client_request_details::ClientRequestDetails,
     headers::{
         errors::HeaderRuleRuntimeError,
         expression::vrl_value_to_header_value,

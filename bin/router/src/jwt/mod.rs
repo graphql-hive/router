@@ -51,7 +51,7 @@ impl JwtAuthRuntime {
         Ok(instance)
     }
 
-    fn lookup(&self, req: &HttpRequest) -> Result<String, LookupError> {
+    fn lookup(&self, req: &HttpRequest) -> Result<(Option<String>, String), LookupError> {
         for lookup_config in &self.config.lookup_locations {
             match lookup_config {
                 JwtAuthPluginLookupLocation::Header { name, prefix } => {
@@ -73,14 +73,17 @@ impl JwtAuthRuntime {
                                 .and_then(|s| s.strip_prefix(prefix))
                             {
                                 Some(stripped_value) => {
-                                    return Ok(stripped_value.trim().to_string());
+                                    return Ok((
+                                        Some(prefix.to_string()),
+                                        stripped_value.trim().to_string(),
+                                    ));
                                 }
                                 None => {
                                     return Err(LookupError::MismatchedPrefix);
                                 }
                             },
                             None => {
-                                return Ok(header_value.to_str().unwrap_or("").to_string());
+                                return Ok((None, header_value.to_str().unwrap_or("").to_string()));
                             }
                         }
                     }
@@ -101,7 +104,7 @@ impl JwtAuthRuntime {
                                     let (cookie_name, cookie_value) = v.name_value_trimmed();
 
                                     if cookie_name == name {
-                                        return Ok(cookie_value.to_string());
+                                        return Ok((None, cookie_value.to_string()));
                                     }
                                 }
                                 Err(e) => {
@@ -158,15 +161,15 @@ impl JwtAuthRuntime {
         &self,
         jwks: &Vec<Arc<JwkSet>>,
         req: &HttpRequest,
-    ) -> Result<(JwtTokenPayload, String), JwtError> {
+    ) -> Result<(JwtTokenPayload, Option<String>, String), JwtError> {
         match self.lookup(req) {
-            Ok(token) => {
+            Ok((maybe_prefix, token)) => {
                 // First, we need to decode the header to determine which provider to use.
                 let header = decode_header(&token).map_err(JwtError::InvalidJwtHeader)?;
                 let jwk = self.find_matching_jwks(&header, jwks)?;
 
                 self.decode_and_validate_token(&token, &jwk.keys)
-                    .map(|token_data| (token_data, token))
+                    .map(|token_data| (token_data, maybe_prefix, token))
             }
             Err(e) => {
                 warn!("jwt plugin failed to lookup token. error: {}", e);
@@ -266,25 +269,15 @@ impl JwtAuthRuntime {
         let valid_jwks = self.jwks.all();
 
         match self.authenticate(&valid_jwks, request) {
-            Ok((token_data, _token)) => {
-                let mut jwt_ctx = JwtRequestContext {
-                    token_payload: None,
-                };
-
-                if self.config.forward_claims_to_upstream_extensions.enabled {
-                    jwt_ctx.token_payload = Some((
-                        self.config
-                            .forward_claims_to_upstream_extensions
-                            .field_name
-                            .clone(),
-                        token_data,
-                    ));
-                }
-
-                request.extensions_mut().insert(jwt_ctx);
+            Ok((token_payload, maybe_token_prefix, token)) => {
+                request.extensions_mut().insert(JwtRequestContext {
+                    token_payload,
+                    token_raw: token,
+                    token_prefix: maybe_token_prefix,
+                });
             }
             Err(e) => {
-                warn!("jwt token error: {}", e);
+                warn!("jwt token error: {:?}", e);
 
                 if self.config.require_authentication.is_some_and(|v| v) {
                     return Err(e);

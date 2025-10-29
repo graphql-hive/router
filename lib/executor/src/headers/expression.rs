@@ -5,10 +5,7 @@ use http::{HeaderMap, HeaderValue};
 use tracing::warn;
 use vrl::core::Value;
 
-use crate::{
-    execution::plan::ClientRequestDetails,
-    headers::{request::RequestExpressionContext, response::ResponseExpressionContext},
-};
+use crate::headers::{request::RequestExpressionContext, response::ResponseExpressionContext};
 
 fn warn_unsupported_conversion_option<T>(type_name: &str) -> Option<T> {
     warn!(
@@ -37,19 +34,6 @@ pub fn vrl_value_to_header_value(value: Value) -> Option<HeaderValue> {
 }
 
 fn header_map_to_vrl_value(headers: &HeaderMap) -> Value {
-    let mut obj = BTreeMap::new();
-    for (header_name, header_value) in headers.iter() {
-        if let Ok(value) = header_value.to_str() {
-            obj.insert(
-                header_name.as_str().into(),
-                Value::Bytes(Bytes::from(value.to_owned())),
-            );
-        }
-    }
-    Value::Object(obj)
-}
-
-fn client_header_map_to_vrl_value(headers: &ntex_http::HeaderMap) -> Value {
     let mut obj = BTreeMap::new();
     for (header_name, header_value) in headers.iter() {
         if let Ok(value) = header_value.to_str() {
@@ -98,50 +82,6 @@ impl From<&ResponseExpressionContext<'_, '_>> for Value {
             ("subgraph".into(), subgraph_value),
             ("response".into(), response_value),
             ("request".into(), request_value),
-        ]))
-    }
-}
-
-impl From<&ClientRequestDetails<'_, '_>> for Value {
-    fn from(details: &ClientRequestDetails) -> Self {
-        // .request.headers
-        let headers_value = client_header_map_to_vrl_value(details.headers);
-
-        // .request.url
-        let url_value = Self::Object(BTreeMap::from([
-            (
-                "host".into(),
-                details.url.host().unwrap_or("unknown").into(),
-            ),
-            ("path".into(), details.url.path().into()),
-            (
-                "port".into(),
-                details
-                    .url
-                    .port_u16()
-                    .unwrap_or_else(|| {
-                        if details.url.scheme() == Some(&http::uri::Scheme::HTTPS) {
-                            443
-                        } else {
-                            80
-                        }
-                    })
-                    .into(),
-            ),
-        ]));
-
-        // .request.operation
-        let operation_value = Self::Object(BTreeMap::from([
-            ("name".into(), details.operation.name.into()),
-            ("type".into(), details.operation.kind.into()),
-            ("query".into(), details.operation.query.into()),
-        ]));
-
-        Self::Object(BTreeMap::from([
-            ("method".into(), details.method.as_str().into()),
-            ("headers".into(), headers_value),
-            ("url".into(), url_value),
-            ("operation".into(), operation_value),
         ]))
     }
 }

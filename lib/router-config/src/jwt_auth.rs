@@ -9,6 +9,8 @@ use crate::primitives::{file_path::FilePath, http_header::HttpHeaderName};
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct JwtAuthConfig {
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
     /// A list of JWKS providers to use for verifying the JWT signature.
     /// Can be either a path to a local JSON of the file-system, or a URL to a remote JWKS provider.
     pub jwks_providers: Vec<JwksProviderSourceConfig>,
@@ -41,6 +43,39 @@ pub struct JwtAuthConfig {
     #[serde(default = "default_forward_claims_to_upstream_extensions")]
     /// Forward the JWT claims to the upstream service using GraphQL's `.extensions`.
     pub forward_claims_to_upstream_extensions: JwtClaimsForwardingConfig,
+}
+
+impl JwtAuthConfig {
+    pub fn is_jwt_extensions_forwarding_enabled(&self) -> bool {
+        self.is_jwt_auth_enabled() && self.forward_claims_to_upstream_extensions.enabled
+    }
+
+    pub fn is_jwt_auth_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn is_jwt_auth_disabled(&self) -> bool {
+        !self.is_jwt_auth_enabled()
+    }
+}
+
+fn default_enabled() -> bool {
+    false
+}
+
+impl Default for JwtAuthConfig {
+    fn default() -> Self {
+        JwtAuthConfig {
+            enabled: default_enabled(),
+            require_authentication: None,
+            lookup_locations: vec![],
+            jwks_providers: vec![],
+            forward_claims_to_upstream_extensions: default_forward_claims_to_upstream_extensions(),
+            audiences: None,
+            issuers: None,
+            allowed_algorithms: None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

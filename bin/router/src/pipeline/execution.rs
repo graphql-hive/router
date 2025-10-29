@@ -1,17 +1,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::jwt::context::JwtRequestContext;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::execute_query_plan;
+use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
-use hive_router_plan_executor::execution::plan::{
-    ClientRequestDetails, PlanExecutionOutput, QueryPlanExecutionContext,
-};
+use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionContext};
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
@@ -67,15 +65,23 @@ pub async fn execute_plan(
         metadata: &supergraph.metadata,
     };
 
-    let jwt_context = {
-        let req_extensions = req.extensions();
-        req_extensions.get::<JwtRequestContext>().cloned()
-    };
-    let jwt_forward_plan: Option<JwtAuthForwardingPlan> = match jwt_context {
-        Some(jwt_context) => jwt_context
-            .try_into()
-            .map_err(|e| req.new_pipeline_error(PipelineErrorVariant::JwtForwardingError(e)))?,
-        None => None,
+    let jwt_forward_plan: Option<JwtAuthForwardingPlan> = if app_state
+        .router_config
+        .jwt
+        .is_jwt_extensions_forwarding_enabled()
+    {
+        client_request_details
+            .jwt
+            .build_forwarding_plan(
+                &app_state
+                    .router_config
+                    .jwt
+                    .forward_claims_to_upstream_extensions
+                    .field_name,
+            )
+            .map_err(|e| req.new_pipeline_error(PipelineErrorVariant::JwtForwardingError(e)))?
+    } else {
+        None
     };
 
     execute_query_plan(QueryPlanExecutionContext {

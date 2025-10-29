@@ -94,11 +94,3 @@ impl From<&JwtError> for GraphQLError {
         }
     }
 }
-
-#[derive(Debug, thiserror::Error)]
-pub enum JwtForwardingError {
-    #[error("failed to serialized jwt claims")]
-    ClaimsSerializeError(#[from] sonic_rs::Error),
-    #[error("failed to parse  as valid header value")]
-    ValueIsNotValidHeader(#[from] http::header::InvalidHeaderValue),
-}
