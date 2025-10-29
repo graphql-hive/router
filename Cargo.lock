@@ -2012,6 +2012,8 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 [[package]]
 name = "hive-console-sdk"
 version = "0.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb4a53b912555adbf4ab91e902dd324166197b803fd1d2d146a44d67468dbf3a"
 dependencies = [
  "anyhow",
  "async-trait",
