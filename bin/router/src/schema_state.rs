@@ -40,7 +40,7 @@ pub struct SupergraphData {
     pub metadata: SchemaMetadata,
     pub planner: Planner,
     pub subgraph_executor_map: SubgraphExecutorMap,
-    pub schema: Arc<Document<'static, String>>,
+    pub supergraph_schema: Arc<Document<'static, String>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -126,7 +126,7 @@ impl SchemaState {
         )?;
 
         Ok(SupergraphData {
-            schema: Arc::new(parsed_supergraph_sdl),
+            supergraph_schema: Arc::new(parsed_supergraph_sdl),
             metadata,
             planner,
             subgraph_executor_map,

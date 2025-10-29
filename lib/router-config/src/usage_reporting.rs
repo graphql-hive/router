@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -5,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct UsageReportingConfig {
     /// Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.
-    pub token: String,
+    pub access_token: String,
     /// A target ID, this can either be a slug following the format “$organizationSlug/$projectSlug/$targetSlug” (e.g “the-guild/graphql-hive/staging”) or an UUID (e.g. “a0f4c605-6541-4350-8cfe-b31f21a4bf80”). To be used when the token is configured with an organization access token.
     pub target_id: Option<String>,
     /// For self-hosting, you can override `/usage` endpoint (defaults to `https://app.graphql-hive.com/usage`).
@@ -45,8 +47,13 @@ pub struct UsageReportingConfig {
     pub request_timeout: u64,
     /// Frequency of flushing the buffer to the server
     /// Default: 5 seconds
-    #[serde(default = "default_flush_interval")]
-    pub flush_interval: u64,
+    #[serde(
+        default = "default_flush_interval",
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "String")]
+    pub flush_interval: Duration,
 }
 
 fn default_endpoint() -> String {
@@ -81,6 +88,6 @@ fn default_connect_timeout() -> u64 {
     5
 }
 
-fn default_flush_interval() -> u64 {
-    5
+fn default_flush_interval() -> Duration {
+    Duration::from_secs(5)
 }

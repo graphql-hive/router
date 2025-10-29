@@ -19,7 +19,7 @@ use crate::{
     },
     jwt::JwtAuthRuntime,
     logger::configure_logging,
-    pipeline::graphql_request_handler,
+    pipeline::{graphql_request_handler, usage_reporting::create_hive_user_agent},
 };
 
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
@@ -110,7 +110,10 @@ pub async fn configure_app_from_config(
         true => Some(JwtAuthRuntime::init(bg_tasks_manager, &router_config.jwt).await?),
         false => None,
     };
-    let usage_agent = pipeline::usage_reporting::from_config(&router_config).map(Arc::new);
+    let usage_agent = router_config
+        .usage_reporting
+        .as_ref()
+        .map(|usage_config| Arc::new(create_hive_user_agent(usage_config)));
 
     if let Some(usage_agent) = &usage_agent {
         bg_tasks_manager.register_task(usage_agent.clone());

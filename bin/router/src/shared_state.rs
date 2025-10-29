@@ -19,7 +19,7 @@ pub struct RouterSharedState {
     pub override_labels_evaluator: OverrideLabelsEvaluator,
     pub cors_runtime: Option<Cors>,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
-    pub usage_agent: Option<Arc<UsageAgent>>,
+    pub hive_usage_agent: Option<Arc<UsageAgent>>,
 }
 
 impl RouterSharedState {
@@ -39,7 +39,7 @@ impl RouterSharedState {
             )
             .map_err(Box::new)?,
             jwt_auth_runtime,
-            usage_agent,
+            hive_usage_agent: usage_agent,
         })
     }
 }
@@ -52,6 +52,6 @@ pub enum SharedStateError {
     CORSConfig(#[from] Box<CORSConfigError>),
     #[error("invalid override labels config: {0}")]
     OverrideLabelsCompile(#[from] Box<OverrideLabelsCompileError>),
-    #[error("error creating usage agent: {0}")]
+    #[error("error creating hive usage agent: {0}")]
     UsageAgent(#[from] Box<hive_console_sdk::agent::AgentError>),
 }
