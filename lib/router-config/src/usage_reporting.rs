@@ -36,15 +36,23 @@ pub struct UsageReportingConfig {
     #[serde(default = "default_accept_invalid_certs")]
     pub accept_invalid_certs: bool,
     /// A timeout for only the connect phase of a request to Hive Console
-    /// Unit: seconds
-    /// Default: 5 (s)
-    #[serde(default = "default_connect_timeout")]
-    pub connect_timeout: u64,
+    /// Default: 5 seconds
+    #[serde(
+        default = "default_connect_timeout",
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "String")]
+    pub connect_timeout: Duration,
     /// A timeout for the entire request to Hive Console
-    /// Unit: seconds
-    /// Default: 15 (s)
-    #[serde(default = "default_request_timeout")]
-    pub request_timeout: u64,
+    /// Default: 15 seconds
+    #[serde(
+        default = "default_request_timeout",
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "String")]
+    pub request_timeout: Duration,
     /// Frequency of flushing the buffer to the server
     /// Default: 5 seconds
     #[serde(
@@ -80,12 +88,12 @@ fn default_accept_invalid_certs() -> bool {
     false
 }
 
-fn default_request_timeout() -> u64 {
-    15
+fn default_request_timeout() -> Duration {
+    Duration::from_secs(15)
 }
 
-fn default_connect_timeout() -> u64 {
-    5
+fn default_connect_timeout() -> Duration {
+    Duration::from_secs(5)
 }
 
 fn default_flush_interval() -> Duration {
