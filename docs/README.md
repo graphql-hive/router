@@ -1842,17 +1842,17 @@ Configuration for usage reporting to GraphQL Hive.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**accept\_invalid\_certs**|`boolean`|Accepts invalid SSL certificates<br/>Default: false<br/>Default: `false`<br/>|no|
+|**access\_token**|`string`|Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.<br/>|yes|
 |**buffer\_size**|`integer`|A maximum number of operations to hold in a buffer before sending to Hive Console<br/>Default: 1000<br/>Default: `1000`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>|no|
 |**client\_name\_header**|`string`|Default: `"graphql-client-name"`<br/>|no|
 |**client\_version\_header**|`string`|Default: `"graphql-client-version"`<br/>|no|
-|**connect\_timeout**|`integer`|A timeout for only the connect phase of a request to Hive Console<br/>Unit: seconds<br/>Default: 5 (s)<br/>Default: `5`<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>|no|
+|**connect\_timeout**|`string`|A timeout for only the connect phase of a request to Hive Console<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>|no|
 |**endpoint**|`string`|For self-hosting, you can override `/usage` endpoint (defaults to `https://app.graphql-hive.com/usage`).<br/>Default: `"https://app.graphql-hive.com/usage"`<br/>|no|
 |[**exclude**](#usage_reportingexclude)|`string[]`|A list of operations (by name) to be ignored by Hive.<br/>Default: <br/>|no|
-|**flush\_interval**|`integer`|Frequency of flushing the buffer to the server<br/>Default: 5 seconds<br/>Default: `5`<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>|no|
-|**request\_timeout**|`integer`|A timeout for the entire request to Hive Console<br/>Unit: seconds<br/>Default: 15 (s)<br/>Default: `15`<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>|no|
+|**flush\_interval**|`string`|Frequency of flushing the buffer to the server<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>|no|
+|**request\_timeout**|`string`|A timeout for the entire request to Hive Console<br/>Default: 15 seconds<br/>Default: `"15s"`<br/>|no|
 |**sample\_rate**|`number`|Sample rate to determine sampling.<br/>0.0 = 0% chance of being sent<br/>1.0 = 100% chance of being sent<br/>Default: 1.0<br/>Default: `1`<br/>Format: `"double"`<br/>|no|
 |**target\_id**|`string`, `null`|A target ID, this can either be a slug following the format “$organizationSlug/$projectSlug/$targetSlug” (e.g “the-guild/graphql-hive/staging”) or an UUID (e.g. “a0f4c605-6541-4350-8cfe-b31f21a4bf80”). To be used when the token is configured with an organization access token.<br/>|no|
-|**token**|`string`|Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
