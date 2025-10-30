@@ -42,7 +42,7 @@ pub fn collect_usage_report(
     execution_result: &PlanExecutionOutput,
 ) {
     let mut rng = rand::rng();
-    let sampled = rng.random::<f64>() < usage_config.sample_rate;
+    let sampled = rng.random::<f64>() < usage_config.sample_rate.as_f64();
     if !sampled {
         return;
     }
