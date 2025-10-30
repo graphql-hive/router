@@ -38,6 +38,8 @@ impl RouterSharedState {
             parse_cache: moka::future::Cache::new(1000),
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,
             jwt_claims_cache: Cache::builder()
+                // Consistent with parse_cache and prevents unbounded memory usage.
+                .max_capacity(1000)
                 // We can have it configurable in the future if needed.
                 .time_to_live(std::time::Duration::from_secs(5))
                 .build(),
