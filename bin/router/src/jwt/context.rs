@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use hive_router_plan_executor::execution::jwt_forward::JwtForwardingError;
 use jsonwebtoken::TokenData;
@@ -10,7 +10,7 @@ pub type JwtTokenPayload = TokenData<JwtClaims>;
 pub struct JwtRequestContext {
     pub token_prefix: Option<String>,
     pub token_raw: String,
-    pub token_payload: JwtTokenPayload,
+    pub token_payload: Arc<JwtTokenPayload>,
 }
 
 impl JwtRequestContext {
