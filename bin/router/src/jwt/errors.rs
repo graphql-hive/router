@@ -9,7 +9,7 @@ use ntex::{
     web,
 };
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone)]
 pub enum LookupError {
     #[error("failed to locate the value in the incoming request")]
     LookupFailed,
@@ -21,7 +21,7 @@ pub enum LookupError {
     FailedToParseHeader(InvalidHeaderValue),
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone)]
 pub enum JwtError {
     #[error("jwt header lookup failed: {0}")]
     LookupFailed(LookupError),

@@ -6,9 +6,12 @@ use hive_router_plan_executor::headers::{
 use moka::future::Cache;
 use std::sync::Arc;
 
+use crate::jwt::context::JwtTokenPayload;
 use crate::jwt::JwtAuthRuntime;
 use crate::pipeline::cors::{CORSConfigError, Cors};
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
+
+pub type JwtClaimsCache = Cache<String, Arc<JwtTokenPayload>>;
 
 pub struct RouterSharedState {
     pub validation_plan: ValidationPlan,
@@ -17,6 +20,10 @@ pub struct RouterSharedState {
     pub headers_plan: HeaderRulesPlan,
     pub override_labels_evaluator: OverrideLabelsEvaluator,
     pub cors_runtime: Option<Cors>,
+    /// Cache for validated JWT claims to avoid re-parsing on every request.
+    /// The cache key is the raw JWT token string.
+    /// Stores the parsed claims payload for 5s.
+    pub jwt_claims_cache: JwtClaimsCache,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
 }
 
@@ -30,6 +37,10 @@ impl RouterSharedState {
             headers_plan: compile_headers_plan(&router_config.headers).map_err(Box::new)?,
             parse_cache: moka::future::Cache::new(1000),
             cors_runtime: Cors::from_config(&router_config.cors).map_err(Box::new)?,
+            jwt_claims_cache: Cache::builder()
+                // We can have it configurable in the future if needed.
+                .time_to_live(std::time::Duration::from_secs(5))
+                .build(),
             router_config: router_config.clone(),
             override_labels_evaluator: OverrideLabelsEvaluator::from_config(
                 &router_config.override_labels,
