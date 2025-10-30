@@ -1,4 +1,4 @@
-use std::{fmt::Display, time::Duration};
+use std::{fmt::Display, str::FromStr, time::Duration};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -181,7 +181,24 @@ pub struct Percentage {
 }
 
 impl Percentage {
-    pub fn from_str(s: &str) -> Result<Self, String> {
+    pub fn from_f64(value: f64) -> Result<Self, String> {
+        if !(0.0..=1.0).contains(&value) {
+            return Err(format!(
+                "Percentage value must be between 0 and 1, got: {}",
+                value
+            ));
+        }
+        Ok(Percentage { value })
+    }
+    pub fn as_f64(&self) -> f64 {
+        self.value
+    }
+}
+
+impl FromStr for Percentage {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s_trimmed = s.trim();
         if let Some(number_part) = s_trimmed.strip_suffix('%') {
             let value: f64 = number_part.parse().map_err(|err| {
@@ -198,25 +215,13 @@ impl Percentage {
             ))
         }
     }
-    pub fn from_f64(value: f64) -> Result<Self, String> {
-        if !(0.0..=1.0).contains(&value) {
-            return Err(format!(
-                "Percentage value must be between 0 and 1, got: {}",
-                value
-            ));
-        }
-        Ok(Percentage { value })
-    }
-    pub fn as_f64(&self) -> f64 {
-        self.value
-    }
 }
 
 impl Display for Percentage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}%", self.value * 100.0)
     }
-}   
+}
 
 // Deserializer from `n%` string to `Percentage` struct
 impl<'de> Deserialize<'de> for Percentage {
