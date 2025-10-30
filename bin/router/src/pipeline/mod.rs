@@ -192,26 +192,19 @@ pub async fn execute_pipeline(
     )
     .await?;
 
-    shared_state
-        .hive_usage_agent
-        .as_ref()
-        .and_then(|usage_agent| {
-            shared_state
-                .router_config
-                .usage_reporting
-                .as_ref()
-                .map(|usage_config| {
-                    usage_reporting::collect_usage_report(
-                        supergraph.supergraph_schema.clone(),
-                        start.elapsed(),
-                        req,
-                        &client_request_details,
-                        usage_agent,
-                        usage_config,
-                        &execution_result,
-                    )
-                })
-        });
+    if shared_state.router_config.usage_reporting.enabled {
+        if let Some(usage_agent) = &shared_state.hive_usage_agent {
+            usage_reporting::collect_usage_report(
+                supergraph.supergraph_schema.clone(),
+                start.elapsed(),
+                req,
+                &client_request_details,
+                usage_agent,
+                &shared_state.router_config.usage_reporting,
+                &execution_result,
+            );
+        }
+    }
 
     Ok(execution_result)
 }

@@ -96,7 +96,7 @@ pub struct HiveRouterConfig {
 
     /// Configuration for usage reporting to GraphQL Hive.
     #[serde(default)]
-    pub usage_reporting: Option<usage_reporting::UsageReportingConfig>,
+    pub usage_reporting: usage_reporting::UsageReportingConfig,
 }
 
 #[derive(Debug, thiserror::Error)]

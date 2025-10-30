@@ -110,10 +110,14 @@ pub async fn configure_app_from_config(
         true => Some(JwtAuthRuntime::init(bg_tasks_manager, &router_config.jwt).await?),
         false => None,
     };
-    let usage_agent = router_config
-        .usage_reporting
-        .as_ref()
-        .map(|usage_config| Arc::new(create_hive_user_agent(usage_config)));
+
+    let usage_agent = if router_config.usage_reporting.enabled {
+        Some(Arc::new(create_hive_user_agent(
+            &router_config.usage_reporting,
+        )))
+    } else {
+        None
+    };
 
     if let Some(usage_agent) = &usage_agent {
         bg_tasks_manager.register_task(usage_agent.clone());
