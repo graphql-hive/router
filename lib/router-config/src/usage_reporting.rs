@@ -8,14 +8,17 @@ use serde::{Deserialize, Serialize};
 pub struct UsageReportingConfig {
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+
     /// Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.
     pub access_token: String,
+
     /// A target ID, this can either be a slug following the format “$organizationSlug/$projectSlug/$targetSlug” (e.g “the-guild/graphql-hive/staging”) or an UUID (e.g. “a0f4c605-6541-4350-8cfe-b31f21a4bf80”). To be used when the token is configured with an organization access token.
     #[serde(deserialize_with = "deserialize_target_id")]
     pub target_id: Option<String>,
     /// For self-hosting, you can override `/usage` endpoint (defaults to `https://app.graphql-hive.com/usage`).
     #[serde(default = "default_endpoint")]
     pub endpoint: String,
+
     /// Sample rate to determine sampling.
     /// 0% = never being sent
     /// 50% = half of the requests being sent
@@ -24,22 +27,27 @@ pub struct UsageReportingConfig {
     #[serde(default = "default_sample_rate")]
     #[schemars(with = "String")]
     pub sample_rate: Percentage,
+
     /// A list of operations (by name) to be ignored by Hive.
     /// Example: ["IntrospectionQuery", "MeQuery"]
     #[serde(default)]
     pub exclude: Vec<String>,
+
     #[serde(default = "default_client_name_header")]
     pub client_name_header: String,
     #[serde(default = "default_client_version_header")]
     pub client_version_header: String,
+
     /// A maximum number of operations to hold in a buffer before sending to Hive Console
     /// Default: 1000
     #[serde(default = "default_buffer_size")]
     pub buffer_size: usize,
+
     /// Accepts invalid SSL certificates
     /// Default: false
     #[serde(default = "default_accept_invalid_certs")]
     pub accept_invalid_certs: bool,
+
     /// A timeout for only the connect phase of a request to Hive Console
     /// Default: 5 seconds
     #[serde(
@@ -49,6 +57,7 @@ pub struct UsageReportingConfig {
     )]
     #[schemars(with = "String")]
     pub connect_timeout: Duration,
+
     /// A timeout for the entire request to Hive Console
     /// Default: 15 seconds
     #[serde(
@@ -58,6 +67,7 @@ pub struct UsageReportingConfig {
     )]
     #[schemars(with = "String")]
     pub request_timeout: Duration,
+
     /// Frequency of flushing the buffer to the server
     /// Default: 5 seconds
     #[serde(
