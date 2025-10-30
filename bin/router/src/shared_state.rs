@@ -26,7 +26,7 @@ impl RouterSharedState {
     pub fn new(
         router_config: Arc<HiveRouterConfig>,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
-        usage_agent: Option<Arc<UsageAgent>>,
+        hive_usage_agent: Option<Arc<UsageAgent>>,
     ) -> Result<Self, SharedStateError> {
         Ok(Self {
             validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
@@ -39,7 +39,7 @@ impl RouterSharedState {
             )
             .map_err(Box::new)?,
             jwt_auth_runtime,
-            hive_usage_agent: usage_agent,
+            hive_usage_agent,
         })
     }
 }

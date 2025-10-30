@@ -193,13 +193,13 @@ pub async fn execute_pipeline(
     .await?;
 
     if shared_state.router_config.usage_reporting.enabled {
-        if let Some(usage_agent) = &shared_state.hive_usage_agent {
+        if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
             usage_reporting::collect_usage_report(
                 supergraph.supergraph_schema.clone(),
                 start.elapsed(),
                 req,
                 &client_request_details,
-                usage_agent,
+                hive_usage_agent,
                 &shared_state.router_config.usage_reporting,
                 &execution_result,
             );

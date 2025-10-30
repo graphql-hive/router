@@ -14,11 +14,17 @@ use ntex::web::HttpRequest;
 use rand::Rng;
 use tokio_util::sync::CancellationToken;
 
-use crate::{background_tasks::BackgroundTask, consts::ROUTER_VERSION};
+use crate::{
+    background_tasks::{BackgroundTask, BackgroundTasksManager},
+    consts::ROUTER_VERSION,
+};
 
-pub fn create_hive_user_agent(usage_config: &UsageReportingConfig) -> UsageAgent {
+pub fn init_hive_user_agent(
+    bg_tasks_manager: &mut BackgroundTasksManager,
+    usage_config: &UsageReportingConfig,
+) -> Arc<UsageAgent> {
     let user_agent = format!("hive-router/{}", ROUTER_VERSION);
-    hive_console_sdk::agent::UsageAgent::new(
+    let hive_user_agent = hive_console_sdk::agent::UsageAgent::new(
         usage_config.access_token.clone(),
         usage_config.endpoint.clone(),
         usage_config.target_id.clone(),
@@ -28,7 +34,10 @@ pub fn create_hive_user_agent(usage_config: &UsageReportingConfig) -> UsageAgent
         usage_config.accept_invalid_certs,
         usage_config.flush_interval,
         user_agent,
-    )
+    );
+    let hive_user_agent_arc = Arc::new(hive_user_agent);
+    bg_tasks_manager.register_task(hive_user_agent_arc.clone());
+    hive_user_agent_arc
 }
 
 #[inline]
@@ -37,7 +46,7 @@ pub fn collect_usage_report(
     duration: Duration,
     req: &HttpRequest,
     client_request_details: &ClientRequestDetails,
-    usage_agent: &UsageAgent,
+    hive_usage_agent: &UsageAgent,
     usage_config: &UsageReportingConfig,
     execution_result: &PlanExecutionOutput,
 ) {
@@ -75,7 +84,7 @@ pub fn collect_usage_report(
         persisted_document_hash: None,
     };
 
-    if let Err(err) = usage_agent.add_report(execution_report) {
+    if let Err(err) = hive_usage_agent.add_report(execution_report) {
         tracing::error!("Failed to send usage report: {}", err);
     }
 }
