@@ -20,7 +20,7 @@ use crate::{
         coerce_variables::coerce_request_variables,
         csrf_prevention::perform_csrf_prevention,
         error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant},
-        execution::execute_plan,
+        execution::{execute_plan, PlannedRequest},
         execution_request::get_execution_request,
         header::{
             RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON,
@@ -218,19 +218,14 @@ pub async fn execute_pipeline(
     )
     .await?;
 
-    let execution_result = execute_plan(
-        req,
-        supergraph,
-        shared_state,
-        &normalize_payload,
-        &query_plan_payload,
-        &variable_payload,
-        &client_request_details,
-        &authorization_errors,
-    )
-    .await?;
-
-    // TODO: apply failures to response (from authZ)
+    let planned_request = PlannedRequest {
+        normalized_payload: &normalize_payload,
+        query_plan_payload: &query_plan_payload,
+        variable_payload: &variable_payload,
+        client_request_details: &client_request_details,
+        authorization_errors: &authorization_errors,
+    };
+    let execution_result = execute_plan(req, supergraph, shared_state, &planned_request).await?;
 
     Ok(execution_result)
 }

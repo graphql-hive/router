@@ -25,16 +25,21 @@ enum ExposeQueryPlanMode {
     DryRun,
 }
 
+pub struct PlannedRequest<'req> {
+    pub normalized_payload: &'req GraphQLNormalizationPayload,
+    pub query_plan_payload: &'req Arc<QueryPlan>,
+    pub variable_payload: &'req CoerceVariablesPayload,
+    pub client_request_details: &'req ClientRequestDetails<'req, 'req>,
+    pub authorization_errors: &'req [AuthorizationError],
+}
+
+// TODO: less args
 #[inline]
 pub async fn execute_plan(
     req: &HttpRequest,
     supergraph: &SupergraphData,
     app_state: &Arc<RouterSharedState>,
-    normalized_payload: &GraphQLNormalizationPayload,
-    query_plan_payload: &Arc<QueryPlan>,
-    variable_payload: &CoerceVariablesPayload,
-    client_request_details: &ClientRequestDetails<'_, '_>,
-    authorization_errors: &[AuthorizationError],
+    planned_request: &PlannedRequest<'_>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
@@ -55,14 +60,17 @@ pub async fn execute_plan(
     {
         Some(HashMap::from_iter([(
             "queryPlan".to_string(),
-            sonic_rs::to_value(&query_plan_payload).unwrap(),
+            sonic_rs::to_value(&planned_request.query_plan_payload).unwrap(),
         )]))
     } else {
         None
     };
 
     let introspection_context = IntrospectionContext {
-        query: normalized_payload.operation_for_introspection.as_deref(),
+        query: planned_request
+            .normalized_payload
+            .operation_for_introspection
+            .as_deref(),
         schema: &supergraph.planner.consumer_schema.document,
         metadata: &supergraph.metadata,
     };
@@ -72,7 +80,8 @@ pub async fn execute_plan(
         .jwt
         .is_jwt_extensions_forwarding_enabled()
     {
-        client_request_details
+        planned_request
+            .client_request_details
             .jwt
             .build_forwarding_plan(
                 &app_state
@@ -87,17 +96,21 @@ pub async fn execute_plan(
     };
 
     execute_query_plan(QueryPlanExecutionContext {
-        query_plan: query_plan_payload,
-        projection_plan: &normalized_payload.projection_plan,
+        query_plan: planned_request.query_plan_payload,
+        projection_plan: &planned_request.normalized_payload.projection_plan,
         headers_plan: &app_state.headers_plan,
-        variable_values: &variable_payload.variables_map,
+        variable_values: &planned_request.variable_payload.variables_map,
         extensions,
-        client_request: client_request_details,
+        client_request: planned_request.client_request_details,
         introspection_context: &introspection_context,
-        operation_type_name: normalized_payload.root_type_name,
+        operation_type_name: planned_request.normalized_payload.root_type_name,
         jwt_auth_forwarding: &jwt_forward_plan,
         executors: &supergraph.subgraph_executor_map,
-        initial_errors: authorization_errors.iter().map(|e| e.into()).collect(),
+        initial_errors: planned_request
+            .authorization_errors
+            .iter()
+            .map(|e| e.into())
+            .collect(),
     })
     .await
     .map_err(|err| {
