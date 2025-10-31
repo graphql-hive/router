@@ -12,6 +12,7 @@ pub mod primitives;
 pub mod query_planner;
 pub mod supergraph;
 pub mod traffic_shaping;
+pub mod aws_sig_v4;
 
 use config::{Config, File, FileFormat, FileSourceFile};
 use envconfig::Envconfig;
@@ -92,6 +93,10 @@ pub struct HiveRouterConfig {
     /// Configuration for overriding labels.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub override_labels: OverrideLabelsConfig,
+
+    /// Configuration for AWS SigV4 signing of requests to subgraphs.
+    #[serde(default, skip_serializing_if = "aws_sig_v4::AwsSigV4Config::is_disabled")]
+    pub aws_sig_v4: aws_sig_v4::AwsSigV4Config,
 }
 
 #[derive(Debug, thiserror::Error)]

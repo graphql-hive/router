@@ -20,6 +20,8 @@ pub enum SubgraphExecutorError {
     RequestFailure(String, String),
     #[error("Failed to serialize variable \"{0}\": {1}")]
     VariablesSerializationFailure(String, String),
+    #[error("Failed to sign request with AWSSigV4 for subgraph \"{0}\": {1}")]
+    AwsSigV4SigningFailure(String, String),
 }
 
 impl From<SubgraphExecutorError> for GraphQLError {
@@ -75,6 +77,9 @@ impl SubgraphExecutorError {
             SubgraphExecutorError::RequestFailure(_, _) => "SUBGRAPH_REQUEST_FAILURE",
             SubgraphExecutorError::VariablesSerializationFailure(_, _) => {
                 "SUBGRAPH_VARIABLES_SERIALIZATION_FAILURE"
+            },
+            SubgraphExecutorError::AwsSigV4SigningFailure(_, _) => {
+                "SUBGRAPH_AWS_SIGV4_SIGNING_FAILURE"
             }
         }
     }
