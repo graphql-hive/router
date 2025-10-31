@@ -15,10 +15,7 @@ pub enum LabelOverrideValue {
     /// A static boolean value to enable or disable the label.
     Boolean(bool),
     /// A dynamic value computed by an expression.
-    Expression {
-        /// An expression that must evaluate to a boolean. If true, the label will be applied.
-        expression: String,
-    },
+    Expression { expression: String },
 }
 
 impl LabelOverrideValue {

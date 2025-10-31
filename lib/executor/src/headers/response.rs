@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, iter::once};
+use std::iter::once;
 
 use crate::{
     execution::client_request_details::ClientRequestDetails,
@@ -13,16 +13,11 @@ use crate::{
         },
         sanitizer::is_denied_header,
     },
+    utils::expression::execute_expression_with_value,
 };
 
 use super::sanitizer::is_never_join_header;
 use http::{header::InvalidHeaderValue, HeaderMap, HeaderName, HeaderValue};
-use vrl::{
-    compiler::TargetValue as VrlTargetValue,
-    core::Value as VrlValue,
-    prelude::{state::RuntimeState as VrlState, Context as VrlContext, TimeZone as VrlTimeZone},
-    value::Secrets as VrlSecrets,
-};
 
 pub fn apply_subgraph_response_headers(
     header_rule_plan: &HeaderRulesPlan,
@@ -194,20 +189,9 @@ impl ApplyResponseHeader for ResponseInsertExpression {
         if is_denied_header(&self.name) {
             return Ok(());
         }
-
-        let mut target = VrlTargetValue {
-            value: ctx.into(),
-            metadata: VrlValue::Object(BTreeMap::new()),
-            secrets: VrlSecrets::default(),
-        };
-
-        let mut state = VrlState::default();
-        let timezone = VrlTimeZone::default();
-        let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
-        let value = self.expression.resolve(&mut ctx).map_err(|err| {
-            HeaderRuleRuntimeError::ExpressionEvaluation(self.name.to_string(), Box::new(err))
+        let value = execute_expression_with_value(&self.expression, ctx.into()).map_err(|err| {
+            HeaderRuleRuntimeError::new_expression_evaluation(self.name.to_string(), Box::new(err))
         })?;
-
         if let Some(header_value) = vrl_value_to_header_value(value) {
             let strategy = if is_never_join_header(&self.name) {
                 HeaderAggregationStrategy::Append

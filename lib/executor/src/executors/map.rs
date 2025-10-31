@@ -15,16 +15,7 @@ use hyper_util::{
 };
 use tokio::sync::{OnceCell, Semaphore};
 use tracing::error;
-use vrl::{
-    compiler::compile as vrl_compile,
-    compiler::Program as VrlProgram,
-    compiler::TargetValue as VrlTargetValue,
-    core::Value as VrlValue,
-    prelude::Function as VrlFunction,
-    prelude::{state::RuntimeState as VrlState, Context as VrlContext, TimeZone as VrlTimeZone},
-    stdlib::all as vrl_build_functions,
-    value::Secrets as VrlSecrets,
-};
+use vrl::{compiler::Program as VrlProgram, core::Value as VrlValue};
 
 use crate::{
     execution::client_request_details::ClientRequestDetails,
@@ -37,6 +28,7 @@ use crate::{
         http::{HTTPSubgraphExecutor, HttpClient},
     },
     response::graphql_error::GraphQLError,
+    utils::expression::{compile_expression, execute_expression_with_value},
 };
 
 type SubgraphName = String;
@@ -54,8 +46,6 @@ pub struct SubgraphExecutorMap {
     /// Mapping from subgraph name to VRL expression program
     expressions_by_subgraph: ExpressionsBySubgraphMap,
     config: Arc<HiveRouterConfig>,
-    /// Precompiled VRL functions to be used in endpoint expressions.
-    vrl_functions: Vec<Box<dyn VrlFunction>>,
     client: Arc<HttpClient>,
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
     max_connections_per_host: usize,
@@ -80,7 +70,6 @@ impl SubgraphExecutorMap {
             static_endpoints_by_subgraph: Default::default(),
             expressions_by_subgraph: Default::default(),
             config,
-            vrl_functions: vrl_build_functions(),
             client: Arc::new(client),
             semaphores_by_origin: Default::default(),
             max_connections_per_host,
@@ -194,26 +183,19 @@ impl SubgraphExecutorMap {
                         SubgraphExecutorError::StaticEndpointNotFound(subgraph_name.to_string())
                     })?,
             ));
-            let mut target = VrlTargetValue {
-                value: VrlValue::Object(BTreeMap::from([
-                    ("request".into(), client_request.into()),
-                    ("original_url".into(), original_url_value),
-                ])),
-                metadata: VrlValue::Object(BTreeMap::new()),
-                secrets: VrlSecrets::default(),
-            };
-
-            let mut state = VrlState::default();
-            let timezone = VrlTimeZone::default();
-            let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
+            let value = VrlValue::Object(BTreeMap::from([
+                ("request".into(), client_request.into()),
+                ("original_url".into(), original_url_value),
+            ]));
 
             // Resolve the expression to get an endpoint URL.
-            let endpoint_result = expression.resolve(&mut ctx).map_err(|err| {
-                SubgraphExecutorError::new_endpoint_expression_resolution_failure(
-                    subgraph_name.to_string(),
-                    err,
-                )
-            })?;
+            let endpoint_result =
+                execute_expression_with_value(expression, value).map_err(|err| {
+                    SubgraphExecutorError::new_endpoint_expression_resolution_failure(
+                        subgraph_name.to_string(),
+                        err,
+                    )
+                })?;
             let endpoint_str = match endpoint_result.as_str() {
                 Some(s) => s.to_string(),
                 None => {
@@ -269,12 +251,11 @@ impl SubgraphExecutorMap {
         subgraph_name: &str,
         expression: &str,
     ) -> Result<(), SubgraphExecutorError> {
-        let compilation_result = vrl_compile(expression, &self.vrl_functions).map_err(|e| {
-            SubgraphExecutorError::new_endpoint_expression_build(subgraph_name.to_string(), e)
+        let program = compile_expression(expression, None).map_err(|err| {
+            SubgraphExecutorError::EndpointExpressionBuild(subgraph_name.to_string(), err)
         })?;
-
         self.expressions_by_subgraph
-            .insert(subgraph_name.to_string(), compilation_result.program);
+            .insert(subgraph_name.to_string(), program);
 
         Ok(())
     }

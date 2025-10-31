@@ -1,20 +1,22 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use hive_router_config::override_labels::{LabelOverrideValue, OverrideLabelsConfig};
-use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
+use hive_router_plan_executor::{
+    execution::client_request_details::ClientRequestDetails, utils::expression::compile_expression,
+};
 use hive_router_query_planner::{
     graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
     state::supergraph_state::SupergraphState,
 };
 use rand::Rng;
 use vrl::{
-    compiler::{compile as vrl_compile, Program as VrlProgram, TargetValue as VrlTargetValue},
+    compiler::Program as VrlProgram,
+    compiler::TargetValue as VrlTargetValue,
     core::Value as VrlValue,
     prelude::{
         state::RuntimeState as VrlState, Context as VrlContext, ExpressionError,
         TimeZone as VrlTimeZone,
     },
-    stdlib::all as vrl_build_functions,
     value::Secrets as VrlSecrets,
 };
 
@@ -126,7 +128,6 @@ impl OverrideLabelsEvaluator {
     ) -> Result<Self, OverrideLabelsCompileError> {
         let mut static_enabled_labels = HashSet::new();
         let mut expressions = HashMap::new();
-        let vrl_functions = vrl_build_functions();
 
         for (label, value) in override_labels_config.iter() {
             match value {
@@ -134,19 +135,13 @@ impl OverrideLabelsEvaluator {
                     static_enabled_labels.insert(label.clone());
                 }
                 LabelOverrideValue::Expression { expression } => {
-                    let compilation_result =
-                        vrl_compile(expression, &vrl_functions).map_err(|diagnostics| {
-                            OverrideLabelsCompileError {
-                                label: label.clone(),
-                                error: diagnostics
-                                    .errors()
-                                    .into_iter()
-                                    .map(|d| d.code.to_string() + ": " + &d.message)
-                                    .collect::<Vec<_>>()
-                                    .join(", "),
-                            }
-                        })?;
-                    expressions.insert(label.clone(), compilation_result.program);
+                    let program = compile_expression(expression, None).map_err(|err| {
+                        OverrideLabelsCompileError {
+                            label: label.clone(),
+                            error: err.to_string(),
+                        }
+                    })?;
+                    expressions.insert(label.clone(), program);
                 }
                 _ => {} // Skip false booleans
             }
