@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
+use crate::utils::expression::execute_expression_with_value;
 use dashmap::DashMap;
-use hive_router_config::hmac_signature::BooleanOrExpression;
 use hive_router_config::HiveRouterConfig;
 use tokio::sync::OnceCell;
 
@@ -22,6 +22,7 @@ use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use sha2::Sha256;
 use tokio::sync::Semaphore;
 use tracing::debug;
+use vrl::compiler::Program as VrlProgram;
 
 use crate::executors::common::HttpExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
@@ -42,6 +43,7 @@ pub struct HTTPSubgraphExecutor {
     pub semaphore: Arc<Semaphore>,
     pub config: Arc<HiveRouterConfig>,
     pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    pub should_sign_hmac: BooleanOrProgram,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -52,6 +54,12 @@ pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
 
 type HmacSha256 = Hmac<Sha256>;
 
+#[derive(Debug)]
+pub enum BooleanOrProgram {
+    Boolean(bool),
+    Program(Box<VrlProgram>),
+}
+
 impl HTTPSubgraphExecutor {
     pub fn new(
         subgraph_name: String,
@@ -60,6 +68,7 @@ impl HTTPSubgraphExecutor {
         semaphore: Arc<Semaphore>,
         config: Arc<HiveRouterConfig>,
         in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+        should_sign_hmac: BooleanOrProgram,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -79,6 +88,7 @@ impl HTTPSubgraphExecutor {
             semaphore,
             config,
             in_flight_requests,
+            should_sign_hmac,
         }
     }
 
@@ -126,9 +136,9 @@ impl HTTPSubgraphExecutor {
             body.put(CLOSE_BRACE);
         }
 
-        let should_sign_hmac = match &self.config.hmac_signature.enabled {
-            BooleanOrExpression::Boolean(b) => *b,
-            BooleanOrExpression::Expression(expr) => {
+        let should_sign_hmac = match &self.should_sign_hmac {
+            BooleanOrProgram::Boolean(b) => *b,
+            BooleanOrProgram::Program(expr) => {
                 // .subgraph
                 let subgraph_value = VrlValue::Object(BTreeMap::from([(
                     "name".into(),
@@ -140,7 +150,7 @@ impl HTTPSubgraphExecutor {
                     ("subgraph".into(), subgraph_value),
                     ("request".into(), request_value),
                 ]));
-                let result = expr.execute_with_value(target_value);
+                let result = execute_expression_with_value(expr, target_value);
                 match result {
                     Ok(VrlValue::Boolean(b)) => b,
                     Ok(_) => {

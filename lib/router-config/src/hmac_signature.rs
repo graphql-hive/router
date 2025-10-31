@@ -1,8 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::primitives::expression::Expression;
-
 #[derive(Debug, Clone, Deserialize, Serialize, Default, JsonSchema)]
 pub struct HMACSignatureConfig {
     // Whether to sign outgoing requests with HMAC signatures.
@@ -34,9 +32,10 @@ fn default_extension_name() -> String {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(untagged)]
 pub enum BooleanOrExpression {
     Boolean(bool),
-    Expression(Expression),
+    Expression { expression: String },
 }
 
 impl Default for BooleanOrExpression {
@@ -49,7 +48,7 @@ impl HMACSignatureConfig {
     pub fn is_disabled(&self) -> bool {
         match &self.enabled {
             BooleanOrExpression::Boolean(b) => !*b,
-            BooleanOrExpression::Expression(_) => {
+            BooleanOrExpression::Expression { expression: _ } => {
                 // If it's an expression, we consider it enabled for the purpose of this check.
                 false
             }
