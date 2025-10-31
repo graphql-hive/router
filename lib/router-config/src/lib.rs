@@ -3,6 +3,7 @@ pub mod csrf;
 mod env_overrides;
 pub mod graphiql;
 pub mod headers;
+pub mod hmac_signature;
 pub mod http_server;
 pub mod jwt_auth;
 pub mod log;
@@ -92,6 +93,12 @@ pub struct HiveRouterConfig {
     /// Configuration for overriding labels.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub override_labels: OverrideLabelsConfig,
+
+    #[serde(
+        default,
+        skip_serializing_if = "hmac_signature::HMACSignatureConfig::is_disabled"
+    )]
+    pub hmac_signature: hmac_signature::HMACSignatureConfig,
 }
 
 #[derive(Debug, thiserror::Error)]

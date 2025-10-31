@@ -104,13 +104,12 @@ impl SubgraphExecutorMap {
         Ok(subgraph_executor_map)
     }
 
-    pub async fn execute<'a, 'req>(
+    pub async fn execute<'exec, 'req>(
         &self,
         subgraph_name: &str,
-        execution_request: HttpExecutionRequest<'a>,
-        client_request: &ClientRequestDetails<'a, 'req>,
+        execution_request: HttpExecutionRequest<'exec, 'req>,
     ) -> HttpExecutionResponse {
-        match self.get_or_create_executor(subgraph_name, client_request) {
+        match self.get_or_create_executor(subgraph_name, execution_request.client_request) {
             Ok(Some(executor)) => executor.execute(execution_request).await,
             Err(err) => {
                 error!(
