@@ -1,6 +1,6 @@
 use once_cell::sync::Lazy;
-use schemars::{JsonSchema, Schema, SchemaGenerator};
-use serde::{Deserialize, Serialize};
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
+use serde::{Deserialize, Serialize, ser::SerializeStruct};
 use std::{borrow::Cow, collections::BTreeMap};
 use vrl::{
     compiler::{compile as vrl_compile, Program as VrlProgram, TargetValue as VrlTargetValue},
@@ -109,7 +109,9 @@ impl Serialize for Expression {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.expression)
+        let mut state = serializer.serialize_struct("Expression", 1)?;
+        state.serialize_field("expression", &self.expression)?;
+        state.end()
     }
 }
 
@@ -118,8 +120,19 @@ impl JsonSchema for Expression {
         "Expression".into()
     }
 
-    fn json_schema(gen: &mut SchemaGenerator) -> Schema {
-        String::json_schema(gen)
+    fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "object",
+            "description": "A VRL expression used for dynamic evaluations.",
+            "properties": {
+                "expression": {
+                    "type": "string",
+                    "description": "The VRL expression string."
+                }
+            },
+            "required": ["expression"],
+            "additionalProperties": false
+        })
     }
 }
 
