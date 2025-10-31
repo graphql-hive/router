@@ -1,16 +1,16 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use hive_router_config::{
-    override_labels::{LabelOverrideValue, OverrideLabelsConfig},
-    primitives::expression::Expression,
+use hive_router_config::override_labels::{LabelOverrideValue, OverrideLabelsConfig};
+use hive_router_plan_executor::{
+    execution::client_request_details::ClientRequestDetails, utils::expression::compile_expression,
 };
-use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_query_planner::{
     graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
     state::supergraph_state::SupergraphState,
 };
 use rand::Rng;
 use vrl::{
+    compiler::Program as VrlProgram,
     compiler::TargetValue as VrlTargetValue,
     core::Value as VrlValue,
     prelude::{
@@ -119,7 +119,7 @@ impl StableOverrideContext {
 /// It's intended to be used as a shared state in the router.
 pub struct OverrideLabelsEvaluator {
     static_enabled_labels: HashSet<String>,
-    expressions: HashMap<String, Expression>,
+    expressions: HashMap<String, VrlProgram>,
 }
 
 impl OverrideLabelsEvaluator {
@@ -134,8 +134,14 @@ impl OverrideLabelsEvaluator {
                 LabelOverrideValue::Boolean(true) => {
                     static_enabled_labels.insert(label.clone());
                 }
-                LabelOverrideValue::Expression(expression) => {
-                    expressions.insert(label.clone(), expression.clone());
+                LabelOverrideValue::Expression { expression } => {
+                    let program = compile_expression(expression, None).map_err(|err| {
+                        OverrideLabelsCompileError {
+                            label: label.clone(),
+                            error: err.to_string(),
+                        }
+                    })?;
+                    expressions.insert(label.clone(), program);
                 }
                 _ => {} // Skip false booleans
             }
@@ -168,7 +174,7 @@ impl OverrideLabelsEvaluator {
         let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
 
         for (label, expression) in &self.expressions {
-            match expression.execute_with_context(&mut ctx) {
+            match expression.resolve(&mut ctx) {
                 Ok(evaluated_value) => match evaluated_value {
                     VrlValue::Boolean(true) => {
                         active_flags.insert(label.clone());

@@ -641,7 +641,7 @@ For more information on the available functions and syntax, see the
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**expression**|`string`|The VRL expression string.<br/>|yes|
+|**expression**|`string`||yes|
 
 
 <a name="headersallresponse"></a>
@@ -863,7 +863,7 @@ For more information on the available functions and syntax, see the
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**expression**|`string`|The VRL expression string.<br/>|yes|
+|**expression**|`string`||yes|
 
 
 <a name="headerssubgraphs"></a>
@@ -1116,7 +1116,7 @@ For more information on the available functions and syntax, see the
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**expression**|`string`|The VRL expression string.<br/>|yes|
+|**expression**|`string`||yes|
 
 
 <a name="headerssubgraphsadditionalpropertiesresponse"></a>
@@ -1338,7 +1338,7 @@ For more information on the available functions and syntax, see the
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**expression**|`string`|The VRL expression string.<br/>|yes|
+|**expression**|`string`||yes|
 
 
 <a name="http"></a>
