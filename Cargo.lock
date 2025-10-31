@@ -2089,6 +2089,7 @@ dependencies = [
  "hive-router-query-planner",
  "http",
  "http-body-util",
+ "humantime",
  "hyper",
  "hyper-tls",
  "hyper-util",
