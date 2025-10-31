@@ -119,7 +119,7 @@ impl StableOverrideContext {
 /// It's intended to be used as a shared state in the router.
 pub struct OverrideLabelsEvaluator {
     static_enabled_labels: HashSet<String>,
-    expressions: HashMap<String, VrlProgram>,
+    expressions: HashMap<String, Expression>,
 }
 
 impl OverrideLabelsEvaluator {
@@ -174,7 +174,7 @@ impl OverrideLabelsEvaluator {
         let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
 
         for (label, expression) in &self.expressions {
-            match expression.resolve(&mut ctx) {
+            match expression.execute_with_context(&mut ctx) {
                 Ok(evaluated_value) => match evaluated_value {
                     VrlValue::Boolean(true) => {
                         active_flags.insert(label.clone());
