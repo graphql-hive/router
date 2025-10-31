@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct TrafficShapingExecutorConfig {
+pub struct TrafficShapingConfig {
     /// Limits the concurrent amount of requests/connections per host/subgraph.
     #[serde(default = "default_max_connections_per_host")]
     pub max_connections_per_host: usize,
@@ -20,7 +20,7 @@ pub struct TrafficShapingExecutorConfig {
     pub dedupe_enabled: bool,
 }
 
-impl Default for TrafficShapingExecutorConfig {
+impl Default for TrafficShapingConfig {
     fn default() -> Self {
         Self {
             max_connections_per_host: default_max_connections_per_host(),
