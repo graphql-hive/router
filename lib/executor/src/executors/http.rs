@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::execution::client_request_details::ClientRequestDetails;
 use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
+use crate::utils::expression::execute_expression_with_value;
 use dashmap::DashMap;
-use hive_router_config::traffic_shaping::DurationOrExpression;
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
@@ -20,6 +21,7 @@ use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
 use tracing::debug;
+use vrl::compiler::Program as VrlProgram;
 use vrl::core::Value as VrlValue;
 
 use crate::executors::common::HttpExecutionRequest;
@@ -32,6 +34,12 @@ use crate::utils::consts::QUOTE;
 use crate::{executors::common::SubgraphExecutor, json_writer::write_and_escape_string};
 
 #[derive(Debug)]
+pub enum DurationOrProgram {
+    Duration(Duration),
+    Program(Box<VrlProgram>),
+}
+
+#[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
     pub subgraph_name: String,
     pub endpoint: http::Uri,
@@ -40,7 +48,7 @@ pub struct HTTPSubgraphExecutor {
     pub semaphore: Arc<Semaphore>,
     pub dedupe_enabled: bool,
     pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
-    pub timeout: DurationOrExpression,
+    pub timeout: DurationOrProgram,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -56,7 +64,7 @@ impl HTTPSubgraphExecutor {
         semaphore: Arc<Semaphore>,
         dedupe_enabled: bool,
         in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
-        timeout: DurationOrExpression,
+        timeout: DurationOrProgram,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -159,17 +167,21 @@ impl HTTPSubgraphExecutor {
         debug!("making http request to {}", self.endpoint.to_string());
 
         let timeout = match &self.timeout {
-            DurationOrExpression::Duration(dur) => *dur,
-            DurationOrExpression::Expression(expr) => {
+            DurationOrProgram::Duration(dur) => *dur,
+            DurationOrProgram::Program(program) => {
                 let value =
                     VrlValue::Object(BTreeMap::from([("request".into(), client_request.into())]));
-                let result = expr.execute_with_value(value).map_err(|err| {
-                    SubgraphExecutorError::TimeoutExpressionResolutionFailure(err.to_string())
+                let result = execute_expression_with_value(program, value).map_err(|err| {
+                    SubgraphExecutorError::TimeoutExpressionResolution(
+                        self.subgraph_name.to_string(),
+                        err.to_string(),
+                    )
                 })?;
                 match result {
                     VrlValue::Integer(i) => {
                         if i < 0 {
-                            return Err(SubgraphExecutorError::TimeoutExpressionResolutionFailure(
+                            return Err(SubgraphExecutorError::TimeoutExpressionResolution(
+                                self.subgraph_name.to_string(),
                                 "Timeout expression resolved to a negative integer".to_string(),
                             ));
                         }
@@ -178,7 +190,8 @@ impl HTTPSubgraphExecutor {
                     VrlValue::Float(f) => {
                         let f = f.into_inner();
                         if f < 0.0 {
-                            return Err(SubgraphExecutorError::TimeoutExpressionResolutionFailure(
+                            return Err(SubgraphExecutorError::TimeoutExpressionResolution(
+                                self.subgraph_name.to_string(),
                                 "Timeout expression resolved to a negative float".to_string(),
                             ));
                         }
@@ -186,20 +199,21 @@ impl HTTPSubgraphExecutor {
                     }
                     VrlValue::Bytes(b) => {
                         let s = std::str::from_utf8(&b).map_err(|e| {
-                            SubgraphExecutorError::TimeoutExpressionResolutionFailure(format!(
-                                "Failed to parse duration string from bytes: {}",
-                                e
-                            ))
+                            SubgraphExecutorError::TimeoutExpressionResolution(
+                                self.subgraph_name.to_string(),
+                                format!("Failed to parse duration string from bytes: {}", e),
+                            )
                         })?;
                         humantime::parse_duration(s).map_err(|e| {
-                            SubgraphExecutorError::TimeoutExpressionResolutionFailure(format!(
-                                "Failed to parse duration string '{}': {}",
-                                s, e
-                            ))
+                            SubgraphExecutorError::TimeoutExpressionResolution(
+                                self.subgraph_name.to_string(),
+                                format!("Failed to parse duration string '{}': {}", s, e),
+                            )
                         })?
                     }
                     other => {
-                        return Err(SubgraphExecutorError::TimeoutExpressionResolutionFailure(
+                        return Err(SubgraphExecutorError::TimeoutExpressionResolution(
+                                self.subgraph_name.to_string(),
                             format!(
                                 "Timeout expression resolved to an unexpected type: {}. Expected a non-negative integer/float (ms) or a duration string.",
                                 other.kind()

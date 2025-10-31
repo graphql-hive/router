@@ -3,8 +3,6 @@ use std::{collections::HashMap, time::Duration};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::primitives::expression::Expression;
-
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TrafficShapingConfig {
@@ -123,7 +121,7 @@ pub enum DurationOrExpression {
     )]
     Duration(Duration),
     /// A VRL expression that evaluates to a duration. The result can be an integer (milliseconds), a float (milliseconds), or a duration string (e.g. "5s").
-    Expression(Expression),
+    Expression { expression: String },
 }
 
 impl Default for TrafficShapingExecutorConfig {

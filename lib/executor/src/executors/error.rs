@@ -20,8 +20,10 @@ pub enum SubgraphExecutorError {
     RequestFailure(String, String),
     #[error("Failed to serialize variable \"{0}\": {1}")]
     VariablesSerializationFailure(String, String),
-    #[error("Failed to resolve VRL expression for timeout. Runtime error: {0}")]
-    TimeoutExpressionResolutionFailure(String),
+    #[error("Failed to compile VRL expression for timeout for subgraph '{0}'. Please check your VRL expression for syntax errors. Diagnostic: {1}")]
+    RequestTimeoutExpressionBuild(String, String),
+    #[error("Failed to resolve VRL expression for timeout for subgraph '{0}'. Runtime error: {1}")]
+    TimeoutExpressionResolution(String, String),
     #[error("Request to subgraph \"{0}\" timed out after {1} milliseconds")]
     RequestTimeout(String, u64),
 }
@@ -65,10 +67,13 @@ impl SubgraphExecutorError {
             SubgraphExecutorError::VariablesSerializationFailure(_, _) => {
                 "SUBGRAPH_VARIABLES_SERIALIZATION_FAILURE"
             }
-            SubgraphExecutorError::TimeoutExpressionResolutionFailure(_) => {
+            SubgraphExecutorError::TimeoutExpressionResolution(_, _) => {
                 "SUBGRAPH_TIMEOUT_EXPRESSION_RESOLUTION_FAILURE"
             }
             SubgraphExecutorError::RequestTimeout(_, _) => "SUBGRAPH_REQUEST_TIMEOUT",
+            SubgraphExecutorError::RequestTimeoutExpressionBuild(_, _) => {
+                "SUBGRAPH_TIMEOUT_EXPRESSION_BUILD_FAILURE"
+            }
         }
     }
 }

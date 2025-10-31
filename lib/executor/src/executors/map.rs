@@ -6,7 +6,10 @@ use std::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use dashmap::DashMap;
-use hive_router_config::{override_subgraph_urls::UrlOrExpression, HiveRouterConfig};
+use hive_router_config::{
+    override_subgraph_urls::UrlOrExpression, traffic_shaping::DurationOrExpression,
+    HiveRouterConfig,
+};
 use http::Uri;
 use hyper_tls::HttpsConnector;
 use hyper_util::{
@@ -25,7 +28,7 @@ use crate::{
         },
         dedupe::{ABuildHasher, SharedResponse},
         error::SubgraphExecutorError,
-        http::{HTTPSubgraphExecutor, HttpClient},
+        http::{DurationOrProgram, HTTPSubgraphExecutor, HttpClient},
     },
     response::graphql_error::GraphQLError,
     utils::expression::{compile_expression, execute_expression_with_value},
@@ -324,6 +327,19 @@ impl SubgraphExecutorMap {
                 .unwrap_or(timeout);
         }
 
+        let timeout = match &timeout {
+            DurationOrExpression::Duration(dur) => DurationOrProgram::Duration(*dur),
+            DurationOrExpression::Expression { expression } => {
+                let program = compile_expression(expression, None).map_err(|err| {
+                    SubgraphExecutorError::RequestTimeoutExpressionBuild(
+                        subgraph_name.to_string(),
+                        err,
+                    )
+                })?;
+                DurationOrProgram::Program(Box::new(program))
+            }
+        };
+
         let executor = HTTPSubgraphExecutor::new(
             subgraph_name.to_string(),
             endpoint_uri,
@@ -331,7 +347,7 @@ impl SubgraphExecutorMap {
             semaphore,
             dedupe_enabled,
             self.in_flight_requests.clone(),
-            timeout.clone(),
+            timeout,
         );
 
         self.executors_by_subgraph
