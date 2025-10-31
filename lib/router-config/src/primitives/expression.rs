@@ -1,6 +1,6 @@
 use once_cell::sync::Lazy;
-use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
-use serde::{Deserialize, Serialize, ser::SerializeStruct};
+use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
+use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use std::{borrow::Cow, collections::BTreeMap};
 use vrl::{
     compiler::{compile as vrl_compile, Program as VrlProgram, TargetValue as VrlTargetValue},
