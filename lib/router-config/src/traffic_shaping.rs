@@ -83,13 +83,13 @@ fn default_request_timeout() -> DurationOrExpression {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 pub enum DurationOrExpression {
-    /// A fixed duration timeout in milliseconds.
+    /// A fixed duration, e.g., "5s" or "100ms".
     #[serde(
         deserialize_with = "humantime_serde::deserialize",
         serialize_with = "humantime_serde::serialize"
     )]
     Duration(Duration),
-    /// A VRL expression that evaluates to a duration in milliseconds.
+    /// A VRL expression that evaluates to a duration. The result can be an integer (milliseconds), a float (milliseconds), or a duration string (e.g. "5s").
     Expression(Expression),
 }
 
