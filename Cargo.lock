@@ -2098,14 +2098,12 @@ dependencies = [
  "http",
  "humantime-serde",
  "jsonwebtoken",
- "once_cell",
  "retry-policies",
  "schemars 1.0.5",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
  "tracing",
- "vrl",
 ]
 
 [[package]]
@@ -2132,9 +2130,11 @@ dependencies = [
  "insta",
  "itoa",
  "ntex-http",
+ "once_cell",
  "ordered-float",
  "regex-automata",
  "ryu",
+ "schemars 1.0.4",
  "serde",
  "sonic-rs",
  "strum 0.27.2",

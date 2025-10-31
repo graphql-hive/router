@@ -3,8 +3,6 @@ use std::collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::primitives::expression::Expression;
-
 /// Configuration for how the Router should override subgraph URLs.
 /// This can be used to point to different subgraph endpoints based on environment,
 /// or to use dynamic expressions to determine the URL at runtime.
@@ -54,7 +52,7 @@ pub enum UrlOrExpression {
     /// A static URL string.
     Url(String),
     /// A dynamic value computed by a VRL expression.
-    Expression(Expression),
+    Expression { expression: String },
 }
 
 fn override_subgraph_urls_example_1() -> OverrideSubgraphUrlsConfig {
@@ -77,7 +75,9 @@ fn override_subgraph_urls_example_1() -> OverrideSubgraphUrlsConfig {
     subgraphs.insert(
         "products".to_string(),
         PerSubgraphConfig {
-            url: UrlOrExpression::Expression(expression.to_string().try_into().unwrap()),
+            url: UrlOrExpression::Expression {
+                expression: expression.to_string(),
+            },
         },
     );
 

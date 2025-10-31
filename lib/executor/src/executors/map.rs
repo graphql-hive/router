@@ -6,9 +6,7 @@ use std::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use dashmap::DashMap;
-use hive_router_config::{
-    override_subgraph_urls::UrlOrExpression, primitives::expression::Expression, HiveRouterConfig,
-};
+use hive_router_config::{override_subgraph_urls::UrlOrExpression, HiveRouterConfig};
 use http::Uri;
 use hyper_tls::HttpsConnector;
 use hyper_util::{
@@ -17,7 +15,7 @@ use hyper_util::{
 };
 use tokio::sync::{OnceCell, Semaphore};
 use tracing::error;
-use vrl::core::Value as VrlValue;
+use vrl::{compiler::Program as VrlProgram, core::Value as VrlValue};
 
 use crate::{
     execution::client_request_details::ClientRequestDetails,
@@ -30,6 +28,7 @@ use crate::{
         http::{HTTPSubgraphExecutor, HttpClient},
     },
     response::graphql_error::GraphQLError,
+    utils::expression::{compile_expression, execute_expression_with_value},
 };
 
 type SubgraphName = String;
@@ -37,7 +36,7 @@ type SubgraphEndpoint = String;
 type ExecutorsBySubgraphMap =
     DashMap<SubgraphName, DashMap<SubgraphEndpoint, SubgraphExecutorBoxedArc>>;
 type EndpointsBySubgraphMap = DashMap<SubgraphName, SubgraphEndpoint>;
-type ExpressionsBySubgraphMap = HashMap<SubgraphName, Expression>;
+type ExpressionsBySubgraphMap = HashMap<SubgraphName, VrlProgram>;
 
 pub struct SubgraphExecutorMap {
     executors_by_subgraph: ExecutorsBySubgraphMap,
@@ -91,7 +90,7 @@ impl SubgraphExecutorMap {
 
             let endpoint_str = match endpoint_str {
                 Some(UrlOrExpression::Url(url)) => url,
-                Some(UrlOrExpression::Expression(expression)) => {
+                Some(UrlOrExpression::Expression { expression }) => {
                     subgraph_executor_map.register_expression(&subgraph_name, expression)?;
                     &original_endpoint_str
                 }
@@ -190,12 +189,13 @@ impl SubgraphExecutorMap {
             ]));
 
             // Resolve the expression to get an endpoint URL.
-            let endpoint_result = expression.execute_with_value(value).map_err(|err| {
-                SubgraphExecutorError::new_endpoint_expression_resolution_failure(
-                    subgraph_name.to_string(),
-                    err,
-                )
-            })?;
+            let endpoint_result =
+                execute_expression_with_value(expression, value).map_err(|err| {
+                    SubgraphExecutorError::new_endpoint_expression_resolution_failure(
+                        subgraph_name.to_string(),
+                        err,
+                    )
+                })?;
             let endpoint_str = match endpoint_result.as_str() {
                 Some(s) => s.to_string(),
                 None => {
@@ -249,10 +249,13 @@ impl SubgraphExecutorMap {
     fn register_expression(
         &mut self,
         subgraph_name: &str,
-        expression: &Expression,
+        expression: &str,
     ) -> Result<(), SubgraphExecutorError> {
+        let program = compile_expression(expression, None).map_err(|err| {
+            SubgraphExecutorError::EndpointExpressionBuild(subgraph_name.to_string(), err)
+        })?;
         self.expressions_by_subgraph
-            .insert(subgraph_name.to_string(), expression.clone());
+            .insert(subgraph_name.to_string(), program);
 
         Ok(())
     }

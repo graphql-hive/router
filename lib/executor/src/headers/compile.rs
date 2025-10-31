@@ -1,12 +1,16 @@
-use crate::headers::{
-    errors::HeaderRuleCompileError,
-    plan::{
-        HeaderAggregationStrategy, HeaderRulesPlan, RequestHeaderRule, RequestHeaderRules,
-        RequestInsertExpression, RequestInsertStatic, RequestPropagateNamed, RequestPropagateRegex,
-        RequestRemoveNamed, RequestRemoveRegex, ResponseHeaderRule, ResponseHeaderRules,
-        ResponseInsertExpression, ResponseInsertStatic, ResponsePropagateNamed,
-        ResponsePropagateRegex, ResponseRemoveNamed, ResponseRemoveRegex,
+use crate::{
+    headers::{
+        errors::HeaderRuleCompileError,
+        plan::{
+            HeaderAggregationStrategy, HeaderRulesPlan, RequestHeaderRule, RequestHeaderRules,
+            RequestInsertExpression, RequestInsertStatic, RequestPropagateNamed,
+            RequestPropagateRegex, RequestRemoveNamed, RequestRemoveRegex, ResponseHeaderRule,
+            ResponseHeaderRules, ResponseInsertExpression, ResponseInsertStatic,
+            ResponsePropagateNamed, ResponsePropagateRegex, ResponseRemoveNamed,
+            ResponseRemoveRegex,
+        },
     },
+    utils::expression::compile_expression,
 };
 
 use hive_router_config::headers as config;
@@ -48,11 +52,14 @@ impl HeaderRuleCompiler<Vec<RequestHeaderRule>> for config::RequestHeaderRule {
                         value: build_header_value(&rule.name, value)?,
                     }));
                 }
-                config::InsertSource::Expression(expression) => {
+                config::InsertSource::Expression { expression } => {
+                    let program = compile_expression(expression, None).map_err(|err| {
+                        HeaderRuleCompileError::ExpressionBuild(rule.name.clone(), err)
+                    })?;
                     actions.push(RequestHeaderRule::InsertExpression(
                         RequestInsertExpression {
                             name: build_header_name(&rule.name)?,
-                            expression: Box::new(expression.clone()),
+                            expression: Box::new(program),
                         },
                     ));
                 }
@@ -114,16 +121,19 @@ impl HeaderRuleCompiler<Vec<ResponseHeaderRule>> for config::ResponseHeaderRule 
                             strategy: aggregation_strategy,
                         }));
                     }
-                    config::InsertSource::Expression(expression) => {
+                    config::InsertSource::Expression { expression } => {
                         // NOTE: In case we ever need to improve performance and not pass the whole context
                         // to VRL expressions, we can use:
                         // - compilation_result.program.info().target_assignments
                         // - compilation_result.program.info().target_queries
                         // to determine what parts of the context are actually needed by the expression
+                        let program = compile_expression(expression, None).map_err(|err| {
+                            HeaderRuleCompileError::ExpressionBuild(rule.name.clone(), err)
+                        })?;
                         actions.push(ResponseHeaderRule::InsertExpression(
                             ResponseInsertExpression {
                                 name: build_header_name(&rule.name)?,
-                                expression: Box::new(expression.clone()),
+                                expression: Box::new(program),
                                 strategy: aggregation_strategy,
                             },
                         ));
