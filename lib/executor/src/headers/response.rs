@@ -13,6 +13,7 @@ use crate::{
         },
         sanitizer::is_denied_header,
     },
+    utils::expression::execute_expression_with_value,
 };
 
 use super::sanitizer::is_never_join_header;
@@ -188,13 +189,9 @@ impl ApplyResponseHeader for ResponseInsertExpression {
         if is_denied_header(&self.name) {
             return Ok(());
         }
-        let value = self
-            .expression
-            .execute_with_value(ctx.into())
-            .map_err(|err| {
-                HeaderRuleRuntimeError::ExpressionEvaluation(self.name.to_string(), Box::new(err))
-            })?;
-
+        let value = execute_expression_with_value(&self.expression, ctx.into()).map_err(|err| {
+            HeaderRuleRuntimeError::new_expression_evaluation(self.name.to_string(), Box::new(err))
+        })?;
         if let Some(header_value) = vrl_value_to_header_value(value) {
             let strategy = if is_never_join_header(&self.name) {
                 HeaderAggregationStrategy::Append

@@ -11,6 +11,7 @@ use crate::{
         },
         sanitizer::{is_denied_header, is_never_join_header},
     },
+    utils::expression::execute_expression_with_value,
 };
 
 pub fn modify_subgraph_request_headers(
@@ -166,15 +167,9 @@ impl ApplyRequestHeader for RequestInsertExpression {
         if is_denied_header(&self.name) {
             return Ok(());
         }
-        let value = self
-            .expression
-            .execute_with_value(ctx.into())
-            .map_err(|err| {
-                HeaderRuleRuntimeError::new_expression_evaluation(
-                    self.name.to_string(),
-                    Box::new(err),
-                )
-            })?;
+        let value = execute_expression_with_value(&self.expression, ctx.into()).map_err(|err| {
+            HeaderRuleRuntimeError::new_expression_evaluation(self.name.to_string(), Box::new(err))
+        })?;
 
         if let Some(header_value) = vrl_value_to_header_value(value) {
             if is_never_join_header(&self.name) {
