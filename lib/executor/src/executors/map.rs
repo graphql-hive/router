@@ -324,6 +324,7 @@ impl SubgraphExecutorMap {
             semaphore,
             self.config.clone(),
             self.in_flight_requests.clone(),
+            None,
         );
 
         self.executors_by_subgraph
