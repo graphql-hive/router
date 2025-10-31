@@ -178,6 +178,19 @@ impl HTTPSubgraphExecutor {
 
         if let Some(extensions) = &execution_request.extensions {
             let mut first = true;
+            if let Some(hmac_bytes) = hmac_signature_ext {
+                if first {
+                    body.put(FIRST_EXTENSION_STR);
+                    first = false;
+                } else {
+                    body.put(COMMA);
+                }
+                body.put(self.config.hmac_signature.extension_name.as_bytes());
+                let hmac_hex = hex::encode(hmac_bytes);
+                body.put(QUOTE);
+                body.put(hmac_hex.as_bytes());
+                body.put(QUOTE);
+            }
             for (extension_name, extension_value) in extensions {
                 if first {
                     body.put(FIRST_EXTENSION_STR);
@@ -196,19 +209,6 @@ impl HTTPSubgraphExecutor {
                     )
                 })?;
                 body.put(value_str.as_bytes());
-            }
-            if let Some(hmac_bytes) = hmac_signature_ext {
-                if first {
-                    body.put(COMMA);
-                    body.put(FIRST_EXTENSION_STR);
-                } else {
-                    body.put(COMMA);
-                }
-                body.put(self.config.hmac_signature.extension_name.as_bytes());
-                let hmac_hex = hex::encode(hmac_bytes);
-                body.put(QUOTE);
-                body.put(hmac_hex.as_bytes());
-                body.put(QUOTE);
             }
         }
 
