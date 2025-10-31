@@ -163,40 +163,47 @@ impl HTTPSubgraphExecutor {
             DurationOrExpression::Expression(expr) => {
                 let value =
                     VrlValue::Object(BTreeMap::from([("request".into(), client_request.into())]));
-                let result = expr.execute(value).map_err(|err| {
+                let result = expr.execute_with_value(value).map_err(|err| {
                     SubgraphExecutorError::TimeoutExpressionResolutionFailure(err.to_string())
                 })?;
                 match result {
-                    VrlValue::Integer(i) if i >= 0 => std::time::Duration::from_millis(i as u64),
+                    VrlValue::Integer(i) => {
+                        if i < 0 {
+                            return Err(SubgraphExecutorError::TimeoutExpressionResolutionFailure(
+                                "Timeout expression resolved to a negative integer".to_string(),
+                            ));
+                        }
+                        std::time::Duration::from_millis(i as u64)
+                    }
                     VrlValue::Float(f) => {
                         let f = f.into_inner();
-                        if f >= 0.0 {
-                            std::time::Duration::from_millis(f as u64)
-                        } else {
+                        if f < 0.0 {
                             return Err(SubgraphExecutorError::TimeoutExpressionResolutionFailure(
                                 "Timeout expression resolved to a negative float".to_string(),
                             ));
                         }
+                        std::time::Duration::from_millis(f as u64)
                     }
                     VrlValue::Bytes(b) => {
-                        let str: String = String::from_utf8(b.to_vec()).map_err(|e| {
+                        let s = std::str::from_utf8(&b).map_err(|e| {
                             SubgraphExecutorError::TimeoutExpressionResolutionFailure(format!(
                                 "Failed to parse duration string from bytes: {}",
                                 e
                             ))
                         })?;
-                        let parsed = humantime::parse_duration(&str).map_err(|e| {
+                        humantime::parse_duration(s).map_err(|e| {
                             SubgraphExecutorError::TimeoutExpressionResolutionFailure(format!(
                                 "Failed to parse duration string '{}': {}",
-                                str, e
+                                s, e
                             ))
-                        })?;
-                        parsed
+                        })?
                     }
-                    _ => {
+                    other => {
                         return Err(SubgraphExecutorError::TimeoutExpressionResolutionFailure(
-                            "Timeout expression did not resolve to a non-negative integer or float"
-                                .to_string(),
+                            format!(
+                                "Timeout expression resolved to an unexpected type: {}. Expected a non-negative integer/float (ms) or a duration string.",
+                                other.kind()
+                            ),
                         ));
                     }
                 }
@@ -269,7 +276,7 @@ impl HTTPSubgraphExecutor {
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
-    #[tracing::instrument(skip_all, fields(subgraph_name = self.subgraph_name))]
+    #[tracing::instrument(skip_all, fields(subgraph_name = %self.subgraph_name))]
     async fn execute<'exec, 'req>(
         &self,
         execution_request: HttpExecutionRequest<'exec, 'req>,
