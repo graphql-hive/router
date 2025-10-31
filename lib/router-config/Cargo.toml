@@ -25,6 +25,7 @@ retry-policies = { workspace = true}
 tracing = { workspace = true }
 vrl = { workspace = true }
 
+once_cell = "1.21.3"
 schemars = "1.0.4"
 humantime-serde = "1.1.1"
 config = { version = "0.15.14", features = ["yaml", "json", "json5"] }

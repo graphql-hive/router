@@ -1,12 +1,12 @@
-use std::{borrow::Cow, collections::BTreeMap};
-
+use once_cell::sync::Lazy;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
+use std::{borrow::Cow, collections::BTreeMap};
 use vrl::{
     compiler::{compile as vrl_compile, Program as VrlProgram, TargetValue as VrlTargetValue},
     core::Value as VrlValue,
     prelude::{
-        state::RuntimeState as VrlState, Context as VrlContext, ExpressionError,
+        state::RuntimeState as VrlState, Context as VrlContext, ExpressionError, Function,
         TimeZone as VrlTimeZone,
     },
     stdlib::all as vrl_build_functions,
@@ -19,16 +19,17 @@ pub struct Expression {
     program: Box<VrlProgram>,
 }
 
+static VRL_FUNCTIONS: Lazy<Vec<Box<dyn Function>>> = Lazy::new(vrl_build_functions);
+static VRL_TIMEZONE: Lazy<VrlTimeZone> = Lazy::new(VrlTimeZone::default);
+
 impl Expression {
     pub fn try_new(expression: String) -> Result<Self, String> {
-        let vrl_functions = vrl_build_functions();
-
         let compilation_result =
-            vrl_compile(&expression, &vrl_functions).map_err(|diagnostics| {
+            vrl_compile(&expression, &VRL_FUNCTIONS).map_err(|diagnostics| {
                 diagnostics
                     .errors()
-                    .into_iter()
-                    .map(|d| d.code.to_string() + ": " + &d.message)
+                    .iter()
+                    .map(|d| format!("{}: {}", d.code, d.message))
                     .collect::<Vec<_>>()
                     .join(", ")
             })?;
@@ -39,7 +40,7 @@ impl Expression {
         })
     }
 
-    pub fn execute(&self, value: VrlValue) -> Result<VrlValue, ExpressionError> {
+    pub fn execute_with_value(&self, value: VrlValue) -> Result<VrlValue, ExpressionError> {
         let mut target = VrlTargetValue {
             value,
             metadata: VrlValue::Object(BTreeMap::new()),
@@ -47,10 +48,13 @@ impl Expression {
         };
 
         let mut state = VrlState::default();
-        let timezone = VrlTimeZone::default();
-        let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
+        let mut ctx = VrlContext::new(&mut target, &mut state, &VRL_TIMEZONE);
 
-        self.program.resolve(&mut ctx)
+        self.execute_with_context(&mut ctx)
+    }
+
+    pub fn execute_with_context(&self, ctx: &mut VrlContext) -> Result<VrlValue, ExpressionError> {
+        self.program.resolve(ctx)
     }
 }
 
@@ -59,8 +63,44 @@ impl<'de> Deserialize<'de> for Expression {
     where
         D: serde::Deserializer<'de>,
     {
-        let expression = String::deserialize(deserializer)?;
-        Expression::try_new(expression).map_err(serde::de::Error::custom)
+        struct ExpressionVisitor;
+        impl<'de> serde::de::Visitor<'de> for ExpressionVisitor {
+            type Value = Expression;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a map for Expression")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut expression_str: Option<String> = None;
+
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "expression" => {
+                            if expression_str.is_some() {
+                                return Err(serde::de::Error::duplicate_field("expression"));
+                            }
+                            expression_str = Some(map.next_value()?);
+                        }
+                        other_key => {
+                            return Err(serde::de::Error::unknown_field(
+                                other_key,
+                                &["expression"],
+                            ));
+                        }
+                    }
+                }
+
+                let expression_str =
+                    expression_str.ok_or_else(|| serde::de::Error::missing_field("expression"))?;
+
+                Expression::try_new(expression_str).map_err(serde::de::Error::custom)
+            }
+        }
+        deserializer.deserialize_map(ExpressionVisitor)
     }
 }
 
