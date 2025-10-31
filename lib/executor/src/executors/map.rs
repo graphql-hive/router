@@ -298,26 +298,30 @@ impl SubgraphExecutorMap {
             .clone();
 
         let mut client = self.client.clone();
+        let mut timeout = &self.config.traffic_shaping.all.request_timeout;
+        let pool_idle_timeout_seconds = self.config.traffic_shaping.all.pool_idle_timeout_seconds;
         let mut dedupe_enabled = self.config.traffic_shaping.all.dedupe_enabled;
-        let mut timeout = self.config.traffic_shaping.all.request_timeout.clone();
         if let Some(subgraph_traffic_shaping_config) =
             self.config.traffic_shaping.subgraphs.get(subgraph_name)
         {
-            if subgraph_traffic_shaping_config.pool_idle_timeout_seconds
-                != self.config.traffic_shaping.all.pool_idle_timeout_seconds
-            {
-                client = Arc::new(
-                    Client::builder(TokioExecutor::new())
-                        .pool_timer(TokioTimer::new())
-                        .pool_idle_timeout(Duration::from_secs(
-                            subgraph_traffic_shaping_config.pool_idle_timeout_seconds,
-                        ))
-                        .pool_max_idle_per_host(self.max_connections_per_host)
-                        .build(HttpsConnector::new()),
-                );
-            }
-            dedupe_enabled = subgraph_traffic_shaping_config.dedupe_enabled;
-            timeout = subgraph_traffic_shaping_config.request_timeout.clone();
+            client = Arc::new(
+                Client::builder(TokioExecutor::new())
+                    .pool_timer(TokioTimer::new())
+                    .pool_idle_timeout(Duration::from_secs(
+                        subgraph_traffic_shaping_config
+                            .pool_idle_timeout_seconds
+                            .unwrap_or(pool_idle_timeout_seconds),
+                    ))
+                    .pool_max_idle_per_host(self.max_connections_per_host)
+                    .build(HttpsConnector::new()),
+            );
+            dedupe_enabled = subgraph_traffic_shaping_config
+                .dedupe_enabled
+                .unwrap_or(dedupe_enabled);
+            timeout = subgraph_traffic_shaping_config
+                .request_timeout
+                .as_ref()
+                .unwrap_or(timeout);
         }
 
         let executor = HTTPSubgraphExecutor::new(
@@ -327,7 +331,7 @@ impl SubgraphExecutorMap {
             semaphore,
             dedupe_enabled,
             self.in_flight_requests.clone(),
-            timeout,
+            timeout.clone(),
         );
 
         self.executors_by_subgraph

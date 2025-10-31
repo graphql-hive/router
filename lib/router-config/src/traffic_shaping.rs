@@ -13,7 +13,7 @@ pub struct TrafficShapingConfig {
     pub all: TrafficShapingExecutorConfig,
     /// Optional per-subgraph configurations that will override the default configuration for specific subgraphs.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub subgraphs: HashMap<String, TrafficShapingExecutorConfig>,
+    pub subgraphs: HashMap<String, TrafficShapingExecutorSubgraphConfig>,
     /// Limits the concurrent amount of requests/connections per host/subgraph.
     #[serde(default = "default_max_connections_per_host")]
     pub max_connections_per_host: usize,
@@ -39,6 +39,39 @@ fn default_pool_idle_timeout_seconds() -> u64 {
 
 fn default_dedupe_enabled() -> bool {
     true
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TrafficShapingExecutorSubgraphConfig {
+    /// Timeout for idle sockets being kept-alive.
+    pub pool_idle_timeout_seconds: Option<u64>,
+
+    /// Enables/disables request deduplication to subgraphs.
+    ///
+    /// When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will
+    /// be deduplicated by sharing the response of other in-flight requests.
+    pub dedupe_enabled: Option<bool>,
+
+    /// Optional timeout configuration for requests to subgraphs.
+    ///
+    /// Example with a fixed duration:
+    /// ```yaml
+    ///   timeout:
+    ///     duration: 5s
+    /// ```
+    ///
+    /// Or with a VRL expression that can return a duration based on the operation kind:
+    /// ```yaml
+    ///   timeout:
+    ///     expression: |
+    ///      if (.request.operation.type == "mutation") {
+    ///        "10s"
+    ///      } else {
+    ///        "15s"
+    ///      }
+    /// ```
+    pub request_timeout: Option<DurationOrExpression>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
