@@ -6,7 +6,9 @@ use std::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use dashmap::DashMap;
-use hive_router_config::{override_subgraph_urls::UrlOrExpression, HiveRouterConfig};
+use hive_router_config::{
+    hmac_signature::BooleanOrExpression, override_subgraph_urls::UrlOrExpression, HiveRouterConfig,
+};
 use http::Uri;
 use hyper_tls::HttpsConnector;
 use hyper_util::{
@@ -25,7 +27,7 @@ use crate::{
         },
         dedupe::{ABuildHasher, SharedResponse},
         error::SubgraphExecutorError,
-        http::{HTTPSubgraphExecutor, HttpClient},
+        http::{BooleanOrProgram, HTTPSubgraphExecutor, HttpClient},
     },
     response::graphql_error::GraphQLError,
     utils::expression::{compile_expression, execute_expression_with_value},
@@ -104,13 +106,12 @@ impl SubgraphExecutorMap {
         Ok(subgraph_executor_map)
     }
 
-    pub async fn execute<'a, 'req>(
+    pub async fn execute<'exec, 'req>(
         &self,
         subgraph_name: &str,
-        execution_request: HttpExecutionRequest<'a>,
-        client_request: &ClientRequestDetails<'a, 'req>,
+        execution_request: HttpExecutionRequest<'exec, 'req>,
     ) -> HttpExecutionResponse {
-        match self.get_or_create_executor(subgraph_name, client_request) {
+        match self.get_or_create_executor(subgraph_name, execution_request.client_request) {
             Ok(Some(executor)) => executor.execute(execution_request).await,
             Err(err) => {
                 error!(
@@ -298,6 +299,16 @@ impl SubgraphExecutorMap {
             .or_insert_with(|| Arc::new(Semaphore::new(self.max_connections_per_host)))
             .clone();
 
+        let should_sign_hmac = match &self.config.hmac_signature.enabled {
+            BooleanOrExpression::Boolean(b) => BooleanOrProgram::Boolean(*b),
+            BooleanOrExpression::Expression { expression } => {
+                let program = compile_expression(expression, None).map_err(|err| {
+                    SubgraphExecutorError::HMACExpressionBuild(subgraph_name.to_string(), err)
+                })?;
+                BooleanOrProgram::Program(Box::new(program))
+            }
+        };
+
         let executor = HTTPSubgraphExecutor::new(
             subgraph_name.to_string(),
             endpoint_uri,
@@ -305,6 +316,7 @@ impl SubgraphExecutorMap {
             semaphore,
             self.config.clone(),
             self.in_flight_requests.clone(),
+            should_sign_hmac,
         );
 
         self.executors_by_subgraph

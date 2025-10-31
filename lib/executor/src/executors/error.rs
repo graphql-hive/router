@@ -20,6 +20,12 @@ pub enum SubgraphExecutorError {
     RequestFailure(String, String),
     #[error("Failed to serialize variable \"{0}\": {1}")]
     VariablesSerializationFailure(String, String),
+    #[error("Failed to serialize extension \"{0}\": {1}")]
+    ExtensionSerializationFailure(String, String),
+    #[error("Failed to build HMAC expression for subgraph '{0}'. Please check your VRL expression for syntax errors. Diagnostic: {1}")]
+    HMACExpressionBuild(String, String),
+    #[error("HMAC signature error: {0}")]
+    HMACSignatureError(String),
 }
 
 impl From<SubgraphExecutorError> for GraphQLError {
@@ -60,6 +66,13 @@ impl SubgraphExecutorError {
             SubgraphExecutorError::RequestFailure(_, _) => "SUBGRAPH_REQUEST_FAILURE",
             SubgraphExecutorError::VariablesSerializationFailure(_, _) => {
                 "SUBGRAPH_VARIABLES_SERIALIZATION_FAILURE"
+            }
+            SubgraphExecutorError::ExtensionSerializationFailure(_, _) => {
+                "SUBGRAPH_EXTENSION_SERIALIZATION_FAILURE"
+            }
+            SubgraphExecutorError::HMACSignatureError(_) => "SUBGRAPH_HMAC_SIGNATURE_ERROR",
+            SubgraphExecutorError::HMACExpressionBuild(_, _) => {
+                "SUBGRAPH_HMAC_EXPRESSION_BUILD_FAILURE"
             }
         }
     }
