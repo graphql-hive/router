@@ -1,9 +1,12 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
+use crate::execution::client_request_details::ClientRequestDetails;
 use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
+use crate::utils::expression::execute_expression_with_value;
 use dashmap::DashMap;
-use hive_router_config::HiveRouterConfig;
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
@@ -18,6 +21,8 @@ use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
 use tracing::debug;
+use vrl::compiler::Program as VrlProgram;
+use vrl::core::Value as VrlValue;
 
 use crate::executors::common::HttpExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
@@ -29,14 +34,21 @@ use crate::utils::consts::QUOTE;
 use crate::{executors::common::SubgraphExecutor, json_writer::write_and_escape_string};
 
 #[derive(Debug)]
+pub enum DurationOrProgram {
+    Duration(Duration),
+    Program(Box<VrlProgram>),
+}
+
+#[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
     pub subgraph_name: String,
     pub endpoint: http::Uri,
     pub http_client: Arc<Client<HttpsConnector<HttpConnector>, Full<Bytes>>>,
     pub header_map: HeaderMap,
     pub semaphore: Arc<Semaphore>,
-    pub config: Arc<HiveRouterConfig>,
+    pub dedupe_enabled: bool,
     pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    pub timeout: DurationOrProgram,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -50,8 +62,9 @@ impl HTTPSubgraphExecutor {
         endpoint: http::Uri,
         http_client: Arc<HttpClient>,
         semaphore: Arc<Semaphore>,
-        config: Arc<HiveRouterConfig>,
+        dedupe_enabled: bool,
         in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+        timeout: DurationOrProgram,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -69,14 +82,15 @@ impl HTTPSubgraphExecutor {
             http_client,
             header_map,
             semaphore,
-            config,
+            dedupe_enabled,
             in_flight_requests,
+            timeout,
         }
     }
 
-    fn build_request_body<'a>(
+    fn build_request_body(
         &self,
-        execution_request: &HttpExecutionRequest<'a>,
+        execution_request: &HttpExecutionRequest<'_, '_>,
     ) -> Result<Vec<u8>, SubgraphExecutorError> {
         let mut body = Vec::with_capacity(4096);
         body.put(FIRST_QUOTE_STR);
@@ -137,6 +151,7 @@ impl HTTPSubgraphExecutor {
         &self,
         body: Vec<u8>,
         headers: HeaderMap,
+        client_request: &ClientRequestDetails<'_, '_>,
     ) -> Result<SharedResponse, SubgraphExecutorError> {
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
@@ -151,9 +166,75 @@ impl HTTPSubgraphExecutor {
 
         debug!("making http request to {}", self.endpoint.to_string());
 
-        let res = self.http_client.request(req).await.map_err(|e| {
-            SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-        })?;
+        let timeout = match &self.timeout {
+            DurationOrProgram::Duration(dur) => *dur,
+            DurationOrProgram::Program(program) => {
+                let value =
+                    VrlValue::Object(BTreeMap::from([("request".into(), client_request.into())]));
+                let result = execute_expression_with_value(program, value).map_err(|err| {
+                    SubgraphExecutorError::TimeoutExpressionResolution(
+                        self.subgraph_name.to_string(),
+                        err.to_string(),
+                    )
+                })?;
+                match result {
+                    VrlValue::Integer(i) => {
+                        if i < 0 {
+                            return Err(SubgraphExecutorError::TimeoutExpressionResolution(
+                                self.subgraph_name.to_string(),
+                                "Timeout expression resolved to a negative integer".to_string(),
+                            ));
+                        }
+                        std::time::Duration::from_millis(i as u64)
+                    }
+                    VrlValue::Float(f) => {
+                        let f = f.into_inner();
+                        if f < 0.0 {
+                            return Err(SubgraphExecutorError::TimeoutExpressionResolution(
+                                self.subgraph_name.to_string(),
+                                "Timeout expression resolved to a negative float".to_string(),
+                            ));
+                        }
+                        std::time::Duration::from_millis(f as u64)
+                    }
+                    VrlValue::Bytes(b) => {
+                        let s = std::str::from_utf8(&b).map_err(|e| {
+                            SubgraphExecutorError::TimeoutExpressionResolution(
+                                self.subgraph_name.to_string(),
+                                format!("Failed to parse duration string from bytes: {}", e),
+                            )
+                        })?;
+                        humantime::parse_duration(s).map_err(|e| {
+                            SubgraphExecutorError::TimeoutExpressionResolution(
+                                self.subgraph_name.to_string(),
+                                format!("Failed to parse duration string '{}': {}", s, e),
+                            )
+                        })?
+                    }
+                    other => {
+                        return Err(SubgraphExecutorError::TimeoutExpressionResolution(
+                                self.subgraph_name.to_string(),
+                            format!(
+                                "Timeout expression resolved to an unexpected type: {}. Expected a non-negative integer/float (ms) or a duration string.",
+                                other.kind()
+                            ),
+                        ));
+                    }
+                }
+            }
+        };
+
+        let res = tokio::time::timeout(timeout, self.http_client.request(req))
+            .await
+            .map_err(|_| {
+                SubgraphExecutorError::RequestTimeout(
+                    self.endpoint.to_string(),
+                    timeout.as_millis() as u64,
+                )
+            })?
+            .map_err(|e| {
+                SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
+            })?;
 
         debug!(
             "http request to {} completed, status: {}",
@@ -209,10 +290,10 @@ impl HTTPSubgraphExecutor {
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
-    #[tracing::instrument(skip_all, fields(subgraph_name = self.subgraph_name))]
-    async fn execute<'a>(
+    #[tracing::instrument(skip_all, fields(subgraph_name = %self.subgraph_name))]
+    async fn execute<'exec, 'req>(
         &self,
-        execution_request: HttpExecutionRequest<'a>,
+        execution_request: HttpExecutionRequest<'exec, 'req>,
     ) -> HttpExecutionResponse {
         let body = match self.build_request_body(&execution_request) {
             Ok(body) => body,
@@ -230,11 +311,14 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             headers.insert(key, value.clone());
         });
 
-        if !self.config.traffic_shaping.dedupe_enabled || !execution_request.dedupe {
+        if !self.dedupe_enabled || !execution_request.dedupe {
             // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
-            return match self._send_request(body, headers).await {
+            return match self
+                ._send_request(body, headers, execution_request.client_request)
+                .await
+            {
                 Ok(shared_response) => HttpExecutionResponse {
                     body: shared_response.body,
                     headers: shared_response.headers,
@@ -266,7 +350,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
                     let _permit = self.semaphore.acquire().await.unwrap();
-                    self._send_request(body, headers).await
+                    self._send_request(body, headers, execution_request.client_request)
+                        .await
                 };
                 // It's important to remove the entry from the map before returning the result.
                 // This ensures that once the OnceCell is set, no future requests can join it.
