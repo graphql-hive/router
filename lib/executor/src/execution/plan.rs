@@ -59,6 +59,7 @@ pub struct QueryPlanExecutionContext<'exec, 'req> {
     pub operation_type_name: &'exec str,
     pub executors: &'exec SubgraphExecutorMap,
     pub jwt_auth_forwarding: &'exec Option<JwtAuthForwardingPlan>,
+    pub initial_errors: Vec<GraphQLError>,
 }
 
 pub struct PlanExecutionOutput {
@@ -75,7 +76,7 @@ pub async fn execute_query_plan<'exec, 'req>(
         Value::Null
     };
 
-    let mut exec_ctx = ExecutionContext::new(ctx.query_plan, init_value);
+    let mut exec_ctx = ExecutionContext::new(ctx.query_plan, init_value, ctx.initial_errors);
     let executor = Executor::new(
         ctx.variable_values,
         ctx.executors,
