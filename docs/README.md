@@ -8,6 +8,7 @@
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
 |[**graphiql**](#graphiql)|`object`|Configuration for the GraphiQL interface.<br/>Default: `{"enabled":true}`<br/>||
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
+|[**hmac\_signature**](#hmac_signature)|`object`||yes|
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"host":"0.0.0.0","port":4000}`<br/>||
 |[**jwt**](#jwt)|`object`|Configuration for JWT authentication plugin.<br/>|yes|
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
@@ -15,7 +16,7 @@
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
-|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaper executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"dedupe_enabled":true,"max_connections_per_host":100,"pool_idle_timeout_seconds":50}`<br/>||
+|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"dedupe_enabled":true,"max_connections_per_host":100,"pool_idle_timeout":"50s"}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -57,6 +58,9 @@ headers:
             default: unknown
             named: x-tenant-id
             rename: x-acct-tenant
+hmac_signature:
+  enabled: false
+  extension_name: hmac-signature
 http:
   host: 0.0.0.0
   port: 4000
@@ -109,7 +113,7 @@ supergraph: {}
 traffic_shaping:
   dedupe_enabled: true
   max_connections_per_host: 100
-  pool_idle_timeout_seconds: 50
+  pool_idle_timeout: 50s
 
 ```
 
@@ -1341,6 +1345,25 @@ For more information on the available functions and syntax, see the
 |**expression**|`string`||yes|
 
 
+<a name="hmac_signature"></a>
+## hmac\_signature: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**||Default: `false`<br/>|no|
+|**extension\_name**|`string`|Default: `"hmac-signature"`<br/>|no|
+|**secret**|`string`||yes|
+
+**Example**
+
+```yaml
+enabled: false
+extension_name: hmac-signature
+
+```
+
 <a name="http"></a>
 ## http: object
 
@@ -1808,7 +1831,7 @@ Request timeout for the Hive Console CDN requests.
 <a name="traffic_shaping"></a>
 ## traffic\_shaping: object
 
-Configuration for the traffic-shaper executor. Use these configurations to control how requests are being executed to subgraphs.
+Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.
 
 
 **Properties**
@@ -1817,7 +1840,7 @@ Configuration for the traffic-shaper executor. Use these configurations to contr
 |----|----|-----------|--------|
 |**dedupe\_enabled**|`boolean`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>Default: `true`<br/>||
 |**max\_connections\_per\_host**|`integer`|Limits the concurrent amount of requests/connections per host/subgraph.<br/>Default: `100`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
-|**pool\_idle\_timeout\_seconds**|`integer`|Timeout for idle sockets being kept-alive.<br/>Default: `50`<br/>Format: `"uint64"`<br/>Minimum: `0`<br/>||
+|**pool\_idle\_timeout**|`string`|Timeout for idle sockets being kept-alive.<br/>Default: `"50s"`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -1825,7 +1848,7 @@ Configuration for the traffic-shaper executor. Use these configurations to contr
 ```yaml
 dedupe_enabled: true
 max_connections_per_host: 100
-pool_idle_timeout_seconds: 50
+pool_idle_timeout: 50s
 
 ```
 

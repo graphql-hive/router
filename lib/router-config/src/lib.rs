@@ -3,6 +3,7 @@ pub mod csrf;
 mod env_overrides;
 pub mod graphiql;
 pub mod headers;
+pub mod hmac_signature;
 pub mod http_server;
 pub mod jwt_auth;
 pub mod log;
@@ -29,7 +30,7 @@ use crate::{
     primitives::file_path::with_start_path,
     query_planner::QueryPlannerConfig,
     supergraph::SupergraphSource,
-    traffic_shaping::TrafficShapingExecutorConfig,
+    traffic_shaping::TrafficShapingConfig,
 };
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -62,9 +63,9 @@ pub struct HiveRouterConfig {
     #[serde(default)]
     pub http: HttpServerConfig,
 
-    /// Configuration for the traffic-shaper executor. Use these configurations to control how requests are being executed to subgraphs.
+    /// Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.
     #[serde(default)]
-    pub traffic_shaping: TrafficShapingExecutorConfig,
+    pub traffic_shaping: TrafficShapingConfig,
 
     /// Configuration for the headers.
     #[serde(default)]
@@ -92,6 +93,12 @@ pub struct HiveRouterConfig {
     /// Configuration for overriding labels.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub override_labels: OverrideLabelsConfig,
+
+    #[serde(
+        default,
+        skip_serializing_if = "hmac_signature::HMACSignatureConfig::is_disabled"
+    )]
+    pub hmac_signature: hmac_signature::HMACSignatureConfig,
 }
 
 #[derive(Debug, thiserror::Error)]

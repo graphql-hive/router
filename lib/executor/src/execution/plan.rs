@@ -708,6 +708,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
             representations,
             headers: headers_map,
             extensions: None,
+            client_request: self.client_request,
         };
 
         if let Some(jwt_forwarding_plan) = &self.jwt_forwarding_plan {
@@ -722,7 +723,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
             subgraph_name: node.service_name.clone(),
             response: self
                 .executors
-                .execute(&node.service_name, subgraph_request, self.client_request)
+                .execute(&node.service_name, subgraph_request)
                 .await
                 .into(),
         }))

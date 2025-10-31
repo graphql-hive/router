@@ -1,12 +1,4 @@
-use std::collections::BTreeMap;
-
 use http::HeaderMap;
-use vrl::{
-    compiler::TargetValue as VrlTargetValue,
-    core::Value as VrlValue,
-    prelude::{state::RuntimeState as VrlState, Context as VrlContext, TimeZone as VrlTimeZone},
-    value::Secrets as VrlSecrets,
-};
 
 use crate::{
     execution::client_request_details::ClientRequestDetails,
@@ -19,6 +11,7 @@ use crate::{
         },
         sanitizer::{is_denied_header, is_never_join_header},
     },
+    utils::expression::execute_expression_with_value,
 };
 
 pub fn modify_subgraph_request_headers(
@@ -174,17 +167,7 @@ impl ApplyRequestHeader for RequestInsertExpression {
         if is_denied_header(&self.name) {
             return Ok(());
         }
-
-        let mut target = VrlTargetValue {
-            value: ctx.into(),
-            metadata: VrlValue::Object(BTreeMap::new()),
-            secrets: VrlSecrets::default(),
-        };
-
-        let mut state = VrlState::default();
-        let timezone = VrlTimeZone::default();
-        let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
-        let value = self.expression.resolve(&mut ctx).map_err(|err| {
+        let value = execute_expression_with_value(&self.expression, ctx.into()).map_err(|err| {
             HeaderRuleRuntimeError::new_expression_evaluation(self.name.to_string(), Box::new(err))
         })?;
 

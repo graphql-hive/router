@@ -1,4 +1,4 @@
-use vrl::{diagnostic::DiagnosticList, prelude::ExpressionError};
+use vrl::prelude::ExpressionError;
 
 use crate::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 
@@ -20,6 +20,12 @@ pub enum SubgraphExecutorError {
     RequestFailure(String, String),
     #[error("Failed to serialize variable \"{0}\": {1}")]
     VariablesSerializationFailure(String, String),
+    #[error("Failed to serialize extension \"{0}\": {1}")]
+    ExtensionSerializationFailure(String, String),
+    #[error("Failed to build HMAC expression. Please check your VRL expression for syntax errors. Diagnostic: {0}")]
+    HMACExpressionBuild(String),
+    #[error("HMAC signature error: {0}")]
+    HMACSignatureError(String),
 }
 
 impl From<SubgraphExecutorError> for GraphQLError {
@@ -34,21 +40,6 @@ impl From<SubgraphExecutorError> for GraphQLError {
 }
 
 impl SubgraphExecutorError {
-    pub fn new_endpoint_expression_build(
-        subgraph_name: String,
-        diagnostics: DiagnosticList,
-    ) -> Self {
-        SubgraphExecutorError::EndpointExpressionBuild(
-            subgraph_name,
-            diagnostics
-                .errors()
-                .into_iter()
-                .map(|d| d.code.to_string() + ": " + &d.message)
-                .collect::<Vec<_>>()
-                .join(", "),
-        )
-    }
-
     pub fn new_endpoint_expression_resolution_failure(
         subgraph_name: String,
         error: ExpressionError,
@@ -75,6 +66,13 @@ impl SubgraphExecutorError {
             SubgraphExecutorError::RequestFailure(_, _) => "SUBGRAPH_REQUEST_FAILURE",
             SubgraphExecutorError::VariablesSerializationFailure(_, _) => {
                 "SUBGRAPH_VARIABLES_SERIALIZATION_FAILURE"
+            }
+            SubgraphExecutorError::ExtensionSerializationFailure(_, _) => {
+                "SUBGRAPH_EXTENSION_SERIALIZATION_FAILURE"
+            }
+            SubgraphExecutorError::HMACSignatureError(_) => "SUBGRAPH_HMAC_SIGNATURE_ERROR",
+            SubgraphExecutorError::HMACExpressionBuild(_) => {
+                "SUBGRAPH_HMAC_EXPRESSION_BUILD_FAILURE"
             }
         }
     }
