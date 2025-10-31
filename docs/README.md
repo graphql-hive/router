@@ -8,6 +8,7 @@
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
 |[**graphiql**](#graphiql)|`object`|Configuration for the GraphiQL interface.<br/>Default: `{"enabled":true}`<br/>||
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
+|[**hmac\_signature**](#hmac_signature)|`object`||yes|
 |[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"host":"0.0.0.0","port":4000}`<br/>||
 |[**jwt**](#jwt)|`object`|Configuration for JWT authentication plugin.<br/>|yes|
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
@@ -57,6 +58,8 @@ headers:
             default: unknown
             named: x-tenant-id
             rename: x-acct-tenant
+hmac_signature:
+  extension_name: hmac_signature
 http:
   host: 0.0.0.0
   port: 4000
@@ -1340,6 +1343,24 @@ For more information on the available functions and syntax, see the
 |----|----|-----------|--------|
 |**expression**|`string`||yes|
 
+
+<a name="hmac_signature"></a>
+## hmac\_signature: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|||yes|
+|**extension\_name**|`string`|Default: `"hmac_signature"`<br/>|no|
+|**secret**|`string`||yes|
+
+**Example**
+
+```yaml
+extension_name: hmac_signature
+
+```
 
 <a name="http"></a>
 ## http: object
