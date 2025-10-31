@@ -303,15 +303,19 @@ impl SubgraphExecutorMap {
         if let Some(subgraph_traffic_shaping_config) =
             self.config.traffic_shaping.subgraphs.get(subgraph_name)
         {
-            client = Arc::new(
-                Client::builder(TokioExecutor::new())
-                    .pool_timer(TokioTimer::new())
-                    .pool_idle_timeout(Duration::from_secs(
-                        subgraph_traffic_shaping_config.pool_idle_timeout_seconds,
-                    ))
-                    .pool_max_idle_per_host(self.max_connections_per_host)
-                    .build(HttpsConnector::new()),
-            );
+            if subgraph_traffic_shaping_config.pool_idle_timeout_seconds
+                != self.config.traffic_shaping.all.pool_idle_timeout_seconds
+            {
+                client = Arc::new(
+                    Client::builder(TokioExecutor::new())
+                        .pool_timer(TokioTimer::new())
+                        .pool_idle_timeout(Duration::from_secs(
+                            subgraph_traffic_shaping_config.pool_idle_timeout_seconds,
+                        ))
+                        .pool_max_idle_per_host(self.max_connections_per_host)
+                        .build(HttpsConnector::new()),
+                );
+            }
             dedupe_enabled = subgraph_traffic_shaping_config.dedupe_enabled;
             timeout = subgraph_traffic_shaping_config.request_timeout.clone();
         }
