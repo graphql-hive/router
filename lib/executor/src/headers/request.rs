@@ -1,12 +1,4 @@
-use std::collections::BTreeMap;
-
 use http::HeaderMap;
-use vrl::{
-    compiler::TargetValue as VrlTargetValue,
-    core::Value as VrlValue,
-    prelude::{state::RuntimeState as VrlState, Context as VrlContext, TimeZone as VrlTimeZone},
-    value::Secrets as VrlSecrets,
-};
 
 use crate::{
     execution::client_request_details::ClientRequestDetails,
@@ -174,17 +166,7 @@ impl ApplyRequestHeader for RequestInsertExpression {
         if is_denied_header(&self.name) {
             return Ok(());
         }
-
-        let mut target = VrlTargetValue {
-            value: ctx.into(),
-            metadata: VrlValue::Object(BTreeMap::new()),
-            secrets: VrlSecrets::default(),
-        };
-
-        let mut state = VrlState::default();
-        let timezone = VrlTimeZone::default();
-        let mut ctx = VrlContext::new(&mut target, &mut state, &timezone);
-        let value = self.expression.resolve(&mut ctx).map_err(|err| {
+        let value = self.expression.execute(ctx.into()).map_err(|err| {
             HeaderRuleRuntimeError::new_expression_evaluation(self.name.to_string(), Box::new(err))
         })?;
 

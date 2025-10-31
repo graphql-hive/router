@@ -1,7 +1,7 @@
 use ahash::HashMap;
+use hive_router_config::primitives::expression::Expression;
 use http::{HeaderName, HeaderValue};
 use regex_automata::meta::Regex;
-use vrl::compiler::Program as VrlProgram;
 
 #[derive(Clone)]
 pub struct HeaderRulesPlan {
@@ -62,13 +62,13 @@ pub struct ResponseInsertStatic {
 #[derive(Clone)]
 pub struct RequestInsertExpression {
     pub name: HeaderName,
-    pub expression: Box<VrlProgram>,
+    pub expression: Box<Expression>,
 }
 
 #[derive(Clone)]
 pub struct ResponseInsertExpression {
     pub name: HeaderName,
-    pub expression: Box<VrlProgram>,
+    pub expression: Box<Expression>,
     pub strategy: HeaderAggregationStrategy,
 }
 

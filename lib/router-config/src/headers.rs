@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::primitives::expression::Expression;
+
 type HeaderName = String;
 type RegExp = String;
 
@@ -248,7 +250,7 @@ pub enum InsertSource {
     ///     name: x-auth-scheme
     ///     expression: 'split(.request.headers.authorization, " ")[0] ?? "none"'
     /// ```
-    Expression { expression: String },
+    Expression(Expression),
 }
 
 /// Helper to allow `one` or `many` values for ergonomics (OR semantics).
