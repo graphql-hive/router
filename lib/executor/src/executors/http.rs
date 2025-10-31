@@ -180,7 +180,6 @@ impl HTTPSubgraphExecutor {
             let mut first = true;
             for (extension_name, extension_value) in extensions {
                 if first {
-                    body.put(COMMA);
                     body.put(FIRST_EXTENSION_STR);
                     first = false;
                 } else {
