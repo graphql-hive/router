@@ -2,6 +2,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::primitives::expression::Expression;
+
 /// A map of label names to their override configuration.
 pub type OverrideLabelsConfig = HashMap<String, LabelOverrideValue>;
 
@@ -15,10 +17,7 @@ pub enum LabelOverrideValue {
     /// A static boolean value to enable or disable the label.
     Boolean(bool),
     /// A dynamic value computed by an expression.
-    Expression {
-        /// An expression that must evaluate to a boolean. If true, the label will be applied.
-        expression: String,
-    },
+    Expression(Expression),
 }
 
 impl LabelOverrideValue {

@@ -190,7 +190,7 @@ impl SubgraphExecutorMap {
             ]));
 
             // Resolve the expression to get an endpoint URL.
-            let endpoint_result = expression.execute(value).map_err(|err| {
+            let endpoint_result = expression.execute_with_value(value).map_err(|err| {
                 SubgraphExecutorError::new_endpoint_expression_resolution_failure(
                     subgraph_name.to_string(),
                     err,
