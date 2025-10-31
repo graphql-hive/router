@@ -108,7 +108,7 @@ impl AuthorizationMetadata {
         let mut field_rules = HashMap::default();
         let mut scopes = ScopeInterner::new();
 
-        for (_type_name, type_def) in &supergraph.definitions {
+        for type_def in supergraph.definitions.values() {
             Self::process_type_definition(
                 type_def,
                 &mut type_rules,
@@ -469,7 +469,7 @@ pub fn apply_authorization_to_operation(
     // Create the user-specific context.
     let user_context = match jwt_request_details {
         JwtRequestDetails::Authenticated { scopes, .. } => {
-            UserAuthContext::new(true, &scopes.as_deref().unwrap_or(&[]), auth_metadata)
+            UserAuthContext::new(true, scopes.as_deref().unwrap_or(&[]), auth_metadata)
         }
         JwtRequestDetails::Unauthenticated => UserAuthContext::new(false, &[], auth_metadata),
     };
@@ -478,17 +478,21 @@ pub fn apply_authorization_to_operation(
     let mut unauthorized_paths_trie = UnauthorizedPathTree::new();
     let mut validated_types_cache = HashSet::new();
     let mut errors = Vec::new();
+    let mut current_path = Vec::with_capacity(32);
+    let mut context = CollectorContext {
+        schema_metadata,
+        variable_payload,
+        auth_metadata,
+        user_context: &user_context,
+        unauthorized_paths: &mut unauthorized_paths_trie,
+        validated_types_cache: &mut validated_types_cache,
+        current_path: &mut current_path,
+        errors: &mut errors,
+    };
     collect_unauthorized_paths(
         &normalized_payload.operation_for_plan.selection_set,
         normalized_payload.root_type_name,
-        schema_metadata,
-        variable_payload,
-        &mut unauthorized_paths_trie,
-        auth_metadata,
-        &user_context,
-        &mut validated_types_cache,
-        &mut Vec::with_capacity(32), // Deep enough path buffer, imo
-        &mut errors,
+        &mut context,
     );
 
     // If the trie is empty, no fields were unauthorized. Return the original payload.
@@ -549,27 +553,30 @@ fn is_selection_ignored(
     false
 }
 
-/// Recursively scans a selection set, populating a Trie with unauthorized paths and collecting errors.
-fn collect_unauthorized_paths<'a>(
-    selection_set: &'a SelectionSet,
+struct CollectorContext<'req, 'auth> {
+    schema_metadata: &'req SchemaMetadata,
+    variable_payload: &'req CoerceVariablesPayload,
+    auth_metadata: &'req AuthorizationMetadata,
+    user_context: &'req UserAuthContext,
+    unauthorized_paths: &'auth mut UnauthorizedPathTree,
+    validated_types_cache: &'auth mut HashSet<StrByAddr<'req>>,
+    current_path: &'auth mut Vec<&'req str>,
+    errors: &'auth mut Vec<AuthorizationError>,
+}
+
+fn collect_unauthorized_paths<'req, 'auth>(
+    selection_set: &'req SelectionSet,
     parent_type_name: &str,
-    schema_metadata: &'a SchemaMetadata,
-    variable_payload: &CoerceVariablesPayload,
-    unauthorized_paths: &mut UnauthorizedPathTree,
-    auth_metadata: &AuthorizationMetadata,
-    user_context: &UserAuthContext,
-    validated_types_cache: &mut HashSet<StrByAddr<'a>>,
-    current_path: &mut Vec<&'a str>,
-    errors: &mut Vec<AuthorizationError>,
+    context: &mut CollectorContext<'req, 'auth>,
 ) {
-    let Some(type_fields) = schema_metadata.get_type_fields(parent_type_name) else {
+    let Some(type_fields) = context.schema_metadata.get_type_fields(parent_type_name) else {
         return;
     };
 
     for selection in &selection_set.items {
         match selection {
             SelectionItem::Field(field) => {
-                if is_field_ignored(field, variable_payload) {
+                if is_field_ignored(field, context.variable_payload) {
                     // Field is skipped due to conditional directives, so we ignore it for authorization.
                     // No need to check further or traverse its children.
                     continue;
@@ -580,58 +587,38 @@ fn collect_unauthorized_paths<'a>(
                 };
                 let path_segment = field.alias.as_ref().unwrap_or(&field.name);
 
-                current_path.push(path_segment);
+                context.current_path.push(path_segment);
 
                 let is_authorized = check_authorization_for_field(
                     parent_type_name,
                     &field.name,
                     output_type_name,
-                    auth_metadata,
-                    user_context,
-                    validated_types_cache,
+                    context.auth_metadata,
+                    context.user_context,
+                    context.validated_types_cache,
                 );
 
                 if is_authorized {
-                    collect_unauthorized_paths(
-                        &field.selections,
-                        output_type_name,
-                        schema_metadata,
-                        variable_payload,
-                        unauthorized_paths,
-                        auth_metadata,
-                        user_context,
-                        validated_types_cache,
-                        current_path,
-                        errors,
-                    );
+                    collect_unauthorized_paths(&field.selections, output_type_name, context);
                 } else {
-                    errors.push(AuthorizationError {
-                        path: current_path.iter().map(|s| s.to_string()).collect(),
+                    context.errors.push(AuthorizationError {
+                        path: context.current_path.iter().map(|s| s.to_string()).collect(),
                     });
-                    unauthorized_paths.mark_path_as_unauthorized(current_path);
+                    context
+                        .unauthorized_paths
+                        .mark_path_as_unauthorized(context.current_path);
                 }
 
-                current_path.pop();
+                context.current_path.pop();
             }
             SelectionItem::InlineFragment(fragment) => {
-                if is_fragment_ignored(fragment, variable_payload) {
+                if is_fragment_ignored(fragment, context.variable_payload) {
                     // Fragment is skipped due to conditional directives, so we ignore it for authorization.
                     // No need to check further or traverse its children.
                     continue;
                 }
 
-                collect_unauthorized_paths(
-                    &fragment.selections,
-                    &fragment.type_condition,
-                    schema_metadata,
-                    variable_payload,
-                    unauthorized_paths,
-                    auth_metadata,
-                    user_context,
-                    validated_types_cache,
-                    current_path,
-                    errors,
-                );
+                collect_unauthorized_paths(&fragment.selections, &fragment.type_condition, context);
             }
             SelectionItem::FragmentSpread(_) => {
                 // Fragments spreads are inlined during normalization, so we can skip them here.
@@ -641,13 +628,13 @@ fn collect_unauthorized_paths<'a>(
 }
 
 /// Performs the authorization check for a single field
-fn check_authorization_for_field<'a>(
+fn check_authorization_for_field<'auth>(
     parent_type_name: &str,
     field_name: &str,
-    output_type_name: &'a str,
+    output_type_name: &'auth str,
     auth_metadata: &AuthorizationMetadata,
     user_context: &UserAuthContext,
-    validated_types_cache: &mut HashSet<StrByAddr<'a>>,
+    validated_types_cache: &mut HashSet<StrByAddr<'auth>>,
 ) -> bool {
     let output_type_key = StrByAddr(output_type_name);
     // Check the output type rule first. This is a critical optimization.
