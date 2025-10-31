@@ -58,7 +58,7 @@ impl SubgraphExecutorMap {
         let client: HttpClient = Client::builder(TokioExecutor::new())
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(Duration::from_secs(
-                config.traffic_shaping.pool_idle_timeout_seconds,
+                config.traffic_shaping.all.pool_idle_timeout_seconds,
             ))
             .pool_max_idle_per_host(config.traffic_shaping.max_connections_per_host)
             .build(https);
@@ -104,13 +104,12 @@ impl SubgraphExecutorMap {
         Ok(subgraph_executor_map)
     }
 
-    pub async fn execute<'a, 'req>(
+    pub async fn execute<'exec, 'req>(
         &self,
         subgraph_name: &str,
-        execution_request: HttpExecutionRequest<'a>,
-        client_request: &ClientRequestDetails<'a, 'req>,
+        execution_request: HttpExecutionRequest<'exec, 'req>,
     ) -> HttpExecutionResponse {
-        match self.get_or_create_executor(subgraph_name, client_request) {
+        match self.get_or_create_executor(subgraph_name, execution_request.client_request) {
             Ok(Some(executor)) => executor.execute(execution_request).await,
             Err(err) => {
                 error!(
@@ -298,13 +297,33 @@ impl SubgraphExecutorMap {
             .or_insert_with(|| Arc::new(Semaphore::new(self.max_connections_per_host)))
             .clone();
 
+        let mut client = self.client.clone();
+        let mut dedupe_enabled = self.config.traffic_shaping.all.dedupe_enabled;
+        let mut timeout = self.config.traffic_shaping.all.request_timeout.clone();
+        if let Some(subgraph_traffic_shaping_config) =
+            self.config.traffic_shaping.subgraphs.get(subgraph_name)
+        {
+            client = Arc::new(
+                Client::builder(TokioExecutor::new())
+                    .pool_timer(TokioTimer::new())
+                    .pool_idle_timeout(Duration::from_secs(
+                        subgraph_traffic_shaping_config.pool_idle_timeout_seconds,
+                    ))
+                    .pool_max_idle_per_host(self.max_connections_per_host)
+                    .build(HttpsConnector::new()),
+            );
+            dedupe_enabled = subgraph_traffic_shaping_config.dedupe_enabled;
+            timeout = subgraph_traffic_shaping_config.request_timeout.clone();
+        }
+
         let executor = HTTPSubgraphExecutor::new(
             subgraph_name.to_string(),
             endpoint_uri,
-            self.client.clone(),
+            client,
             semaphore,
-            self.config.clone(),
+            dedupe_enabled,
             self.in_flight_requests.clone(),
+            timeout,
         );
 
         self.executors_by_subgraph
