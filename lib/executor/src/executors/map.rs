@@ -6,10 +6,7 @@ use std::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use dashmap::DashMap;
-use hive_router_config::{
-    override_subgraph_urls::UrlOrExpression, traffic_shaping::DurationOrExpression,
-    HiveRouterConfig,
-};
+use hive_router_config::{override_subgraph_urls::UrlOrExpression, HiveRouterConfig};
 use http::Uri;
 use hyper_tls::HttpsConnector;
 use hyper_util::{
@@ -27,6 +24,7 @@ use crate::{
             HttpExecutionRequest, HttpExecutionResponse, SubgraphExecutor, SubgraphExecutorBoxedArc,
         },
         dedupe::{ABuildHasher, SharedResponse},
+        duration_or_prog::{compile_duration_expression, DurationOrProgram},
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClient},
     },
@@ -40,12 +38,7 @@ type ExecutorsBySubgraphMap =
     DashMap<SubgraphName, DashMap<SubgraphEndpoint, SubgraphExecutorBoxedArc>>;
 type EndpointsBySubgraphMap = DashMap<SubgraphName, SubgraphEndpoint>;
 type ExpressionsBySubgraphMap = HashMap<SubgraphName, VrlProgram>;
-
-#[derive(Debug)]
-pub enum DurationOrProgram {
-    Duration(Duration),
-    Program(Box<VrlProgram>),
-}
+type TimeoutsBySubgraph = DashMap<SubgraphName, DurationOrProgram>;
 
 pub struct SubgraphExecutorMap {
     executors_by_subgraph: ExecutorsBySubgraphMap,
@@ -54,7 +47,7 @@ pub struct SubgraphExecutorMap {
     static_endpoints_by_subgraph: EndpointsBySubgraphMap,
     /// Mapping from subgraph name to VRL expression program
     expressions_by_subgraph: ExpressionsBySubgraphMap,
-    timeouts_by_subgraph: DashMap<SubgraphName, DurationOrProgram>,
+    timeouts_by_subgraph: TimeoutsBySubgraph,
     config: Arc<HiveRouterConfig>,
     client: Arc<HttpClient>,
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
@@ -371,20 +364,15 @@ impl SubgraphExecutorMap {
         }
 
         if !self.timeouts_by_subgraph.contains_key(subgraph_name) {
-            let timeout = match &timeout_config {
-                DurationOrExpression::Duration(dur) => DurationOrProgram::Duration(*dur),
-                DurationOrExpression::Expression { expression } => {
-                    let program = compile_expression(expression, None).map_err(|err| {
-                        SubgraphExecutorError::RequestTimeoutExpressionBuild(
-                            subgraph_name.to_string(),
-                            err,
-                        )
-                    })?;
-                    DurationOrProgram::Program(Box::new(program))
-                }
-            };
+            let timeout_prog: DurationOrProgram = compile_duration_expression(timeout_config, None)
+                .map_err(|err| {
+                    SubgraphExecutorError::RequestTimeoutExpressionBuild(
+                        subgraph_name.to_string(),
+                        err,
+                    )
+                })?;
             self.timeouts_by_subgraph
-                .insert(subgraph_name.to_string(), timeout);
+                .insert(subgraph_name.to_string(), timeout_prog);
         }
 
         let executor = HTTPSubgraphExecutor::new(
