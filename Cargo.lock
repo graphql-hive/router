@@ -2094,7 +2094,6 @@ dependencies = [
  "ordered-float",
  "regex-automata",
  "ryu",
- "schemars 1.0.4",
  "serde",
  "sonic-rs",
  "strum 0.27.2",
