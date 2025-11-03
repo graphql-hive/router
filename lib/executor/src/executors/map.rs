@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::Arc, time::Duration,
+    sync::Arc,
+    time::Duration,
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -344,7 +345,10 @@ impl SubgraphExecutorMap {
         if let Some(subgraph_traffic_shaping_config) =
             self.config.traffic_shaping.subgraphs.get(subgraph_name)
         {
-            if subgraph_traffic_shaping_config.pool_idle_timeout_seconds.is_some() {
+            if subgraph_traffic_shaping_config
+                .pool_idle_timeout_seconds
+                .is_some()
+            {
                 client = Arc::new(
                     Client::builder(TokioExecutor::new())
                         .pool_timer(TokioTimer::new())
