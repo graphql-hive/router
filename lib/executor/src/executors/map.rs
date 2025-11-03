@@ -1,7 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
-    time::Duration,
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -57,9 +56,7 @@ impl SubgraphExecutorMap {
         let https = HttpsConnector::new();
         let client: HttpClient = Client::builder(TokioExecutor::new())
             .pool_timer(TokioTimer::new())
-            .pool_idle_timeout(Duration::from_secs(
-                config.traffic_shaping.pool_idle_timeout_seconds,
-            ))
+            .pool_idle_timeout(config.traffic_shaping.pool_idle_timeout)
             .pool_max_idle_per_host(config.traffic_shaping.max_connections_per_host)
             .build(https);
 
