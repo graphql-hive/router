@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.0.1](https://github.com/graphql-hive/router/compare/hive-router-plan-executor-v6.0.0...hive-router-plan-executor-v6.0.1) - 2025-11-03
+
+### <!-- 2 -->Refactoring
+
+- *(jwt)* improve the implementation of `jwt` plugin and expose it to expressions ([#534](https://github.com/graphql-hive/router/pull/534))
+- *(executor, router)* define `ClientRequestDetails` only once and avoid all clones, improve how coerce_variables is done  ([#532](https://github.com/graphql-hive/router/pull/532))
+
 ## [6.0.0](https://github.com/graphql-hive/router/compare/hive-router-plan-executor-v5.0.0...hive-router-plan-executor-v6.0.0) - 2025-10-27
 
 ### <!-- 0 -->New Features

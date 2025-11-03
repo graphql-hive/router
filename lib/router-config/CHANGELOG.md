@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.11](https://github.com/graphql-hive/router/compare/hive-router-config-v0.0.10...hive-router-config-v0.0.11) - 2025-11-03
+
+### <!-- 2 -->Refactoring
+
+- *(jwt)* improve the implementation of `jwt` plugin and expose it to expressions ([#534](https://github.com/graphql-hive/router/pull/534))
+
 ## [0.0.10](https://github.com/graphql-hive/router/compare/hive-router-config-v0.0.9...hive-router-config-v0.0.10) - 2025-10-27
 
 ### <!-- 0 -->New Features
