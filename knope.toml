@@ -1,14 +1,17 @@
 [packages.query-planner]
 versioned_files = ["lib/query-planner/Cargo.toml", { path = "lib/executor/Cargo.toml", dependency = "hive-router-query-planner" }, { path = "bin/router/Cargo.toml", dependency = "hive-router-query-planner" }, "Cargo.lock"]
 scopes = ["hive-router-query-planner", "qp", "query-planner"]
+changelog = "lib/query-planner/CHANGELOG.md"
 
 [packages.executor]
 versioned_files = ["lib/executor/Cargo.toml", { path = "bin/router/Cargo.toml", dependency = "hive-router-plan-executor" }, "Cargo.lock"]
 scopes = ["hive-router-plan-executor", "executor"]
+changelog = "lib/executor/CHANGELOG.md"
 
 [packages.router]
 versioned_files = ["bin/router/Cargo.toml", "Cargo.lock"]
 scopes = ["hive-router", "router", "config"]
+changelog = "bin/router/CHANGELOG.md"
 
 [[workflows]]
 name = "release"
