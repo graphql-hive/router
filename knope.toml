@@ -1,0 +1,38 @@
+[packages.query-planner]
+versioned_files = ["lib/query-planner/Cargo.toml", { path = "lib/executor/Cargo.toml", dependency = "hive-router-query-planner" }, { path = "bin/router/Cargo.toml", dependency = "hive-router-query-planner" }, "Cargo.lock"]
+scopes = ["hive-router-query-planner", "qp", "query-planner"]
+
+[packages.executor]
+versioned_files = ["lib/executor/Cargo.toml", { path = "bin/router/Cargo.toml", dependency = "hive-router-plan-executor" }, "Cargo.lock"]
+scopes = ["hive-router-plan-executor", "executor"]
+
+[packages.router]
+versioned_files = ["bin/router/Cargo.toml", "Cargo.lock"]
+scopes = ["hive-router", "router", "config"]
+
+[[workflows]]
+name = "release"
+
+[[workflows.steps]]
+type = "PrepareRelease"
+
+[[workflows.steps]]
+type = "Command"
+command = 'git commit -m "chore: prepare releases"'
+
+[[workflows.steps]]
+type = "Command"
+command = "git push"
+
+[[workflows.steps]]
+type = "Release"
+
+[[workflows]]
+name = "document-change"
+
+[[workflows.steps]]
+type = "CreateChangeFile"
+
+[github]
+owner = "graphql-hive"
+repo = "router"
