@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::Arc,
+    sync::Arc, time::Duration,
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -27,7 +27,7 @@ use crate::{
         },
         dedupe::{ABuildHasher, SharedResponse},
         error::SubgraphExecutorError,
-        http::{DurationOrProgram, HTTPSubgraphExecutor, HttpClient},
+        http::{HTTPSubgraphExecutor, HttpClient},
     },
     response::graphql_error::GraphQLError,
     utils::expression::{compile_expression, execute_expression_with_value},
@@ -40,6 +40,12 @@ type ExecutorsBySubgraphMap =
 type EndpointsBySubgraphMap = DashMap<SubgraphName, SubgraphEndpoint>;
 type ExpressionsBySubgraphMap = HashMap<SubgraphName, VrlProgram>;
 
+#[derive(Debug)]
+pub enum DurationOrProgram {
+    Duration(Duration),
+    Program(Box<VrlProgram>),
+}
+
 pub struct SubgraphExecutorMap {
     executors_by_subgraph: ExecutorsBySubgraphMap,
     /// Mapping from subgraph name to endpoint for quick lookup
@@ -47,6 +53,7 @@ pub struct SubgraphExecutorMap {
     static_endpoints_by_subgraph: EndpointsBySubgraphMap,
     /// Mapping from subgraph name to VRL expression program
     expressions_by_subgraph: ExpressionsBySubgraphMap,
+    timeouts_by_subgraph: DashMap<SubgraphName, DurationOrProgram>,
     config: Arc<HiveRouterConfig>,
     client: Arc<HttpClient>,
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
@@ -74,6 +81,7 @@ impl SubgraphExecutorMap {
             semaphores_by_origin: Default::default(),
             max_connections_per_host,
             in_flight_requests: Arc::new(DashMap::with_hasher(ABuildHasher::default())),
+            timeouts_by_subgraph: Default::default(),
         }
     }
 
@@ -104,13 +112,45 @@ impl SubgraphExecutorMap {
         Ok(subgraph_executor_map)
     }
 
-    pub async fn execute<'exec, 'req>(
+    pub async fn execute<'a, 'req>(
         &self,
         subgraph_name: &str,
-        execution_request: HttpExecutionRequest<'exec, 'req>,
+        execution_request: HttpExecutionRequest<'a>,
+        client_request: &ClientRequestDetails<'a, 'req>,
     ) -> HttpExecutionResponse {
-        match self.get_or_create_executor(subgraph_name, execution_request.client_request) {
-            Ok(Some(executor)) => executor.execute(execution_request).await,
+        match self.get_or_create_executor(subgraph_name, client_request) {
+            Ok(Some(executor)) => {
+                let timeout = self
+                    .timeouts_by_subgraph
+                    .get(subgraph_name)
+                    .map(|t| resolve_duration_prog(t.value(), subgraph_name, client_request));
+                match timeout {
+                    Some(Ok(dur)) => tokio::time::timeout(dur, executor.execute(execution_request))
+                        .await
+                        .unwrap_or_else(|_| {
+                            error!(
+                                "Request to subgraph '{}' timed out after {:?}",
+                                subgraph_name, dur,
+                            );
+                            self.internal_server_error_response(
+                                SubgraphExecutorError::RequestTimeout(
+                                    subgraph_name.to_string(),
+                                    dur.as_millis() as u64,
+                                )
+                                .into(),
+                                subgraph_name,
+                            )
+                        }),
+                    Some(Err(err)) => {
+                        error!(
+                            "Timeout expression resolution error for subgraph '{}': {}",
+                            subgraph_name, err,
+                        );
+                        self.internal_server_error_response(err.into(), subgraph_name)
+                    }
+                    None => executor.execute(execution_request).await,
+                }
+            }
             Err(err) => {
                 error!(
                     "Subgraph executor error for subgraph '{}': {}",
@@ -326,18 +366,22 @@ impl SubgraphExecutorMap {
                 .unwrap_or(timeout_config);
         }
 
-        let timeout_prog = match &timeout_config {
-            DurationOrExpression::Duration(dur) => DurationOrProgram::Duration(*dur),
-            DurationOrExpression::Expression { expression } => {
-                let program = compile_expression(expression, None).map_err(|err| {
-                    SubgraphExecutorError::RequestTimeoutExpressionBuild(
-                        subgraph_name.to_string(),
-                        err,
-                    )
-                })?;
-                DurationOrProgram::Program(Box::new(program))
-            }
-        };
+        if !self.timeouts_by_subgraph.contains_key(subgraph_name) {
+            let timeout = match &timeout_config {
+                DurationOrExpression::Duration(dur) => DurationOrProgram::Duration(*dur),
+                DurationOrExpression::Expression { expression } => {
+                    let program = compile_expression(expression, None).map_err(|err| {
+                        SubgraphExecutorError::RequestTimeoutExpressionBuild(
+                            subgraph_name.to_string(),
+                            err,
+                        )
+                    })?;
+                    DurationOrProgram::Program(Box::new(program))
+                }
+            };
+            self.timeouts_by_subgraph
+                .insert(subgraph_name.to_string(), timeout);
+        }
 
         let executor = HTTPSubgraphExecutor::new(
             subgraph_name.to_string(),
@@ -346,7 +390,6 @@ impl SubgraphExecutorMap {
             semaphore,
             dedupe_enabled,
             self.in_flight_requests.clone(),
-            timeout_prog,
         );
 
         self.executors_by_subgraph
@@ -355,5 +398,69 @@ impl SubgraphExecutorMap {
             .insert(endpoint_str.to_string(), executor.to_boxed_arc());
 
         Ok(())
+    }
+}
+
+fn resolve_duration_prog(
+    duration_or_program: &DurationOrProgram,
+    subgraph_name: &str,
+    client_request: &ClientRequestDetails<'_, '_>,
+) -> Result<Duration, SubgraphExecutorError> {
+    match duration_or_program {
+        DurationOrProgram::Duration(dur) => Ok(*dur),
+        DurationOrProgram::Program(program) => {
+            let value =
+                VrlValue::Object(BTreeMap::from([("request".into(), client_request.into())]));
+            let result = execute_expression_with_value(program, value).map_err(|err| {
+                SubgraphExecutorError::TimeoutExpressionResolution(
+                    subgraph_name.to_string(),
+                    err.to_string(),
+                )
+            })?;
+            match result {
+                VrlValue::Integer(i) => {
+                    if i < 0 {
+                        return Err(SubgraphExecutorError::TimeoutExpressionResolution(
+                            subgraph_name.to_string(),
+                            "Timeout expression resolved to a negative integer".to_string(),
+                        ));
+                    }
+                    Ok(std::time::Duration::from_millis(i as u64))
+                }
+                VrlValue::Float(f) => {
+                    let f = f.into_inner();
+                    if f < 0.0 {
+                        return Err(SubgraphExecutorError::TimeoutExpressionResolution(
+                            subgraph_name.to_string(),
+                            "Timeout expression resolved to a negative float".to_string(),
+                        ));
+                    }
+                    Ok(std::time::Duration::from_millis(f as u64))
+                }
+                VrlValue::Bytes(b) => {
+                    let s = std::str::from_utf8(&b).map_err(|e| {
+                        SubgraphExecutorError::TimeoutExpressionResolution(
+                            subgraph_name.to_string(),
+                            format!("Failed to parse duration string from bytes: {}", e),
+                        )
+                    })?;
+                    Ok(humantime::parse_duration(s).map_err(|e| {
+                        SubgraphExecutorError::TimeoutExpressionResolution(
+                            subgraph_name.to_string(),
+                            format!("Failed to parse duration string '{}': {}", s, e),
+                        )
+                    })?)
+                }
+                other => {
+                    Err(SubgraphExecutorError::TimeoutExpressionResolution(
+                                subgraph_name.to_string(),
+                            format!(
+                                "Timeout expression resolved to an unexpected type: {}. Expected a non-negative integer/float (ms) or a duration string.",
+                                other.kind()
+                            ),
+                        ))
+                }
+            }
+        }
     }
 }
