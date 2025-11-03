@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -9,8 +11,13 @@ pub struct TrafficShapingConfig {
     pub max_connections_per_host: usize,
 
     /// Timeout for idle sockets being kept-alive.
-    #[serde(default = "default_pool_idle_timeout_seconds")]
-    pub pool_idle_timeout_seconds: u64,
+    #[serde(
+        default = "default_pool_idle_timeout",
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize"
+    )]
+    #[schemars(with = "String")]
+    pub pool_idle_timeout: Duration,
 
     /// Enables/disables request deduplication to subgraphs.
     ///
@@ -24,7 +31,7 @@ impl Default for TrafficShapingConfig {
     fn default() -> Self {
         Self {
             max_connections_per_host: default_max_connections_per_host(),
-            pool_idle_timeout_seconds: default_pool_idle_timeout_seconds(),
+            pool_idle_timeout: default_pool_idle_timeout(),
             dedupe_enabled: default_dedupe_enabled(),
         }
     }
@@ -34,8 +41,8 @@ fn default_max_connections_per_host() -> usize {
     100
 }
 
-fn default_pool_idle_timeout_seconds() -> u64 {
-    50
+fn default_pool_idle_timeout() -> Duration {
+    Duration::from_secs(50)
 }
 
 fn default_dedupe_enabled() -> bool {
