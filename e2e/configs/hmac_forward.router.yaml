@@ -1,0 +1,3 @@
+hmac_signature:
+  enabled: true
+  secret: VERY_SECRET

@@ -186,25 +186,30 @@ impl HTTPSubgraphExecutor {
             None
         };
 
-        if let Some(extensions) = &execution_request.extensions {
-            let mut first = true;
-            if let Some(hmac_bytes) = hmac_signature_ext {
-                if first {
-                    body.put(FIRST_EXTENSION_STR);
-                    first = false;
-                } else {
-                    body.put(COMMA);
-                }
-                body.put(self.config.hmac_signature.extension_name.as_bytes());
-                let hmac_hex = hex::encode(hmac_bytes);
-                body.put(QUOTE);
-                body.put(hmac_hex.as_bytes());
-                body.put(QUOTE);
+        let mut first_extension = true;
+
+        if let Some(hmac_bytes) = hmac_signature_ext {
+            if first_extension {
+                body.put(FIRST_EXTENSION_STR);
+                first_extension = false;
+            } else {
+                body.put(COMMA);
             }
+            body.put(QUOTE);
+            body.put(self.config.hmac_signature.extension_name.as_bytes());
+            body.put(QUOTE);
+            body.put(COLON);
+            let hmac_hex = hex::encode(hmac_bytes);
+            body.put(QUOTE);
+            body.put(hmac_hex.as_bytes());
+            body.put(QUOTE);
+        }
+
+        if let Some(extensions) = &execution_request.extensions {
             for (extension_name, extension_value) in extensions {
-                if first {
+                if first_extension {
                     body.put(FIRST_EXTENSION_STR);
-                    first = false;
+                    first_extension = false;
                 } else {
                     body.put(COMMA);
                 }
@@ -222,8 +227,13 @@ impl HTTPSubgraphExecutor {
             }
         }
 
+        if !first_extension {
+            body.put(CLOSE_BRACE);
+        }
+
         body.put(CLOSE_BRACE);
 
+        println!("Built request body: {}", String::from_utf8_lossy(&body));
         Ok(body)
     }
 

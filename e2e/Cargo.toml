@@ -24,3 +24,7 @@ subgraphs = { path = "../bench/subgraphs" }
 
 mockito = "1.7.0"
 tempfile = "3.23.0"
+
+hmac = "0.12.1"
+sha2 = "0.10.9"
+hex = "0.4.3"

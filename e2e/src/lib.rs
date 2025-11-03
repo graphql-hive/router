@@ -3,6 +3,8 @@ mod file_supergraph;
 #[cfg(test)]
 mod hive_cdn_supergraph;
 #[cfg(test)]
+mod hmac;
+#[cfg(test)]
 mod jwt;
 #[cfg(test)]
 mod override_subgraph_urls;
