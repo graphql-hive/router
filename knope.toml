@@ -18,6 +18,7 @@ name = "release"
 
 [[workflows.steps]]
 type = "PrepareRelease"
+ignore_conventional_commits = true
 
 [[workflows.steps]]
 type = "Command"
@@ -39,3 +40,5 @@ type = "CreateChangeFile"
 [github]
 owner = "graphql-hive"
 repo = "router"
+
+bot.releases.enabled = true
