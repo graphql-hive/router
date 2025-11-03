@@ -2,7 +2,6 @@
 members = [
   "lib/query-planner",
   "lib/router-config",
-  "lib/wasm-lib",
   "lib/executor",
   "bin/dev-cli",
   "bin/router",

@@ -10,11 +10,6 @@ release = false
 publish = false
 
 [[package]]
-name = "query-planner-wasm"
-release = false
-publish = false
-
-[[package]]
 name = "subgraphs"
 release = false
 publish = false
