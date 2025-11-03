@@ -59,6 +59,7 @@ headers:
             named: x-tenant-id
             rename: x-acct-tenant
 hmac_signature:
+  enabled: false
   extension_name: hmac_signature
 http:
   host: 0.0.0.0
@@ -1351,13 +1352,14 @@ For more information on the available functions and syntax, see the
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**enabled**|||yes|
+|**enabled**||Default: `false`<br/>|no|
 |**extension\_name**|`string`|Default: `"hmac_signature"`<br/>|no|
 |**secret**|`string`||yes|
 
 **Example**
 
 ```yaml
+enabled: false
 extension_name: hmac_signature
 
 ```

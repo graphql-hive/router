@@ -169,6 +169,11 @@ impl HTTPSubgraphExecutor {
         };
 
         let hmac_signature_ext = if should_sign_hmac {
+            if self.config.hmac_signature.secret.is_empty() {
+                return Err(SubgraphExecutorError::HMACSignatureError(
+                    "HMAC signature secret is empty".to_string(),
+                ));
+            }
             let mut mac = HmacSha256::new_from_slice(self.config.hmac_signature.secret.as_bytes())
                 .map_err(|e| {
                     SubgraphExecutorError::HMACSignatureError(format!(

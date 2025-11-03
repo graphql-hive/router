@@ -16,6 +16,7 @@ pub struct HMACSignatureConfig {
     //    } else {
     //      false
     //    }
+    #[serde(default = "default_hmac_signature_enabled")]
     pub enabled: BooleanOrExpression,
 
     // The secret key used for HMAC signing and verification.
@@ -54,4 +55,8 @@ impl HMACSignatureConfig {
             }
         }
     }
+}
+
+fn default_hmac_signature_enabled() -> BooleanOrExpression {
+    BooleanOrExpression::Boolean(false)
 }
