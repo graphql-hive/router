@@ -60,7 +60,7 @@ headers:
             rename: x-acct-tenant
 hmac_signature:
   enabled: false
-  extension_name: hmac_signature
+  extension_name: hmac-signature
 http:
   host: 0.0.0.0
   port: 4000
@@ -1353,14 +1353,14 @@ For more information on the available functions and syntax, see the
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**enabled**||Default: `false`<br/>|no|
-|**extension\_name**|`string`|Default: `"hmac_signature"`<br/>|no|
+|**extension\_name**|`string`|Default: `"hmac-signature"`<br/>|no|
 |**secret**|`string`||yes|
 
 **Example**
 
 ```yaml
 enabled: false
-extension_name: hmac_signature
+extension_name: hmac-signature
 
 ```
 

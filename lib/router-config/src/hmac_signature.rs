@@ -29,7 +29,7 @@ pub struct HMACSignatureConfig {
 }
 
 fn default_extension_name() -> String {
-    "hmac_signature".to_string()
+    "hmac-signature".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]

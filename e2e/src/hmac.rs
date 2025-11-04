@@ -49,7 +49,7 @@ mod hmac_e2e_tests {
 
         let expected_signature = create_hmac_signature("VERY_SECRET", query);
         assert_eq!(
-            extensions.get("hmac_signature").unwrap(),
+            extensions.get("hmac-signature").unwrap(),
             &expected_signature
         );
     }
