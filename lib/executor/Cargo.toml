@@ -30,9 +30,9 @@ xxhash-rust = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 dashmap = { workspace = true }
 vrl = { workspace = true }
+regex-automata = { workspace = true }
 
 ahash = "0.8.12"
-regex-automata = "0.4.10"
 strum = { version = "0.27.2", features = ["derive"] }
 ntex-http = "0.1.15"
 ordered-float = "4.2.0"

@@ -19,6 +19,7 @@ path = "src/main.rs"
 hive-router-query-planner = { path = "../../lib/query-planner", version = "2.0.2" }
 hive-router-plan-executor = { path = "../../lib/executor", version = "6.0.1" }
 hive-router-config = { path = "../../lib/router-config", version = "0.0.10" }
+hive-console-sdk = "0.1.0"
 
 tokio = { workspace = true }
 futures = { workspace = true }
@@ -45,11 +46,11 @@ reqwest-retry = { workspace = true }
 reqwest-middleware = { workspace = true }
 vrl = { workspace = true }
 serde_json = { workspace = true }
+regex-automata = { workspace = true }
 
 mimalloc = { version = "0.1.48", features = ["v3"] }
 moka = { version = "0.12.10", features = ["future"] }
 ulid = "1.2.1"
 tokio-util = "0.7.16"
 cookie = "0.18.1"
-regex-automata = "0.4.10"
 arc-swap = "1.7.1"
