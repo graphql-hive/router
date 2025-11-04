@@ -123,6 +123,7 @@ fn default_request_timeout() -> DurationOrExpression {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(untagged)]
 pub enum DurationOrExpression {
     /// A fixed duration, e.g., "5s" or "100ms".
     #[serde(
