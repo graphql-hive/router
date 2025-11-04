@@ -119,7 +119,7 @@ pub struct TrafficShapingExecutorConfig {
 }
 
 fn default_request_timeout() -> DurationOrExpression {
-    DurationOrExpression::Duration(Duration::from_secs(15))
+    DurationOrExpression::Duration(Duration::from_secs(30))
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
