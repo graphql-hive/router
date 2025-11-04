@@ -13,7 +13,7 @@ authors = ["The Guild"]
 
 [dependencies]
 hive-router-query-planner = { path = "../query-planner", version = "2.0.2" }
-hive-router-config = { path = "../router-config", version = "0" }
+hive-router-config = { path = "../router-config", version = "0.0.11" }
 
 graphql-parser = { workspace = true }
 graphql-tools = { workspace = true }
