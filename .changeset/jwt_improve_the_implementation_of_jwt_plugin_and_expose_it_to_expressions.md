@@ -3,7 +3,7 @@ executor: patch
 router: patch
 ---
 
-Improve the implementation of jwt plugin and expose it to expressions.
+# Improve the implementation of jwt plugin and expose it to expressions.
 
 The following properties are available in the request object exposed to VRL expressions:
 - `request.jwt` will always be an object
