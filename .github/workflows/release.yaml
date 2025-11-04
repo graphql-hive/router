@@ -20,16 +20,16 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
         with:
           cache: false
-      - name: Authenticate with crates.io
+      - name: authenticate with crates.io
         uses: rust-lang/crates-io-auth-action@v1
         id: auth
-      - name: release-plz release
-        uses: release-plz/action@d529f731ae3e89610ada96eda34e5c6ba3b12214 # v0.5.118
-        with:
-          command: release
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+      # - name: release-plz release
+      #   uses: release-plz/action@d529f731ae3e89610ada96eda34e5c6ba3b12214 # v0.5.118
+      #   with:
+      #     command: release
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      #     CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   release-pr:
     name: pr
@@ -48,10 +48,10 @@ jobs:
       - name: Authenticate with crates.io
         uses: rust-lang/crates-io-auth-action@v1
         id: auth
-      - name: release-plz release-pr
-        uses: release-plz/action@d529f731ae3e89610ada96eda34e5c6ba3b12214 # v0.5.118
-        with:
-          command: release-pr
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+      # - name: release-plz release-pr
+      #   uses: release-plz/action@d529f731ae3e89610ada96eda34e5c6ba3b12214 # v0.5.118
+      #   with:
+      #     command: release-pr
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      #     CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
