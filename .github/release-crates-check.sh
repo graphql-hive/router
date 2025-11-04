@@ -26,16 +26,15 @@ publish_list=""
 while IFS=$'\t' read -r name version manifest_path; do
     echo "checking $name@$version (manifest: $manifest_path) ..."
 
-    STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://crates.io/api/v1/crates/$name/$version")
+    cargo info "$name@$version" --registry crates-io &> /dev/null
+    EXIT_CODE=$?
 
-    if [ "$STATUS_CODE" -eq 200 ]; then
-        echo "   [x] ALREADY PUBLISHED"
-    elif [ "$STATUS_CODE" -eq 404 ]; then
+    if [ "$EXIT_CODE" -eq 0 ]; then
+        echo "   ✅ ALREADY PUBLISHED"
+    else
         echo "   [ ] NOT PUBLISHED"
         dir_name=$(dirname "$manifest_path")
         publish_list="${publish_list}${name}\t${dir_name}\n"
-    else
-        echo "   ❌ ERROR (Received HTTP $STATUS_CODE)" >&2
     fi
     echo "---"
 done <<< "$CRATES_TO_CHECK"

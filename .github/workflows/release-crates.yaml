@@ -43,6 +43,13 @@ jobs:
         uses: rust-lang/crates-io-auth-action@v1
         id: auth
 
+      - name: publish config lib
+        if: env.CRATES_TO_PUBLISH.hive-router-config
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          cargo publish --manifest-path ${{ env.CRATES_TO_PUBLISH.hive-router-config }}
+
       - name: publish query-planner lib
         if: env.CRATES_TO_PUBLISH.hive-router-query-planner
         env:
