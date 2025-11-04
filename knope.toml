@@ -1,5 +1,6 @@
 [bot.releases]
 enabled = true
+pull_request.title = "chore(release): router crates and artifacts"
 
 [github]
 owner = "graphql-hive"

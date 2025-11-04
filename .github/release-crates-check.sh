@@ -26,7 +26,7 @@ publish_list=""
 while IFS=$'\t' read -r name version manifest_path; do
     echo "checking $name@$version (manifest: $manifest_path) ..."
 
-    cargo info "$name@$version" --registry crates-io &> /dev/null
+    cargo info "$name@$version" --registry crates-io
     EXIT_CODE=$?
 
     if [ "$EXIT_CODE" -eq 0 ]; then
