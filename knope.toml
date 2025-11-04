@@ -1,3 +1,10 @@
+[bot.releases]
+enabled = true
+
+[github]
+owner = "graphql-hive"
+repo = "router"
+
 [packages.query-planner]
 versioned_files = ["lib/query-planner/Cargo.toml", { path = "lib/executor/Cargo.toml", dependency = "hive-router-query-planner" }, { path = "bin/router/Cargo.toml", dependency = "hive-router-query-planner" }, "Cargo.lock"]
 scopes = ["hive-router-query-planner", "qp", "query-planner"]
@@ -10,35 +17,30 @@ changelog = "lib/executor/CHANGELOG.md"
 
 [packages.router]
 versioned_files = ["bin/router/Cargo.toml", "Cargo.lock"]
-scopes = ["hive-router", "router", "config"]
+scopes = ["hive-router", "router", "config", "qp", "executor"]
 changelog = "bin/router/CHANGELOG.md"
 
+# "release" pipeline that prepares the release and pushes a release PR
 [[workflows]]
 name = "release"
+  [[workflows.steps]]
+  type = "PrepareRelease"
+  ignore_conventional_commits = true
+  [[workflows.steps]]
+  type = "Command"
+  command = 'git commit -m "chore: prepare releases"'
+  [[workflows.steps]]
+  type = "Command"
+  command = "git push"
+  [[workflows.steps]]
+  type = "Release"
 
-[[workflows.steps]]
-type = "PrepareRelease"
-ignore_conventional_commits = true
-
-[[workflows.steps]]
-type = "Command"
-command = 'git commit -m "chore: prepare releases"'
-
-[[workflows.steps]]
-type = "Command"
-command = "git push"
-
-[[workflows.steps]]
-type = "Release"
-
+# "document-change" pipeline that prepares the release and pushes a release PR
 [[workflows]]
 name = "document-change"
-
-[[workflows.steps]]
-type = "CreateChangeFile"
-
-[github]
-owner = "graphql-hive"
-repo = "router"
-
-bot.releases.enabled = true
+  [[workflows.steps]]
+  type = "CreateChangeFile"
+[[workflows]]
+name = "changeset"
+  [[workflows.steps]]
+  type = "CreateChangeFile"
