@@ -35,7 +35,7 @@ name = "release"
   [[workflows.steps]]
   type = "Release"
 
-# "document-change" pipeline that prepares the release and pushes a release PR
+# "document-change" / "changeset" pipeline that helps to create a changeset file during development
 [[workflows]]
 name = "document-change"
   [[workflows.steps]]
