@@ -26,6 +26,9 @@ versioned_files = ["bin/router/Cargo.toml", "Cargo.lock"]
 scopes = ["hive-router", "router", "config", "qp", "executor"]
 changelog = "bin/router/CHANGELOG.md"
 
+[packages.node-addon]
+versioned_files = ["lib/node-addon/package.json", "lib/node-addon/package-lock.json"]
+
 # "release" pipeline that prepares the release and pushes a release PR
 [[workflows]]
 name = "release"
