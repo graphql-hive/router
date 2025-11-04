@@ -52,7 +52,7 @@ See [GitHub Releases](https://github.com/graphql-hive/router/releases) to the fu
 
 ### Docker
 
-The router image is being published to [Docker to GitHub Container Registry](). You may use it directly using the following command:
+The router image is being published to [Docker to GitHub Container Registry](https://github.com/graphql-hive/router/pkgs/container/router). You may use it directly using the following command:
 
 ```bash
 docker run \

@@ -1,0 +1,52 @@
+[bot.releases]
+enabled = true
+pull_request.title = "chore(release): router crates and artifacts"
+
+[github]
+owner = "graphql-hive"
+repo = "router"
+
+[packages.query-planner]
+versioned_files = ["lib/query-planner/Cargo.toml", { path = "lib/executor/Cargo.toml", dependency = "hive-router-query-planner" }, { path = "bin/router/Cargo.toml", dependency = "hive-router-query-planner" }, "Cargo.lock"]
+scopes = ["hive-router-query-planner", "qp", "query-planner"]
+changelog = "lib/query-planner/CHANGELOG.md"
+
+[packages.executor]
+versioned_files = ["lib/executor/Cargo.toml", { path = "bin/router/Cargo.toml", dependency = "hive-router-plan-executor" }, "Cargo.lock"]
+scopes = ["hive-router-plan-executor", "executor"]
+changelog = "lib/executor/CHANGELOG.md"
+
+[packages.config]
+versioned_files = ["lib/router-config/Cargo.toml", { path = "lib/executor/Cargo.toml", dependency = "hive-router-config" }, { path = "bin/router/Cargo.toml", dependency = "hive-router-config" }, "Cargo.lock"]
+scopes = ["config"]
+changelog = "lib/router-config/CHANGELOG.md"
+
+[packages.router]
+versioned_files = ["bin/router/Cargo.toml", "Cargo.lock"]
+scopes = ["hive-router", "router", "config", "qp", "executor"]
+changelog = "bin/router/CHANGELOG.md"
+
+# "release" pipeline that prepares the release and pushes a release PR
+[[workflows]]
+name = "release"
+  [[workflows.steps]]
+  type = "PrepareRelease"
+  ignore_conventional_commits = true
+  [[workflows.steps]]
+  type = "Command"
+  command = 'git commit -m "chore: prepare releases"'
+  [[workflows.steps]]
+  type = "Command"
+  command = "git push"
+  [[workflows.steps]]
+  type = "Release"
+
+# "document-change" / "changeset" pipeline that helps to create a changeset file during development
+[[workflows]]
+name = "document-change"
+  [[workflows.steps]]
+  type = "CreateChangeFile"
+[[workflows]]
+name = "changeset"
+  [[workflows.steps]]
+  type = "CreateChangeFile"

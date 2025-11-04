@@ -47,21 +47,6 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
       - run: cargo build --release
 
-  # build-wasm:
-  #   name: build-wasm
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-  #     - uses: actions-rust-lang/setup-rust-toolchain@fb51252c7ba57d633bc668f941da052e410add48 # v1
-
-  #     - uses: jetli/wasm-pack-action@0d096b08b4e5a7de8c28de67e11e945404e9eefa # v0.4.0
-  #       with:
-  #         version: "latest"
-
-  #     - name: "wasm-pack: nodejs"
-  #       run: wasm-pack build -t nodejs -d pkg-node
-  #       working-directory: ./lib/wasm-lib
-
   fmt:
     name: fmt
     runs-on: ubuntu-latest
@@ -200,7 +185,7 @@ jobs:
           files: |
             audits/reports/*.xml
       - name: Publish Test Results for details
-        uses: mikepenz/action-junit-report@3585e9575db828022551b4231f165eb59a0e74e3 # v5
+        uses: mikepenz/action-junit-report@e08919a3b1fb83a78393dfb775a9c37f17d8eea6 # v6
         if: (!cancelled())
         with:
           report_paths: "audits/reports/*.xml"
@@ -250,7 +235,7 @@ jobs:
           files: |
             audits/reports/*.xml
       - name: Publish Test Results for details
-        uses: mikepenz/action-junit-report@3585e9575db828022551b4231f165eb59a0e74e3 # v5
+        uses: mikepenz/action-junit-report@e08919a3b1fb83a78393dfb775a9c37f17d8eea6 # v6
         if: (!cancelled())
         with:
           report_paths: "audits/reports/*.xml"
