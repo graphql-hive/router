@@ -26,15 +26,11 @@ publish_list=""
 while IFS=$'\t' read -r name version manifest_path; do
     echo "checking $name@$version (manifest: $manifest_path) ..."
 
-    cargo info "$name@$version" --registry crates-io
-    EXIT_CODE=$?
-
-    if [ "$EXIT_CODE" -eq 0 ]; then
-        echo "   ✅ ALREADY PUBLISHED"
+    if ! cargo info "$name@$version" --registry crates-io; then
+      echo "   [ ] NOT PUBLISHED"
+      publish_list="${publish_list}${name}\t${manifest_path}\n"
     else
-        echo "   [ ] NOT PUBLISHED"
-        dir_name=$(dirname "$manifest_path")
-        publish_list="${publish_list}${name}\t${dir_name}\n"
+      echo "   [x] ALREADY PUBLISHED"
     fi
     echo "---"
 done <<< "$CRATES_TO_CHECK"
@@ -53,5 +49,4 @@ echo "$CRATES_TO_PUBLISH_JSON" | jq .
 if [ -n "$GITHUB_OUTPUT" ]; then
     echo "Setting GitHub Actions output 'crates_to_publish'..."
     echo "crates_to_publish=$(echo "$CRATES_TO_PUBLISH_JSON" | jq -c .)" >> "$GITHUB_OUTPUT"
-    echo "✅ GHA output set."
 fi
