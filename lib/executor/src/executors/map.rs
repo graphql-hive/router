@@ -21,7 +21,8 @@ use crate::{
     execution::client_request_details::ClientRequestDetails,
     executors::{
         common::{
-            HttpExecutionRequest, HttpExecutionResponse, SubgraphExecutor, SubgraphExecutorBoxedArc,
+            HttpExecutionResponse, SubgraphExecutionRequest, SubgraphExecutor,
+            SubgraphExecutorBoxedArc,
         },
         dedupe::{ABuildHasher, SharedResponse},
         duration_or_prog::{compile_duration_expression, DurationOrProgram},
@@ -109,7 +110,7 @@ impl SubgraphExecutorMap {
     pub async fn execute<'a, 'req>(
         &self,
         subgraph_name: &str,
-        execution_request: HttpExecutionRequest<'a>,
+        execution_request: SubgraphExecutionRequest<'a>,
         client_request: &ClientRequestDetails<'a, 'req>,
     ) -> HttpExecutionResponse {
         match self.get_or_create_executor(subgraph_name, client_request) {
@@ -119,30 +120,15 @@ impl SubgraphExecutorMap {
                     .get(subgraph_name)
                     .map(|t| resolve_duration_prog(t.value(), subgraph_name, client_request));
                 match timeout {
-                    Some(Ok(dur)) => tokio::time::timeout(dur, executor.execute(execution_request))
-                        .await
-                        .unwrap_or_else(|_| {
-                            error!(
-                                "Request to subgraph '{}' timed out after {:?}",
-                                subgraph_name, dur,
-                            );
-                            self.internal_server_error_response(
-                                SubgraphExecutorError::RequestTimeout(
-                                    subgraph_name.to_string(),
-                                    dur.as_millis() as u64,
-                                )
-                                .into(),
-                                subgraph_name,
-                            )
-                        }),
+                    Some(Ok(dur)) => executor.execute(execution_request, Some(dur)).await,
                     Some(Err(err)) => {
                         error!(
-                            "Timeout expression resolution error for subgraph '{}': {}",
+                            "Failed to resolve timeout for subgraph '{}': {}",
                             subgraph_name, err,
                         );
                         self.internal_server_error_response(err.into(), subgraph_name)
                     }
-                    None => executor.execute(execution_request).await,
+                    None => executor.execute(execution_request, None).await,
                 }
             }
             Err(err) => {

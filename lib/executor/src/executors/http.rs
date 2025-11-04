@@ -1,8 +1,10 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
 use dashmap::DashMap;
+use futures::TryFutureExt;
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
@@ -18,7 +20,7 @@ use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
 use tracing::debug;
 
-use crate::executors::common::HttpExecutionRequest;
+use crate::executors::common::SubgraphExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
 use crate::response::graphql_error::GraphQLError;
 use crate::utils::consts::CLOSE_BRACE;
@@ -75,7 +77,7 @@ impl HTTPSubgraphExecutor {
 
     fn build_request_body(
         &self,
-        execution_request: &HttpExecutionRequest<'_>,
+        execution_request: &SubgraphExecutionRequest<'_>,
     ) -> Result<Vec<u8>, SubgraphExecutorError> {
         let mut body = Vec::with_capacity(4096);
         body.put(FIRST_QUOTE_STR);
@@ -136,6 +138,7 @@ impl HTTPSubgraphExecutor {
         &self,
         body: Vec<u8>,
         headers: HeaderMap,
+        timeout: Option<Duration>,
     ) -> Result<SharedResponse, SubgraphExecutorError> {
         let mut req = hyper::Request::builder()
             .method(http::Method::POST)
@@ -150,9 +153,22 @@ impl HTTPSubgraphExecutor {
 
         debug!("making http request to {}", self.endpoint.to_string());
 
-        let res = self.http_client.request(req).await.map_err(|e| {
+        let res_fut = self.http_client.request(req).map_err(|e| {
             SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-        })?;
+        });
+
+        let res = if let Some(timeout_duration) = timeout {
+            tokio::time::timeout(timeout_duration, res_fut)
+                .await
+                .map_err(|_| {
+                    SubgraphExecutorError::RequestTimeout(
+                        self.endpoint.to_string(),
+                        timeout_duration.as_secs(),
+                    )
+                })?
+        } else {
+            res_fut.await
+        }?;
 
         debug!(
             "http request to {} completed, status: {}",
@@ -211,7 +227,8 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
     #[tracing::instrument(skip_all, fields(subgraph_name = %self.subgraph_name))]
     async fn execute<'a>(
         &self,
-        execution_request: HttpExecutionRequest<'a>,
+        execution_request: SubgraphExecutionRequest<'a>,
+        timeout: Option<Duration>,
     ) -> HttpExecutionResponse {
         let body = match self.build_request_body(&execution_request) {
             Ok(body) => body,
@@ -233,7 +250,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
-            return match self._send_request(body, headers).await {
+            return match self._send_request(body, headers, timeout).await {
                 Ok(shared_response) => HttpExecutionResponse {
                     body: shared_response.body,
                     headers: shared_response.headers,
@@ -265,7 +282,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
                     let _permit = self.semaphore.acquire().await.unwrap();
-                    self._send_request(body, headers).await
+                    self._send_request(body, headers, timeout).await
                 };
                 // It's important to remove the entry from the map before returning the result.
                 // This ensures that once the OnceCell is set, no future requests can join it.
