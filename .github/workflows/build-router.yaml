@@ -1,4 +1,4 @@
-name: build
+name: build-router
 on:
   push:
     branches:
@@ -31,7 +31,7 @@ env:
 jobs:
   config:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'hive-router-v'))
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'router/v'))
     steps:
       - name: checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
@@ -62,7 +62,7 @@ jobs:
 
   binary:
     name: ${{ matrix.name }}
-    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'hive-router-v'))
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'router/v'))
     runs-on: ${{ matrix.action_runner }}
     strategy:
       matrix:
@@ -150,7 +150,7 @@ jobs:
           tags: |
             type=ref,event=pr
             type=semver,pattern={{version}},value=${{ github.event.release.name }},enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
-            type=match,group=1,pattern=hive-router-v(.*),value=${{ github.event.release.name }},enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=match,group=1,pattern=router/v(.*),value=${{ github.event.release.name }},enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
             type=sha
             type=raw,value=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
       - name: download binary artifacts

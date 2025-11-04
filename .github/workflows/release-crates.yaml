@@ -1,0 +1,65 @@
+name: release-crates
+
+permissions:
+  pull-requests: write
+  contents: write
+  id-token: write
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      crates_to_publish: ${{ steps.check_crates.outputs.crates_to_publish }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+        with:
+          cache: false
+      - name: Run release-crates-check.sh
+        id: check_crates
+        run: |
+          chmod +x ./.github/release-crates-check.sh
+          ./.github/release-crates-check.sh
+
+  publish-crates:
+    name: crates
+    runs-on: ubuntu-latest
+    needs:
+      - check
+    if: ${{ github.repository_owner == 'graphql-hive' && needs.check.outputs.crates_to_publish != '{}' }}
+    env:
+      CRATES_TO_PUBLISH: ${{ fromJson(needs.check.outputs.crates_to_publish) }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+        with:
+          cache: false
+      - name: authenticate with crates.io
+        uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      - name: publish query-planner lib
+        if: env.CRATES_TO_PUBLISH.hive-router-query-planner
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          cargo publish --manifest-path ${{ env.CRATES_TO_PUBLISH.hive-router-query-planner }}
+
+      - name: publish executor lib
+        if: env.CRATES_TO_PUBLISH.hive-router-plan-executor
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          cargo publish --manifest-path ${{ env.CRATES_TO_PUBLISH.hive-router-plan-executor }}
+
+      - name: publish router lib
+        if: env.CRATES_TO_PUBLISH.hive-router
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          cargo publish --manifest-path ${{ env.CRATES_TO_PUBLISH.hive-router }}
