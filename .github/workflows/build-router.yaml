@@ -165,8 +165,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - binary
-    # TODO: enable before merging and npm publish
-    # if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'node-addon/v')
+    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'node-addon/v')
     steps:
       - name: checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
@@ -191,8 +190,7 @@ jobs:
         working-directory: lib/node-addon
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        # TODO: no dry run on release
-        run: npm publish --provenance --dry-run
+        run: npm publish --provenance
 
   docker:
     runs-on: ubuntu-latest
