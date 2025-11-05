@@ -27,7 +27,7 @@ scopes = ["hive-router", "router", "config", "qp", "executor"]
 changelog = "bin/router/CHANGELOG.md"
 
 [packages.node-addon]
-versioned_files = ["lib/node-addon/package.json"]
+versioned_files = ["lib/node-addon/package.json", "lib/node-addon/package-lock.json", "lib/node-addon/Cargo.toml", "Cargo.lock"]
 scopes = ["node-addon"]
 changelog = "lib/node-addon/CHANGELOG.md"
 
