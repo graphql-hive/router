@@ -159,6 +159,7 @@ jobs:
           file: lib/node-addon/*.node
           tag: ${{ github.ref }}
 
+  # NOTE: would publish from release.yaml but we need the artifacts. doing it from here is simpler
   npm-publish:
     name: publish node addon
     runs-on: ubuntu-latest
