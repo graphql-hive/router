@@ -138,7 +138,7 @@ jobs:
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         name: upload node addon artifact
         with:
-          name: node_addon
+          name: node_addon_${{ matrix.name }}
           path: |
             lib/node-addon/*.node
           if-no-files-found: error
@@ -177,8 +177,15 @@ jobs:
       - name: download node addon artifacts
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
-          pattern: node_addon
+          pattern: node_addon_*
           path: lib/node-addon
+      - name: prepare artifacts
+        working-directory: lib/node-addon
+        run: |
+          mv ./node_addon_linux_arm64/* .
+          mv ./node_addon_linux_amd64/* .
+          mv ./node_addon_macos_arm64/* .
+          mv ./node_addon_macos_amd64/* .
       - name: npm publish
         working-directory: lib/node-addon
         env:
