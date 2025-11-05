@@ -26,7 +26,7 @@
     "access": "public"
   },
   "napi": {
-    "binaryName": "hive_router",
+    "binaryName": "hive_router_query_planner",
     "targets": [
       "aarch64-unknown-linux-gnu",
       "x86_64-unknown-linux-gnu",
