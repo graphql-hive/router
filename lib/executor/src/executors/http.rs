@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::execution::hmac::{sign_hmac, BooleanOrProgram};
 use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
 use dashmap::DashMap;
@@ -37,10 +38,12 @@ pub struct HTTPSubgraphExecutor {
     pub semaphore: Arc<Semaphore>,
     pub config: Arc<HiveRouterConfig>,
     pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    pub should_sign_hmac: Arc<BooleanOrProgram>,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
 const FIRST_QUOTE_STR: &[u8] = b"{\"query\":";
+pub const FIRST_EXTENSION_STR: &[u8] = b",\"extensions\":{";
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
 
@@ -52,6 +55,7 @@ impl HTTPSubgraphExecutor {
         semaphore: Arc<Semaphore>,
         config: Arc<HiveRouterConfig>,
         in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+        should_sign_hmac: Arc<BooleanOrProgram>,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -71,12 +75,13 @@ impl HTTPSubgraphExecutor {
             semaphore,
             config,
             in_flight_requests,
+            should_sign_hmac,
         }
     }
 
-    fn build_request_body<'a>(
+    fn build_request_body<'exec, 'req>(
         &self,
-        execution_request: &HttpExecutionRequest<'a>,
+        execution_request: &HttpExecutionRequest<'exec, 'req>,
     ) -> Result<Vec<u8>, SubgraphExecutorError> {
         let mut body = Vec::with_capacity(4096);
         body.put(FIRST_QUOTE_STR);
@@ -118,14 +123,43 @@ impl HTTPSubgraphExecutor {
             body.put(CLOSE_BRACE);
         }
 
-        if let Some(extensions) = &execution_request.extensions {
-            if !extensions.is_empty() {
-                let as_value = sonic_rs::to_value(extensions).unwrap();
+        let mut first_extension = true;
 
-                body.put(COMMA);
-                body.put("\"extensions\":".as_bytes());
-                body.extend_from_slice(as_value.to_string().as_bytes());
+        if !self.config.hmac_signature.is_disabled() {
+            sign_hmac(
+                &self.should_sign_hmac,
+                &self.config.hmac_signature,
+                &self.subgraph_name,
+                execution_request.client_request,
+                &mut first_extension,
+                &mut body,
+            )?;
+        }
+
+        if let Some(extensions) = &execution_request.extensions {
+            for (extension_name, extension_value) in extensions {
+                if first_extension {
+                    body.put(FIRST_EXTENSION_STR);
+                    first_extension = false;
+                } else {
+                    body.put(COMMA);
+                }
+                body.put(QUOTE);
+                body.put(extension_name.as_bytes());
+                body.put(QUOTE);
+                body.put(COLON);
+                let value_str = sonic_rs::to_string(extension_value).map_err(|err| {
+                    SubgraphExecutorError::ExtensionSerializationFailure(
+                        extension_name.to_string(),
+                        err.to_string(),
+                    )
+                })?;
+                body.put(value_str.as_bytes());
             }
+        }
+
+        if !first_extension {
+            body.put(CLOSE_BRACE);
         }
 
         body.put(CLOSE_BRACE);
@@ -210,9 +244,9 @@ impl HTTPSubgraphExecutor {
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
     #[tracing::instrument(skip_all, fields(subgraph_name = self.subgraph_name))]
-    async fn execute<'a>(
+    async fn execute<'exec, 'req>(
         &self,
-        execution_request: HttpExecutionRequest<'a>,
+        execution_request: HttpExecutionRequest<'exec, 'req>,
     ) -> HttpExecutionResponse {
         let body = match self.build_request_body(&execution_request) {
             Ok(body) => body,

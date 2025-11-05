@@ -17,7 +17,10 @@ use tracing::error;
 use vrl::{compiler::Program as VrlProgram, core::Value as VrlValue};
 
 use crate::{
-    execution::client_request_details::ClientRequestDetails,
+    execution::{
+        client_request_details::ClientRequestDetails,
+        hmac::{compile_hmac_config, BooleanOrProgram},
+    },
     executors::{
         common::{
             HttpExecutionRequest, HttpExecutionResponse, SubgraphExecutor, SubgraphExecutorBoxedArc,
@@ -49,10 +52,11 @@ pub struct SubgraphExecutorMap {
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
     max_connections_per_host: usize,
     in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    should_sign_hmac: Arc<BooleanOrProgram>,
 }
 
 impl SubgraphExecutorMap {
-    pub fn new(config: Arc<HiveRouterConfig>) -> Self {
+    pub fn try_new(config: Arc<HiveRouterConfig>) -> Result<Self, SubgraphExecutorError> {
         let https = HttpsConnector::new();
         let client: HttpClient = Client::builder(TokioExecutor::new())
             .pool_timer(TokioTimer::new())
@@ -62,7 +66,9 @@ impl SubgraphExecutorMap {
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
 
-        SubgraphExecutorMap {
+        let should_sign_hmac = compile_hmac_config(&config.hmac_signature)?;
+
+        Ok(SubgraphExecutorMap {
             executors_by_subgraph: Default::default(),
             static_endpoints_by_subgraph: Default::default(),
             expressions_by_subgraph: Default::default(),
@@ -71,14 +77,15 @@ impl SubgraphExecutorMap {
             semaphores_by_origin: Default::default(),
             max_connections_per_host,
             in_flight_requests: Arc::new(DashMap::with_hasher(ABuildHasher::default())),
-        }
+            should_sign_hmac: Arc::new(should_sign_hmac),
+        })
     }
 
     pub fn from_http_endpoint_map(
         subgraph_endpoint_map: HashMap<SubgraphName, SubgraphEndpoint>,
         config: Arc<HiveRouterConfig>,
     ) -> Result<Self, SubgraphExecutorError> {
-        let mut subgraph_executor_map = SubgraphExecutorMap::new(config.clone());
+        let mut subgraph_executor_map = SubgraphExecutorMap::try_new(config.clone())?;
 
         for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.into_iter() {
             let endpoint_str = config
@@ -101,13 +108,12 @@ impl SubgraphExecutorMap {
         Ok(subgraph_executor_map)
     }
 
-    pub async fn execute<'a, 'req>(
+    pub async fn execute<'exec, 'req>(
         &self,
         subgraph_name: &str,
-        execution_request: HttpExecutionRequest<'a>,
-        client_request: &ClientRequestDetails<'a, 'req>,
+        execution_request: HttpExecutionRequest<'exec, 'req>,
     ) -> HttpExecutionResponse {
-        match self.get_or_create_executor(subgraph_name, client_request) {
+        match self.get_or_create_executor(subgraph_name, execution_request.client_request) {
             Ok(executor) => executor.execute(execution_request).await,
             Err(err) => {
                 error!(
@@ -285,6 +291,7 @@ impl SubgraphExecutorMap {
             semaphore,
             self.config.clone(),
             self.in_flight_requests.clone(),
+            self.should_sign_hmac.clone(),
         );
 
         let executor_arc = executor.to_boxed_arc();
