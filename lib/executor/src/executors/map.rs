@@ -154,7 +154,12 @@ impl SubgraphExecutorMap {
                     client_request,
                 )
             })
-            .unwrap_or_else(|| self.get_executor_from_static_endpoint(subgraph_name))
+            .unwrap_or_else(|| {
+                self.get_executor_from_static_endpoint(subgraph_name)
+                    .ok_or_else(|| {
+                        SubgraphExecutorError::StaticEndpointNotFound(subgraph_name.to_string())
+                    })
+            })
     }
 
     /// Looks up a subgraph executor,
@@ -207,7 +212,7 @@ impl SubgraphExecutorMap {
     fn get_executor_from_static_endpoint(
         &self,
         subgraph_name: &str,
-    ) -> Result<SubgraphExecutorBoxedArc, SubgraphExecutorError> {
+    ) -> Option<SubgraphExecutorBoxedArc> {
         self.static_endpoints_by_subgraph
             .get(subgraph_name)
             .and_then(|endpoint_ref| {
@@ -216,7 +221,6 @@ impl SubgraphExecutorMap {
                     .get(subgraph_name)
                     .and_then(|endpoints| endpoints.get(endpoint_str).map(|e| e.clone()))
             })
-            .ok_or_else(|| SubgraphExecutorError::StaticEndpointNotFound(subgraph_name.to_string()))
     }
 
     /// Registers a VRL expression for the given subgraph name.
