@@ -1,9 +1,8 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use crate::execution::hmac::{sign_hmac, BooleanOrProgram};
 use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
-use crate::utils::expression::execute_expression_with_value;
 use dashmap::DashMap;
 use hive_router_config::HiveRouterConfig;
 use tokio::sync::OnceCell;
@@ -11,7 +10,6 @@ use tokio::sync::OnceCell;
 use async_trait::async_trait;
 
 use bytes::{BufMut, Bytes, BytesMut};
-use hmac::{Hmac, Mac};
 use http::HeaderMap;
 use http::HeaderValue;
 use http_body_util::BodyExt;
@@ -19,10 +17,8 @@ use http_body_util::Full;
 use hyper::Version;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
-use sha2::Sha256;
 use tokio::sync::Semaphore;
 use tracing::debug;
-use vrl::compiler::Program as VrlProgram;
 
 use crate::executors::common::HttpExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
@@ -32,7 +28,6 @@ use crate::utils::consts::COLON;
 use crate::utils::consts::COMMA;
 use crate::utils::consts::QUOTE;
 use crate::{executors::common::SubgraphExecutor, json_writer::write_and_escape_string};
-use vrl::core::Value as VrlValue;
 
 #[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
@@ -48,17 +43,9 @@ pub struct HTTPSubgraphExecutor {
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
 const FIRST_QUOTE_STR: &[u8] = b"{\"query\":";
-const FIRST_EXTENSION_STR: &[u8] = b",\"extensions\":{";
+pub const FIRST_EXTENSION_STR: &[u8] = b",\"extensions\":{";
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
-
-type HmacSha256 = Hmac<Sha256>;
-
-#[derive(Debug)]
-pub enum BooleanOrProgram {
-    Boolean(bool),
-    Program(Box<VrlProgram>),
-}
 
 impl HTTPSubgraphExecutor {
     pub fn new(
@@ -90,80 +77,6 @@ impl HTTPSubgraphExecutor {
             in_flight_requests,
             should_sign_hmac,
         }
-    }
-
-    fn sign_hmac(
-        &self,
-        execution_request: &HttpExecutionRequest,
-        body: &mut Vec<u8>,
-        first_extension: &mut bool,
-    ) -> Result<(), SubgraphExecutorError> {
-        let should_sign_hmac = match &self.should_sign_hmac.as_ref() {
-            BooleanOrProgram::Boolean(b) => *b,
-            BooleanOrProgram::Program(expr) => {
-                // .subgraph
-                let subgraph_value = VrlValue::Object(BTreeMap::from([(
-                    "name".into(),
-                    VrlValue::Bytes(Bytes::from(self.subgraph_name.to_owned())),
-                )]));
-                // .request
-                let request_value: VrlValue = execution_request.client_request.into();
-                let target_value = VrlValue::Object(BTreeMap::from([
-                    ("subgraph".into(), subgraph_value),
-                    ("request".into(), request_value),
-                ]));
-                let result = execute_expression_with_value(expr, target_value);
-                match result {
-                    Ok(VrlValue::Boolean(b)) => b,
-                    Ok(_) => {
-                        return Err(SubgraphExecutorError::HMACSignatureError(
-                            "HMAC signature expression did not evaluate to a boolean".to_string(),
-                        ));
-                    }
-                    Err(e) => {
-                        return Err(SubgraphExecutorError::HMACSignatureError(format!(
-                            "HMAC signature expression evaluation error: {}",
-                            e
-                        )));
-                    }
-                }
-            }
-        };
-
-        if should_sign_hmac {
-            if self.config.hmac_signature.secret.is_empty() {
-                return Err(SubgraphExecutorError::HMACSignatureError(
-                    "HMAC signature secret is empty".to_string(),
-                ));
-            }
-            let mut mac = HmacSha256::new_from_slice(self.config.hmac_signature.secret.as_bytes())
-                .map_err(|e| {
-                    SubgraphExecutorError::HMACSignatureError(format!(
-                        "Failed to create HMAC instance: {}",
-                        e
-                    ))
-                })?;
-            let mut body_without_extensions = body.clone();
-            body_without_extensions.put(CLOSE_BRACE);
-            mac.update(&body_without_extensions);
-            let result = mac.finalize();
-            let result_bytes = result.into_bytes();
-            if *first_extension {
-                body.put(FIRST_EXTENSION_STR);
-                *first_extension = false;
-            } else {
-                body.put(COMMA);
-            }
-            body.put(QUOTE);
-            body.put(self.config.hmac_signature.extension_name.as_bytes());
-            body.put(QUOTE);
-            body.put(COLON);
-            let hmac_hex = hex::encode(result_bytes);
-            body.put(QUOTE);
-            body.put(hmac_hex.as_bytes());
-            body.put(QUOTE);
-        }
-        Ok(())
     }
 
     fn build_request_body<'exec, 'req>(
@@ -213,7 +126,14 @@ impl HTTPSubgraphExecutor {
         let mut first_extension = true;
 
         if !self.config.hmac_signature.is_disabled() {
-            self.sign_hmac(execution_request, &mut body, &mut first_extension)?;
+            sign_hmac(
+                &self.should_sign_hmac,
+                &self.config.hmac_signature,
+                &self.subgraph_name,
+                execution_request.client_request,
+                &mut first_extension,
+                &mut body,
+            )?;
         }
 
         if let Some(extensions) = &execution_request.extensions {

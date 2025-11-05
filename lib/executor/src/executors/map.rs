@@ -5,9 +5,7 @@ use std::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use dashmap::DashMap;
-use hive_router_config::{
-    hmac_signature::BooleanOrExpression, override_subgraph_urls::UrlOrExpression, HiveRouterConfig,
-};
+use hive_router_config::{override_subgraph_urls::UrlOrExpression, HiveRouterConfig};
 use http::Uri;
 use hyper_tls::HttpsConnector;
 use hyper_util::{
@@ -19,14 +17,17 @@ use tracing::error;
 use vrl::{compiler::Program as VrlProgram, core::Value as VrlValue};
 
 use crate::{
-    execution::client_request_details::ClientRequestDetails,
+    execution::{
+        client_request_details::ClientRequestDetails,
+        hmac::{compile_hmac_config, BooleanOrProgram},
+    },
     executors::{
         common::{
             HttpExecutionRequest, HttpExecutionResponse, SubgraphExecutor, SubgraphExecutorBoxedArc,
         },
         dedupe::{ABuildHasher, SharedResponse},
         error::SubgraphExecutorError,
-        http::{BooleanOrProgram, HTTPSubgraphExecutor, HttpClient},
+        http::{HTTPSubgraphExecutor, HttpClient},
     },
     response::graphql_error::GraphQLError,
     utils::expression::{compile_expression, execute_expression_with_value},
@@ -65,14 +66,7 @@ impl SubgraphExecutorMap {
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
 
-        let should_sign_hmac = match &config.hmac_signature.enabled {
-            BooleanOrExpression::Boolean(b) => BooleanOrProgram::Boolean(*b),
-            BooleanOrExpression::Expression { expression } => {
-                let program = compile_expression(expression, None)
-                    .map_err(SubgraphExecutorError::HMACExpressionBuild)?;
-                BooleanOrProgram::Program(Box::new(program))
-            }
-        };
+        let should_sign_hmac = compile_hmac_config(&config.hmac_signature)?;
 
         Ok(SubgraphExecutorMap {
             executors_by_subgraph: Default::default(),
