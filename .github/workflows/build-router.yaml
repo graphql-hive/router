@@ -62,7 +62,14 @@ jobs:
 
   binary:
     name: ${{ matrix.name }}
-    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'router/v'))
+    if: |
+      github.event_name == 'push' || github.event_name == 'pull_request' || (
+        github.event_name == 'release' &&
+        (
+          startsWith(github.event.release.tag_name, 'router/v') ||
+          startsWith(github.event.release.tag_name, 'node-addon/v')
+        )
+      )
     runs-on: ${{ matrix.action_runner }}
     strategy:
       matrix:
@@ -129,9 +136,9 @@ jobs:
             target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
             lib/node-addon/${{ env.BINARY_NAME }}.*.node
           if-no-files-found: error
-      - name: Upload binaries to release
+      - name: Upload binaries to router release
         uses: svenstaro/upload-release-action@81c65b7cd4de9b2570615ce3aad67a41de5b1a13 # v2
-        if: ${{ github.event_name == 'release' }}
+        if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'router/v')
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
@@ -139,7 +146,7 @@ jobs:
           tag: ${{ github.ref }}
       - name: Upload node addons to release
         uses: svenstaro/upload-release-action@81c65b7cd4de9b2570615ce3aad67a41de5b1a13 # v2
-        if: ${{ github.event_name == 'release' }}
+        if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'node-addon/v')
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: lib/node-addon/${{ env.BINARY_NAME }}.*.node
