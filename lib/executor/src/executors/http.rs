@@ -43,7 +43,7 @@ pub struct HTTPSubgraphExecutor {
     pub semaphore: Arc<Semaphore>,
     pub config: Arc<HiveRouterConfig>,
     pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
-    pub should_sign_hmac: BooleanOrProgram,
+    pub should_sign_hmac: Arc<BooleanOrProgram>,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -68,7 +68,7 @@ impl HTTPSubgraphExecutor {
         semaphore: Arc<Semaphore>,
         config: Arc<HiveRouterConfig>,
         in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
-        should_sign_hmac: BooleanOrProgram,
+        should_sign_hmac: Arc<BooleanOrProgram>,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -98,7 +98,7 @@ impl HTTPSubgraphExecutor {
         body: &mut Vec<u8>,
         first_extension: &mut bool,
     ) -> Result<(), SubgraphExecutorError> {
-        let should_sign_hmac = match &self.should_sign_hmac {
+        let should_sign_hmac = match &self.should_sign_hmac.as_ref() {
             BooleanOrProgram::Boolean(b) => *b,
             BooleanOrProgram::Program(expr) => {
                 // .subgraph

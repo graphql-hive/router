@@ -51,10 +51,11 @@ pub struct SubgraphExecutorMap {
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
     max_connections_per_host: usize,
     in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    should_sign_hmac: Arc<BooleanOrProgram>,
 }
 
 impl SubgraphExecutorMap {
-    pub fn new(config: Arc<HiveRouterConfig>) -> Self {
+    pub fn try_new(config: Arc<HiveRouterConfig>) -> Result<Self, SubgraphExecutorError> {
         let https = HttpsConnector::new();
         let client: HttpClient = Client::builder(TokioExecutor::new())
             .pool_timer(TokioTimer::new())
@@ -64,7 +65,16 @@ impl SubgraphExecutorMap {
 
         let max_connections_per_host = config.traffic_shaping.max_connections_per_host;
 
-        SubgraphExecutorMap {
+        let should_sign_hmac = match &config.hmac_signature.enabled {
+            BooleanOrExpression::Boolean(b) => BooleanOrProgram::Boolean(*b),
+            BooleanOrExpression::Expression { expression } => {
+                let program = compile_expression(expression, None)
+                    .map_err(|err| SubgraphExecutorError::HMACExpressionBuild(err))?;
+                BooleanOrProgram::Program(Box::new(program))
+            }
+        };
+
+        Ok(SubgraphExecutorMap {
             executors_by_subgraph: Default::default(),
             static_endpoints_by_subgraph: Default::default(),
             expressions_by_subgraph: Default::default(),
@@ -73,14 +83,15 @@ impl SubgraphExecutorMap {
             semaphores_by_origin: Default::default(),
             max_connections_per_host,
             in_flight_requests: Arc::new(DashMap::with_hasher(ABuildHasher::default())),
-        }
+            should_sign_hmac: Arc::new(should_sign_hmac),
+        })
     }
 
     pub fn from_http_endpoint_map(
         subgraph_endpoint_map: HashMap<SubgraphName, SubgraphEndpoint>,
         config: Arc<HiveRouterConfig>,
     ) -> Result<Self, SubgraphExecutorError> {
-        let mut subgraph_executor_map = SubgraphExecutorMap::new(config.clone());
+        let mut subgraph_executor_map = SubgraphExecutorMap::try_new(config.clone())?;
 
         for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.into_iter() {
             let endpoint_str = config
@@ -275,16 +286,6 @@ impl SubgraphExecutorMap {
             .or_insert_with(|| Arc::new(Semaphore::new(self.max_connections_per_host)))
             .clone();
 
-        let should_sign_hmac = match &self.config.hmac_signature.enabled {
-            BooleanOrExpression::Boolean(b) => BooleanOrProgram::Boolean(*b),
-            BooleanOrExpression::Expression { expression } => {
-                let program = compile_expression(expression, None).map_err(|err| {
-                    SubgraphExecutorError::HMACExpressionBuild(subgraph_name.to_string(), err)
-                })?;
-                BooleanOrProgram::Program(Box::new(program))
-            }
-        };
-
         let executor = HTTPSubgraphExecutor::new(
             subgraph_name.to_string(),
             endpoint_uri,
@@ -292,7 +293,7 @@ impl SubgraphExecutorMap {
             semaphore,
             self.config.clone(),
             self.in_flight_requests.clone(),
-            should_sign_hmac,
+            self.should_sign_hmac.clone(),
         );
 
         let executor_arc = executor.to_boxed_arc();

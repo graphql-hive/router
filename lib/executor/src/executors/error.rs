@@ -22,8 +22,8 @@ pub enum SubgraphExecutorError {
     VariablesSerializationFailure(String, String),
     #[error("Failed to serialize extension \"{0}\": {1}")]
     ExtensionSerializationFailure(String, String),
-    #[error("Failed to build HMAC expression for subgraph '{0}'. Please check your VRL expression for syntax errors. Diagnostic: {1}")]
-    HMACExpressionBuild(String, String),
+    #[error("Failed to build HMAC expression. Please check your VRL expression for syntax errors. Diagnostic: {0}")]
+    HMACExpressionBuild(String),
     #[error("HMAC signature error: {0}")]
     HMACSignatureError(String),
 }
@@ -71,7 +71,7 @@ impl SubgraphExecutorError {
                 "SUBGRAPH_EXTENSION_SERIALIZATION_FAILURE"
             }
             SubgraphExecutorError::HMACSignatureError(_) => "SUBGRAPH_HMAC_SIGNATURE_ERROR",
-            SubgraphExecutorError::HMACExpressionBuild(_, _) => {
+            SubgraphExecutorError::HMACExpressionBuild(_) => {
                 "SUBGRAPH_HMAC_EXPRESSION_BUILD_FAILURE"
             }
         }
