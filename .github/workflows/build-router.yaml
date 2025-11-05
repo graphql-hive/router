@@ -156,6 +156,7 @@ jobs:
         if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'node-addon/v')
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file_glob: true
           file: lib/node-addon/*.node
           tag: ${{ github.ref }}
 
