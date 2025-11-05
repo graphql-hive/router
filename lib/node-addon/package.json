@@ -41,6 +41,7 @@
   "scripts": {
     "build": "RELEASE=true node build.js",
     "build:debug": "node build.js",
+    "build:js": "ONLY_JS=true node build.js",
     "test": "node tests",
     "test:updatesnaps": "node --test-update-snapshots tests"
   },
