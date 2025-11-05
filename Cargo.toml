@@ -3,6 +3,7 @@ members = [
   "lib/query-planner",
   "lib/router-config",
   "lib/executor",
+  "lib/node-addon",
   "bin/dev-cli",
   "bin/router",
   "e2e",

@@ -1,0 +1,50 @@
+{
+  "name": "@graphql-hive/router-query-planner",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "README.md",
+    "index.js",
+    "index.d.ts",
+    "*.node"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/graphql-hive/router.git",
+    "directory": "lib/node-addon"
+  },
+  "homepage": "https://the-guild.dev/graphql/hive/docs/router",
+  "author": {
+    "email": "contact@the-guild.dev",
+    "name": "The Guild",
+    "url": "https://the-guild.dev"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "napi": {
+    "binaryName": "hive_router_query_planner",
+    "targets": [
+      "aarch64-unknown-linux-gnu",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin"
+    ]
+  },
+  "engines": {
+    "node": ">=20",
+    "bun": "^1"
+  },
+  "scripts": {
+    "build": "RELEASE=true node build.js",
+    "build:debug": "node build.js",
+    "test": "node tests",
+    "test:updatesnaps": "node --test-update-snapshots tests"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.2.0"
+  }
+}

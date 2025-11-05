@@ -1,0 +1,23 @@
+[package]
+edition = "2021"
+version = "0.0.0"
+name = "node-addon"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+hive-router-query-planner = { path = "../query-planner", version = "2.0.0" }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+napi = { version = "3.0.0", features = ["async", "serde-json"] }
+napi-derive = "3.0.0"
+
+[build-dependencies]
+napi-build = "2"
+
+# TODO: profiles need to specified at root Cargo.toml, does it make a difference? I see lto is true there too
+# [profile.release]
+# lto = true
+# strip = "symbols"

@@ -62,7 +62,14 @@ jobs:
 
   binary:
     name: ${{ matrix.name }}
-    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'router/v'))
+    if: |
+      github.event_name == 'push' || github.event_name == 'pull_request' || (
+        github.event_name == 'release' &&
+        (
+          startsWith(github.event.release.tag_name, 'router/v') ||
+          startsWith(github.event.release.tag_name, 'node-addon/v')
+        )
+      )
     runs-on: ${{ matrix.action_runner }}
     strategy:
       matrix:
@@ -112,19 +119,78 @@ jobs:
         if: ${{ !matrix.zigbuild }}
 
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
-        name: upload build artifact
+        name: upload router artifact
         with:
           name: hive_router_${{ matrix.name }}
-          path: target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
+          path: |
+            target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
           if-no-files-found: error
-      - name: Upload binaries to release
+
+      # napi build will use zigbuild when cross compiling
+      - name: node-addon build (${{ matrix.rust_target }})
+        working-directory: lib/node-addon
+        env:
+          CROSS_COMPILE: ${{ matrix.zigbuild }}
+          TARGET: ${{ matrix.rust_target }}
+        run: |
+          npm ci
+          npm run build
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        name: upload node addon artifact
+        with:
+          name: node_addon_${{ matrix.name }}
+          path: |
+            lib/node-addon/*.node
+          if-no-files-found: error
+
+      - name: Upload binaries to router release
         uses: svenstaro/upload-release-action@81c65b7cd4de9b2570615ce3aad67a41de5b1a13 # v2
-        if: ${{ github.event_name == 'release' }}
+        if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'router/v')
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
           asset_name: hive_router_${{ matrix.name }}
           tag: ${{ github.ref }}
+      - name: Upload node addons to release
+        uses: svenstaro/upload-release-action@81c65b7cd4de9b2570615ce3aad67a41de5b1a13 # v2
+        if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'node-addon/v')
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: lib/node-addon/*.node
+          tag: ${{ github.ref }}
+
+  # NOTE: would publish from release.yaml but we need the artifacts. doing it from here is simpler
+  npm-publish:
+    name: publish node addon
+    runs-on: ubuntu-latest
+    needs:
+      - binary
+    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'node-addon/v')
+    steps:
+      - name: checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+      - name: setup node
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6
+        with:
+          node-version-file: lib/node-addon/.node-version
+          registry-url: https://registry.npmjs.org
+      - name: download node addon artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: node_addon_*
+          path: lib/node-addon
+      - name: prepare artifacts
+        working-directory: lib/node-addon
+        run: |
+          mv ./node_addon_linux_arm64/* .
+          mv ./node_addon_linux_amd64/* .
+          mv ./node_addon_macos_arm64/* .
+          mv ./node_addon_macos_amd64/* .
+      - name: npm publish
+        working-directory: lib/node-addon
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance
 
   docker:
     runs-on: ubuntu-latest

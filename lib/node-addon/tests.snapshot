@@ -1,0 +1,536 @@
+exports[`fixtures > should plan federation-example/query.graphql 1`] = `
+{
+  "kind": "QueryPlan",
+  "node": {
+    "kind": "Sequence",
+    "nodes": [
+      {
+        "kind": "Parallel",
+        "nodes": [
+          {
+            "kind": "Fetch",
+            "operation": "query{topProducts{__typename upc name price weight}}",
+            "operationKind": "query",
+            "serviceName": "products"
+          },
+          {
+            "kind": "Fetch",
+            "operation": "query{users{__typename id username name}}",
+            "operationKind": "query",
+            "serviceName": "accounts"
+          }
+        ]
+      },
+      {
+        "kind": "Parallel",
+        "nodes": [
+          {
+            "kind": "Flatten",
+            "node": {
+              "kind": "Fetch",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{shippingEstimate inStock}}}",
+              "operationKind": "query",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "price"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "weight"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "upc"
+                    }
+                  ],
+                  "typeCondition": "Product"
+                }
+              ],
+              "serviceName": "inventory"
+            },
+            "path": [
+              {
+                "Field": "topProducts"
+              },
+              "@"
+            ]
+          },
+          {
+            "kind": "Flatten",
+            "node": {
+              "kind": "Fetch",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{reviews{id body author{__typename id reviews{id body product{__typename upc}} username}}}}}",
+              "operationKind": "query",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "upc"
+                    }
+                  ],
+                  "typeCondition": "Product"
+                }
+              ],
+              "serviceName": "reviews"
+            },
+            "path": [
+              {
+                "Field": "topProducts"
+              },
+              "@"
+            ]
+          },
+          {
+            "kind": "Flatten",
+            "node": {
+              "kind": "Fetch",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{reviews{id body product{__typename upc reviews{id body author{__typename id reviews{id body product{__typename upc}} username}}}}}}}",
+              "operationKind": "query",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ],
+                  "typeCondition": "User"
+                }
+              ],
+              "serviceName": "reviews"
+            },
+            "path": [
+              {
+                "Field": "users"
+              },
+              "@"
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Parallel",
+        "nodes": [
+          {
+            "kind": "Flatten",
+            "node": {
+              "kind": "Fetch",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price weight name}}}",
+              "operationKind": "query",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "upc"
+                    }
+                  ],
+                  "typeCondition": "Product"
+                }
+              ],
+              "serviceName": "products"
+            },
+            "path": [
+              {
+                "Field": "topProducts"
+              },
+              "@",
+              {
+                "Field": "reviews"
+              },
+              "@",
+              {
+                "Field": "author"
+              },
+              {
+                "Field": "reviews"
+              },
+              "@",
+              {
+                "Field": "product"
+              }
+            ]
+          },
+          {
+            "kind": "Flatten",
+            "node": {
+              "kind": "Fetch",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
+              "operationKind": "query",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ],
+                  "typeCondition": "User"
+                }
+              ],
+              "serviceName": "accounts"
+            },
+            "path": [
+              {
+                "Field": "topProducts"
+              },
+              "@",
+              {
+                "Field": "reviews"
+              },
+              "@",
+              {
+                "Field": "author"
+              }
+            ]
+          },
+          {
+            "kind": "Flatten",
+            "node": {
+              "kind": "Fetch",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price weight name}}}",
+              "operationKind": "query",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "upc"
+                    }
+                  ],
+                  "typeCondition": "Product"
+                }
+              ],
+              "serviceName": "products"
+            },
+            "path": [
+              {
+                "Field": "users"
+              },
+              "@",
+              {
+                "Field": "reviews"
+              },
+              "@",
+              {
+                "Field": "product"
+              }
+            ]
+          },
+          {
+            "kind": "Flatten",
+            "node": {
+              "kind": "Fetch",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{price weight name}}}",
+              "operationKind": "query",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "upc"
+                    }
+                  ],
+                  "typeCondition": "Product"
+                }
+              ],
+              "serviceName": "products"
+            },
+            "path": [
+              {
+                "Field": "users"
+              },
+              "@",
+              {
+                "Field": "reviews"
+              },
+              "@",
+              {
+                "Field": "product"
+              },
+              {
+                "Field": "reviews"
+              },
+              "@",
+              {
+                "Field": "author"
+              },
+              {
+                "Field": "reviews"
+              },
+              "@",
+              {
+                "Field": "product"
+              }
+            ]
+          },
+          {
+            "kind": "Flatten",
+            "node": {
+              "kind": "Fetch",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on User{name}}}",
+              "operationKind": "query",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "id"
+                    }
+                  ],
+                  "typeCondition": "User"
+                }
+              ],
+              "serviceName": "accounts"
+            },
+            "path": [
+              {
+                "Field": "users"
+              },
+              "@",
+              {
+                "Field": "reviews"
+              },
+              "@",
+              {
+                "Field": "product"
+              },
+              {
+                "Field": "reviews"
+              },
+              "@",
+              {
+                "Field": "author"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "kind": "Parallel",
+        "nodes": [
+          {
+            "kind": "Flatten",
+            "node": {
+              "kind": "Fetch",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{inStock shippingEstimate}}}",
+              "operationKind": "query",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "upc"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "price"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "weight"
+                    }
+                  ],
+                  "typeCondition": "Product"
+                }
+              ],
+              "serviceName": "inventory"
+            },
+            "path": [
+              {
+                "Field": "topProducts"
+              },
+              "@",
+              {
+                "Field": "reviews"
+              },
+              "@",
+              {
+                "Field": "author"
+              },
+              {
+                "Field": "reviews"
+              },
+              "@",
+              {
+                "Field": "product"
+              }
+            ]
+          },
+          {
+            "kind": "Flatten",
+            "node": {
+              "kind": "Fetch",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{inStock shippingEstimate}}}",
+              "operationKind": "query",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "upc"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "price"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "weight"
+                    }
+                  ],
+                  "typeCondition": "Product"
+                }
+              ],
+              "serviceName": "inventory"
+            },
+            "path": [
+              {
+                "Field": "users"
+              },
+              "@",
+              {
+                "Field": "reviews"
+              },
+              "@",
+              {
+                "Field": "product"
+              }
+            ]
+          },
+          {
+            "kind": "Flatten",
+            "node": {
+              "kind": "Fetch",
+              "operation": "query($representations:[_Any!]!){_entities(representations: $representations){...on Product{inStock shippingEstimate}}}",
+              "operationKind": "query",
+              "requires": [
+                {
+                  "kind": "InlineFragment",
+                  "selections": [
+                    {
+                      "kind": "Field",
+                      "name": "__typename"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "upc"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "price"
+                    },
+                    {
+                      "kind": "Field",
+                      "name": "weight"
+                    }
+                  ],
+                  "typeCondition": "Product"
+                }
+              ],
+              "serviceName": "inventory"
+            },
+            "path": [
+              {
+                "Field": "users"
+              },
+              "@",
+              {
+                "Field": "reviews"
+              },
+              "@",
+              {
+                "Field": "product"
+              },
+              {
+                "Field": "reviews"
+              },
+              "@",
+              {
+                "Field": "author"
+              },
+              {
+                "Field": "reviews"
+              },
+              "@",
+              {
+                "Field": "product"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
+`;
+
+exports[`fixtures > should plan simple-inaccessible/test-2.graphql 1`] = `
+{
+  "kind": "QueryPlan",
+  "node": {
+    "kind": "Fetch",
+    "operation": "query{usersInFriends{id friends(type: FRIEND){id}}}",
+    "operationKind": "query",
+    "serviceName": "friends"
+  }
+}
+`;
+
+exports[`should expose consumer schema without federation internals 1`] = `
+"schema @transport(subgraph: \\"age\\", kind: \\"http\\", location: \\"http://localhost/simple-inaccessible/age\\") @transport(subgraph: \\"friends\\", kind: \\"http\\", location: \\"http://localhost/simple-inaccessible/friends\\") {\\n  query: Query\\n}\\n\\nenum FriendType {\\n  FRIEND\\n}\\n\\ntype Query {\\n  usersInAge: [User!]!\\n  usersInFriends: [User!]!\\n  __schema: __Schema!\\n  __type(name: String!): __Type\\n}\\n\\ntype User {\\n  id: ID\\n  age: Int\\n  friends: [User!]!\\n  type: FriendType\\n}\\n\\n\\"Directs the executor to skip this field or fragment when the \`if\` argument is true.\\"\\ndirective @skip(\\"Skipped when true.\\" if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT\\n\\n\\"Directs the executor to include this field or fragment only when the \`if\` argument is true.\\"\\ndirective @include(\\"Included when true.\\" if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT\\n\\ndirective @deprecated(reason: String = \\"No longer supported\\") on FIELD_DEFINITION | ENUM_VALUE | INPUT_FIELD_DEFINITION\\n\\ndirective @specifiedBy(url: String!) on SCALAR\\n\\ndirective @oneOf on OBJECT | INTERFACE | UNION\\n\\n\\"The \`Boolean\` scalar type represents \`true\` or \`false\` values.\\"\\nscalar Boolean\\n\\n\\"The \`Float\` scalar type represents signed double-precision fractional values as specified by [IEEE 754](https://en.wikipedia.org/wiki/IEEE_floating_point). Float can represent values between -(2^53 - 1) and 2^53 - 1, inclusive.\\"\\nscalar Float\\n\\n\\"The \`Int\` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1.\\"\\nscalar Int\\n\\n\\"The \`ID\` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as \`\\\\\\"4\\\\\\"\`) or integer (such as \`4\`) input value will be accepted as an ID.\\"\\nscalar ID\\n\\n\\"The \`String\` scalar type represents textual data, represented as UTF-8 character sequences. The String type is most often used by GraphQL to represent free-form human-readable text.\\"\\nscalar String\\n\\ntype __Schema {\\n  description: String\\n  types: [__Type!]!\\n  queryType: __Type!\\n  mutationType: __Type\\n  subscriptionType: __Type\\n  directives: [__Directive!]!\\n}\\n\\ntype __Type {\\n  kind: __TypeKind!\\n  name: String\\n  description: String\\n  fields(includeDeprecated: Boolean = false): [__Field!]\\n  interfaces: [__Type!]\\n  possibleTypes: [__Type!]\\n  enumValues(includeDeprecated: Boolean = false): [__EnumValue!]\\n  inputFields(includeDeprecated: Boolean = false): [__InputValue!]\\n  ofType: __Type\\n}\\n\\ntype __Field {\\n  name: String!\\n  description: String\\n  args(includeDeprecated: Boolean = false): [__InputValue!]!\\n  type: __Type!\\n  isDeprecated: Boolean!\\n  deprecationReason: String\\n}\\n\\ntype __InputValue {\\n  name: String!\\n  description: String\\n  type: __Type!\\n  defaultValue: String\\n  isDeprecated: Boolean!\\n  deprecationReason: String\\n}\\n\\ntype __EnumValue {\\n  name: String!\\n  description: String\\n  isDeprecated: Boolean!\\n  deprecationReason: String\\n}\\n\\nenum __TypeKind {\\n  SCALAR\\n  OBJECT\\n  INTERFACE\\n  UNION\\n  ENUM\\n  INPUT_OBJECT\\n  LIST\\n  NON_NULL\\n}\\n\\ntype __Directive {\\n  name: String!\\n  description: String\\n  locations: [__DirectiveLocation!]!\\n  args(includeDeprecated: Boolean = false): [__InputValue!]!\\n}\\n\\nenum __DirectiveLocation {\\n  QUERY\\n  MUTATION\\n  SUBSCRIPTION\\n  FIELD\\n  FRAGMENT_DEFINITION\\n  FRAGMENT_SPREAD\\n  INLINE_FRAGMENT\\n  SCHEMA\\n  SCALAR\\n  OBJECT\\n  FIELD_DEFINITION\\n  ARGUMENT_DEFINITION\\n  INTERFACE\\n  UNION\\n  ENUM\\n  ENUM_VALUE\\n  INPUT_OBJECT\\n  INPUT_FIELD_DEFINITION\\n}\\n"
+`;
