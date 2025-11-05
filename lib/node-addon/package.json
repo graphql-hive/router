@@ -5,6 +5,7 @@
   "main": "index.js",
   "types": "index.d.ts",
   "files": [
+    "README.md",
     "index.js",
     "index.d.ts",
     "*.node"
