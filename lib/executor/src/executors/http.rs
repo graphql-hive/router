@@ -168,7 +168,9 @@ impl HTTPSubgraphExecutor {
             }
         };
 
-        let hmac_signature_ext = if should_sign_hmac {
+        let mut first_extension = true;
+
+        if should_sign_hmac {
             if self.config.hmac_signature.secret.is_empty() {
                 return Err(SubgraphExecutorError::HMACSignatureError(
                     "HMAC signature secret is empty".to_string(),
@@ -186,14 +188,6 @@ impl HTTPSubgraphExecutor {
             mac.update(&body_without_extensions);
             let result = mac.finalize();
             let result_bytes = result.into_bytes();
-            Some(result_bytes)
-        } else {
-            None
-        };
-
-        let mut first_extension = true;
-
-        if let Some(hmac_bytes) = hmac_signature_ext {
             if first_extension {
                 body.put(FIRST_EXTENSION_STR);
                 first_extension = false;
@@ -204,7 +198,7 @@ impl HTTPSubgraphExecutor {
             body.put(self.config.hmac_signature.extension_name.as_bytes());
             body.put(QUOTE);
             body.put(COLON);
-            let hmac_hex = hex::encode(hmac_bytes);
+            let hmac_hex = hex::encode(result_bytes);
             body.put(QUOTE);
             body.put(hmac_hex.as_bytes());
             body.put(QUOTE);
