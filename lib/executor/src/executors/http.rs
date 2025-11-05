@@ -244,7 +244,6 @@ impl HTTPSubgraphExecutor {
 
         body.put(CLOSE_BRACE);
 
-        println!("Built request body: {}", String::from_utf8_lossy(&body));
         Ok(body)
     }
 
