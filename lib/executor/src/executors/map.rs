@@ -194,19 +194,17 @@ impl SubgraphExecutorMap {
                     )
                 })?;
             let endpoint_str = match endpoint_result.as_str() {
-                Some(s) => s.to_string(),
-                None => {
-                    return Err(SubgraphExecutorError::EndpointExpressionWrongType(
-                        subgraph_name.to_string(),
-                    ));
-                }
-            };
+                Some(s) => Ok(s),
+                None => Err(SubgraphExecutorError::EndpointExpressionWrongType(
+                    subgraph_name.to_string(),
+                )),
+            }?;
 
             // Check if an executor for this endpoint already exists.
             let existing_executor = self
                 .executors_by_subgraph
                 .get(subgraph_name)
-                .and_then(|endpoints| endpoints.get(&endpoint_str).map(|e| e.clone()));
+                .and_then(|endpoints| endpoints.get(endpoint_str.as_ref()).map(|e| e.clone()));
 
             if let Some(executor) = existing_executor {
                 return Ok(Some(executor));
@@ -219,7 +217,7 @@ impl SubgraphExecutorMap {
                 .executors_by_subgraph
                 .get(subgraph_name)
                 .expect("Executor was just registered, should be present");
-            return Ok(endpoints.get(&endpoint_str).map(|e| e.clone()));
+            return Ok(endpoints.get(endpoint_str.as_ref()).map(|e| e.clone()));
         }
 
         Ok(None)
