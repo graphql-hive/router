@@ -69,7 +69,7 @@ impl SubgraphExecutorMap {
             BooleanOrExpression::Boolean(b) => BooleanOrProgram::Boolean(*b),
             BooleanOrExpression::Expression { expression } => {
                 let program = compile_expression(expression, None)
-                    .map_err(|err| SubgraphExecutorError::HMACExpressionBuild(err))?;
+                    .map_err(SubgraphExecutorError::HMACExpressionBuild)?;
                 BooleanOrProgram::Program(Box::new(program))
             }
         };
