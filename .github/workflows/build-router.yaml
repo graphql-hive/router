@@ -118,6 +118,14 @@ jobs:
         run: cargo build --release --target ${{ matrix.rust_target }}
         if: ${{ !matrix.zigbuild }}
 
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        name: upload router artifact
+        with:
+          name: hive_router_${{ matrix.name }}
+          path: |
+            target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
+          if-no-files-found: error
+
       # napi build will use zigbuild when cross compiling
       - name: node-addon build (${{ matrix.rust_target }})
         working-directory: lib/node-addon
@@ -129,13 +137,13 @@ jobs:
           npm run build
 
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
-        name: upload build artifact
+        name: upload node addon artifact
         with:
-          name: hive_router_${{ matrix.name }}
+          name: node_addon_${{ matrix.name }}
           path: |
-            target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
             lib/node-addon/${{ env.BINARY_NAME }}.*.node
           if-no-files-found: error
+
       - name: Upload binaries to router release
         uses: svenstaro/upload-release-action@81c65b7cd4de9b2570615ce3aad67a41de5b1a13 # v2
         if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'router/v')
@@ -151,6 +159,33 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: lib/node-addon/${{ env.BINARY_NAME }}.*.node
           tag: ${{ github.ref }}
+
+  npm-publish:
+    name: publish node addon
+    runs-on: ubuntu-latest
+    needs:
+      - binary
+    # TODO: enable before merging and npm publish
+    # if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'node-addon/v')
+    steps:
+      - name: checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+      - name: setup node
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6
+        with:
+          node-version-file: lib/node-addon/.node-version
+          registry-url: https://registry.npmjs.org
+      - name: download node addon artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: node_addon_*
+          path: lib/node-addon
+      - name: npm publish
+        working-directory: lib/node-addon
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # TODO: no dry run on release
+        run: npm publish --provenance --dry-run
 
   docker:
     runs-on: ubuntu-latest
@@ -189,9 +224,8 @@ jobs:
           mkdir -p ./target/linux/arm64
           mkdir -p ./target/linux/amd64
 
-          mv ./artifacts/${{ env.BINARY_NAME }}_linux_arm64/target/aarch64-unknown-linux-gnu/release/${{ env.BINARY_NAME }} ./target/linux/arm64/${{ env.BINARY_NAME }}
-          mv ./artifacts/${{ env.BINARY_NAME }}_linux_amd64/target/x86_64-unknown-linux-gnu/release/${{ env.BINARY_NAME }} ./target/linux/amd64/${{ env.BINARY_NAME }}
-
+          mv ./artifacts/${{ env.BINARY_NAME }}_linux_arm64/${{ env.BINARY_NAME }} ./target/linux/arm64/${{ env.BINARY_NAME }}
+          mv ./artifacts/${{ env.BINARY_NAME }}_linux_amd64/${{ env.BINARY_NAME }} ./target/linux/amd64/${{ env.BINARY_NAME }}
           ls -ltra ./target/linux/arm64/
           ls -ltra ./target/linux/amd64/
       - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
