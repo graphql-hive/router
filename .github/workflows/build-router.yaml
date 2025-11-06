@@ -151,14 +151,6 @@ jobs:
           file: target/${{ matrix.rust_target }}/release/${{ env.BINARY_NAME }}
           asset_name: hive_router_${{ matrix.name }}
           tag: ${{ github.ref }}
-      - name: Upload node addons to release
-        uses: svenstaro/upload-release-action@81c65b7cd4de9b2570615ce3aad67a41de5b1a13 # v2
-        if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'node-addon/v')
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file_glob: true
-          file: lib/node-addon/*.node
-          tag: ${{ github.ref }}
 
   # NOTE: would publish from release.yaml but we need the artifacts. doing it from here is simpler
   npm-publish:
@@ -187,11 +179,21 @@ jobs:
           mv ./node_addon_linux_amd64/* .
           mv ./node_addon_macos_arm64/* .
           mv ./node_addon_macos_amd64/* .
-      - name: npm publish
+      - name: publish
         working-directory: lib/node-addon
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance
+      - name: pack
+        working-directory: lib/node-addon
+        run: npm pack
+      - name: upload pack to release
+        uses: svenstaro/upload-release-action@81c65b7cd4de9b2570615ce3aad67a41de5b1a13 # v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file_glob: true
+          file: lib/node-addon/*.tgz
+          tag: ${{ github.ref }}
 
   docker:
     runs-on: ubuntu-latest
