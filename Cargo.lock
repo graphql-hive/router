@@ -3079,7 +3079,7 @@ dependencies = [
 
 [[package]]
 name = "node-addon"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "hive-router-query-planner",
  "napi",
