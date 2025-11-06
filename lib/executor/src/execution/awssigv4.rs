@@ -1,7 +1,7 @@
 use hive_router_config::aws_sig_v4::AwsSigV4SubgraphConfig;
 use reqsign_aws_v4::{
-    AssumeRoleWithWebIdentityCredentialProvider, Credential, DefaultCredentialProvider,
-    ProfileCredentialProvider, RequestSigner, StaticCredentialProvider,
+    Credential, DefaultCredentialProvider, DefaultCredentialProviderBuilder, RequestSigner,
+    StaticCredentialProvider,
 };
 use reqsign_core::{Context, OsEnv, ProvideCredentialChain, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -14,22 +14,28 @@ pub fn create_awssigv4_signer(config: &AwsSigV4SubgraphConfig) -> Signer<Credent
         .with_env(OsEnv);
     let mut loader = ProvideCredentialChain::new();
     match config {
-        AwsSigV4SubgraphConfig::DefaultChain(default_chain) => {
+        AwsSigV4SubgraphConfig::DefaultChain(default_chain_config) => {
             loader = loader.push(DefaultCredentialProvider::new());
-            if let Some(profile_name) = &default_chain.profile_name {
-                loader = loader.push(ProfileCredentialProvider::new().with_profile(profile_name));
+            let mut default_chain_builder = DefaultCredentialProviderBuilder::new();
+            if let Some(profile_name) = &default_chain_config.profile_name {
+                default_chain_builder = default_chain_builder
+                    .configure_profile(|p| p.with_credentials_file(profile_name));
             }
-            if let Some(assume_role) = &default_chain.assume_role {
-                let mut assume_role_provider = AssumeRoleWithWebIdentityCredentialProvider::new()
-                    .with_role_arn(assume_role.role_arn.to_string());
-                if let Some(session_name) = &assume_role.session_name {
-                    assume_role_provider =
-                        assume_role_provider.with_role_session_name(session_name.to_string());
-                }
-                if let Some(region) = &default_chain.region {
-                    assume_role_provider = assume_role_provider.with_region(region.to_string());
-                }
-                loader = loader.push(assume_role_provider);
+            if let Some(assume_role_config) = &default_chain_config.assume_role {
+                default_chain_builder =
+                    default_chain_builder.configure_assume_role(|mut assume_role| {
+                        assume_role = assume_role.with_role_arn(&assume_role_config.role_arn);
+                        if let Some(session_name) = &assume_role_config.session_name {
+                            assume_role =
+                                assume_role.with_role_session_name(session_name.to_string());
+                        }
+                        if let Some(region) = &default_chain_config.region {
+                            assume_role = assume_role.with_region(region.to_string());
+                        }
+                        assume_role
+                    });
+                let default_chain = default_chain_builder.build();
+                loader = loader.push(default_chain);
             }
         }
         AwsSigV4SubgraphConfig::HardCoded(hard_coded) => {
