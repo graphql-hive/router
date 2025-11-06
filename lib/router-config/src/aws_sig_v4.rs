@@ -13,7 +13,7 @@ pub struct AwsSigV4Config {
 
     // configuration that will apply to all subgraphs
     pub all: AwsSigV4SubgraphConfig,
-    
+
     // per-subgraph configuration overrides
     #[serde(default)]
     pub subgraphs: HashMap<String, AwsSigV4SubgraphConfig>,
@@ -66,6 +66,7 @@ pub struct HardCodedConfig {
     pub secret_access_key: String,
     pub region: String,
     pub service_name: String,
+    pub session_token: Option<String>,
 }
 
 impl AwsSigV4Config {

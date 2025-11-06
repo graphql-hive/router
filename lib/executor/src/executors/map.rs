@@ -27,7 +27,7 @@ use vrl::{
 };
 
 use crate::{
-    execution::client_request_details::ClientRequestDetails,
+    execution::{awssigv4::create_awssigv4_signer, client_request_details::ClientRequestDetails},
     executors::{
         common::{
             HttpExecutionRequest, HttpExecutionResponse, SubgraphExecutor, SubgraphExecutorBoxedArc,
@@ -317,6 +317,19 @@ impl SubgraphExecutorMap {
             .or_insert_with(|| Arc::new(Semaphore::new(self.max_connections_per_host)))
             .clone();
 
+        let aws_sigv4_signer = if self.config.aws_sig_v4.is_disabled() {
+            None
+        } else {
+            let aws_sigv4_subgraph_config = self
+                .config
+                .aws_sig_v4
+                .subgraphs
+                .get(subgraph_name)
+                .unwrap_or(&self.config.aws_sig_v4.all);
+
+            Some(create_awssigv4_signer(aws_sigv4_subgraph_config))
+        };
+
         let executor = HTTPSubgraphExecutor::new(
             subgraph_name.to_string(),
             endpoint_uri,
@@ -324,7 +337,7 @@ impl SubgraphExecutorMap {
             semaphore,
             self.config.clone(),
             self.in_flight_requests.clone(),
-            None,
+            aws_sigv4_signer,
         );
 
         self.executors_by_subgraph
