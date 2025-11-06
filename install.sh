@@ -12,6 +12,7 @@ set -e
 GH_OWNER="graphql-hive"
 GH_REPO="router"
 BINARY_NAME="hive_router"
+CARGO_PKG_NAME="hive-router"
 
 info() {
     echo "\033[34m[INFO]\033[0m $1"
@@ -76,23 +77,23 @@ detect_arch() {
 
 get_version() {
     if [ -n "$1" ]; then
-        VERSION="hive-router-$1"
+        VERSION="$1"
         info "Installing specified version: $VERSION"
     else
-        info "No version specified. Fetching the latest release from GitHub..."
-        LATEST_RELEASE_URL="https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/releases/latest"
-        VERSION=$(curl -sL "$LATEST_RELEASE_URL" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        info "No version specified. Fetching the latest version from crates.io..."
+        CRATES_API_URL="https://crates.io/api/v1/crates/${CARGO_PKG_NAME}"
+        VERSION=$(curl -sL "$CRATES_API_URL" | grep -o '"max_version":"[^"]*"' | head -1 | sed 's/"max_version":"\([^"]*\)"/\1/')
 
         if [ -z "$VERSION" ]; then
-            error "Could not determine the latest version. Please check the repository details."
+            error "Could not determine the latest version from crates.io. Please check the crate name."
         fi
-        info "Latest version found: $VERSION"
+        info "Latest version found on crates.io: $VERSION"
     fi
 }
 
 download_and_install() {
     ASSET_NAME="${BINARY_NAME}_${OS}_${ARCH}"
-    DOWNLOAD_URL="https://github.com/${GH_OWNER}/${GH_REPO}/releases/download/${VERSION}/${ASSET_NAME}"
+    DOWNLOAD_URL="https://github.com/${GH_OWNER}/${GH_REPO}/releases/download/router%2Fv${VERSION}/${ASSET_NAME}"
 
     info "Downloading binary from: ${DOWNLOAD_URL}"
 
