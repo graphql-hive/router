@@ -83,5 +83,4 @@ fn default_aws_sig_v4_enabled() -> bool {
 pub struct AssumeRoleConfig {
     pub role_arn: String,
     pub session_name: Option<String>,
-    pub external_id: Option<String>,
 }

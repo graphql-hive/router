@@ -1,7 +1,7 @@
 use hive_router_config::aws_sig_v4::AwsSigV4SubgraphConfig;
 use reqsign_aws_v4::{
-    Credential, DefaultCredentialProvider, ProfileCredentialProvider, RequestSigner,
-    StaticCredentialProvider,
+    AssumeRoleWithWebIdentityCredentialProvider, Credential, DefaultCredentialProvider,
+    ProfileCredentialProvider, RequestSigner, StaticCredentialProvider,
 };
 use reqsign_core::{Context, OsEnv, ProvideCredentialChain, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -18,6 +18,18 @@ pub fn create_awssigv4_signer(config: &AwsSigV4SubgraphConfig) -> Signer<Credent
             loader = loader.push(DefaultCredentialProvider::new());
             if let Some(profile_name) = &default_chain.profile_name {
                 loader = loader.push(ProfileCredentialProvider::new().with_profile(profile_name));
+            }
+            if let Some(assume_role) = &default_chain.assume_role {
+                let mut assume_role_provider = AssumeRoleWithWebIdentityCredentialProvider::new()
+                    .with_role_arn(assume_role.role_arn.to_string());
+                if let Some(session_name) = &assume_role.session_name {
+                    assume_role_provider =
+                        assume_role_provider.with_role_session_name(session_name.to_string());
+                }
+                if let Some(region) = &default_chain.region {
+                    assume_role_provider = assume_role_provider.with_region(region.to_string());
+                }
+                loader = loader.push(assume_role_provider);
             }
         }
         AwsSigV4SubgraphConfig::HardCoded(hard_coded) => {
