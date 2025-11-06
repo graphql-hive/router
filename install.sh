@@ -82,7 +82,7 @@ get_version() {
     else
         info "No version specified. Fetching the latest version from crates.io..."
         CRATES_API_URL="https://crates.io/api/v1/crates/${CARGO_PKG_NAME}"
-        VERSION=$(curl -sL "$CRATES_API_URL" | grep -o '"max_version":"[^"]*"' | head -1 | sed 's/"max_version":"\([^"]*\)"/\1/')
+        VERSION="v$(curl -sL "$CRATES_API_URL" | grep -o '"max_version":"[^"]*"' | head -1 | sed 's/"max_version":"\([^"]*\)"/\1/')"
 
         if [ -z "$VERSION" ]; then
             error "Could not determine the latest version from crates.io. Please check the crate name."
@@ -93,7 +93,7 @@ get_version() {
 
 download_and_install() {
     ASSET_NAME="${BINARY_NAME}_${OS}_${ARCH}"
-    DOWNLOAD_URL="https://github.com/${GH_OWNER}/${GH_REPO}/releases/download/router%2Fv${VERSION}/${ASSET_NAME}"
+    DOWNLOAD_URL="https://github.com/${GH_OWNER}/${GH_REPO}/releases/download/router%2F${VERSION}/${ASSET_NAME}"
 
     info "Downloading binary from: ${DOWNLOAD_URL}"
 
