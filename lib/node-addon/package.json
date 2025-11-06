@@ -10,6 +10,14 @@
     "index.d.ts",
     "*.node"
   ],
+  "exports": {
+    ".": {
+      "import": "./index.js",
+      "require": "./index.cjs",
+      "types": "./index.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/graphql-hive/router.git",
