@@ -10,7 +10,7 @@ pub struct AwsSigV4Config {
     pub all: AwsSigV4SubgraphConfig,
 
     // per-subgraph configuration overrides
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub subgraphs: HashMap<String, AwsSigV4SubgraphConfig>,
 }
 
@@ -31,9 +31,9 @@ fn default_all_config() -> AwsSigV4SubgraphConfig {
 #[serde(untagged)]
 pub enum AwsSigV4SubgraphConfig {
     Disabled,
-    DefaultChain(DefaultChainConfig),
+    DefaultChain { default_chain: DefaultChainConfig },
     // Not recommended, prefer using default_chain as shown above
-    HardCoded(HardCodedConfig),
+    HardCoded { hardcoded: HardCodedConfig },
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -61,7 +61,12 @@ pub struct HardCodedConfig {
 
 impl AwsSigV4Config {
     pub fn is_disabled(&self) -> bool {
-        matches!(self.all, AwsSigV4SubgraphConfig::Disabled) && self.subgraphs.is_empty()
+        matches!(self.all, AwsSigV4SubgraphConfig::Disabled)
+            && (self.subgraphs.is_empty()
+                || self
+                    .subgraphs
+                    .values()
+                    .all(|cfg| matches!(cfg, AwsSigV4SubgraphConfig::Disabled)))
     }
 }
 

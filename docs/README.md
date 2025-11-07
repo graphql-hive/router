@@ -23,7 +23,6 @@
 
 ```yaml
 aws_sig_v4:
-  enabled: false
   subgraphs: {}
 cors:
   allow_any_origin: false
@@ -128,14 +127,12 @@ Configuration for AWS SigV4 signing of requests to subgraphs.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**all**|||yes|
-|**enabled**|`boolean`|Enables or disables AWS Signature Version 4 signing for requests to subgraphs.<br/>When enabled, the router will sign requests to subgraphs using AWS SigV4.<br/>Default: `false`<br/>|no|
-|[**subgraphs**](#aws_sig_v4subgraphs)|`object`|Default: `{}`<br/>|no|
+|[**subgraphs**](#aws_sig_v4subgraphs)|`object`||no|
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
-enabled: false
 subgraphs: {}
 
 ```

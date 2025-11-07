@@ -17,7 +17,9 @@ pub fn create_awssigv4_signer(config: &AwsSigV4SubgraphConfig) -> Option<Signer<
         AwsSigV4SubgraphConfig::Disabled => {
             return None;
         }
-        AwsSigV4SubgraphConfig::DefaultChain(default_chain_config) => {
+        AwsSigV4SubgraphConfig::DefaultChain {
+            default_chain: default_chain_config,
+        } => {
             loader = loader.push(DefaultCredentialProvider::new());
             let mut default_chain_builder = DefaultCredentialProviderBuilder::new();
             if let Some(profile_name) = &default_chain_config.profile_name {
@@ -40,25 +42,25 @@ pub fn create_awssigv4_signer(config: &AwsSigV4SubgraphConfig) -> Option<Signer<
                 loader = loader.push(default_chain);
             }
         }
-        AwsSigV4SubgraphConfig::HardCoded(hard_coded) => {
+        AwsSigV4SubgraphConfig::HardCoded { hardcoded } => {
             let mut provider = StaticCredentialProvider::new(
-                &hard_coded.access_key_id,
-                &hard_coded.secret_access_key,
+                &hardcoded.access_key_id,
+                &hardcoded.secret_access_key,
             );
-            if let Some(session_token) = &hard_coded.session_token {
+            if let Some(session_token) = &hardcoded.session_token {
                 provider = provider.with_session_token(session_token);
             }
             loader = loader.push(provider);
         }
     }
     let service: &str = match config {
-        AwsSigV4SubgraphConfig::DefaultChain(default_chain) => &default_chain.service,
-        AwsSigV4SubgraphConfig::HardCoded(hard_coded) => &hard_coded.service_name,
+        AwsSigV4SubgraphConfig::DefaultChain { default_chain } => &default_chain.service,
+        AwsSigV4SubgraphConfig::HardCoded { hardcoded } => &hardcoded.service_name,
         AwsSigV4SubgraphConfig::Disabled => unreachable!(),
     };
     let region: &str = match config {
-        AwsSigV4SubgraphConfig::DefaultChain(default_chain) => &default_chain.region,
-        AwsSigV4SubgraphConfig::HardCoded(hard_coded) => &hard_coded.region,
+        AwsSigV4SubgraphConfig::DefaultChain { default_chain } => &default_chain.region,
+        AwsSigV4SubgraphConfig::HardCoded { hardcoded } => &hardcoded.region,
         AwsSigV4SubgraphConfig::Disabled => unreachable!(),
     };
     let builder = RequestSigner::new(service, region);
@@ -81,13 +83,15 @@ mod tests {
         let secret_access_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
         let region = "eu-central-1";
         let service_name = "s3";
-        let config = AwsSigV4SubgraphConfig::HardCoded(HardCodedConfig {
-            access_key_id: access_key_id.to_string(),
-            secret_access_key: secret_access_key.to_string(),
-            region: region.to_string(),
-            service_name: service_name.to_string(),
-            session_token: None,
-        });
+        let config = AwsSigV4SubgraphConfig::HardCoded {
+            hardcoded: HardCodedConfig {
+                access_key_id: access_key_id.to_string(),
+                secret_access_key: secret_access_key.to_string(),
+                region: region.to_string(),
+                service_name: service_name.to_string(),
+                session_token: None,
+            },
+        };
         let signer = create_awssigv4_signer(&config).expect("Expected to return a signer");
         let body = Full::new(Bytes::from("query { hello }"));
         let content_length = body.size_hint().exact().unwrap();
