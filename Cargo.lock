@@ -2114,6 +2114,7 @@ dependencies = [
  "async-trait",
  "bumpalo",
  "bytes",
+ "chrono",
  "criterion",
  "dashmap",
  "futures",

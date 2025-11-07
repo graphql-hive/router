@@ -317,18 +317,14 @@ impl SubgraphExecutorMap {
             .or_insert_with(|| Arc::new(Semaphore::new(self.max_connections_per_host)))
             .clone();
 
-        let aws_sigv4_signer = if self.config.aws_sig_v4.is_disabled() {
-            None
-        } else {
-            let aws_sigv4_subgraph_config = self
-                .config
-                .aws_sig_v4
-                .subgraphs
-                .get(subgraph_name)
-                .unwrap_or(&self.config.aws_sig_v4.all);
+        let aws_sigv4_subgraph_config = self
+            .config
+            .aws_sig_v4
+            .subgraphs
+            .get(subgraph_name)
+            .unwrap_or(&self.config.aws_sig_v4.all);
 
-            Some(create_awssigv4_signer(aws_sigv4_subgraph_config))
-        };
+        let aws_sigv4_signer = create_awssigv4_signer(aws_sigv4_subgraph_config);
 
         let executor = HTTPSubgraphExecutor::new(
             subgraph_name.to_string(),

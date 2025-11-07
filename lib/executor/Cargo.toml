@@ -59,6 +59,7 @@ subgraphs = { path = "../../bench/subgraphs" }
 criterion = { workspace = true }
 tokio = { workspace = true }
 insta = { workspace = true }
+chrono = "0.4.42"
 
 [[bench]]
 name = "executor_benches"

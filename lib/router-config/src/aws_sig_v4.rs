@@ -6,11 +6,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AwsSigV4Config {
-    /// Enables or disables AWS Signature Version 4 signing for requests to subgraphs.
-    /// When enabled, the router will sign requests to subgraphs using AWS SigV4.
-    #[serde(default = "default_aws_sig_v4_enabled")]
-    pub enabled: bool,
-
     // configuration that will apply to all subgraphs
     pub all: AwsSigV4SubgraphConfig,
 
@@ -22,7 +17,6 @@ pub struct AwsSigV4Config {
 impl Default for AwsSigV4Config {
     fn default() -> Self {
         Self {
-            enabled: default_aws_sig_v4_enabled(),
             all: default_all_config(),
             subgraphs: HashMap::new(),
         }
@@ -30,17 +24,13 @@ impl Default for AwsSigV4Config {
 }
 
 fn default_all_config() -> AwsSigV4SubgraphConfig {
-    AwsSigV4SubgraphConfig::DefaultChain(DefaultChainConfig {
-        profile_name: None,
-        region: None,
-        service: None,
-        assume_role: None,
-    })
+    AwsSigV4SubgraphConfig::Disabled
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum AwsSigV4SubgraphConfig {
+    Disabled,
     DefaultChain(DefaultChainConfig),
     // Not recommended, prefer using default_chain as shown above
     HardCoded(HardCodedConfig),
@@ -52,10 +42,10 @@ pub struct DefaultChainConfig {
     pub profile_name: Option<String>,
 
     // https://docs.aws.amazon.com/general/latest/gr/rande.html
-    pub region: Option<String>,
+    pub region: String,
 
     // https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_aws-services-that-work-with-iam.html
-    pub service: Option<String>,
+    pub service: String,
 
     pub assume_role: Option<AssumeRoleConfig>,
 }
@@ -71,12 +61,8 @@ pub struct HardCodedConfig {
 
 impl AwsSigV4Config {
     pub fn is_disabled(&self) -> bool {
-        !self.enabled
+        matches!(self.all, AwsSigV4SubgraphConfig::Disabled) && self.subgraphs.is_empty()
     }
-}
-
-fn default_aws_sig_v4_enabled() -> bool {
-    false
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
