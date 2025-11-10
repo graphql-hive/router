@@ -77,7 +77,14 @@ impl<'de> Deserialize<'de> for ExecutionRequest {
                             if variables.is_some() {
                                 return Err(de::Error::duplicate_field("variables"));
                             }
-                            variables = Some(map.next_value()?);
+                            // Handle if variables do not exist or null
+                            if let Some(vars) =
+                                map.next_value::<Option<HashMap<String, Value>>>()?
+                            {
+                                variables = Some(vars);
+                            } else {
+                                variables = Some(HashMap::new());
+                            }
                         }
                         "extensions" => {
                             if extensions.is_some() {
