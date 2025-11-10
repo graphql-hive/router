@@ -111,10 +111,7 @@ pub fn client_header_map_to_vrl_value(headers: &ntex_http::HeaderMap) -> Value {
 
 pub fn client_url_to_vrl_value(url: &http::Uri) -> Value {
     Value::Object(BTreeMap::from([
-        (
-            "host".into(),
-            url.host().unwrap_or("unknown").into(),
-        ),
+        ("host".into(), url.host().unwrap_or("unknown").into()),
         ("path".into(), url.path().into()),
         (
             "port".into(),

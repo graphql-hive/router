@@ -3,11 +3,11 @@ mod consts;
 mod http_utils;
 mod jwt;
 mod logger;
+mod persisted_documents;
 mod pipeline;
 mod schema_state;
 mod shared_state;
 mod supergraph;
-mod persisted_documents;
 
 use std::sync::Arc;
 
@@ -20,6 +20,7 @@ use crate::{
     },
     jwt::JwtAuthRuntime,
     logger::configure_logging,
+    persisted_documents::PersistedDocumentsLoader,
     pipeline::graphql_request_handler,
 };
 
@@ -112,11 +113,23 @@ pub async fn configure_app_from_config(
         false => None,
     };
 
+    let persisted_docs = if router_config.persisted_documents.enabled {
+        Some(PersistedDocumentsLoader::try_new(
+            &router_config.persisted_documents,
+        )?)
+    } else {
+        None
+    };
+
     let router_config_arc = Arc::new(router_config);
     let schema_state =
         SchemaState::new_from_config(bg_tasks_manager, router_config_arc.clone()).await?;
     let schema_state_arc = Arc::new(schema_state);
-    let shared_state = Arc::new(RouterSharedState::new(router_config_arc, jwt_runtime)?);
+    let shared_state = Arc::new(RouterSharedState::new(
+        router_config_arc,
+        jwt_runtime,
+        persisted_docs,
+    )?);
 
     Ok((shared_state, schema_state_arc))
 }

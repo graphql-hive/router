@@ -10,11 +10,11 @@ use crate::primitives::file_path::FilePath;
 pub struct PersistedDocumentsConfig {
     #[serde(default = "default_enabled")]
     /// Whether persisted operations are enabled.
-    enabled: bool,
-    
+    pub enabled: bool,
+
     /// Whether to allow arbitrary operations that are not persisted.
     #[serde(default = "default_allow_arbitrary_operations")]
-    pub allow_arbitrary_operations: bool,
+    pub allow_arbitrary_operations: BoolOrExpression,
 
     /// The source of persisted documents.
     #[serde(default = "default_source")]
@@ -23,6 +23,23 @@ pub struct PersistedDocumentsConfig {
     /// The specification to extract persisted operations.
     #[serde(default = "default_spec")]
     pub spec: PersistedDocumentsSpec,
+}
+
+impl PersistedDocumentsConfig {
+    pub fn is_disabled(&self) -> bool {
+        !self.enabled
+    }
+}
+
+impl Default for PersistedDocumentsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_enabled(),
+            allow_arbitrary_operations: default_allow_arbitrary_operations(),
+            source: default_source(),
+            spec: default_spec(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -74,21 +91,38 @@ pub enum PersistedDocumentsSource {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
-#[serde(rename_all = "lowercase")]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub enum PersistedDocumentsSpec {
+    /// Hive's persisted documents specification.
+    /// Expects the document ID to be found in the `documentId` field of the request's extra parameters.
+    /// This is the default specification.
     Hive,
+    /// Apollo's persisted documents specification.
+    /// Expects the document ID to be found in the `extensions.persistedQuery.sha256Hash` field of the request's extra parameters.
     Apollo,
+    /// Relay's persisted documents specification.
+    /// Expects the document ID to be found in the `doc_id` field of the request's extra parameters.
     Relay,
+    /// A custom VRL expression to extract the persisted document ID from the request.
+    /// The expression should evaluate to a string representing the document ID.
     Expression(String),
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(untagged)]
+pub enum BoolOrExpression {
+    /// A static boolean value.
+    Bool(bool),
+    /// A dynamic value computed by a VRL expression.
+    Expression { expression: String },
 }
 
 fn default_enabled() -> bool {
     false
 }
 
-fn default_allow_arbitrary_operations() -> bool {
-    false
+fn default_allow_arbitrary_operations() -> BoolOrExpression {
+    BoolOrExpression::Bool(false)
 }
 
 fn default_source() -> PersistedDocumentsSource {

@@ -1,10 +1,11 @@
+use core::fmt;
 use std::collections::HashMap;
 
 use http::Method;
 use ntex::util::Bytes;
 use ntex::web::types::Query;
 use ntex::web::HttpRequest;
-use serde::{Deserialize, Deserializer};
+use serde::{de, Deserialize, Deserializer};
 use sonic_rs::Value;
 use tracing::{trace, warn};
 
@@ -22,28 +23,87 @@ struct GETQueryParams {
     pub extra_params: HashMap<String, Value>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct ExecutionRequest {
     pub query: Option<String>,
     pub operation_name: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub variables: HashMap<String, Value>,
-    // TODO: We don't use extensions yet, but we definitely will in the future.
     #[allow(dead_code)]
     pub extensions: Option<HashMap<String, Value>>,
-
-    #[serde(flatten)]
     pub extra_params: HashMap<String, Value>,
 }
 
-fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    T: Default + Deserialize<'de>,
-    D: Deserializer<'de>,
-{
-    let opt = Option::<T>::deserialize(deserializer)?;
-    Ok(opt.unwrap_or_default())
+// Workaround for https://github.com/cloudwego/sonic-rs/issues/114
+
+impl<'de> Deserialize<'de> for ExecutionRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct GraphQLErrorExtensionsVisitor;
+
+        impl<'de> de::Visitor<'de> for GraphQLErrorExtensionsVisitor {
+            type Value = ExecutionRequest;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a map for GraphQLErrorExtensions")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::MapAccess<'de>,
+            {
+                let mut query = None;
+                let mut operation_name = None;
+                let mut variables: Option<HashMap<String, Value>> = None;
+                let mut extensions: Option<HashMap<String, Value>> = None;
+                let mut extra_params = HashMap::new();
+
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "query" => {
+                            if query.is_some() {
+                                return Err(de::Error::duplicate_field("query"));
+                            }
+                            query = Some(map.next_value()?);
+                        }
+                        "operationName" => {
+                            if operation_name.is_some() {
+                                return Err(de::Error::duplicate_field("operationName"));
+                            }
+                            operation_name = Some(map.next_value()?);
+                        }
+                        "variables" => {
+                            if variables.is_some() {
+                                return Err(de::Error::duplicate_field("variables"));
+                            }
+                            variables = Some(map.next_value()?);
+                        }
+                        "extensions" => {
+                            if extensions.is_some() {
+                                return Err(de::Error::duplicate_field("extensions"));
+                            }
+                            extensions = Some(map.next_value()?);
+                        }
+                        other => {
+                            let value: Value = map.next_value()?;
+                            extra_params.insert(other.to_string(), value);
+                        }
+                    }
+                }
+
+                Ok(ExecutionRequest {
+                    query,
+                    operation_name,
+                    variables: variables.unwrap_or_default(),
+                    extensions,
+                    extra_params,
+                })
+            }
+        }
+
+        deserializer.deserialize_map(GraphQLErrorExtensionsVisitor)
+    }
 }
 
 impl TryInto<ExecutionRequest> for GETQueryParams {
@@ -135,7 +195,7 @@ pub async fn get_execution_request(
 }
 
 impl ExecutionRequest {
-    pub fn get_query_str<'a>(&'a self) -> Result<&'a str, PipelineErrorVariant> {
+    pub fn get_query_str(&self) -> Result<&str, PipelineErrorVariant> {
         match &self.query {
             Some(query_str) => Ok(query_str.as_str()),
             None => Err(PipelineErrorVariant::GetMissingQueryParam("query")),

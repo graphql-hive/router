@@ -15,10 +15,13 @@ use ntex::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{persisted_documents::PersistedDocumentsError, pipeline::{
-    header::{APPLICATION_GRAPHQL_RESPONSE_JSON_STR, RequestAccepts},
-    progressive_override::LabelEvaluationError,
-}};
+use crate::{
+    persisted_documents::PersistedDocumentsError,
+    pipeline::{
+        header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR},
+        progressive_override::LabelEvaluationError,
+    },
+};
 
 #[derive(Debug)]
 pub struct PipelineError {
@@ -53,7 +56,7 @@ pub enum PipelineErrorVariant {
     // GET Specific pipeline errors
     #[error("Failed to deserialize query parameters")]
     GetInvalidQueryParams,
-    #[error("Missing query parameter: {0}")]
+    #[error("Missing query parameter")]
     GetMissingQueryParam(&'static str),
     #[error("Cannot perform mutations over GET")]
     MutationNotAllowedOverHttpGet,
@@ -161,7 +164,7 @@ impl PipelineErrorVariant {
                 PersistedDocumentsError::KeyNotFound => StatusCode::BAD_REQUEST,
                 PersistedDocumentsError::PersistedDocumentsOnly => StatusCode::BAD_REQUEST,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
-            }
+            },
         }
     }
 }

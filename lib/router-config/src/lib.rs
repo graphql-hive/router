@@ -8,11 +8,11 @@ pub mod jwt_auth;
 pub mod log;
 pub mod override_labels;
 pub mod override_subgraph_urls;
+pub mod persisted_documents;
 pub mod primitives;
 pub mod query_planner;
 pub mod supergraph;
 pub mod traffic_shaping;
-pub mod persisted_documents;
 
 use config::{Config, File, FileFormat, FileSourceFile};
 use envconfig::Envconfig;
@@ -22,7 +22,16 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::{
-    env_overrides::{EnvVarOverrides, EnvVarOverridesError}, graphiql::GraphiQLConfig, http_server::HttpServerConfig, log::LoggingConfig, override_labels::OverrideLabelsConfig, persisted_documents::PersistedDocumentsConfig, primitives::file_path::with_start_path, query_planner::QueryPlannerConfig, supergraph::SupergraphSource, traffic_shaping::TrafficShapingConfig
+    env_overrides::{EnvVarOverrides, EnvVarOverridesError},
+    graphiql::GraphiQLConfig,
+    http_server::HttpServerConfig,
+    log::LoggingConfig,
+    override_labels::OverrideLabelsConfig,
+    persisted_documents::PersistedDocumentsConfig,
+    primitives::file_path::with_start_path,
+    query_planner::QueryPlannerConfig,
+    supergraph::SupergraphSource,
+    traffic_shaping::TrafficShapingConfig,
 };
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -87,6 +96,7 @@ pub struct HiveRouterConfig {
     pub override_labels: OverrideLabelsConfig,
 
     /// Configuration for persisted operations
+    #[serde(default, skip_serializing_if = "PersistedDocumentsConfig::is_disabled")]
     pub persisted_documents: PersistedDocumentsConfig,
 }
 

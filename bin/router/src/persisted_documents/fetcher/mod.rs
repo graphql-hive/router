@@ -1,7 +1,9 @@
-use hive_console_sdk::persisted_documents::{PersistedDocumentsManager};
-use hive_router_config::persisted_documents::{PersistedDocumentsSource};
+use hive_console_sdk::persisted_documents::PersistedDocumentsManager;
+use hive_router_config::persisted_documents::PersistedDocumentsSource;
 
-use crate::persisted_documents::{PersistedDocumentsError, fetcher::file::FilePersistedDocumentsManager};
+use crate::persisted_documents::{
+    fetcher::file::FilePersistedDocumentsManager, PersistedDocumentsError,
+};
 
 mod file;
 pub enum PersistedDocumentsFetcher {
@@ -10,9 +12,7 @@ pub enum PersistedDocumentsFetcher {
 }
 
 impl PersistedDocumentsFetcher {
-    pub fn try_new(
-        config: &PersistedDocumentsSource,
-    ) -> Result<Self, PersistedDocumentsError> {
+    pub fn try_new(config: &PersistedDocumentsSource) -> Result<Self, PersistedDocumentsError> {
         match config {
             PersistedDocumentsSource::File { path, .. } => {
                 let manager = FilePersistedDocumentsManager::try_new(path)?;
@@ -25,7 +25,7 @@ impl PersistedDocumentsFetcher {
                 request_timeout,
                 connect_timeout,
                 retry_count,
-                cache_size
+                cache_size,
             } => {
                 let manager = PersistedDocumentsManager::new(
                     key.clone(),
@@ -45,16 +45,19 @@ impl PersistedDocumentsFetcher {
         match self {
             PersistedDocumentsFetcher::File(manager) => Ok(manager.resolve_document(document_id)?),
             PersistedDocumentsFetcher::HiveConsole(manager) => {
-                Ok(manager.resolve_document(document_id).await
-                .map_err(|err| err.into())?)
+                Ok(manager.resolve_document(document_id).await?)
             }
         }
     }
 }
 
-impl Into<PersistedDocumentsError> for hive_console_sdk::persisted_documents::PersistedDocumentsError {
-    fn into(self: hive_console_sdk::persisted_documents::PersistedDocumentsError) -> PersistedDocumentsError {
-        match self {
+impl From<hive_console_sdk::persisted_documents::PersistedDocumentsError>
+    for PersistedDocumentsError
+{
+    fn from(
+        orig_err: hive_console_sdk::persisted_documents::PersistedDocumentsError,
+    ) -> PersistedDocumentsError {
+        match orig_err {
             hive_console_sdk::persisted_documents::PersistedDocumentsError::DocumentNotFound => PersistedDocumentsError::NotFound("unknown".to_string()),
             hive_console_sdk::persisted_documents::PersistedDocumentsError::FailedToFetchFromCDN(e) => PersistedDocumentsError::NetworkError(e),
             hive_console_sdk::persisted_documents::PersistedDocumentsError::PersistedDocumentRequired => PersistedDocumentsError::PersistedDocumentsOnly,

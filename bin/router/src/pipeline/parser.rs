@@ -25,10 +25,7 @@ pub async fn parse_operation_with_cache(
 ) -> Result<GraphQLParserPayload, PipelineError> {
     let query = execution_params
         .get_query_str()
-        .map_err(|err| {
-            error!("Missing query string: {}", err);
-            req.new_pipeline_error(PipelineErrorVariant::GetMissingQueryParam("query"))
-        })?;
+        .map_err(|err| req.new_pipeline_error(err))?;
     let cache_key = {
         let mut hasher = Xxh3::new();
         query.hash(&mut hasher);

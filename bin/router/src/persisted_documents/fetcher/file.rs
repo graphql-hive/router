@@ -10,11 +10,11 @@ pub struct FilePersistedDocumentsManager {
 
 impl FilePersistedDocumentsManager {
     pub fn try_new(file_path: &FilePath) -> Result<Self, PersistedDocumentsError> {
-        let content = read_to_string(&file_path.absolute)
-            .map_err(|err| PersistedDocumentsError::FileReadError(err))?;
+        let content =
+            read_to_string(&file_path.absolute).map_err(PersistedDocumentsError::FileReadError)?;
 
-        let operations: HashMap<String, String> = serde_json::from_str(&content)
-            .map_err(|err| PersistedDocumentsError::ParseError(err))?;
+        let operations: HashMap<String, String> =
+            serde_json::from_str(&content).map_err(PersistedDocumentsError::ParseError)?;
 
         Ok(Self { operations })
     }

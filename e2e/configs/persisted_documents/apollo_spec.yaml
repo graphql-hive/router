@@ -1,0 +1,10 @@
+# yaml-language-server: $schema=../../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../../supergraph.graphql
+persisted_documents:
+  enabled: true
+  source:
+    file:
+      path: ../../persisted_docs.json
+  spec: apollo

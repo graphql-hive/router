@@ -19,13 +19,14 @@ pub struct RouterSharedState {
     pub override_labels_evaluator: OverrideLabelsEvaluator,
     pub cors_runtime: Option<Cors>,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
-    pub persisted_docs: PersistedDocumentsLoader,
+    pub persisted_docs: Option<PersistedDocumentsLoader>,
 }
 
 impl RouterSharedState {
     pub fn new(
         router_config: Arc<HiveRouterConfig>,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
+        persisted_docs: Option<PersistedDocumentsLoader>,
     ) -> Result<Self, SharedStateError> {
         Ok(Self {
             validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
@@ -38,10 +39,7 @@ impl RouterSharedState {
             )
             .map_err(Box::new)?,
             jwt_auth_runtime,
-            persisted_docs: PersistedDocumentsLoader::try_new(&router_config.persisted_documents)
-                .map_err(|e| {
-                    SharedStateError::PersistedDocumentsCompile(Box::new(e))
-                })?,
+            persisted_docs,
         })
     }
 }
@@ -54,6 +52,6 @@ pub enum SharedStateError {
     CORSConfig(#[from] Box<CORSConfigError>),
     #[error("invalid override labels config: {0}")]
     OverrideLabelsCompile(#[from] Box<OverrideLabelsCompileError>),
-    #[error("failed to compile persisted documents config: {0}")]
-    PersistedDocumentsCompile(#[from] Box<PersistedDocumentsError>),
+    #[error("failed to build the persisted documents manager: {0}")]
+    PersistedDocuments(#[from] Box<PersistedDocumentsError>),
 }

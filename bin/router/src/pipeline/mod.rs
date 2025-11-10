@@ -12,6 +12,7 @@ use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
 };
+use tracing::trace;
 
 use crate::{
     jwt::context::JwtRequestContext,
@@ -115,6 +116,7 @@ pub async fn execute_pipeline(
 
     let mut execution_request = get_execution_request(req, body_bytes).await?;
 
+    trace!("building JWT request details");
     let req_extensions = req.extensions();
     let jwt_context = req_extensions.get::<JwtRequestContext>();
     let jwt_request_details = match jwt_context {
@@ -129,9 +131,16 @@ pub async fn execute_pipeline(
         None => JwtRequestDetails::Unauthenticated,
     };
 
-    shared_state.persisted_docs.handle(&mut execution_request, &req, &jwt_request_details).await.map_err(|e| {
-        req.new_pipeline_error(PipelineErrorVariant::PersistedDocumentsError(e))
-    })?;
+    if let Some(persisted_docs) = &shared_state.persisted_docs {
+        trace!("handling persisted documents");
+        persisted_docs
+            .handle(&mut execution_request, req, &jwt_request_details)
+            .await
+            .map_err(|e| {
+                req.new_pipeline_error(PipelineErrorVariant::PersistedDocumentsError(e))
+            })?;
+    }
+
     let parser_payload = parse_operation_with_cache(req, shared_state, &execution_request).await?;
     validate_operation_with_cache(req, supergraph, schema_state, shared_state, &parser_payload)
         .await?;
@@ -163,8 +172,8 @@ pub async fn execute_pipeline(
                 None => "query",
             },
             query: execution_request
-            .get_query_str()
-            .map_err(|e| req.new_pipeline_error(e))?,
+                .get_query_str()
+                .map_err(|e| req.new_pipeline_error(e))?,
         },
         jwt: &jwt_request_details,
     };
