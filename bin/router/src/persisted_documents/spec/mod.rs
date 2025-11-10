@@ -49,13 +49,9 @@ impl PersistedDocumentsSpecResolver {
                 .ok_or(PersistedDocumentsError::KeyNotFound),
             PersistedDocumentsSpecResolver::Apollo => execution_request
                 .extensions
-                .as_ref()
-                .and_then(|extensions| {
-                    extensions
-                        .get("persistedQuery")
-                        .and_then(|val| val.get("sha256Hash"))
-                        .and_then(|val| val.as_str().map(|s| s.to_string()))
-                })
+                .get("persistedQuery")
+                .and_then(|val| val.get("sha256Hash"))
+                .and_then(|val| val.as_str().map(|s| s.to_string()))
                 .ok_or(PersistedDocumentsError::KeyNotFound),
             PersistedDocumentsSpecResolver::Relay => execution_request
                 .extra_params

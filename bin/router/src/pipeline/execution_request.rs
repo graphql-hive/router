@@ -28,8 +28,7 @@ pub struct ExecutionRequest {
     pub query: Option<String>,
     pub operation_name: Option<String>,
     pub variables: HashMap<String, Value>,
-    #[allow(dead_code)]
-    pub extensions: Option<HashMap<String, Value>>,
+    pub extensions: HashMap<String, Value>,
     pub extra_params: HashMap<String, Value>,
 }
 
@@ -77,14 +76,7 @@ impl<'de> Deserialize<'de> for ExecutionRequest {
                             if variables.is_some() {
                                 return Err(de::Error::duplicate_field("variables"));
                             }
-                            // Handle if variables do not exist or null
-                            if let Some(vars) =
-                                map.next_value::<Option<HashMap<String, Value>>>()?
-                            {
-                                variables = Some(vars);
-                            } else {
-                                variables = Some(HashMap::new());
-                            }
+                            variables = map.next_value::<Option<HashMap<String, Value>>>()?;
                         }
                         "extensions" => {
                             if extensions.is_some() {
@@ -103,7 +95,7 @@ impl<'de> Deserialize<'de> for ExecutionRequest {
                     query,
                     operation_name,
                     variables: variables.unwrap_or_default(),
-                    extensions,
+                    extensions: extensions.unwrap_or_default(),
                     extra_params,
                 })
             }
@@ -129,12 +121,12 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
 
         let extensions = match self.extensions.as_deref() {
             Some(e_str) if !e_str.is_empty() => match sonic_rs::from_str(e_str) {
-                Ok(exts) => Some(exts),
+                Ok(exts) => exts,
                 Err(e) => {
                     return Err(PipelineErrorVariant::FailedToParseExtensions(e));
                 }
             },
-            _ => None,
+            _ => HashMap::new(),
         };
 
         let execution_request = ExecutionRequest {
