@@ -23,9 +23,15 @@ pub async fn parse_operation_with_cache(
     app_state: &Arc<RouterSharedState>,
     execution_params: &ExecutionRequest,
 ) -> Result<GraphQLParserPayload, PipelineError> {
+    let query = execution_params
+        .get_query_str()
+        .map_err(|err| {
+            error!("Missing query string: {}", err);
+            req.new_pipeline_error(PipelineErrorVariant::GetMissingQueryParam("query"))
+        })?;
     let cache_key = {
         let mut hasher = Xxh3::new();
-        execution_params.query.hash(&mut hasher);
+        query.hash(&mut hasher);
         hasher.finish()
     };
 
@@ -33,7 +39,7 @@ pub async fn parse_operation_with_cache(
         trace!("Found cached parsed operation for query");
         cached
     } else {
-        let parsed = safe_parse_operation(&execution_params.query).map_err(|err| {
+        let parsed = safe_parse_operation(query).map_err(|err| {
             error!("Failed to parse GraphQL operation: {}", err);
             req.new_pipeline_error(PipelineErrorVariant::FailedToParseOperation(err))
         })?;

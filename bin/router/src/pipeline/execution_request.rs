@@ -18,18 +18,23 @@ struct GETQueryParams {
     pub operation_name: Option<String>,
     pub variables: Option<String>,
     pub extensions: Option<String>,
+    #[serde(flatten)]
+    pub extra_params: HashMap<String, Value>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionRequest {
-    pub query: String,
+    pub query: Option<String>,
     pub operation_name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_null_default")]
     pub variables: HashMap<String, Value>,
     // TODO: We don't use extensions yet, but we definitely will in the future.
     #[allow(dead_code)]
     pub extensions: Option<HashMap<String, Value>>,
+
+    #[serde(flatten)]
+    pub extra_params: HashMap<String, Value>,
 }
 
 fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
@@ -45,11 +50,6 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
     type Error = PipelineErrorVariant;
 
     fn try_into(self) -> Result<ExecutionRequest, Self::Error> {
-        let query = match self.query {
-            Some(q) => q,
-            None => return Err(PipelineErrorVariant::GetMissingQueryParam("query")),
-        };
-
         let variables = match self.variables.as_deref() {
             Some(v_str) if !v_str.is_empty() => match sonic_rs::from_str(v_str) {
                 Ok(vars) => vars,
@@ -71,10 +71,11 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
         };
 
         let execution_request = ExecutionRequest {
-            query,
+            query: self.query,
             operation_name: self.operation_name,
             variables,
             extensions,
+            extra_params: self.extra_params,
         };
 
         Ok(execution_request)
@@ -131,4 +132,13 @@ pub async fn get_execution_request(
     };
 
     Ok(execution_request)
+}
+
+impl ExecutionRequest {
+    pub fn get_query_str<'a>(&'a self) -> Result<&'a str, PipelineErrorVariant> {
+        match &self.query {
+            Some(query_str) => Ok(query_str.as_str()),
+            None => Err(PipelineErrorVariant::GetMissingQueryParam("query")),
+        }
+    }
 }

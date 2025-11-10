@@ -84,10 +84,14 @@ impl EnvVarOverrides {
 
         if let Some(hive_console_cdn_endpoint) = self.hive_console_cdn_endpoint.take() {
             config = config.set_override("supergraph.source", "hive")?;
-            config = config.set_override("supergraph.endpoint", hive_console_cdn_endpoint)?;
+            config = config.set_override("supergraph.endpoint", hive_console_cdn_endpoint.clone())?;
+
+            config = config.set_override("persisted_documents.endpoint", hive_console_cdn_endpoint)?;
 
             if let Some(hive_console_cdn_key) = self.hive_console_cdn_key.take() {
-                config = config.set_override("supergraph.key", hive_console_cdn_key)?;
+                config = config.set_override("supergraph.key", hive_console_cdn_key.clone())?;
+                
+                config = config.set_override("persisted_documents.key", hive_console_cdn_key)?;
             } else {
                 return Err(EnvVarOverridesError::MissingRequiredEnvVar("HIVE_CDN_KEY"));
             }

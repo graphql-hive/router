@@ -7,6 +7,7 @@ mod pipeline;
 mod schema_state;
 mod shared_state;
 mod supergraph;
+mod persisted_documents;
 
 use std::sync::Arc;
 

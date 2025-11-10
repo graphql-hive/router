@@ -7,6 +7,7 @@ use moka::future::Cache;
 use std::sync::Arc;
 
 use crate::jwt::JwtAuthRuntime;
+use crate::persisted_documents::{PersistedDocumentsError, PersistedDocumentsLoader};
 use crate::pipeline::cors::{CORSConfigError, Cors};
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 
@@ -18,6 +19,7 @@ pub struct RouterSharedState {
     pub override_labels_evaluator: OverrideLabelsEvaluator,
     pub cors_runtime: Option<Cors>,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
+    pub persisted_docs: PersistedDocumentsLoader,
 }
 
 impl RouterSharedState {
@@ -36,6 +38,10 @@ impl RouterSharedState {
             )
             .map_err(Box::new)?,
             jwt_auth_runtime,
+            persisted_docs: PersistedDocumentsLoader::try_new(&router_config.persisted_documents)
+                .map_err(|e| {
+                    SharedStateError::PersistedDocumentsCompile(Box::new(e))
+                })?,
         })
     }
 }
@@ -48,4 +54,6 @@ pub enum SharedStateError {
     CORSConfig(#[from] Box<CORSConfigError>),
     #[error("invalid override labels config: {0}")]
     OverrideLabelsCompile(#[from] Box<OverrideLabelsCompileError>),
+    #[error("failed to compile persisted documents config: {0}")]
+    PersistedDocumentsCompile(#[from] Box<PersistedDocumentsError>),
 }
