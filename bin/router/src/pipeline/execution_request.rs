@@ -64,13 +64,13 @@ impl<'de> Deserialize<'de> for ExecutionRequest {
                             if query.is_some() {
                                 return Err(de::Error::duplicate_field("query"));
                             }
-                            query = Some(map.next_value()?);
+                            query = map.next_value::<Option<String>>()?;
                         }
                         "operationName" => {
                             if operation_name.is_some() {
                                 return Err(de::Error::duplicate_field("operationName"));
                             }
-                            operation_name = Some(map.next_value()?);
+                            operation_name = map.next_value::<Option<String>>()?;
                         }
                         "variables" => {
                             if variables.is_some() {
@@ -82,7 +82,7 @@ impl<'de> Deserialize<'de> for ExecutionRequest {
                             if extensions.is_some() {
                                 return Err(de::Error::duplicate_field("extensions"));
                             }
-                            extensions = Some(map.next_value()?);
+                            extensions = map.next_value::<Option<HashMap<String, Value>>>()?;
                         }
                         other => {
                             let value: Value = map.next_value()?;
