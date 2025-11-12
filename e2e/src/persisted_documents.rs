@@ -156,13 +156,17 @@ mod persisted_documents_e2e_tests {
             .unwrap();
         wait_for_readiness(&app.app).await;
 
-        let req = test::TestRequest::get()
-            .uri("/graphql/simple");
+        let req = test::TestRequest::get().uri("/graphql/simple");
         let resp = test::call_service(&app.app, req.to_request()).await;
 
         let status = resp.status();
         let body = test::read_body(resp).await;
-        assert!(status.is_success(), "Expected 200 OK, got {} with body {:#?}", status, body);
+        assert!(
+            status.is_success(),
+            "Expected 200 OK, got {} with body {:#?}",
+            status,
+            body
+        );
 
         let subgraph_requests = subgraphs_server
             .get_subgraph_requests_log("accounts")

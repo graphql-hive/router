@@ -136,8 +136,15 @@ pub async fn configure_app_from_config(
     Ok((shared_state, schema_state_arc))
 }
 
-pub fn configure_ntex_app(service_config: &mut web::ServiceConfig, router_config: &HiveRouterConfig) {
-    service_config.route(&router_config.http.graphql_endpoint, web::to(graphql_endpoint_handler))
+pub fn configure_ntex_app(
+    service_config: &mut web::ServiceConfig,
+    router_config: &HiveRouterConfig,
+) {
+    service_config
+        .route(
+            &router_config.http.graphql_endpoint,
+            web::to(graphql_endpoint_handler),
+        )
         .route("/health", web::to(health_check_handler))
         .route("/readiness", web::to(readiness_check_handler));
 }

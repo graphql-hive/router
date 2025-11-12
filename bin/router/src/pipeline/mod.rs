@@ -163,6 +163,7 @@ pub async fn execute_pipeline(
         method: req.method(),
         url: req.uri(),
         headers: req.headers(),
+        path_params: req.match_info(),
         operation: OperationDetails {
             name: normalize_payload.operation_for_plan.name.as_deref(),
             kind: match normalize_payload.operation_for_plan.operation_kind {

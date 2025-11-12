@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
 use bytes::Bytes;
-use http::Method;
+use http::{Method, Uri};
+use ntex::router::Path;
 use ntex_http::HeaderMap as NtexHeaderMap;
-use vrl::core::Value;
+use vrl::{core::Value, value::KeyString};
 
 use crate::utils::vrl::sonic_value_to_vrl_value;
 
@@ -16,6 +17,7 @@ pub struct OperationDetails<'exec> {
 pub struct ClientRequestDetails<'exec, 'req> {
     pub method: &'req Method,
     pub url: &'req http::Uri,
+    pub path_params: &'req Path<Uri>,
     pub headers: &'req NtexHeaderMap,
     pub operation: OperationDetails<'exec>,
     pub jwt: &'exec JwtRequestDetails<'req>,
@@ -91,6 +93,10 @@ impl From<&ClientRequestDetails<'_, '_>> for Value {
             ("headers".into(), headers_value),
             ("url".into(), url_value),
             ("operation".into(), operation_value),
+            (
+                "path_params".into(),
+                client_path_params_to_vrl_value(details.path_params),
+            ),
             ("jwt".into(), details.jwt.into()),
         ]))
     }
@@ -126,4 +132,13 @@ pub fn client_url_to_vrl_value(url: &http::Uri) -> Value {
                 .into(),
         ),
     ]))
+}
+
+pub fn client_path_params_to_vrl_value(path_params: &Path<Uri>) -> Value {
+    Value::Object(
+        path_params
+            .iter()
+            .map(|(k, v)| (k.to_string().into(), v.to_string().into()))
+            .collect::<BTreeMap<KeyString, Value>>(),
+    )
 }

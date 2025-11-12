@@ -30,6 +30,7 @@ xxhash-rust = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 dashmap = { workspace = true }
 vrl = { workspace = true }
+ntex = { workspace = true }
 
 ahash = "0.8.12"
 regex-automata = "0.4.10"

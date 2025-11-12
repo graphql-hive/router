@@ -2155,6 +2155,7 @@ dependencies = [
  "indexmap 2.12.0",
  "insta",
  "itoa",
+ "ntex",
  "ntex-http",
  "once_cell",
  "ordered-float",
