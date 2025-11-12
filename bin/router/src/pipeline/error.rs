@@ -54,8 +54,6 @@ pub enum PipelineErrorVariant {
     UnsupportedContentType,
 
     // GET Specific pipeline errors
-    #[error("Failed to deserialize query parameters")]
-    GetInvalidQueryParams,
     #[error("Missing query parameter")]
     GetMissingQueryParam(&'static str),
     #[error("Cannot perform mutations over GET")]
@@ -143,7 +141,6 @@ impl PipelineErrorVariant {
             (Self::UnsupportedHttpMethod(_), _) => StatusCode::METHOD_NOT_ALLOWED,
             (Self::InvalidHeaderValue(_), _) => StatusCode::BAD_REQUEST,
             (Self::GetUnprocessableQueryParams(_), _) => StatusCode::BAD_REQUEST,
-            (Self::GetInvalidQueryParams, _) => StatusCode::BAD_REQUEST,
             (Self::GetMissingQueryParam(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseBody(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseVariables(_), _) => StatusCode::BAD_REQUEST,

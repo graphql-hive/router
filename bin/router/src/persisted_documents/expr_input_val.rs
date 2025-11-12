@@ -3,9 +3,10 @@ use std::collections::BTreeMap;
 use hive_router_plan_executor::execution::client_request_details::{
     client_header_map_to_vrl_value, client_url_to_vrl_value, JwtRequestDetails,
 };
-use ntex::web::HttpRequest;
+use http::Uri;
+use ntex::{router::Path, web::HttpRequest};
 use sonic_rs::{JsonContainerTrait, JsonValueTrait};
-use vrl::core::Value as VrlValue;
+use vrl::{core::Value as VrlValue, value::KeyString};
 
 use crate::pipeline::execution_request::ExecutionRequest;
 
@@ -16,13 +17,15 @@ pub fn get_expression_input_val(
 ) -> VrlValue {
     let headers_value = client_header_map_to_vrl_value(req.headers());
     let url_value = client_url_to_vrl_value(req.uri());
+    let path_params_value = client_path_params_to_vrl_value(req.match_info());
     let request_obj = VrlValue::Object(BTreeMap::from([
         ("method".into(), req.method().as_str().into()),
         ("headers".into(), headers_value),
         ("url".into(), url_value),
+        ("path_params".into(), path_params_value),
         ("jwt".into(), jwt_request_details.into()),
         (
-            "params".into(),
+            "body".into(),
             execution_request_to_vrl_value(execution_request),
         ),
     ]));
@@ -83,4 +86,13 @@ fn from_sonic_value_to_vrl_value(value: &sonic_rs::Value) -> VrlValue {
             }
         }
     }
+}
+
+fn client_path_params_to_vrl_value(path_params: &Path<Uri>) -> VrlValue {
+    VrlValue::Object(
+        path_params
+            .iter()
+            .map(|(k, v)| (k.to_string().into(), v.to_string().into()))
+            .collect::<BTreeMap<KeyString, VrlValue>>(),
+    )
 }

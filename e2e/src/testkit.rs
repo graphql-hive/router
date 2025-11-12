@@ -187,7 +187,9 @@ pub async fn init_router_from_config(
         web::App::new()
             .state(shared_state.clone())
             .state(schema_state.clone())
-            .configure(configure_ntex_app),
+            .configure(|service_config| {
+                configure_ntex_app(service_config, &shared_state.router_config);
+            }),
     )
     .await;
 

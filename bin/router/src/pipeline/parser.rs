@@ -40,7 +40,7 @@ pub async fn parse_operation_with_cache(
             error!("Failed to parse GraphQL operation: {}", err);
             req.new_pipeline_error(PipelineErrorVariant::FailedToParseOperation(err))
         })?;
-        trace!("sucessfully parsed GraphQL operation");
+        trace!("sucesssfully parsed GraphQL operation");
         let parsed_arc = Arc::new(parsed);
         app_state
             .parse_cache

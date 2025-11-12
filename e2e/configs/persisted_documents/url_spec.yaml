@@ -2,10 +2,12 @@
 supergraph:
   source: file
   path: ../../supergraph.graphql
+http:
+  graphql_endpoint: /graphql/{document_id}
 persisted_documents:
   enabled: true
   source:
     file:
       path: ../../persisted_docs.json
   spec:
-    expression: .request.body.my_id
+    expression: .request.path_params.document_id

@@ -12,7 +12,7 @@ use tracing::{trace, warn};
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::header::AssertRequestJson;
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize, Debug, Default)]
 struct GETQueryParams {
     pub query: Option<String>,
     #[serde(rename = "camelCase")]
@@ -23,7 +23,7 @@ struct GETQueryParams {
     pub extra_params: HashMap<String, Value>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ExecutionRequest {
     pub query: Option<String>,
     pub operation_name: Option<String>,
@@ -150,20 +150,24 @@ pub async fn get_execution_request(
     let execution_request: ExecutionRequest = match *http_method {
         Method::GET => {
             trace!("processing GET GraphQL operation");
-            let query_params_str = req.uri().query().ok_or_else(|| {
-                req.new_pipeline_error(PipelineErrorVariant::GetInvalidQueryParams)
-            })?;
-            let query_params = Query::<GETQueryParams>::from_query(query_params_str)
-                .map_err(|e| {
-                    req.new_pipeline_error(PipelineErrorVariant::GetUnprocessableQueryParams(e))
-                })?
-                .0;
+            match req.uri().query() {
+                Some(query_params_str) => {
+                    let query_params = Query::<GETQueryParams>::from_query(query_params_str)
+                        .map_err(|e| {
+                            req.new_pipeline_error(
+                                PipelineErrorVariant::GetUnprocessableQueryParams(e),
+                            )
+                        })?
+                        .0;
 
-            trace!("parsed GET query params: {:?}", query_params);
+                    trace!("parsed GET query params: {:?}", query_params);
 
-            query_params
-                .try_into()
-                .map_err(|err| req.new_pipeline_error(err))?
+                    query_params
+                        .try_into()
+                        .map_err(|err| req.new_pipeline_error(err))?
+                }
+                None => ExecutionRequest::default(),
+            }
         }
         Method::POST => {
             trace!("Processing POST GraphQL request");

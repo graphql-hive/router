@@ -17,6 +17,10 @@ pub struct HttpServerConfig {
     /// If you are running the router inside a Docker container, please ensure that the port is exposed correctly using `-p <host_port>:<container_port>` flag.
     #[serde(default = "http_server_port_default")]
     port: u16,
+
+    #[serde(default = "graphql_endpoint_default")]
+    // The GraphQL endpoint path.
+    pub graphql_endpoint: String,
 }
 
 impl Default for HttpServerConfig {
@@ -24,6 +28,7 @@ impl Default for HttpServerConfig {
         Self {
             host: http_server_host_default(),
             port: http_server_port_default(),
+            graphql_endpoint: graphql_endpoint_default(),
         }
     }
 }
@@ -34,6 +39,10 @@ fn http_server_host_default() -> String {
 
 fn http_server_port_default() -> u16 {
     4000
+}
+
+fn graphql_endpoint_default() -> String {
+    "/graphql".to_string()
 }
 
 impl HttpServerConfig {

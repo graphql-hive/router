@@ -90,7 +90,9 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
         web::App::new()
             .state(shared_state.clone())
             .state(schema_state.clone())
-            .configure(configure_ntex_app)
+            .configure(|service_config| {
+                configure_ntex_app(service_config, &shared_state.router_config);
+            })
             .default_service(web::to(landing_page_handler))
     })
     .bind(addr)?
@@ -134,8 +136,8 @@ pub async fn configure_app_from_config(
     Ok((shared_state, schema_state_arc))
 }
 
-pub fn configure_ntex_app(cfg: &mut web::ServiceConfig) {
-    cfg.route("/graphql", web::to(graphql_endpoint_handler))
+pub fn configure_ntex_app(service_config: &mut web::ServiceConfig, router_config: &HiveRouterConfig) {
+    service_config.route(&router_config.http.graphql_endpoint, web::to(graphql_endpoint_handler))
         .route("/health", web::to(health_check_handler))
         .route("/readiness", web::to(readiness_check_handler));
 }

@@ -148,4 +148,30 @@ mod persisted_documents_e2e_tests {
             "expected 1 request to accounts subgraph"
         );
     }
+    #[ntex::test]
+    async fn should_support_url_params() {
+        let subgraphs_server = SubgraphsServer::start().await;
+        let app = init_router_from_config_file("configs/persisted_documents/url_spec.yaml")
+            .await
+            .unwrap();
+        wait_for_readiness(&app.app).await;
+
+        let req = test::TestRequest::get()
+            .uri("/graphql/simple");
+        let resp = test::call_service(&app.app, req.to_request()).await;
+
+        let status = resp.status();
+        let body = test::read_body(resp).await;
+        assert!(status.is_success(), "Expected 200 OK, got {} with body {:#?}", status, body);
+
+        let subgraph_requests = subgraphs_server
+            .get_subgraph_requests_log("accounts")
+            .await
+            .expect("expected requests sent to accounts subgraph");
+        assert_eq!(
+            subgraph_requests.len(),
+            1,
+            "expected 1 request to accounts subgraph"
+        );
+    }
 }
