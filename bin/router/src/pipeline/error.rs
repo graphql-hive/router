@@ -15,9 +15,12 @@ use ntex::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::pipeline::{
-    header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR},
-    progressive_override::LabelEvaluationError,
+use crate::{
+    persisted_documents::PersistedDocumentsError,
+    pipeline::{
+        header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR},
+        progressive_override::LabelEvaluationError,
+    },
 };
 
 #[derive(Debug)]
@@ -51,9 +54,7 @@ pub enum PipelineErrorVariant {
     UnsupportedContentType,
 
     // GET Specific pipeline errors
-    #[error("Failed to deserialize query parameters")]
-    GetInvalidQueryParams,
-    #[error("Missing query parameter: {0}")]
+    #[error("Missing query parameter")]
     GetMissingQueryParam(&'static str),
     #[error("Cannot perform mutations over GET")]
     MutationNotAllowedOverHttpGet,
@@ -89,6 +90,10 @@ pub enum PipelineErrorVariant {
     // JWT-auth plugin errors
     #[error("Failed to forward jwt: {0}")]
     JwtForwardingError(JwtForwardingError),
+
+    // Persisted Documents errors
+    #[error(transparent)]
+    PersistedDocumentsError(#[from] PersistedDocumentsError),
 }
 
 impl PipelineErrorVariant {
@@ -110,6 +115,12 @@ impl PipelineErrorVariant {
             Self::NormalizationError(NormalizationError::MultipleMatchingOperationsFound) => {
                 "OPERATION_RESOLUTION_FAILURE"
             }
+            Self::PersistedDocumentsError(err) => match err {
+                PersistedDocumentsError::NotFound(_) => "PERSISTED_QUERY_NOT_FOUND",
+                PersistedDocumentsError::KeyNotFound => "PERSISTED_QUERY_KEY_NOT_FOUND",
+                PersistedDocumentsError::PersistedDocumentsOnly => "PERSISTED_QUERY_ONLY",
+                _ => "PERSISTED_DOCUMENT_ERROR",
+            },
             _ => "BAD_REQUEST",
         }
     }
@@ -130,7 +141,6 @@ impl PipelineErrorVariant {
             (Self::UnsupportedHttpMethod(_), _) => StatusCode::METHOD_NOT_ALLOWED,
             (Self::InvalidHeaderValue(_), _) => StatusCode::BAD_REQUEST,
             (Self::GetUnprocessableQueryParams(_), _) => StatusCode::BAD_REQUEST,
-            (Self::GetInvalidQueryParams, _) => StatusCode::BAD_REQUEST,
             (Self::GetMissingQueryParam(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseBody(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseVariables(_), _) => StatusCode::BAD_REQUEST,
@@ -146,6 +156,12 @@ impl PipelineErrorVariant {
             (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
+            (Self::PersistedDocumentsError(err), _) => match err {
+                PersistedDocumentsError::NotFound(_) => StatusCode::NOT_FOUND,
+                PersistedDocumentsError::KeyNotFound => StatusCode::BAD_REQUEST,
+                PersistedDocumentsError::PersistedDocumentsOnly => StatusCode::BAD_REQUEST,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            },
         }
     }
 }

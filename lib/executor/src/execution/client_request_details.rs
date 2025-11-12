@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
 use bytes::Bytes;
-use http::Method;
+use http::{Method, Uri};
+use ntex::router::Path;
 use ntex_http::HeaderMap as NtexHeaderMap;
-use vrl::core::Value;
+use vrl::{core::Value, value::KeyString};
 
 use crate::utils::vrl::sonic_value_to_vrl_value;
 
@@ -16,6 +17,7 @@ pub struct OperationDetails<'exec> {
 pub struct ClientRequestDetails<'exec, 'req> {
     pub method: &'req Method,
     pub url: &'req http::Uri,
+    pub path_params: &'req Path<Uri>,
     pub headers: &'req NtexHeaderMap,
     pub operation: OperationDetails<'exec>,
     pub jwt: &'exec JwtRequestDetails<'req>,
@@ -31,43 +33,9 @@ pub enum JwtRequestDetails<'exec> {
     Unauthenticated,
 }
 
-impl From<&ClientRequestDetails<'_, '_>> for Value {
-    fn from(details: &ClientRequestDetails) -> Self {
-        // .request.headers
-        let headers_value = client_header_map_to_vrl_value(details.headers);
-
-        // .request.url
-        let url_value = Self::Object(BTreeMap::from([
-            (
-                "host".into(),
-                details.url.host().unwrap_or("unknown").into(),
-            ),
-            ("path".into(), details.url.path().into()),
-            (
-                "port".into(),
-                details
-                    .url
-                    .port_u16()
-                    .unwrap_or_else(|| {
-                        if details.url.scheme() == Some(&http::uri::Scheme::HTTPS) {
-                            443
-                        } else {
-                            80
-                        }
-                    })
-                    .into(),
-            ),
-        ]));
-
-        // .request.operation
-        let operation_value = Self::Object(BTreeMap::from([
-            ("name".into(), details.operation.name.into()),
-            ("type".into(), details.operation.kind.into()),
-            ("query".into(), details.operation.query.into()),
-        ]));
-
-        // .request.jwt
-        let jwt_value = match details.jwt {
+impl From<&JwtRequestDetails<'_>> for Value {
+    fn from(details: &JwtRequestDetails) -> Self {
+        match details {
             JwtRequestDetails::Authenticated {
                 token,
                 prefix,
@@ -101,19 +69,40 @@ impl From<&ClientRequestDetails<'_, '_>> for Value {
                 ("claims".into(), Value::Object(BTreeMap::new())),
                 ("scopes".into(), Value::Array(vec![])),
             ])),
-        };
+        }
+    }
+}
+
+impl From<&ClientRequestDetails<'_, '_>> for Value {
+    fn from(details: &ClientRequestDetails) -> Self {
+        // .request.headers
+        let headers_value = client_header_map_to_vrl_value(details.headers);
+
+        // .request.url
+        let url_value = client_url_to_vrl_value(details.url);
+
+        // .request.operation
+        let operation_value = Self::Object(BTreeMap::from([
+            ("name".into(), details.operation.name.into()),
+            ("type".into(), details.operation.kind.into()),
+            ("query".into(), details.operation.query.into()),
+        ]));
 
         Self::Object(BTreeMap::from([
             ("method".into(), details.method.as_str().into()),
             ("headers".into(), headers_value),
             ("url".into(), url_value),
             ("operation".into(), operation_value),
-            ("jwt".into(), jwt_value),
+            (
+                "path_params".into(),
+                client_path_params_to_vrl_value(details.path_params),
+            ),
+            ("jwt".into(), details.jwt.into()),
         ]))
     }
 }
 
-fn client_header_map_to_vrl_value(headers: &ntex_http::HeaderMap) -> Value {
+pub fn client_header_map_to_vrl_value(headers: &ntex_http::HeaderMap) -> Value {
     let mut obj = BTreeMap::new();
     for (header_name, header_value) in headers.iter() {
         if let Ok(value) = header_value.to_str() {
@@ -124,4 +113,32 @@ fn client_header_map_to_vrl_value(headers: &ntex_http::HeaderMap) -> Value {
         }
     }
     Value::Object(obj)
+}
+
+pub fn client_url_to_vrl_value(url: &http::Uri) -> Value {
+    Value::Object(BTreeMap::from([
+        ("host".into(), url.host().unwrap_or("unknown").into()),
+        ("path".into(), url.path().into()),
+        (
+            "port".into(),
+            url.port_u16()
+                .unwrap_or_else(|| {
+                    if url.scheme() == Some(&http::uri::Scheme::HTTPS) {
+                        443
+                    } else {
+                        80
+                    }
+                })
+                .into(),
+        ),
+    ]))
+}
+
+pub fn client_path_params_to_vrl_value(path_params: &Path<Uri>) -> Value {
+    Value::Object(
+        path_params
+            .iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect::<BTreeMap<KeyString, Value>>(),
+    )
 }

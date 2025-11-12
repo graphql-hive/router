@@ -3,6 +3,7 @@ mod consts;
 mod http_utils;
 mod jwt;
 mod logger;
+mod persisted_documents;
 mod pipeline;
 mod schema_state;
 mod shared_state;
@@ -19,6 +20,7 @@ use crate::{
     },
     jwt::JwtAuthRuntime,
     logger::configure_logging,
+    persisted_documents::PersistedDocumentsLoader,
     pipeline::graphql_request_handler,
 };
 
@@ -88,7 +90,9 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
         web::App::new()
             .state(shared_state.clone())
             .state(schema_state.clone())
-            .configure(configure_ntex_app)
+            .configure(|service_config| {
+                configure_ntex_app(service_config, &shared_state.router_config);
+            })
             .default_service(web::to(landing_page_handler))
     })
     .bind(addr)?
@@ -111,17 +115,36 @@ pub async fn configure_app_from_config(
         false => None,
     };
 
+    let persisted_docs = if router_config.persisted_documents.enabled {
+        Some(PersistedDocumentsLoader::try_new(
+            &router_config.persisted_documents,
+        )?)
+    } else {
+        None
+    };
+
     let router_config_arc = Arc::new(router_config);
     let schema_state =
         SchemaState::new_from_config(bg_tasks_manager, router_config_arc.clone()).await?;
     let schema_state_arc = Arc::new(schema_state);
-    let shared_state = Arc::new(RouterSharedState::new(router_config_arc, jwt_runtime)?);
+    let shared_state = Arc::new(RouterSharedState::new(
+        router_config_arc,
+        jwt_runtime,
+        persisted_docs,
+    )?);
 
     Ok((shared_state, schema_state_arc))
 }
 
-pub fn configure_ntex_app(cfg: &mut web::ServiceConfig) {
-    cfg.route("/graphql", web::to(graphql_endpoint_handler))
+pub fn configure_ntex_app(
+    service_config: &mut web::ServiceConfig,
+    router_config: &HiveRouterConfig,
+) {
+    service_config
+        .route(
+            &router_config.http.graphql_endpoint,
+            web::to(graphql_endpoint_handler),
+        )
         .route("/health", web::to(health_check_handler))
         .route("/readiness", web::to(readiness_check_handler));
 }

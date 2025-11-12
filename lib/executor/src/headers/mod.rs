@@ -21,6 +21,7 @@ mod tests {
     };
     use hive_router_config::parse_yaml_config;
     use http::{HeaderMap, HeaderName, HeaderValue};
+    use ntex::router::Path;
     use ntex_http::HeaderMap as NtexHeaderMap;
 
     fn header_name_owned(s: &str) -> HeaderName {
@@ -77,6 +78,7 @@ mod tests {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
             headers: &client_headers,
+            path_params: &Path::default(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -111,6 +113,7 @@ mod tests {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
             headers: &client_headers,
+            path_params: &Path::default(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -158,6 +161,7 @@ mod tests {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
             headers: &client_headers,
+            path_params: &Path::default(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -196,6 +200,7 @@ mod tests {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
             headers: &client_headers,
+            path_params: &Path::default(),
             operation: OperationDetails {
                 name: Some("MyQuery"),
                 query: "{ __typename }",
@@ -230,6 +235,7 @@ mod tests {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
             headers: &client_headers,
+            path_params: &Path::default(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -270,6 +276,7 @@ mod tests {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
             headers: &client_headers,
+            path_params: &Path::default(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -314,6 +321,7 @@ mod tests {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
             headers: &client_headers,
+            path_params: &Path::default(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -379,6 +387,7 @@ mod tests {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
             headers: &client_headers,
+            path_params: &Path::default(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -443,6 +452,7 @@ mod tests {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
             headers: &client_headers,
+            path_params: &Path::default(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -500,6 +510,7 @@ mod tests {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
             headers: &client_headers,
+            path_params: &Path::default(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -558,6 +569,7 @@ mod tests {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
             headers: &client_headers,
+            path_params: &Path::default(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -617,6 +629,7 @@ mod tests {
             method: &http::Method::POST,
             url: &"http://example.com".parse().unwrap(),
             headers: &client_headers,
+            path_params: &Path::default(),
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",

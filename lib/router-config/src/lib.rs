@@ -8,6 +8,7 @@ pub mod jwt_auth;
 pub mod log;
 pub mod override_labels;
 pub mod override_subgraph_urls;
+pub mod persisted_documents;
 pub mod primitives;
 pub mod query_planner;
 pub mod supergraph;
@@ -26,6 +27,7 @@ use crate::{
     http_server::HttpServerConfig,
     log::LoggingConfig,
     override_labels::OverrideLabelsConfig,
+    persisted_documents::PersistedDocumentsConfig,
     primitives::file_path::with_start_path,
     query_planner::QueryPlannerConfig,
     supergraph::SupergraphSource,
@@ -92,6 +94,10 @@ pub struct HiveRouterConfig {
     /// Configuration for overriding labels.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub override_labels: OverrideLabelsConfig,
+
+    /// Configuration for persisted operations
+    #[serde(default, skip_serializing_if = "PersistedDocumentsConfig::is_disabled")]
+    pub persisted_documents: PersistedDocumentsConfig,
 }
 
 #[derive(Debug, thiserror::Error)]

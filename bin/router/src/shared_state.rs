@@ -7,6 +7,7 @@ use moka::future::Cache;
 use std::sync::Arc;
 
 use crate::jwt::JwtAuthRuntime;
+use crate::persisted_documents::{PersistedDocumentsError, PersistedDocumentsLoader};
 use crate::pipeline::cors::{CORSConfigError, Cors};
 use crate::pipeline::progressive_override::{OverrideLabelsCompileError, OverrideLabelsEvaluator};
 
@@ -18,12 +19,14 @@ pub struct RouterSharedState {
     pub override_labels_evaluator: OverrideLabelsEvaluator,
     pub cors_runtime: Option<Cors>,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
+    pub persisted_docs: Option<PersistedDocumentsLoader>,
 }
 
 impl RouterSharedState {
     pub fn new(
         router_config: Arc<HiveRouterConfig>,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
+        persisted_docs: Option<PersistedDocumentsLoader>,
     ) -> Result<Self, SharedStateError> {
         Ok(Self {
             validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
@@ -36,6 +39,7 @@ impl RouterSharedState {
             )
             .map_err(Box::new)?,
             jwt_auth_runtime,
+            persisted_docs,
         })
     }
 }
@@ -48,4 +52,6 @@ pub enum SharedStateError {
     CORSConfig(#[from] Box<CORSConfigError>),
     #[error("invalid override labels config: {0}")]
     OverrideLabelsCompile(#[from] Box<OverrideLabelsCompileError>),
+    #[error("failed to build the persisted documents manager: {0}")]
+    PersistedDocuments(#[from] Box<PersistedDocumentsError>),
 }
