@@ -138,7 +138,7 @@ pub fn client_path_params_to_vrl_value(path_params: &Path<Uri>) -> Value {
     Value::Object(
         path_params
             .iter()
-            .map(|(k, v)| (k.to_string().into(), v.to_string().into()))
+            .map(|(k, v)| (k.into(), v.into()))
             .collect::<BTreeMap<KeyString, Value>>(),
     )
 }
