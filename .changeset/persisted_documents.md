@@ -1,6 +1,4 @@
 ---
-node-addon: patch
-query-planner: patch
 router: patch
 config: patch
 executor: patch
