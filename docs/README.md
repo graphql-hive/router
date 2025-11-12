@@ -8,7 +8,7 @@
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
 |[**graphiql**](#graphiql)|`object`|Configuration for the GraphiQL interface.<br/>Default: `{"enabled":true}`<br/>||
 |[**headers**](#headers)|`object`|Configuration for the headers.<br/>Default: `{}`<br/>||
-|[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"host":"0.0.0.0","port":4000}`<br/>||
+|[**http**](#http)|`object`|Configuration for the HTTP server/listener.<br/>Default: `{"graphql_endpoint":"/graphql","host":"0.0.0.0","port":4000}`<br/>||
 |[**jwt**](#jwt)|`object`|Configuration for JWT authentication plugin.<br/>|yes|
 |[**log**](#log)|`object`|The router logger configuration.<br/>Default: `{"filter":null,"format":"json","level":"info"}`<br/>||
 |[**override\_labels**](#override_labels)|`object`|Configuration for overriding labels.<br/>||
@@ -59,6 +59,7 @@ headers:
             named: x-tenant-id
             rename: x-acct-tenant
 http:
+  graphql_endpoint: /graphql
   host: 0.0.0.0
   port: 4000
 jwt:
@@ -1365,6 +1366,7 @@ Configuration for the HTTP server/listener.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|**graphql\_endpoint**|`string`|Default: `"/graphql"`<br/>||
 |**host**|`string`|The host address to bind the HTTP server to.<br/><br/>Can also be set via the `HOST` environment variable.<br/>Default: `"0.0.0.0"`<br/>||
 |**port**|`integer`|The port to bind the HTTP server to.<br/><br/>Can also be set via the `PORT` environment variable.<br/><br/>If you are running the router inside a Docker container, please ensure that the port is exposed correctly using `-p <host_port>:<container_port>` flag.<br/>Default: `4000`<br/>Format: `"uint16"`<br/>Minimum: `0`<br/>Maximum: `65535`<br/>||
 
@@ -1372,6 +1374,7 @@ Configuration for the HTTP server/listener.
 **Example**
 
 ```yaml
+graphql_endpoint: /graphql
 host: 0.0.0.0
 port: 4000
 
