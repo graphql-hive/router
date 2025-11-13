@@ -49,12 +49,17 @@ itoa = "1.0.15"
 ryu = "1.0.20"
 indexmap = "2.10.0"
 bumpalo = "3.19.0"
+reqsign-aws-v4 = "2.0.1"
+reqsign-core = "2.0.1"
+reqsign-file-read-tokio = "2.0.1"
+reqsign-http-send-reqwest = "2.0.1"
 
 [dev-dependencies]
 subgraphs = { path = "../../bench/subgraphs" }
 criterion = { workspace = true }
 tokio = { workspace = true }
 insta = { workspace = true }
+chrono = "0.4.42"
 
 [[bench]]
 name = "executor_benches"

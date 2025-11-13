@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
+use async_trait::async_trait;
 use dashmap::DashMap;
 use hive_router_config::HiveRouterConfig;
+use reqsign_aws_v4::Credential;
+use reqsign_core::Signer;
 use tokio::sync::OnceCell;
-
-use async_trait::async_trait;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use http::HeaderMap;
@@ -37,6 +38,7 @@ pub struct HTTPSubgraphExecutor {
     pub semaphore: Arc<Semaphore>,
     pub config: Arc<HiveRouterConfig>,
     pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    pub aws_sigv4_signer: Option<Signer<Credential>>,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -52,6 +54,7 @@ impl HTTPSubgraphExecutor {
         semaphore: Arc<Semaphore>,
         config: Arc<HiveRouterConfig>,
         in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+        aws_sigv4_signer: Option<Signer<Credential>>,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -71,6 +74,7 @@ impl HTTPSubgraphExecutor {
             semaphore,
             config,
             in_flight_requests,
+            aws_sigv4_signer,
         }
     }
 
@@ -138,7 +142,7 @@ impl HTTPSubgraphExecutor {
         body: Vec<u8>,
         headers: HeaderMap,
     ) -> Result<SharedResponse, SubgraphExecutorError> {
-        let mut req = hyper::Request::builder()
+        let mut req: http::Request<Full<Bytes>> = hyper::Request::builder()
             .method(http::Method::POST)
             .uri(&self.endpoint)
             .version(Version::HTTP_11)
@@ -150,6 +154,17 @@ impl HTTPSubgraphExecutor {
         *req.headers_mut() = headers;
 
         debug!("making http request to {}", self.endpoint.to_string());
+
+        if let Some(aws_sigv4_signer) = &self.aws_sigv4_signer {
+            let (mut parts, body) = req.into_parts();
+            aws_sigv4_signer.sign(&mut parts, None).await.map_err(|e| {
+                SubgraphExecutorError::AwsSigV4SigningFailure(
+                    self.endpoint.to_string(),
+                    e.to_string(),
+                )
+            })?;
+            req = http::Request::from_parts(parts, body);
+        }
 
         let res = self.http_client.request(req).await.map_err(|e| {
             SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
