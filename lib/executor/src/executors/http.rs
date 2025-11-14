@@ -12,8 +12,8 @@ use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
 use http::HeaderMap;
 use http::HeaderValue;
+use http_body_util::BodyExt;
 use http_body_util::Full;
-use http_body_util::{BodyExt};
 use hyper::Version;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
@@ -65,7 +65,7 @@ impl HTTPSubgraphExecutor {
         );
         header_map.insert(
             http::header::ACCEPT_ENCODING,
-            HeaderValue::from_static("gzip, deflate, br, zstd"),
+            HeaderValue::from_static(CompressionType::accept_encoding()),
         );
 
         Self {
