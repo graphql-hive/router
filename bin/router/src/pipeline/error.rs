@@ -75,6 +75,8 @@ pub enum PipelineErrorVariant {
     VariablesCoercionError(String),
     #[error("Validation errors")]
     ValidationErrors(Arc<Vec<ValidationError>>),
+    #[error("Authorization failed")]
+    AuthorizationFailed(Vec<GraphQLError>),
     #[error("Failed to execute a plan: {0}")]
     PlanExecutionError(PlanExecutionError),
     #[error("Failed to produce a plan: {0}")]
@@ -101,6 +103,7 @@ impl PipelineErrorVariant {
             Self::FailedToParseOperation(_) => "GRAPHQL_PARSE_FAILED",
             Self::ValidationErrors(_) => "GRAPHQL_VALIDATION_FAILED",
             Self::VariablesCoercionError(_) => "BAD_USER_INPUT",
+            Self::AuthorizationFailed(_) => "UNAUTHORIZED_OPERATION",
             Self::NormalizationError(NormalizationError::OperationNotFound) => {
                 "OPERATION_RESOLUTION_FAILURE"
             }
@@ -143,6 +146,7 @@ impl PipelineErrorVariant {
             (Self::MutationNotAllowedOverHttpGet, _) => StatusCode::METHOD_NOT_ALLOWED,
             (Self::ValidationErrors(_), true) => StatusCode::OK,
             (Self::ValidationErrors(_), false) => StatusCode::BAD_REQUEST,
+            (Self::AuthorizationFailed(_), _) => StatusCode::FORBIDDEN,
             (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
@@ -166,6 +170,14 @@ impl PipelineError {
             };
 
             return ResponseBuilder::new(status).json(&validation_error_result);
+        }
+
+        if let PipelineErrorVariant::AuthorizationFailed(authorization_errors) = self.error {
+            let authorization_error_result = FailedExecutionResult {
+                errors: Some(authorization_errors),
+            };
+
+            return ResponseBuilder::new(status).json(&authorization_error_result);
         }
 
         let code = self.error.graphql_error_code();

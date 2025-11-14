@@ -1,4 +1,6 @@
-use async_graphql::{EmptyMutation, EmptySubscription, Object, Schema, SimpleObject, ID};
+use async_graphql::{
+    ComplexObject, EmptyMutation, EmptySubscription, Interface, Object, Schema, SimpleObject, ID,
+};
 use lazy_static::lazy_static;
 
 lazy_static! {
@@ -42,12 +44,69 @@ lazy_static! {
     ];
 }
 
+#[derive(Interface, Clone)]
+#[allow(clippy::duplicated_attributes)] // async_graphql needs `ty` "duplicated"
+#[graphql(
+    field(name = "url", ty = "String"),
+    field(name = "handle", ty = "String")
+)]
+pub enum SocialAccount {
+    TwitterAccount(TwitterAccount),
+    GitHubAccount(GitHubAccount),
+}
+
 #[derive(SimpleObject, Clone)]
+pub struct TwitterAccount {
+    url: String,
+    handle: String,
+    followers: i32,
+}
+
+#[derive(SimpleObject, Clone)]
+pub struct GitHubAccount {
+    url: String,
+    handle: String,
+    repo_count: i32,
+}
+
+#[derive(SimpleObject, Clone)]
+#[graphql(complex)]
 pub struct User {
     id: ID,
     name: Option<String>,
     username: Option<String>,
     birthday: Option<i32>,
+}
+
+#[ComplexObject]
+impl User {
+    async fn social_accounts(&self) -> Vec<SocialAccount> {
+        vec![
+            SocialAccount::TwitterAccount(TwitterAccount {
+                url: format!(
+                    "https://twitter.com/{}",
+                    self.username.as_ref().unwrap_or(&"unknown".to_string())
+                ),
+                handle: format!(
+                    "@{}",
+                    self.username.as_ref().unwrap_or(&"unknown".to_string())
+                ),
+                followers: 1000,
+            }),
+            SocialAccount::GitHubAccount(GitHubAccount {
+                url: format!(
+                    "https://github.com/{}",
+                    self.username.as_ref().unwrap_or(&"unknown".to_string())
+                ),
+                handle: self
+                    .username
+                    .as_ref()
+                    .unwrap_or(&"unknown".to_string())
+                    .clone(),
+                repo_count: 42,
+            }),
+        ]
+    }
 }
 
 impl User {

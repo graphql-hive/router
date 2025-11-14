@@ -32,11 +32,15 @@ impl<'a> Default for ExecutionContext<'a> {
 }
 
 impl<'a> ExecutionContext<'a> {
-    pub fn new(query_plan: &QueryPlan, init_final_response: Value<'a>) -> Self {
+    pub fn new(
+        query_plan: &QueryPlan,
+        init_final_response: Value<'a>,
+        init_errors: Vec<GraphQLError>,
+    ) -> Self {
         ExecutionContext {
             response_storage: ResponsesStorage::new(),
             output_rewrites: OutputRewritesStorage::from_query_plan(query_plan),
-            errors: Vec::new(),
+            errors: init_errors,
             final_response: init_final_response,
             response_headers_aggregator: Default::default(),
         }

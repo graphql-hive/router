@@ -27,3 +27,9 @@ pub struct CorePurposesEnum {}
 impl CorePurposesEnum {
     pub const NAME: &str = "core__Purpose";
 }
+
+pub struct RequiresScopesScopeScalar {}
+
+impl RequiresScopesScopeScalar {
+    pub const NAME: &str = "requiresScopes__Scope";
+}
