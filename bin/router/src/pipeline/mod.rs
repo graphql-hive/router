@@ -69,7 +69,10 @@ pub async fn graphql_request_handler(
     }
 
     if let Some(jwt) = &shared_state.jwt_auth_runtime {
-        match jwt.validate_request(req) {
+        match jwt
+            .validate_request(req, &shared_state.jwt_claims_cache)
+            .await
+        {
             Ok(_) => (),
             Err(err) => return err.make_response(),
         }
