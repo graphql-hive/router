@@ -20,6 +20,10 @@ pub enum SubgraphExecutorError {
     RequestFailure(String, String),
     #[error("Failed to serialize variable \"{0}\": {1}")]
     VariablesSerializationFailure(String, String),
+    #[error("An unknown encoding \"{0}\" was specified in the 'Content-Encoding' header.")]
+    UnknownEncoding(String),
+    #[error("Decompression failed for encoding \"{0}\": {1}")]
+    DecompressionFailed(String, String),
 }
 
 impl From<SubgraphExecutorError> for GraphQLError {
@@ -75,7 +79,9 @@ impl SubgraphExecutorError {
             SubgraphExecutorError::RequestFailure(_, _) => "SUBGRAPH_REQUEST_FAILURE",
             SubgraphExecutorError::VariablesSerializationFailure(_, _) => {
                 "SUBGRAPH_VARIABLES_SERIALIZATION_FAILURE"
-            }
+            },
+            SubgraphExecutorError::UnknownEncoding(_) => "SUBGRAPH_UNKNOWN_ENCODING",
+            SubgraphExecutorError::DecompressionFailed(_, _) => "SUBGRAPH_DECOMPRESSION_FAILED",
         }
     }
 }
