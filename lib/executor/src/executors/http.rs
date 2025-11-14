@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::executors::common::HttpExecutionResponse;
+use crate::executors::compression::CompressionType;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
 use dashmap::DashMap;
 use hive_router_config::HiveRouterConfig;
@@ -61,6 +62,10 @@ impl HTTPSubgraphExecutor {
         header_map.insert(
             http::header::CONNECTION,
             HeaderValue::from_static("keep-alive"),
+        );
+        header_map.insert(
+            http::header::ACCEPT_ENCODING,
+            HeaderValue::from_static(CompressionType::accept_encoding()),
         );
 
         Self {
@@ -162,13 +167,24 @@ impl HTTPSubgraphExecutor {
         );
 
         let (parts, body) = res.into_parts();
-        let body = body
+        let mut body = body
             .collect()
             .await
             .map_err(|e| {
                 SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
             })?
             .to_bytes();
+
+        let content_encoding_header = parts
+            .headers
+            .get(http::header::CONTENT_ENCODING)
+            .and_then(|v| v.to_str().ok());
+
+        if let Some(content_encoding_header) = content_encoding_header {
+            let decompressor = CompressionType::from_encoding_header(content_encoding_header)?;
+
+            body = decompressor.decompress(body).await?;
+        }
 
         if body.is_empty() {
             return Err(SubgraphExecutorError::RequestFailure(
