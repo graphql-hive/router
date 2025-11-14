@@ -30,8 +30,7 @@ impl CompressionType {
                 .iter()
                 .map(|t| t.header_value().to_string())
                 .collect::<Vec<String>>()
-                .join(", ")
-                .to_string(),
+                .join(", "),
         }
     }
     pub fn from_encoding_header(encoding: &str) -> Result<CompressionType, SubgraphExecutorError> {
@@ -63,45 +62,45 @@ impl CompressionType {
                 CompressionType::Gzip => {
                     let mut decoder = GzipDecoder::new(body.as_ref());
                     let mut buf = Vec::new();
-                    let _ = decoder.read_to_end(&mut buf).await.map_err(|e| {
+                    decoder.read_to_end(&mut buf).await.map_err(|e| {
                         SubgraphExecutorError::DecompressionFailed(
                             self.header_value(),
                             e.to_string(),
                         )
-                    });
+                    })?;
                     Ok(Bytes::from(buf))
                 }
                 CompressionType::Deflate => {
                     let mut decoder = DeflateDecoder::new(body.as_ref());
                     let mut buf = Vec::new();
-                    let _ = decoder.read_to_end(&mut buf).await.map_err(|e| {
+                    decoder.read_to_end(&mut buf).await.map_err(|e| {
                         SubgraphExecutorError::DecompressionFailed(
                             self.header_value(),
                             e.to_string(),
                         )
-                    });
+                    })?;
                     Ok(Bytes::from(buf))
                 }
                 CompressionType::Brotli => {
                     let mut decoder = BrotliDecoder::new(body.as_ref());
                     let mut buf = Vec::new();
-                    let _ = decoder.read_to_end(&mut buf).await.map_err(|e| {
+                    decoder.read_to_end(&mut buf).await.map_err(|e| {
                         SubgraphExecutorError::DecompressionFailed(
                             self.header_value(),
                             e.to_string(),
                         )
-                    });
+                    })?;
                     Ok(Bytes::from(buf))
                 }
                 CompressionType::Zstd => {
                     let mut decoder = ZstdDecoder::new(body.as_ref());
                     let mut buf = Vec::new();
-                    let _ = decoder.read_to_end(&mut buf).await.map_err(|e| {
+                    decoder.read_to_end(&mut buf).await.map_err(|e| {
                         SubgraphExecutorError::DecompressionFailed(
                             self.header_value(),
                             e.to_string(),
                         )
-                    });
+                    })?;
                     Ok(Bytes::from(buf))
                 }
                 CompressionType::Multiple(types) => {
