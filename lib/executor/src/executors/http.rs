@@ -181,14 +181,9 @@ impl HTTPSubgraphExecutor {
             .and_then(|v| v.to_str().ok());
 
         if let Some(content_encoding_header) = content_encoding_header {
-            let decompressor = CompressionType::from_encoding_header(content_encoding_header)
-                .map_err(|e| {
-                    SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-                })?;
+            let decompressor = CompressionType::from_encoding_header(content_encoding_header)?;
 
-            body = decompressor.decompress(body).await.map_err(|e| {
-                SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-            })?;
+            body = decompressor.decompress(body).await?;
         }
 
         if body.is_empty() {
