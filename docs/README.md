@@ -4,6 +4,7 @@
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**aws\_sig\_v4**](#aws_sig_v4)|`object`|Configuration for AWS SigV4 signing of requests to subgraphs.<br/>|yes|
 |[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
 |[**graphiql**](#graphiql)|`object`|Configuration for the GraphiQL interface.<br/>Default: `{"enabled":true}`<br/>||
@@ -21,6 +22,8 @@
 **Example**
 
 ```yaml
+aws_sig_v4:
+  subgraphs: {}
 cors:
   allow_any_origin: false
   allow_credentials: false
@@ -112,6 +115,36 @@ traffic_shaping:
   pool_idle_timeout_seconds: 50
 
 ```
+
+<a name="aws_sig_v4"></a>
+## aws\_sig\_v4: object
+
+Configuration for AWS SigV4 signing of requests to subgraphs.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**all**|||yes|
+|[**subgraphs**](#aws_sig_v4subgraphs)|`object`||no|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+subgraphs: {}
+
+```
+
+<a name="aws_sig_v4subgraphs"></a>
+### aws\_sig\_v4\.subgraphs: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
 
 <a name="cors"></a>
 ## cors: object
