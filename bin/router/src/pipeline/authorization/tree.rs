@@ -28,9 +28,9 @@ impl PathIndex {
 
 /// Node in the path trie for tracking unauthorized field paths.
 #[derive(Debug, Default)]
-pub(super) struct PathNode<'req> {
+pub(super) struct PathNode<'op> {
     /// Mapping from field name/alias to child position in UnauthorizedPathTrie.nodes
-    child_fields: HashMap<StrByAddr<'req>, PathIndex>,
+    child_fields: HashMap<StrByAddr<'op>, PathIndex>,
     /// If true, the field corresponding to this path is unauthorized.
     is_unauthorized: bool,
 }
@@ -54,12 +54,12 @@ pub(super) struct PathNode<'req> {
 /// - 3 - "title" marked as unauthorized
 /// - 4 - "email" marked as unauthorized
 #[derive(Debug)]
-pub(super) struct UnauthorizedPathTrie<'auth> {
+pub(super) struct UnauthorizedPathTrie<'op> {
     /// The root is always at position 0.
-    nodes: Vec<PathNode<'auth>>,
+    nodes: Vec<PathNode<'op>>,
 }
 
-impl<'auth> UnauthorizedPathTrie<'auth> {
+impl<'op> UnauthorizedPathTrie<'op> {
     /// Creates a new lookup with an empty root entry.
     fn new() -> Self {
         Self {
@@ -69,9 +69,9 @@ impl<'auth> UnauthorizedPathTrie<'auth> {
 
     /// Builds trie of unauthorized paths for cheap lookups during reconstruction.
     pub(super) fn from_checks(
-        checks: &[FieldCheck<'auth>],
+        checks: &[FieldCheck<'op>],
         removal_flags: &[bool],
-    ) -> UnauthorizedPathTrie<'auth> {
+    ) -> UnauthorizedPathTrie<'op> {
         let mut unauthorized_path_trie = UnauthorizedPathTrie::new();
         let mut path_buffer = Vec::with_capacity(16);
 
@@ -101,7 +101,7 @@ impl<'auth> UnauthorizedPathTrie<'auth> {
     ///
     /// Builds the trie structure by following the path segments and creating
     /// entries as needed. The final segment is marked as unauthorized.
-    fn add_unauthorized_path(&mut self, path: &[PathSegment<'auth>]) {
+    fn add_unauthorized_path(&mut self, path: &[PathSegment<'op>]) {
         let mut current_path_position = PathIndex::root();
         for segment in path {
             let segment_key = StrByAddr(segment.as_str());
@@ -132,7 +132,7 @@ impl<'auth> UnauthorizedPathTrie<'auth> {
     pub(super) fn find_field(
         &self,
         parent_path_position: PathIndex,
-        segment: &'auth str,
+        segment: &'op str,
     ) -> Option<(PathIndex, bool)> {
         let parent_node = &self.nodes[parent_path_position.get()];
         let child_path_position = parent_node.child_fields.get(&StrByAddr(segment)).copied()?;

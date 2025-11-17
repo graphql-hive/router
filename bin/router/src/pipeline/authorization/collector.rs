@@ -9,14 +9,14 @@ use super::metadata::{AuthorizationMetadata, UserAuthContext};
 use super::AuthorizationError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PathSegment<'a> {
-    Field(&'a str),
-    TypeCondition(&'a str),
+pub enum PathSegment<'op> {
+    Field(&'op str),
+    TypeCondition(&'op str),
 }
 
-impl<'a> PathSegment<'a> {
+impl<'op> PathSegment<'op> {
     #[inline(always)]
-    pub fn as_str(&self) -> &'a str {
+    pub fn as_str(&self) -> &'op str {
         match self {
             PathSegment::Field(name) => name,
             PathSegment::TypeCondition(name) => name,
@@ -62,17 +62,17 @@ pub(super) enum FieldAuthStatus {
 /// checks[2]: FieldCheck { parent: Some(1), path_segment: "title", status: UnauthorizedNullable }
 /// ```
 #[derive(Debug)]
-pub(super) struct FieldCheck<'a> {
+pub(super) struct FieldCheck<'op> {
     pub(super) parent_check_index: Option<CheckIndex>,
-    pub(super) path_segment: PathSegment<'a>,
+    pub(super) path_segment: PathSegment<'op>,
     pub(super) status: FieldAuthStatus,
 }
 
 /// Result of collecting authorization statuses for all fields in the operation.
 #[derive(Debug)]
-pub(super) struct AuthorizationCollectionResult<'a> {
+pub(super) struct AuthorizationCollectionResult<'op> {
     pub(super) has_non_null_unauthorized: bool,
-    pub(super) checks: Vec<FieldCheck<'a>>,
+    pub(super) checks: Vec<FieldCheck<'op>>,
     pub(super) errors: Vec<AuthorizationError>,
 }
 
@@ -117,31 +117,31 @@ impl CheckTree {
 }
 
 /// Context for authorization collection with cached data.
-struct AuthorizationCollector<'req, 'auth> {
-    schema_metadata: &'req SchemaMetadata,
-    variable_payload: &'req CoerceVariablesPayload,
-    auth_metadata: &'req AuthorizationMetadata,
-    user_context: &'req UserAuthContext,
-    validated_types_cache: &'auth mut HashSet<StrByAddr<'req>>,
-    errors: &'auth mut Vec<AuthorizationError>,
-    checks: &'auth mut Vec<FieldCheck<'req>>,
+struct AuthorizationCollector<'op, 'ctx> {
+    schema_metadata: &'op SchemaMetadata,
+    variable_payload: &'op CoerceVariablesPayload,
+    auth_metadata: &'op AuthorizationMetadata,
+    user_context: &'op UserAuthContext,
+    validated_types_cache: &'ctx mut HashSet<StrByAddr<'op>>,
+    errors: &'ctx mut Vec<AuthorizationError>,
+    checks: &'ctx mut Vec<FieldCheck<'op>>,
 }
 
-struct TraversalState<'req> {
-    selection_set: &'req SelectionSet,
-    parent_type_name: &'req str,
+struct TraversalState<'op> {
+    selection_set: &'op SelectionSet,
+    parent_type_name: &'op str,
     parent_check_index: Option<CheckIndex>,
 }
 
 /// Collects authorization status for all fields.
-pub(super) fn collect_authorization_statuses<'req>(
-    selection_set: &'req SelectionSet,
-    root_type_name: &'req str,
-    schema_metadata: &'req SchemaMetadata,
-    variable_payload: &'req CoerceVariablesPayload,
-    auth_metadata: &'req AuthorizationMetadata,
-    user_context: &'req UserAuthContext,
-) -> AuthorizationCollectionResult<'req> {
+pub(super) fn collect_authorization_statuses<'op>(
+    selection_set: &'op SelectionSet,
+    root_type_name: &'op str,
+    schema_metadata: &'op SchemaMetadata,
+    variable_payload: &'op CoerceVariablesPayload,
+    auth_metadata: &'op AuthorizationMetadata,
+    user_context: &'op UserAuthContext,
+) -> AuthorizationCollectionResult<'op> {
     // Check root type (Query/Mutation) authorization once
     // before iterating through all fields.
     // If the root type is unauthorized, all its fields are unauthorized.
@@ -229,11 +229,11 @@ pub(super) fn collect_authorization_statuses<'req>(
 }
 
 /// Internal traversal that populates the field checks array.
-fn collect_authorization_statuses_internal<'req, 'auth>(
-    selection_set: &'req SelectionSet,
-    parent_type_name: &'req str,
+fn collect_authorization_statuses_internal<'op, 'ctx>(
+    selection_set: &'op SelectionSet,
+    parent_type_name: &'op str,
     parent_check_index: Option<CheckIndex>,
-    context: &mut AuthorizationCollector<'req, 'auth>,
+    context: &mut AuthorizationCollector<'op, 'ctx>,
     has_non_null_unauthorized: &mut bool,
 ) {
     let mut stack = Vec::with_capacity(32);
@@ -375,13 +375,13 @@ fn collect_authorization_statuses_internal<'req, 'auth>(
 }
 
 /// Checks field authorization (parent type rule + field rule + output type rule).
-fn check_authorization_for_field<'auth>(
-    parent_type_name: &'auth str,
+fn check_authorization_for_field<'op>(
+    parent_type_name: &'op str,
     field_name: &str,
-    output_type_name: &'auth str,
+    output_type_name: &'op str,
     auth_metadata: &AuthorizationMetadata,
     user_context: &UserAuthContext,
-    validated_types_cache: &mut HashSet<StrByAddr<'auth>>,
+    validated_types_cache: &mut HashSet<StrByAddr<'op>>,
 ) -> bool {
     let output_type_key = StrByAddr(output_type_name);
     // Cache type authorization checks
@@ -396,11 +396,11 @@ fn check_authorization_for_field<'auth>(
 }
 
 /// Checks type authorization (type rule)
-fn check_authorization_for_type_condition<'auth>(
-    type_condition: &'auth str,
+fn check_authorization_for_type_condition<'op>(
+    type_condition: &'op str,
     auth_metadata: &AuthorizationMetadata,
     user_context: &UserAuthContext,
-    validated_types_cache: &mut HashSet<StrByAddr<'auth>>,
+    validated_types_cache: &mut HashSet<StrByAddr<'op>>,
 ) -> bool {
     let type_key = StrByAddr(type_condition);
 

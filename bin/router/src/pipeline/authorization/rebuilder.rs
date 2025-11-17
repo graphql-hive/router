@@ -9,9 +9,9 @@ use hive_router_query_planner::ast::{
 use crate::pipeline::authorization::tree::{PathIndex, UnauthorizedPathTrie};
 
 /// Reconstructs a GraphQL operation with unauthorized fields removed.
-pub(super) fn rebuild_authorized_operation<'auth>(
-    original_operation: &'auth OperationDefinition,
-    unauthorized_path_trie: &UnauthorizedPathTrie<'auth>,
+pub(super) fn rebuild_authorized_operation<'op>(
+    original_operation: &'op OperationDefinition,
+    unauthorized_path_trie: &UnauthorizedPathTrie<'op>,
 ) -> OperationDefinition {
     let selection_set = rebuild_authorized_selection_set(
         &original_operation.selection_set,
@@ -42,9 +42,9 @@ pub(super) fn rebuild_authorized_operation<'auth>(
 }
 
 /// Recursively filters a selection set to remove unauthorized fields.
-fn rebuild_authorized_selection_set<'req>(
-    original_selection_set: &'req SelectionSet,
-    unauthorized_path_trie: &UnauthorizedPathTrie<'req>,
+fn rebuild_authorized_selection_set<'op>(
+    original_selection_set: &'op SelectionSet,
+    unauthorized_path_trie: &UnauthorizedPathTrie<'op>,
     path_position: PathIndex,
 ) -> SelectionSet {
     if !unauthorized_path_trie.has_unauthorized_fields(path_position) {
