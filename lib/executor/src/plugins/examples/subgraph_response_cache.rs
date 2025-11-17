@@ -1,6 +1,6 @@
 use dashmap::DashMap;
 
-use crate::{executors::dedupe::SharedResponse, hooks::on_subgraph_http_request::{OnSubgraphHttpRequestPayload, OnSubgraphHttpResponsePayload}, plugin_trait::{ControlFlow, RouterPlugin}};
+use crate::{executors::dedupe::SharedResponse, hooks::on_subgraph_http_request::{OnSubgraphHttpRequestPayload, OnSubgraphHttpResponsePayload}, plugin_trait::{ EndPayload, HookResult, RouterPlugin, StartPayload}};
 
 pub struct SubgraphResponseCachePlugin {
     cache: DashMap<String, SharedResponse>,
@@ -10,7 +10,7 @@ impl RouterPlugin for SubgraphResponseCachePlugin {
     fn on_subgraph_http_request<'exec>(
             &'static self, 
             payload: OnSubgraphHttpRequestPayload<'exec>,
-        ) -> ControlFlow<'exec, OnSubgraphHttpResponsePayload<'exec>> {
+        ) -> HookResult<'exec, OnSubgraphHttpRequestPayload<'exec>, OnSubgraphHttpResponsePayload<'exec>> {
         let key = format!(
             "subgraph_response_cache:{}:{:?}",
             payload.execution_request.query, payload.execution_request.variables
@@ -19,12 +19,12 @@ impl RouterPlugin for SubgraphResponseCachePlugin {
             // Here payload.response is Option
             // So it is bypassing the actual subgraph request
             *payload.response = Some(cached_response.clone());
-            return ControlFlow::Continue;
+            return payload.cont();
         }
-        ControlFlow::OnEnd(Box::new(move |payload: OnSubgraphHttpResponsePayload| {
+        payload.on_end(move |payload: OnSubgraphHttpResponsePayload<'exec>|  {
             // Here payload.response is not Option
             self.cache.insert(key, payload.response.clone());
-            ControlFlow::Continue
-        }))
+            payload.cont()
+        })
     }
 }

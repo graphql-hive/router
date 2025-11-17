@@ -27,8 +27,7 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 use hive_router_config::{load_config, HiveRouterConfig};
 use http::header::RETRY_AFTER;
 use ntex::{
-    util::Bytes,
-    web::{self, HttpRequest},
+    util::Bytes, web::{self, HttpRequest}
 };
 use tracing::{info, warn};
 
@@ -121,7 +120,9 @@ pub async fn configure_app_from_config(
 }
 
 pub fn configure_ntex_app(cfg: &mut web::ServiceConfig) {
-    cfg.route("/graphql", web::to(graphql_endpoint_handler))
+    cfg
+        .route("/graphql", web::to(graphql_endpoint_handler))
         .route("/health", web::to(health_check_handler))
         .route("/readiness", web::to(readiness_check_handler));
 }
+

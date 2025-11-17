@@ -19,7 +19,7 @@ use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
 use tracing::debug;
 
-use crate::executors::common::HttpExecutionRequest;
+use crate::executors::common::SubgraphExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
 use crate::response::graphql_error::GraphQLError;
 use crate::utils::consts::CLOSE_BRACE;
@@ -76,7 +76,7 @@ impl HTTPSubgraphExecutor {
 
     fn build_request_body<'a>(
         &self,
-        execution_request: &HttpExecutionRequest<'a>,
+        execution_request: &SubgraphExecutionRequest<'a>,
     ) -> Result<Vec<u8>, SubgraphExecutorError> {
         let mut body = Vec::with_capacity(4096);
         body.put(FIRST_QUOTE_STR);
@@ -212,7 +212,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
     #[tracing::instrument(skip_all, fields(subgraph_name = self.subgraph_name))]
     async fn execute<'a>(
         &self,
-        execution_request: HttpExecutionRequest<'a>,
+        execution_request: SubgraphExecutionRequest<'a>,
     ) -> HttpExecutionResponse {
         let body = match self.build_request_body(&execution_request) {
             Ok(body) => body,

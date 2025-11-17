@@ -1,11 +1,17 @@
 use std::sync::Arc;
 
-use hive_router_plan_executor::execution::{
-    client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
-    plan::PlanExecutionOutput,
+use hive_router_plan_executor::{
+    execution::{
+        client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
+        plan::PlanExecutionOutput,
+    },
+    hooks::on_deserialization::{
+        OnDeserializationEndPayload, OnDeserializationStartPayload
+    },
+    plugin_trait::ControlFlowResult,
 };
 use hive_router_query_planner::{
-    state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
+    state::supergraph_state::OperationKind, utils::cancellation::CancellationToken
 };
 use http::{header::CONTENT_TYPE, HeaderValue, Method};
 use ntex::{
@@ -16,20 +22,9 @@ use ntex::{
 use crate::{
     jwt::context::JwtRequestContext,
     pipeline::{
-        coerce_variables::coerce_request_variables,
-        csrf_prevention::perform_csrf_prevention,
-        error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant},
-        execution::execute_plan,
-        execution_request::get_execution_request,
-        header::{
-            RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON,
-            APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, TEXT_HTML_CONTENT_TYPE,
-        },
-        normalize::normalize_request_with_cache,
-        parser::parse_operation_with_cache,
-        progressive_override::request_override_context,
-        query_plan::plan_operation_with_cache,
-        validation::validate_operation_with_cache,
+        coerce_variables::coerce_request_variables, csrf_prevention::perform_csrf_prevention, deserialize_graphql_params::{GetQueryStr, deserialize_graphql_params}, error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant}, execution::execute_plan, header::{
+            APPLICATION_GRAPHQL_RESPONSE_JSON, APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, RequestAccepts, TEXT_HTML_CONTENT_TYPE
+        }, normalize::normalize_request_with_cache, parser::parse_operation_with_cache, progressive_override::request_override_context, query_plan::plan_operation_with_cache, validation::validate_operation_with_cache
     },
     schema_state::{SchemaState, SupergraphData},
     shared_state::RouterSharedState,
@@ -40,7 +35,7 @@ pub mod cors;
 pub mod csrf_prevention;
 pub mod error;
 pub mod execution;
-pub mod execution_request;
+pub mod deserialize_graphql_params;
 pub mod header;
 pub mod normalize;
 pub mod parser;
@@ -104,17 +99,61 @@ pub async fn graphql_request_handler(
 
 #[inline]
 #[allow(clippy::await_holding_refcell_ref)]
-pub async fn execute_pipeline(
-    req: &mut HttpRequest,
-    body_bytes: Bytes,
+pub async fn execute_pipeline<'req>(
+    req: &'req mut HttpRequest,
+    body: Bytes,
     supergraph: &SupergraphData,
-    shared_state: &Arc<RouterSharedState>,
+    shared_state: &'req Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
-    let mut execution_request = get_execution_request(req, body_bytes).await?;
-    let parser_payload = parse_operation_with_cache(req, shared_state, &execution_request).await?;
+    /* Handle on_deserialize hook in the plugins - START */
+    let mut deserialization_end_callbacks = vec![];
+    let mut deserialization_payload: OnDeserializationStartPayload<'req> = OnDeserializationStartPayload {
+        router_http_request: req,
+        body,
+        graphql_params: None,
+    };
+    for plugin in &shared_state.plugins {
+        let result = plugin.on_deserialization(deserialization_payload);
+        deserialization_payload = result.start_payload;
+        match result.control_flow {
+            ControlFlowResult::Continue => { /* continue to next plugin */ }
+            ControlFlowResult::EndResponse(response) => {
+                return Ok(response);
+            }
+            ControlFlowResult::OnEnd(callback) => {
+                deserialization_end_callbacks.push(callback);
+            }
+        }
+    }
+    let graphql_params = deserialization_payload.graphql_params.unwrap_or_else(|| {
+        deserialize_graphql_params(req, deserialization_payload.body).expect("Failed to parse execution request")
+    });
+
+    let mut payload: OnDeserializationEndPayload<'req> = OnDeserializationEndPayload {
+        router_http_request: req,
+        graphql_params,
+    };
+    for deserialization_end_callback in deserialization_end_callbacks {
+        let result = deserialization_end_callback(payload);
+        payload = result.start_payload;
+        match result.control_flow {
+            ControlFlowResult::Continue => { /* continue to next plugin */ }
+            ControlFlowResult::EndResponse(response) => {
+                return Ok(response);
+            },
+            ControlFlowResult::OnEnd(_) => {
+                // on_end callbacks should not return OnEnd again
+                unreachable!("on_end callback returned OnEnd again");
+            }
+        }
+    }
+    let mut graphql_params = payload.graphql_params;
+    /* Handle on_deserialize hook in the plugins - END */
+
+    let parser_payload = parse_operation_with_cache(req, shared_state, &graphql_params).await?;
     validate_operation_with_cache(req, supergraph, schema_state, shared_state, &parser_payload)
         .await?;
 
@@ -122,12 +161,13 @@ pub async fn execute_pipeline(
         req,
         supergraph,
         schema_state,
-        &execution_request,
+        &graphql_params,
         &parser_payload,
     )
     .await?;
+    
     let variable_payload =
-        coerce_request_variables(req, supergraph, &mut execution_request, &normalize_payload)?;
+        coerce_request_variables(req, supergraph, &mut graphql_params, &normalize_payload)?;
 
     let query_plan_cancellation_token =
         CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
@@ -158,7 +198,7 @@ pub async fn execute_pipeline(
                 Some(OperationKind::Subscription) => "subscription",
                 None => "query",
             },
-            query: &execution_request.query,
+            query: graphql_params.get_query().map_err(|err| req.new_pipeline_error(err))?,
         },
         jwt: &jwt_request_details,
     };

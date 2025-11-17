@@ -30,7 +30,7 @@ use crate::{
     execution::client_request_details::ClientRequestDetails,
     executors::{
         common::{
-            HttpExecutionRequest, HttpExecutionResponse, SubgraphExecutor, SubgraphExecutorBoxedArc,
+            SubgraphExecutionRequest, HttpExecutionResponse, SubgraphExecutor, SubgraphExecutorBoxedArc,
         },
         dedupe::{ABuildHasher, SharedResponse},
         error::SubgraphExecutorError,
@@ -118,7 +118,7 @@ impl SubgraphExecutorMap {
     pub async fn execute<'a, 'req>(
         &self,
         subgraph_name: &str,
-        execution_request: HttpExecutionRequest<'a>,
+        execution_request: SubgraphExecutionRequest<'a>,
         client_request: &ClientRequestDetails<'a, 'req>,
     ) -> HttpExecutionResponse {
         match self.get_or_create_executor(subgraph_name, client_request) {

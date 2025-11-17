@@ -1,11 +1,9 @@
 use dashmap::DashMap;
-use ntex::web::HttpResponse;
+use http::HeaderMap;
 use redis::Commands;
 
 use crate::{
-    hooks::{on_execute::OnExecutePayload, on_schema_reload::OnSchemaReloadPayload}, plugins::plugin_trait::{
-        ControlFlow, RouterPlugin
-    }, utils::consts::TYPENAME_FIELD_NAME
+    execution::plan::PlanExecutionOutput, hooks::{on_execute::{OnExecuteEndPayload, OnExecuteStartPayload}, on_schema_reload::OnSchemaReloadPayload}, plugin_trait::{EndPayload, HookResult, StartPayload}, plugins::plugin_trait::RouterPlugin, utils::consts::TYPENAME_FIELD_NAME
 };
 
 pub struct ResponseCachePlugin {
@@ -25,9 +23,9 @@ impl ResponseCachePlugin {
 
 impl RouterPlugin for ResponseCachePlugin {
     fn on_execute<'exec>(
-        &self,
-        payload: OnExecutePayload<'exec>,
-    ) -> ControlFlow<'exec, OnExecutePayload<'exec>> {
+        &'exec self,
+        payload: OnExecuteStartPayload<'exec>,
+    ) -> HookResult<'exec, OnExecuteStartPayload<'exec>, OnExecuteEndPayload<'exec>> {
         let key = format!(
             "response_cache:{}:{:?}",
             payload.query_plan, payload.variable_values
@@ -35,16 +33,18 @@ impl RouterPlugin for ResponseCachePlugin {
         if let Ok(mut conn) = self.redis_client.get_connection() {
             let cached_response: Option<Vec<u8>> = conn.get(&key).ok();
             if let Some(cached_response) = cached_response {
-                return ControlFlow::Break(
-                    HttpResponse::Ok()
-                        .header("Content-Type", "application/json")
-                        .body(cached_response),
+                return payload.end_response(
+                    
+                    PlanExecutionOutput {
+                        body: cached_response,
+                        headers: HeaderMap::new(),
+                    }
                 );
             }
-            ControlFlow::OnEnd(Box::new(move |payload: OnExecutePayload| {
+            return payload.on_end(move |payload: OnExecuteEndPayload<'exec>| {
                 // Do not cache if there are errors
                 if !payload.errors.is_empty() {
-                    return ControlFlow::Continue;
+                    return payload.cont();
                 }
 
                 if let Ok(serialized) = sonic_rs::to_vec(&payload.data) {
@@ -78,10 +78,10 @@ impl RouterPlugin for ResponseCachePlugin {
                     // Set the cache with the decided ttl
                     let _: () = conn.set_ex(key, serialized, max_ttl).unwrap_or(());
                 }
-                ControlFlow::Continue
-            }));
+                payload.cont()
+            });
         }
-        ControlFlow::Continue
+        payload.cont()
     }
     fn on_schema_reload(&self, payload: OnSchemaReloadPayload) {
         // Visit the schema and update ttl_per_type based on some directive

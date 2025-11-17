@@ -9,7 +9,7 @@ use sonic_rs::Value;
 pub trait SubgraphExecutor {
     async fn execute<'a>(
         &self,
-        execution_request: HttpExecutionRequest<'a>,
+        execution_request: SubgraphExecutionRequest<'a>,
     ) -> HttpExecutionResponse;
 
     fn to_boxed_arc<'a>(self) -> Arc<Box<dyn SubgraphExecutor + Send + Sync + 'a>>
@@ -26,7 +26,7 @@ pub type SubgraphExecutorBoxedArc = Arc<Box<SubgraphExecutorType>>;
 
 pub type SubgraphRequestExtensions = HashMap<String, Value>;
 
-pub struct HttpExecutionRequest<'a> {
+pub struct SubgraphExecutionRequest<'a> {
     pub query: &'a str,
     pub dedupe: bool,
     pub operation_name: Option<&'a str>,
@@ -37,7 +37,7 @@ pub struct HttpExecutionRequest<'a> {
     pub extensions: Option<SubgraphRequestExtensions>,
 }
 
-impl HttpExecutionRequest<'_> {
+impl SubgraphExecutionRequest<'_> {
     pub fn add_request_extensions_field(&mut self, key: String, value: Value) {
         self.extensions
             .get_or_insert_with(HashMap::new)
