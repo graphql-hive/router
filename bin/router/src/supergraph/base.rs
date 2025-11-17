@@ -9,6 +9,8 @@ pub enum LoadSupergraphError {
     NetworkError(#[from] reqwest_middleware::Error),
     #[error("Failed to read supergraph from network: {0}")]
     NetworkResponseError(#[from] reqwest::Error),
+    #[error("{0}")]
+    OtherError(String),
 }
 
 #[derive(Debug)]
