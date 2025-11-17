@@ -3,6 +3,7 @@ use hive_console_sdk::supergraph_fetcher::{
     SupergraphFetcher, SupergraphFetcherAsyncState, SupergraphFetcherError,
 };
 use std::time::Duration;
+use tracing::{debug, error};
 
 use crate::{
     consts::ROUTER_VERSION,
@@ -38,7 +39,10 @@ impl SupergraphLoader for SupergraphHiveConsoleLoader {
         let fetcher_result = self.fetcher.fetch_supergraph().await;
         match fetcher_result {
             // If there was an error fetching the supergraph, propagate it
-            Err(err) => Err(err.into()),
+            Err(err) => {
+                error!("Error fetching supergraph from Hive Console: {}", err);
+                Err(LoadSupergraphError::from(err))
+            }
             // If the supergraph has not changed, return Unchanged
             Ok(None) => Ok(ReloadSupergraphResult::Unchanged),
             // If there is a new supergraph SDL, return it
@@ -61,6 +65,12 @@ impl SupergraphHiveConsoleLoader {
         accept_invalid_certs: bool,
         retry_count: u32,
     ) -> Result<Box<Self>, LoadSupergraphError> {
+        debug!(
+            "Creating supergraph source from Hive Console CDN: '{}' (poll interval: {}ms, request_timeout: {}ms)",
+            endpoint,
+            poll_interval.as_millis(),
+            request_timeout.as_millis()
+        );
         let fetcher = SupergraphFetcher::try_new_async(
             endpoint,
             key,
