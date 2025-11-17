@@ -1702,21 +1702,25 @@ Loads a supergraph from Hive Console CDN.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|**accept\_invalid\_certs**|`boolean`|Whether to accept invalid TLS certificates when connecting to the Hive Console CDN.<br/>Default: `false`<br/>|no|
+|[**connect\_timeout**](#option2connect_timeout)|`object`|Connect timeout for the Hive Console CDN requests.<br/>Default: `"10s"`<br/>|yes|
 |**endpoint**|`string`|The CDN endpoint from Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.<br/>|yes|
 |**key**|`string`|The CDN Access Token with from the Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_KEY` environment variable.<br/>|yes|
 |[**poll\_interval**](#option2poll_interval)|`object`|Interval at which the Hive Console should be polled for changes.<br/>Default: `"10s"`<br/>|yes|
+|[**request\_timeout**](#option2request_timeout)|`object`|Request timeout for the Hive Console CDN requests.<br/>Default: `"1m"`<br/>|yes|
 |[**retry\_policy**](#option2retry_policy)|`object`|Interval at which the Hive Console should be polled for changes.<br/>Default: `{"max_retries":10}`<br/>|yes|
 |**source**|`string`|Constant Value: `"hive"`<br/>|yes|
-|[**timeout**](#option2timeout)|`object`|Request timeout for the Hive Console CDN requests.<br/>Default: `"1m"`<br/>|yes|
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
+accept_invalid_certs: false
+connect_timeout: 10s
 poll_interval: 10s
+request_timeout: 1m
 retry_policy:
   max_retries: 10
-timeout: 1m
 
 ```
 
@@ -1742,6 +1746,26 @@ If not provided, the file will only be loaded once when the router starts.
 
 ```
 
+<a name="option2connect_timeout"></a>
+## Option 2: connect\_timeout: object
+
+Connect timeout for the Hive Console CDN requests.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**nanos**|`integer`|Format: `"uint32"`<br/>Minimum: `0`<br/>|yes|
+|**secs**|`integer`|Format: `"uint64"`<br/>Minimum: `0`<br/>|yes|
+
+**Example**
+
+```yaml
+10s
+
+```
+
 <a name="option2poll_interval"></a>
 ## Option 2: poll\_interval: object
 
@@ -1764,6 +1788,26 @@ Can also be set using the `HIVE_CDN_POLL_INTERVAL` environment variable.
 
 ```
 
+<a name="option2request_timeout"></a>
+## Option 2: request\_timeout: object
+
+Request timeout for the Hive Console CDN requests.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**nanos**|`integer`|Format: `"uint32"`<br/>Minimum: `0`<br/>|yes|
+|**secs**|`integer`|Format: `"uint64"`<br/>Minimum: `0`<br/>|yes|
+
+**Example**
+
+```yaml
+1m
+
+```
+
 <a name="option2retry_policy"></a>
 ## Option 2: retry\_policy: object
 
@@ -1782,26 +1826,6 @@ By default, an exponential backoff retry policy is used, with 10 attempts.
 
 ```yaml
 max_retries: 10
-
-```
-
-<a name="option2timeout"></a>
-## Option 2: timeout: object
-
-Request timeout for the Hive Console CDN requests.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**nanos**|`integer`|Format: `"uint32"`<br/>Minimum: `0`<br/>|yes|
-|**secs**|`integer`|Format: `"uint64"`<br/>Minimum: `0`<br/>|yes|
-
-**Example**
-
-```yaml
-1m
 
 ```
 

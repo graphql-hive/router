@@ -47,14 +47,14 @@ pub enum SupergraphSource {
         poll_interval: Duration,
         /// Request timeout for the Hive Console CDN requests.
         #[serde(
-            default = "default_hive_timeout",
+            default = "default_hive_request_timeout",
             deserialize_with = "humantime_serde::deserialize",
             serialize_with = "humantime_serde::serialize"
         )]
         request_timeout: Duration,
         /// Connect timeout for the Hive Console CDN requests.
         #[serde(
-            default = "default_hive_timeout",
+            default = "default_hive_connect_timeout",
             deserialize_with = "humantime_serde::deserialize",
             serialize_with = "humantime_serde::serialize"
         )]
@@ -74,8 +74,12 @@ fn default_accept_invalid_certs() -> bool {
     false
 }
 
-fn default_hive_timeout() -> Duration {
+fn default_hive_request_timeout() -> Duration {
     Duration::from_secs(60)
+}
+
+fn default_hive_connect_timeout() -> Duration {
+    Duration::from_secs(10)
 }
 
 fn default_hive_retry_policy() -> RetryPolicyConfig {
