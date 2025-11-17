@@ -1,7 +1,7 @@
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::utils::StrByAddr;
-use ahash::HashSet;
-use hive_router_plan_executor::introspection::schema::SchemaMetadata;
+use ahash::{HashMap, HashSet};
+use hive_router_plan_executor::introspection::schema::{FieldTypeInfo, SchemaMetadata};
 use hive_router_query_planner::ast::selection_set::{FieldSelection, InlineFragmentSelection};
 use hive_router_query_planner::ast::{selection_item::SelectionItem, selection_set::SelectionSet};
 
@@ -228,6 +228,123 @@ pub(super) fn collect_authorization_statuses<'op>(
     }
 }
 
+/// Processes a field selection and returns a new traversal state if children should be processed.
+fn process_field_selection<'op, 'ctx>(
+    field: &'op FieldSelection,
+    type_fields: Option<&'op HashMap<String, FieldTypeInfo>>,
+    parent_type_name: &'op str,
+    parent_check_index: Option<CheckIndex>,
+    parent_has_auth: bool,
+    context: &mut AuthorizationCollector<'op, 'ctx>,
+    has_non_null_unauthorized: &mut bool,
+) -> Option<TraversalState<'op>> {
+    if is_field_ignored(field, context.variable_payload) {
+        return None;
+    }
+
+    let field_info = type_fields.and_then(|f| f.get(&field.name))?;
+
+    let is_authorized = if parent_has_auth {
+        check_authorization_for_field(
+            parent_type_name,
+            &field.name,
+            &field_info.output_type_name,
+            context.auth_metadata,
+            context.user_context,
+            context.validated_types_cache,
+        )
+    } else {
+        true
+    };
+
+    let status = if is_authorized {
+        FieldAuthStatus::Authorized
+    } else if field_info.is_non_null {
+        FieldAuthStatus::UnauthorizedNonNullable
+    } else {
+        FieldAuthStatus::UnauthorizedNullable
+    };
+
+    if status == FieldAuthStatus::UnauthorizedNonNullable && !*has_non_null_unauthorized {
+        *has_non_null_unauthorized = true;
+    }
+
+    let field_alias = field.alias.as_ref().unwrap_or(&field.name);
+    let current_check_index = CheckIndex::new(context.checks.len());
+
+    context.checks.push(FieldCheck {
+        parent_check_index,
+        path_segment: PathSegment::Field(field_alias),
+        status,
+    });
+
+    // Skip traversing unauthorized field children
+    if status == FieldAuthStatus::Authorized {
+        return Some(TraversalState {
+            selection_set: &field.selections,
+            parent_type_name: &field_info.output_type_name,
+            parent_check_index: Some(current_check_index),
+        });
+    }
+
+    context.errors.push(AuthorizationError {
+        path: build_error_path(context.checks, parent_check_index, Some(field_alias)),
+    });
+    None
+}
+
+/// Processes an inline fragment selection and returns a new traversal state if children should be processed.
+fn process_inline_fragment_selection<'op, 'ctx>(
+    fragment: &'op InlineFragmentSelection,
+    _parent_type_name: &'op str,
+    parent_check_index: Option<CheckIndex>,
+    parent_has_auth: bool,
+    context: &mut AuthorizationCollector<'op, 'ctx>,
+) -> Option<TraversalState<'op>> {
+    if is_fragment_ignored(fragment, context.variable_payload) {
+        return None;
+    }
+
+    // Check if the concrete type is authorized
+    let is_type_authorized = if parent_has_auth {
+        check_authorization_for_type_condition(
+            &fragment.type_condition,
+            context.auth_metadata,
+            context.user_context,
+            context.validated_types_cache,
+        )
+    } else {
+        true
+    };
+
+    let status = if is_type_authorized {
+        FieldAuthStatus::Authorized
+    } else {
+        FieldAuthStatus::UnauthorizedNullable
+    };
+
+    let type_condition_check_index = CheckIndex::new(context.checks.len());
+    context.checks.push(FieldCheck {
+        parent_check_index,
+        path_segment: PathSegment::TypeCondition(&fragment.type_condition),
+        status,
+    });
+
+    if status == FieldAuthStatus::Authorized {
+        return Some(TraversalState {
+            selection_set: &fragment.selections,
+            parent_type_name: &fragment.type_condition,
+            parent_check_index: Some(type_condition_check_index),
+        });
+    }
+
+    context.errors.push(AuthorizationError {
+        // Create an error for the parent field.
+        path: build_error_path(context.checks, parent_check_index, None),
+    });
+    None
+}
+
 /// Internal traversal that populates the field checks array.
 fn collect_authorization_statuses_internal<'op, 'ctx>(
     selection_set: &'op SelectionSet,
@@ -257,118 +374,31 @@ fn collect_authorization_statuses_internal<'op, 'ctx>(
             .unwrap_or(true);
 
         for selection in &current_state.selection_set.items {
-            match selection {
-                SelectionItem::Field(field) => {
-                    if is_field_ignored(field, context.variable_payload) {
-                        continue;
-                    }
-                    let Some(field_info) = type_fields.and_then(|f| f.get(&field.name)) else {
-                        continue;
-                    };
-
-                    let is_authorized = if parent_has_auth {
-                        check_authorization_for_field(
-                            current_state.parent_type_name,
-                            &field.name,
-                            &field_info.output_type_name,
-                            context.auth_metadata,
-                            context.user_context,
-                            context.validated_types_cache,
-                        )
-                    } else {
-                        true
-                    };
-
-                    let status = if is_authorized {
-                        FieldAuthStatus::Authorized
-                    } else if field_info.is_non_null {
-                        FieldAuthStatus::UnauthorizedNonNullable
-                    } else {
-                        FieldAuthStatus::UnauthorizedNullable
-                    };
-
-                    if status == FieldAuthStatus::UnauthorizedNonNullable
-                        && has_non_null_unauthorized == &false
-                    {
-                        *has_non_null_unauthorized = true;
-                    }
-
-                    let field_alias = field.alias.as_ref().unwrap_or(&field.name);
-                    let current_check_index = CheckIndex::new(context.checks.len());
-
-                    context.checks.push(FieldCheck {
-                        parent_check_index: current_state.parent_check_index,
-                        path_segment: PathSegment::Field(field_alias),
-                        status,
-                    });
-
-                    // Skip traversing unauthorized field children
-                    if status == FieldAuthStatus::Authorized {
-                        stack.push(TraversalState {
-                            selection_set: &field.selections,
-                            parent_type_name: &field_info.output_type_name,
-                            parent_check_index: Some(current_check_index),
-                        });
-                    } else {
-                        context.errors.push(AuthorizationError {
-                            path: build_error_path(
-                                context.checks,
-                                current_state.parent_check_index,
-                                Some(field_alias),
-                            ),
-                        });
-                    }
-                }
-                SelectionItem::InlineFragment(fragment) => {
-                    if is_fragment_ignored(fragment, context.variable_payload) {
-                        continue;
-                    }
-
-                    // Check if the concrete type is authorized
-                    let is_type_authorized = if parent_has_auth {
-                        check_authorization_for_type_condition(
-                            &fragment.type_condition,
-                            context.auth_metadata,
-                            context.user_context,
-                            context.validated_types_cache,
-                        )
-                    } else {
-                        true
-                    };
-
-                    let status = if is_type_authorized {
-                        FieldAuthStatus::Authorized
-                    } else {
-                        FieldAuthStatus::UnauthorizedNullable
-                    };
-
-                    let type_condition_check_index = CheckIndex::new(context.checks.len());
-                    context.checks.push(FieldCheck {
-                        parent_check_index: current_state.parent_check_index,
-                        path_segment: PathSegment::TypeCondition(&fragment.type_condition),
-                        status,
-                    });
-
-                    if status == FieldAuthStatus::Authorized {
-                        stack.push(TraversalState {
-                            selection_set: &fragment.selections,
-                            parent_type_name: &fragment.type_condition,
-                            parent_check_index: Some(type_condition_check_index),
-                        });
-                    } else {
-                        context.errors.push(AuthorizationError {
-                            // Create an error for the parent field.
-                            path: build_error_path(
-                                context.checks,
-                                current_state.parent_check_index,
-                                None,
-                            ),
-                        });
-                    }
-                }
+            let next_state = match selection {
+                SelectionItem::Field(field) => process_field_selection(
+                    field,
+                    type_fields,
+                    current_state.parent_type_name,
+                    current_state.parent_check_index,
+                    parent_has_auth,
+                    context,
+                    has_non_null_unauthorized,
+                ),
+                SelectionItem::InlineFragment(fragment) => process_inline_fragment_selection(
+                    fragment,
+                    current_state.parent_type_name,
+                    current_state.parent_check_index,
+                    parent_has_auth,
+                    context,
+                ),
                 SelectionItem::FragmentSpread(_) => {
                     // Fragment spreads are inlined during normalization, so we can skip them here.
+                    None
                 }
+            };
+
+            if let Some(state) = next_state {
+                stack.push(state);
             }
         }
     }
