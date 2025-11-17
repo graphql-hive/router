@@ -265,7 +265,7 @@ fn process_field_selection<'op, 'ctx>(
         FieldAuthStatus::UnauthorizedNullable
     };
 
-    if status == FieldAuthStatus::UnauthorizedNonNullable && !*has_non_null_unauthorized {
+    if status == FieldAuthStatus::UnauthorizedNonNullable {
         *has_non_null_unauthorized = true;
     }
 
