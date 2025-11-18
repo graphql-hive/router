@@ -22,6 +22,7 @@ use crate::{
         errors::{JwtError, LookupError},
         jwks_manager::{JwksManager, JwksSourceError},
     },
+    shared_state::JwtClaimsCache,
 };
 
 pub struct JwtAuthRuntime {
@@ -265,26 +266,47 @@ impl JwtAuthRuntime {
         Ok(token_data)
     }
 
-    pub fn validate_request(&self, request: &mut HttpRequest) -> Result<(), JwtError> {
-        let valid_jwks = self.jwks.all();
+    pub async fn validate_request(
+        &self,
+        request: &mut HttpRequest,
+        cache: &JwtClaimsCache,
+    ) -> Result<(), JwtError> {
+        let (maybe_prefix, token) = match self.lookup(request) {
+            Ok((p, t)) => (p, t),
+            Err(e) => {
+                // No token found, but this is only an error if auth is required.
+                if self.config.require_authentication.is_some_and(|v| v) {
+                    return Err(JwtError::LookupFailed(e));
+                }
+                return Ok(());
+            }
+        };
 
-        match self.authenticate(&valid_jwks, request) {
-            Ok((token_payload, maybe_token_prefix, token)) => {
+        let validation_result = cache
+            .try_get_with(token.clone(), async {
+                let valid_jwks = self.jwks.all();
+                self.authenticate(&valid_jwks, request)
+                    .map(|(payload, _, _)| Arc::new(payload))
+            })
+            .await;
+
+        match validation_result {
+            Ok(token_payload) => {
                 request.extensions_mut().insert(JwtRequestContext {
                     token_payload,
                     token_raw: token,
-                    token_prefix: maybe_token_prefix,
+                    token_prefix: maybe_prefix,
                 });
+                Ok(())
             }
-            Err(e) => {
-                warn!("jwt token error: {:?}", e);
-
+            Err(err) => {
+                warn!("jwt token error: {:?}", err);
                 if self.config.require_authentication.is_some_and(|v| v) {
-                    return Err(e);
+                    Err((*err).clone())
+                } else {
+                    Ok(())
                 }
             }
         }
-
-        Ok(())
     }
 }
