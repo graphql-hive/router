@@ -117,7 +117,7 @@ pub fn apply_authorization_to_operation(
     jwt_request_details: &JwtRequestDetails<'_>,
     reject_mode: bool,
 ) -> AuthorizationDecision {
-    if auth_metadata.field_rules.is_empty() && auth_metadata.type_rules.is_empty() {
+    if auth_metadata.is_empty() {
         return AuthorizationDecision::NoChange;
     }
 

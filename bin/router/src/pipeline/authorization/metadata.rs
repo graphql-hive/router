@@ -126,6 +126,10 @@ impl AuthorizationMetadata {
         })
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.type_rules.is_empty() && self.field_rules.is_empty()
+    }
+
     /// Computes whether each type has auth rules in its subtree.
     fn compute_type_auth_metadata(
         definitions: &std::collections::HashMap<String, SupergraphDefinition>,
