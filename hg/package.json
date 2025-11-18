@@ -1,0 +1,14 @@
+{
+  "name": "hg",
+  "version": "1.0.0",
+  "main": "gateway.config.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@graphql-mesh/transport-http": "^1.0.11"
+  }
+}
