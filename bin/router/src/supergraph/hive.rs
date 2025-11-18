@@ -22,12 +22,12 @@ impl From<SupergraphFetcherError> for LoadSupergraphError {
             SupergraphFetcherError::NetworkResponseError(e) => {
                 LoadSupergraphError::NetworkResponseError(e)
             }
-            SupergraphFetcherError::Lock(e) => LoadSupergraphError::OtherError(e),
+            SupergraphFetcherError::Lock(e) => LoadSupergraphError::LockError(e),
             SupergraphFetcherError::FetcherCreationError(e) => {
-                LoadSupergraphError::OtherError(format!("Failed to create fetcher: {}", e))
+                LoadSupergraphError::InitializationError(e.to_string())
             }
             SupergraphFetcherError::InvalidKey(e) => {
-                LoadSupergraphError::OtherError(format!("Invalid CDN key: {}", e))
+                LoadSupergraphError::InvalidConfiguration(format!("Invalid CDN key: {}", e))
             }
         }
     }
