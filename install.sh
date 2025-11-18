@@ -1,3 +1,4 @@
+curl -o- https://raw.githubusercontent.com/graphql-hive/router/main/install.sh | sh -s v0.0.8
 #!/bin/sh
 set -e
 
@@ -80,14 +81,22 @@ get_version() {
         VERSION="$1"
         info "Installing specified version: $VERSION"
     else
-        info "No version specified. Fetching the latest version from crates.io..."
-        CRATES_API_URL="https://crates.io/api/v1/crates/${CARGO_PKG_NAME}"
-        VERSION="v$(curl -sL "$CRATES_API_URL" | grep -o '"max_version":"[^"]*"' | head -1 | sed 's/"max_version":"\([^"]*\)"/\1/')"
+        info "No version specified. Fetching the latest version from crates.io index..."
 
-        if [ -z "$VERSION" ]; then
-            error "Could not determine the latest version from crates.io. Please check the crate name."
+        # Uses index.crates.io which is more reliable than the rate-limited Crates API
+        # Path structure: /first_two_chars/next_two_chars/full_name
+        CRATE_FIRST_TWO=$(echo "${CARGO_PKG_NAME}" | cut -c1-2)
+        CRATE_NEXT_TWO=$(echo "${CARGO_PKG_NAME}" | cut -c3-4)
+
+        INDEX_URL="https://index.crates.io/${CRATE_FIRST_TWO}/${CRATE_NEXT_TWO}/${CARGO_PKG_NAME}"
+
+        # The index returns newline-delimited JSON; extract the version from the last line
+        VERSION="v$(curl -sL "$INDEX_URL" | tail -1 | grep -o '"vers":"[^"]*"' | sed 's/"vers":"\([^"]*\)"/\1/')"
+
+        if [ -z "$VERSION" ] || [ "$VERSION" = "v" ]; then
+            error "Could not determine the latest version from crates.io index. Please check the crate name or specify a version manually."
         fi
-        info "Latest version found on crates.io: $VERSION"
+        info "Latest version found: $VERSION"
     fi
 }
 
