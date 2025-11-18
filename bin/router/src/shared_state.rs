@@ -64,7 +64,8 @@ pub struct RouterSharedState {
     pub cors_runtime: Option<Cors>,
     /// Cache for validated JWT claims to avoid re-parsing on every request.
     /// The cache key is the raw JWT token string.
-    /// Stores the parsed claims payload for 5s.
+    /// Stores the parsed claims payload for 5s,
+    /// but no longer than `exp` date.
     pub jwt_claims_cache: JwtClaimsCache,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
 }
