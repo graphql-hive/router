@@ -1,10 +1,9 @@
 use bytes::Bytes;
-use http::{HeaderMap, Request, Uri};
+use http::{Request};
 use http_body_util::Full;
-use ntex::web::HttpRequest;
 
 use crate::{
-    executors::{common::SubgraphExecutionRequest, dedupe::SharedResponse}, plugin_trait::{EndPayload, StartPayload}}
+    executors::{dedupe::SharedResponse}, plugin_trait::{EndPayload, StartPayload}}
 ;
 
 pub struct OnSubgraphHttpRequestPayload<'exec> {

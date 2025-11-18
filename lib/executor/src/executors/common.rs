@@ -45,6 +45,7 @@ impl SubgraphExecutionRequest<'_> {
     }
 }
 
+#[derive(Clone)]
 pub struct HttpExecutionResponse {
     pub body: Bytes,
     pub headers: HeaderMap,
