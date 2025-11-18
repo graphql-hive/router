@@ -1,6 +1,6 @@
 use graphql_tools::static_graphql::query::Document;
 
-use crate::{hooks::on_deserialization::GraphQLParams, plugin_trait::{EndPayload, StartPayload}};
+use crate::{hooks::on_graphql_params::GraphQLParams, plugin_trait::{EndPayload, StartPayload}};
 
 pub struct OnGraphQLParseStartPayload<'exec> {
     pub router_http_request: &'exec ntex::web::HttpRequest,

@@ -2,7 +2,8 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use graphql_parser::query::Document;
-use hive_router_plan_executor::hooks::on_deserialization::GraphQLParams;
+use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
+use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 use hive_router_plan_executor::hooks::on_graphql_parse::{OnGraphQLParseEndPayload, OnGraphQLParseStartPayload};
 use hive_router_plan_executor::plugin_trait::ControlFlowResult;
 use hive_router_query_planner::utils::parsing::safe_parse_operation;
@@ -20,12 +21,17 @@ pub struct GraphQLParserPayload {
     pub cache_key: u64,
 }
 
+pub enum ParseResult {
+    Payload(GraphQLParserPayload),
+    Response(PlanExecutionOutput),
+}
+
 #[inline]
 pub async fn parse_operation_with_cache(
     req: &HttpRequest,
     app_state: &Arc<RouterSharedState>,
     graphql_params: &GraphQLParams,
-) -> Result<GraphQLParserPayload, PipelineError> {
+) -> Result<ParseResult, PipelineError> {
     let cache_key = {
         let mut hasher = Xxh3::new();
         graphql_params.query.hash(&mut hasher);
@@ -43,15 +49,15 @@ pub async fn parse_operation_with_cache(
             document: None,
         };
         let mut on_end_callbacks = vec![];
-        for plugin in &app_state.plugins {
+        for plugin in app_state.plugins.as_ref() {
             let result = plugin.on_graphql_parse(start_payload);
-            start_payload = result.start_payload;
+            start_payload = result.payload;
             match result.control_flow {
                 ControlFlowResult::Continue => {
                     // continue to next plugin
                 }
                 ControlFlowResult::EndResponse(response) => {
-                    todo!()
+                    return Ok(ParseResult::Response(response));
                 }
                 ControlFlowResult::OnEnd(callback) => {
                     // store the callback to be called later
@@ -80,13 +86,13 @@ pub async fn parse_operation_with_cache(
         };
         for callback in on_end_callbacks {
             let result = callback(end_payload);
-            end_payload = result.start_payload;
+            end_payload = result.payload;
             match result.control_flow {
                 ControlFlowResult::Continue => {
                     // continue to next callback
                 }
                 ControlFlowResult::EndResponse(response) => {
-                    todo!()
+                    return Ok(ParseResult::Response(response));
                 }
                 ControlFlowResult::OnEnd(_) => {
                     // on_end callbacks should not return OnEnd again
@@ -105,8 +111,10 @@ pub async fn parse_operation_with_cache(
         parsed_arc
     };
 
-    Ok(GraphQLParserPayload {
-        parsed_operation,
-        cache_key,
-    })
+    Ok(
+        ParseResult::Payload(GraphQLParserPayload {
+            parsed_operation,
+            cache_key,
+        })
+    )
 }

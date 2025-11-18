@@ -111,10 +111,10 @@ pub async fn configure_app_from_config(
     };
 
     let router_config_arc = Arc::new(router_config);
+    let shared_state = Arc::new(RouterSharedState::new(router_config_arc.clone(), jwt_runtime)?);
     let schema_state =
-        SchemaState::new_from_config(bg_tasks_manager, router_config_arc.clone()).await?;
+        SchemaState::new_from_config(bg_tasks_manager, router_config_arc.clone(), shared_state.clone()).await?;
     let schema_state_arc = Arc::new(schema_state);
-    let shared_state = Arc::new(RouterSharedState::new(router_config_arc, jwt_runtime)?);
 
     Ok((shared_state, schema_state_arc))
 }

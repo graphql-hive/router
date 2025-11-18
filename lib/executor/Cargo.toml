@@ -35,6 +35,7 @@ ahash = "0.8.12"
 regex-automata = "0.4.10"
 strum = { version = "0.27.2", features = ["derive"] }
 
+arc-swap = "1.7.1"
 ntex = { version = "2", features = ["tokio"] }
 ntex-http = "0.1.15"
 ordered-float = "4.2.0"

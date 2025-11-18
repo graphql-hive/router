@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use hive_router_plan_executor::hooks::on_deserialization::GraphQLParams;
+use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::variables::collect_variables;
 use hive_router_query_planner::state::supergraph_state::OperationKind;
 use http::Method;
@@ -11,7 +12,6 @@ use tracing::{error, trace, warn};
 
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
-use crate::schema_state::SupergraphData;
 
 #[derive(Clone, Debug)]
 pub struct CoerceVariablesPayload {

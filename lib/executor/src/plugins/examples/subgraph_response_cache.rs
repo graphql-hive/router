@@ -1,16 +1,16 @@
 use dashmap::DashMap;
 
-use crate::{executors::dedupe::SharedResponse, hooks::on_subgraph_http_request::{OnSubgraphHttpRequestPayload, OnSubgraphHttpResponsePayload}, plugin_trait::{ EndPayload, HookResult, RouterPlugin, StartPayload}};
+use crate::{executors::dedupe::SharedResponse, hooks::{on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload}, on_subgraph_http_request::{OnSubgraphHttpRequestPayload, OnSubgraphHttpResponsePayload}}, plugin_trait::{ EndPayload, HookResult, RouterPlugin, StartPayload}};
 
 pub struct SubgraphResponseCachePlugin {
     cache: DashMap<String, SharedResponse>,
 }
 
 impl RouterPlugin for SubgraphResponseCachePlugin {
-    fn on_subgraph_http_request<'exec>(
-            &'static self, 
-            payload: OnSubgraphHttpRequestPayload<'exec>,
-        ) -> HookResult<'exec, OnSubgraphHttpRequestPayload<'exec>, OnSubgraphHttpResponsePayload<'exec>> {
+    fn on_subgraph_execute<'exec>(
+            &'exec self, 
+            payload: OnSubgraphExecuteStartPayload<'exec>,
+        ) -> HookResult<'exec, OnSubgraphExecuteStartPayload<'exec>, OnSubgraphExecuteEndPayload> {
         let key = format!(
             "subgraph_response_cache:{}:{:?}",
             payload.execution_request.query, payload.execution_request.variables
@@ -21,9 +21,9 @@ impl RouterPlugin for SubgraphResponseCachePlugin {
             *payload.response = Some(cached_response.clone());
             return payload.cont();
         }
-        payload.on_end(move |payload: OnSubgraphHttpResponsePayload<'exec>|  {
+        payload.on_end(move |payload: OnSubgraphExecuteEndPayload|  {
             // Here payload.response is not Option
-            self.cache.insert(key, payload.response.clone());
+            self.cache.insert(key, payload.execution_result.body.as_ref());
             payload.cont()
         })
     }

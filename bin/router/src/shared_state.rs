@@ -19,7 +19,7 @@ pub struct RouterSharedState {
     pub override_labels_evaluator: OverrideLabelsEvaluator,
     pub cors_runtime: Option<Cors>,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
-    pub plugins: Vec<Box<dyn RouterPlugin + Send + Sync>>,
+    pub plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
 }
 
 impl RouterSharedState {
@@ -38,7 +38,7 @@ impl RouterSharedState {
             )
             .map_err(Box::new)?,
             jwt_auth_runtime,
-            plugins: Vec::new(),
+            plugins: Arc::new(vec![]),
         })
     }
 }

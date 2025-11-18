@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use hive_router_plan_executor::hooks::on_deserialization::GraphQLParams;
+use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 use http::Method;
 use ntex::util::Bytes;
 use ntex::web::types::Query;

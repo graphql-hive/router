@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
+use crate::plugin_trait::RouterPlugin;
 use dashmap::DashMap;
 use hive_router_config::HiveRouterConfig;
 use tokio::sync::OnceCell;
@@ -28,7 +29,6 @@ use crate::utils::consts::COMMA;
 use crate::utils::consts::QUOTE;
 use crate::{executors::common::SubgraphExecutor, json_writer::write_and_escape_string};
 
-#[derive(Debug)]
 pub struct HTTPSubgraphExecutor {
     pub subgraph_name: String,
     pub endpoint: http::Uri,
@@ -37,6 +37,7 @@ pub struct HTTPSubgraphExecutor {
     pub semaphore: Arc<Semaphore>,
     pub config: Arc<HiveRouterConfig>,
     pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    pub plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -52,6 +53,7 @@ impl HTTPSubgraphExecutor {
         semaphore: Arc<Semaphore>,
         config: Arc<HiveRouterConfig>,
         in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+        plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -71,6 +73,7 @@ impl HTTPSubgraphExecutor {
             semaphore,
             config,
             in_flight_requests,
+            plugins,
         }
     }
 

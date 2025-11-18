@@ -29,17 +29,16 @@ where
     Ok(opt.unwrap_or_default())
 }
 
-pub struct OnDeserializationStartPayload<'exec> {
+pub struct OnGraphQLParamsStartPayload<'exec> {
     pub router_http_request: &'exec ntex::web::HttpRequest,
     pub body: Bytes,
     pub graphql_params: Option<GraphQLParams>,
 }
 
-impl<'exec> StartPayload<OnDeserializationEndPayload<'exec>> for OnDeserializationStartPayload<'exec> {}
+impl<'exec> StartPayload<OnGraphQLParamsEndPayload> for OnGraphQLParamsStartPayload<'exec> {}
 
-pub struct OnDeserializationEndPayload<'exec> {
-    pub router_http_request: &'exec ntex::web::HttpRequest,
+pub struct OnGraphQLParamsEndPayload {
     pub graphql_params: GraphQLParams,
 }
 
-impl<'exec> EndPayload for OnDeserializationEndPayload<'exec> {}
+impl EndPayload for OnGraphQLParamsEndPayload {}

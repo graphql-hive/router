@@ -27,16 +27,14 @@ use vrl::{
 };
 
 use crate::{
-    execution::client_request_details::ClientRequestDetails,
-    executors::{
+    execution::client_request_details::ClientRequestDetails, executors::{
         common::{
-            SubgraphExecutionRequest, HttpExecutionResponse, SubgraphExecutor, SubgraphExecutorBoxedArc,
+            HttpExecutionResponse, SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc
         },
         dedupe::{ABuildHasher, SharedResponse},
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClient},
-    },
-    response::graphql_error::GraphQLError,
+    }, hooks::on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload}, plugin_trait::{ControlFlowResult, RouterPlugin}, response::graphql_error::GraphQLError
 };
 
 type SubgraphName = String;
@@ -60,10 +58,14 @@ pub struct SubgraphExecutorMap {
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
     max_connections_per_host: usize,
     in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
 }
 
 impl SubgraphExecutorMap {
-    pub fn new(config: Arc<HiveRouterConfig>) -> Self {
+    pub fn new(
+        config: Arc<HiveRouterConfig>,
+        plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
+    ) -> Self {
         let https = HttpsConnector::new();
         let client: HttpClient = Client::builder(TokioExecutor::new())
             .pool_timer(TokioTimer::new())
@@ -85,14 +87,16 @@ impl SubgraphExecutorMap {
             semaphores_by_origin: Default::default(),
             max_connections_per_host,
             in_flight_requests: Arc::new(DashMap::with_hasher(ABuildHasher::default())),
+            plugins,
         }
     }
 
     pub fn from_http_endpoint_map(
         subgraph_endpoint_map: HashMap<SubgraphName, SubgraphEndpoint>,
         config: Arc<HiveRouterConfig>,
+        plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
     ) -> Result<Self, SubgraphExecutorError> {
-        let mut subgraph_executor_map = SubgraphExecutorMap::new(config.clone());
+        let mut subgraph_executor_map = SubgraphExecutorMap::new(config.clone(), plugins);
 
         for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.into_iter() {
             let endpoint_str = config
@@ -121,8 +125,40 @@ impl SubgraphExecutorMap {
         execution_request: SubgraphExecutionRequest<'a>,
         client_request: &ClientRequestDetails<'a, 'req>,
     ) -> HttpExecutionResponse {
-        match self.get_or_create_executor(subgraph_name, client_request) {
-            Ok(Some(executor)) => executor.execute(execution_request).await,
+        let mut start_payload = OnSubgraphExecuteStartPayload {
+            subgraph_name: subgraph_name.to_string(),
+            execution_request,
+            execution_result: None,
+        };
+
+        let mut on_end_callbacks = vec![];
+
+        for plugin in self.plugins.as_ref() {
+            let result = plugin.on_subgraph_execute(start_payload);
+            start_payload = result.payload;
+            match result.control_flow {
+                ControlFlowResult::Continue => {
+                    // continue to next plugin
+                }
+                ControlFlowResult::EndResponse(response) => {
+                    // TODO: FFIX
+                    return HttpExecutionResponse {
+                        body: response.body.into(),
+                        headers: response.headers,
+                    };
+                }
+                ControlFlowResult::OnEnd(callback) => {
+                    on_end_callbacks.push(callback);
+                }
+            }
+        }
+
+        let execution_request = start_payload.execution_request;
+
+        let execution_result = match self.get_or_create_executor(subgraph_name, client_request) {
+            Ok(Some(executor)) => executor
+                .execute(execution_request)
+                .await,
             Err(err) => {
                 error!(
                     "Subgraph executor error for subgraph '{}': {}",
@@ -137,7 +173,33 @@ impl SubgraphExecutorMap {
                 );
                 self.internal_server_error_response("Internal server error".into(), subgraph_name)
             }
+        };
+        
+        let mut end_payload = OnSubgraphExecuteEndPayload {
+            execution_result
+        };
+
+        for callback in on_end_callbacks {
+            let result = callback(end_payload);
+            end_payload = result.payload;
+            match result.control_flow {
+                ControlFlowResult::Continue => {
+                    // continue to next callback
+                }
+                ControlFlowResult::EndResponse(response) => {
+                        // TODO: FFIX
+                        return HttpExecutionResponse {
+                            body: response.body.into(),
+                            headers: response.headers,
+                        };
+                }
+                ControlFlowResult::OnEnd(_) => {
+                    unreachable!("End callbacks should not register further end callbacks");
+                }
+            }
         }
+
+        end_payload.execution_result
     }
 
     fn internal_server_error_response(
@@ -324,6 +386,7 @@ impl SubgraphExecutorMap {
             semaphore,
             self.config.clone(),
             self.in_flight_requests.clone(),
+            self.plugins.clone(),
         );
 
         self.executors_by_subgraph

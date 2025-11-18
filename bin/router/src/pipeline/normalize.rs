@@ -1,7 +1,8 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use hive_router_plan_executor::hooks::on_deserialization::GraphQLParams;
+use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::partition::partition_operation;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_query_planner::ast::normalization::normalize_operation;
@@ -11,7 +12,7 @@ use xxhash_rust::xxh3::Xxh3;
 
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::parser::GraphQLParserPayload;
-use crate::schema_state::{SchemaState, SupergraphData};
+use crate::schema_state::{SchemaState};
 use tracing::{error, trace};
 
 #[derive(Debug)]

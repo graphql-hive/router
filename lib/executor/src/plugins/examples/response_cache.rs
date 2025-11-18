@@ -3,7 +3,13 @@ use http::HeaderMap;
 use redis::Commands;
 
 use crate::{
-    execution::plan::PlanExecutionOutput, hooks::{on_execute::{OnExecuteEndPayload, OnExecuteStartPayload}, on_schema_reload::OnSchemaReloadPayload}, plugin_trait::{EndPayload, HookResult, StartPayload}, plugins::plugin_trait::RouterPlugin, utils::consts::TYPENAME_FIELD_NAME
+    execution::plan::PlanExecutionOutput,
+    hooks::{
+        on_execute::{OnExecuteEndPayload, OnExecuteStartPayload}, on_supergraph_load::{OnSupergraphLoadEndPayload, OnSupergraphLoadStartPayload},
+    },
+    plugin_trait::{EndPayload, HookResult, StartPayload},
+    plugins::plugin_trait::RouterPlugin,
+    utils::consts::TYPENAME_FIELD_NAME,
 };
 
 pub struct ResponseCachePlugin {
@@ -33,15 +39,12 @@ impl RouterPlugin for ResponseCachePlugin {
         if let Ok(mut conn) = self.redis_client.get_connection() {
             let cached_response: Option<Vec<u8>> = conn.get(&key).ok();
             if let Some(cached_response) = cached_response {
-                return payload.end_response(
-                    
-                    PlanExecutionOutput {
-                        body: cached_response,
-                        headers: HeaderMap::new(),
-                    }
-                );
+                return payload.end_response(PlanExecutionOutput {
+                    body: cached_response,
+                    headers: HeaderMap::new(),
+                });
             }
-            return payload.on_end(move |payload: OnExecuteEndPayload<'exec>| {
+            return payload.on_end(move |mut payload: OnExecuteEndPayload<'exec>| {
                 // Do not cache if there are errors
                 if !payload.errors.is_empty() {
                     return payload.cont();
@@ -73,6 +76,7 @@ impl RouterPlugin for ResponseCachePlugin {
                     // Insert the ttl into extensions for client awareness
                     payload
                         .extensions
+                        .get_or_insert_default()
                         .insert("response_cache_ttl".to_string(), sonic_rs::json!(max_ttl));
 
                     // Set the cache with the decided ttl
@@ -83,11 +87,10 @@ impl RouterPlugin for ResponseCachePlugin {
         }
         payload.cont()
     }
-    fn on_schema_reload(&self, payload: OnSchemaReloadPayload) {
+    fn on_supergraph_reload<'a>(&'a self, payload: OnSupergraphLoadStartPayload) -> HookResult<'a, OnSupergraphLoadStartPayload, OnSupergraphLoadEndPayload> {
         // Visit the schema and update ttl_per_type based on some directive
         payload
-            .new_schema
-            .document
+            .new_ast
             .definitions
             .iter()
             .for_each(|def| {
@@ -110,5 +113,7 @@ impl RouterPlugin for ResponseCachePlugin {
                     }
                 }
             });
+
+        payload.cont()
     }
 }

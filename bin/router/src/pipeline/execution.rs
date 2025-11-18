@@ -4,12 +4,12 @@ use std::sync::Arc;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
-use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionContext};
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
@@ -85,6 +85,7 @@ pub async fn execute_plan(
     };
 
     execute_query_plan(QueryPlanExecutionContext {
+        router_http_request: req,
         query_plan: query_plan_payload,
         projection_plan: &normalized_payload.projection_plan,
         headers_plan: &app_state.headers_plan,
@@ -95,6 +96,7 @@ pub async fn execute_plan(
         operation_type_name: normalized_payload.root_type_name,
         jwt_auth_forwarding: &jwt_forward_plan,
         executors: &supergraph.subgraph_executor_map,
+        plugins: &app_state.plugins,
     })
     .await
     .map_err(|err| {

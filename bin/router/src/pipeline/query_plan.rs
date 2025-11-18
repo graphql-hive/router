@@ -4,11 +4,27 @@ use std::sync::Arc;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
-use crate::schema_state::{SchemaState, SupergraphData};
+use crate::schema_state::{SchemaState};
+use crate::RouterSharedState;
+use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
+use hive_router_plan_executor::hooks::on_query_plan::OnQueryPlanStartPayload;
+use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
+use hive_router_plan_executor::plugin_trait::ControlFlowResult;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
+use hive_router_query_planner::planner::PlannerError;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
 use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
+
+pub enum QueryPlanResult {
+    QueryPlan(Arc<QueryPlan>),
+    Response(PlanExecutionOutput),
+}
+
+pub enum QueryPlanGetterError {
+    Planner(PlannerError),
+    Response(PlanExecutionOutput),
+}
 
 #[inline]
 pub async fn plan_operation_with_cache(
@@ -18,7 +34,8 @@ pub async fn plan_operation_with_cache(
     normalized_operation: &Arc<GraphQLNormalizationPayload>,
     request_override_context: &RequestOverrideContext,
     cancellation_token: &CancellationToken,
-) -> Result<Arc<QueryPlan>, PipelineError> {
+    app_state: &Arc<RouterSharedState>,
+) -> Result<QueryPlanResult, PipelineError> {
     let stable_override_context =
         StableOverrideContext::new(&supergraph.planner.supergraph, request_override_context);
 
@@ -38,20 +55,80 @@ pub async fn plan_operation_with_cache(
                 }));
             }
 
-            supergraph
-                .planner
-                .plan_from_normalized_operation(
-                    filtered_operation_for_plan,
-                    (&request_override_context.clone()).into(),
-                    cancellation_token,
-                )
-                .map(Arc::new)
+            /* Handle on_query_plan hook in the plugins - START */
+            let mut start_payload = OnQueryPlanStartPayload {
+                router_http_request: req,
+                filtered_operation_for_plan,
+                planner_override_context: (&request_override_context.clone()).into(),
+                cancellation_token,
+                query_plan: None,
+                planner: &supergraph.planner,
+            };
+
+            let mut on_end_callbacks = vec![];
+            for plugin in app_state.plugins.as_ref() {
+                let result = plugin.on_query_plan(start_payload);
+                start_payload = result.payload;
+                match result.control_flow {
+                    ControlFlowResult::Continue => {
+                        // continue to next plugin
+                    }
+                    ControlFlowResult::EndResponse(response) => {
+                        return Err(QueryPlanGetterError::Response(response));
+                    }
+                    ControlFlowResult::OnEnd(callback) => {
+                        on_end_callbacks.push(callback);
+                    }
+                }
+            }
+            let query_plan = match start_payload.query_plan {
+                Some(plan) => plan,
+                None => supergraph
+                    .planner
+                    .plan_from_normalized_operation(
+                        filtered_operation_for_plan,
+                        (&request_override_context.clone()).into(),
+                        cancellation_token,
+                    )
+                    .map_err(|e| QueryPlanGetterError::Planner(e))?,
+            };
+
+            let mut end_payload = hive_router_plan_executor::hooks::on_query_plan::OnQueryPlanEndPayload {
+                router_http_request: req,
+                filtered_operation_for_plan,
+                planner_override_context: (&request_override_context.clone()).into(),
+                cancellation_token,
+                query_plan,
+                planner: &supergraph.planner,
+            };
+
+            for callback in on_end_callbacks {
+                let result = callback(end_payload);
+                end_payload = result.payload;
+                match result.control_flow {
+                    ControlFlowResult::Continue => {
+                        // continue to next callback
+                    }
+                    ControlFlowResult::EndResponse(response) => {
+                        return Err(QueryPlanGetterError::Response(response));
+                    }
+                    ControlFlowResult::OnEnd(_) => {
+                        // on_end callbacks should not return OnEnd again
+                    }
+                }
+            }
+
+            Ok(Arc::new(end_payload.query_plan))
+            /* Handle on_query_plan hook in the plugins - END */
         })
         .await;
 
     match plan_result {
-        Ok(plan) => Ok(plan),
-        Err(e) => Err(req.new_pipeline_error(PipelineErrorVariant::PlannerError(e.clone()))),
+        Ok(plan) => Ok(QueryPlanResult::QueryPlan(plan)),
+        Err(e) => match e.as_ref() {
+            QueryPlanGetterError::Planner(e) => Err(req.new_pipeline_error(PipelineErrorVariant::PlannerError(e.clone()))),
+            QueryPlanGetterError::Response(response) => Ok(QueryPlanResult::Response(response.clone())),
+        },
     }
 }
 

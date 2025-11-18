@@ -7,48 +7,44 @@ use hive_router_query_planner::planner::plan_nodes::{
     QueryPlan, SequenceNode,
 };
 use http::HeaderMap;
+use ntex::web::HttpRequest;
 use serde::Deserialize;
 use sonic_rs::ValueRef;
 
 use crate::{
-    context::ExecutionContext,
-    execution::{
+    context::ExecutionContext, execution::{
         client_request_details::ClientRequestDetails,
         error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
-    },
-    executors::{
-        common::{SubgraphExecutionRequest, HttpExecutionResponse},
+    }, executors::{
+        common::{HttpExecutionResponse, SubgraphExecutionRequest},
         map::SubgraphExecutorMap,
-    },
-    headers::{
+    }, headers::{
         plan::HeaderRulesPlan,
         request::modify_subgraph_request_headers,
         response::{apply_subgraph_response_headers, modify_client_response_headers},
-    },
-    introspection::{
-        resolve::{resolve_introspection, IntrospectionContext},
+    }, hooks::on_execute::{OnExecuteEndPayload, OnExecuteStartPayload}, introspection::{
+        resolve::{IntrospectionContext, resolve_introspection},
         schema::SchemaMetadata,
-    },
-    projection::{
+    }, plugin_trait::{ControlFlowResult, RouterPlugin}, projection::{
         plan::FieldProjectionPlan,
-        request::{project_requires, RequestProjectionContext},
+        request::{RequestProjectionContext, project_requires},
         response::project_by_operation,
-    },
-    response::{
+    }, response::{
         graphql_error::{GraphQLError, GraphQLErrorExtensions, GraphQLErrorPath},
         merge::deep_merge,
         subgraph_response::SubgraphResponse,
         value::Value,
-    },
-    utils::{
+    }, utils::{
         consts::{CLOSE_BRACKET, OPEN_BRACKET},
         traverse::{traverse_and_callback, traverse_and_callback_mut},
-    },
+    }
 };
 
 pub struct QueryPlanExecutionContext<'exec, 'req> {
+    pub router_http_request: &'exec HttpRequest,
+    pub plugins: &'exec Vec<Box<dyn RouterPlugin + 'exec + Send + Sync>>,
     pub query_plan: &'exec QueryPlan,
     pub projection_plan: &'exec Vec<FieldProjectionPlan>,
     pub headers_plan: &'exec HeaderRulesPlan,
@@ -61,6 +57,7 @@ pub struct QueryPlanExecutionContext<'exec, 'req> {
     pub jwt_auth_forwarding: &'exec Option<JwtAuthForwardingPlan>,
 }
 
+#[derive(Clone)]
 pub struct PlanExecutionOutput {
     pub body: Vec<u8>,
     pub headers: HeaderMap,
@@ -74,6 +71,36 @@ pub async fn execute_query_plan<'exec, 'req>(
     } else {
         Value::Null
     };
+
+    let dedupe_subgraph_requests = ctx.operation_type_name == "Query";
+
+    let mut start_payload = OnExecuteStartPayload {
+        router_http_request: ctx.router_http_request,
+        query_plan: ctx.query_plan,
+        data: init_value,
+        errors: Vec::new(),
+        extensions: ctx.extensions.clone(),
+        variable_values: ctx.variable_values,
+        dedupe_subgraph_requests,
+    };
+
+    let mut on_end_callbacks = vec![];
+
+    for plugin in ctx.plugins {
+        let result = plugin.on_execute(start_payload);
+        start_payload = result.payload;
+        match result.control_flow {
+            ControlFlowResult::Continue => { /* continue to next plugin */ },
+            ControlFlowResult::EndResponse(response) => {
+                return Ok(response);
+            },
+            ControlFlowResult::OnEnd(callback) => {
+                on_end_callbacks.push(callback);
+            }
+        }
+    }
+
+    let init_value = start_payload.data;
 
     let mut exec_ctx = ExecutionContext::new(ctx.query_plan, init_value);
     let executor = Executor::new(
@@ -100,15 +127,36 @@ pub async fn execute_query_plan<'exec, 'req>(
             affected_path: || None,
         })?;
 
-    let final_response = &exec_ctx.final_response;
+    let mut end_payload = OnExecuteEndPayload {
+        data: exec_ctx.final_response,
+        errors: exec_ctx.errors,
+        extensions: start_payload.extensions,
+        response_size_estimate: exec_ctx.response_storage.estimate_final_response_size(),
+    };
+
+    for callback in on_end_callbacks {
+        let result = callback(end_payload);
+        end_payload = result.payload;
+        match result.control_flow {
+            ControlFlowResult::Continue => { /* continue to next callback */ },
+            ControlFlowResult::EndResponse(response) => {
+                return Ok(response);
+            },
+            ControlFlowResult::OnEnd(_) => {
+                // on_end callbacks should not return OnEnd again
+                unreachable!("on_end callback returned OnEnd again");
+            }
+        }
+    }
+
     let body = project_by_operation(
-        final_response,
-        exec_ctx.errors,
+        &end_payload.data,
+        end_payload.errors,
         &ctx.extensions,
         ctx.operation_type_name,
         ctx.projection_plan,
         ctx.variable_values,
-        exec_ctx.response_storage.estimate_final_response_size(),
+        end_payload.response_size_estimate,
     )
     .with_plan_context(LazyPlanContext {
         subgraph_name: || None,

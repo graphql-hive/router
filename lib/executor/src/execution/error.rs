@@ -116,7 +116,7 @@ impl<T> IntoPlanExecutionError<T> for Result<T, ProjectionError> {
             let kind = PlanExecutionErrorKind::ProjectionFailure(source);
             PlanExecutionError::new(kind, context)
         })
-    }
+    } 
 }
 
 impl<T> IntoPlanExecutionError<T> for Result<T, HeaderRuleRuntimeError> {

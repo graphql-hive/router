@@ -1,4 +1,6 @@
-use http::{HeaderMap, Uri};
+use bytes::Bytes;
+use http::{HeaderMap, Request, Uri};
+use http_body_util::Full;
 use ntex::web::HttpRequest;
 
 use crate::{
@@ -6,28 +8,18 @@ use crate::{
 ;
 
 pub struct OnSubgraphHttpRequestPayload<'exec> {
-    pub router_http_request: &'exec HttpRequest,
     pub subgraph_name: &'exec str,
     // At this point, there is no point of mutating this
-    pub execution_request: &'exec SubgraphExecutionRequest<'exec>,
-
-    pub endpoint: &'exec mut Uri,
-    // By default, it is POST
-    pub method: &'exec mut http::Method,
-    pub headers: &'exec mut HeaderMap,
-    pub request_body: &'exec mut Vec<u8>,
+    pub request: Request<Full<Bytes>>,
 
     // Early response
-    pub response: &'exec mut Option<SharedResponse>,
+    pub response: Option<SharedResponse>,
 }
 
-impl<'exec> StartPayload<OnSubgraphHttpResponsePayload<'exec>> for OnSubgraphHttpRequestPayload<'exec> {}
+impl<'exec> StartPayload<OnSubgraphHttpResponsePayload> for OnSubgraphHttpRequestPayload<'exec> {}
 
-pub struct OnSubgraphHttpResponsePayload<'exec> {
-    pub router_http_request: &'exec HttpRequest,
-    pub subgraph_name: &'exec str,
-    pub execution_request: &'exec SubgraphExecutionRequest<'exec>,
-	pub response: &'exec mut SharedResponse,
+pub struct OnSubgraphHttpResponsePayload {
+	pub response: SharedResponse,
 }
 
-impl<'exec> EndPayload for OnSubgraphHttpResponsePayload<'exec> {}
+impl<'exec> EndPayload for OnSubgraphHttpResponsePayload {}
