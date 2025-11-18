@@ -27,22 +27,19 @@ pub fn resolve_from_config(
         SupergraphSource::HiveConsole {
             endpoint,
             key,
-            poll_interval,
+            connect_timeout,
+            request_timeout,
+            accept_invalid_certs,
             retry_policy,
-            timeout,
-        } => {
-            let patched_endpoint = match endpoint.ends_with("/supergraph") {
-                true => endpoint.to_string(),
-                false => format!("{}/supergraph", endpoint),
-            };
-
-            Ok(SupergraphHiveConsoleLoader::new(
-                patched_endpoint,
-                key,
-                *poll_interval,
-                *timeout,
-                retry_policy.into(),
-            )?)
-        }
+            poll_interval,
+        } => Ok(SupergraphHiveConsoleLoader::try_new(
+            endpoint.clone(),
+            key,
+            *poll_interval,
+            *connect_timeout,
+            *request_timeout,
+            *accept_invalid_certs,
+            retry_policy.max_retries,
+        )?),
     }
 }

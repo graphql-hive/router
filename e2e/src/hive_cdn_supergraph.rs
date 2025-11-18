@@ -281,7 +281,7 @@ mod hive_cdn_supergraph_e2e_tests {
               source: hive
               endpoint: http://{host}/supergraph
               key: dummy_key
-              timeout: 100ms
+              request_timeout: 100ms
               retry_policy:
                 max_retries: 10
         "#,

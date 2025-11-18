@@ -9,6 +9,12 @@ pub enum LoadSupergraphError {
     NetworkError(#[from] reqwest_middleware::Error),
     #[error("Failed to read supergraph from network: {0}")]
     NetworkResponseError(#[from] reqwest::Error),
+    #[error("Failed to lock supergraph: {0}")]
+    LockError(String),
+    #[error("Failed to initialize the loader: {0}")]
+    InitializationError(String),
+    #[error("Invalid configuration: {0}")]
+    InvalidConfiguration(String),
 }
 
 #[derive(Debug)]

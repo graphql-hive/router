@@ -1,14 +1,8 @@
 use async_trait::async_trait;
-use http::{
-    header::{ETAG, IF_NONE_MATCH, USER_AGENT},
-    HeaderValue, StatusCode,
+use hive_console_sdk::supergraph_fetcher::{
+    SupergraphFetcher, SupergraphFetcherAsyncState, SupergraphFetcherError,
 };
-use lazy_static::lazy_static;
-use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
-use reqwest_retry::RetryTransientMiddleware;
-use retry_policies::policies::ExponentialBackoff;
 use std::time::Duration;
-use tokio::sync::RwLock;
 use tracing::{debug, error};
 
 use crate::{
@@ -16,76 +10,43 @@ use crate::{
     supergraph::base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
 };
 
-lazy_static! {
-    pub static ref USER_AGENT_VALUE: HeaderValue = {
-        HeaderValue::from_str(&format!("hive-router/{}", ROUTER_VERSION))
-            .expect("failed to construct user-agent")
-    };
+pub struct SupergraphHiveConsoleLoader {
+    fetcher: SupergraphFetcher<SupergraphFetcherAsyncState>,
+    poll_interval: Duration,
 }
 
-static AUTH_HEADER_NAME: &str = "x-hive-cdn-key";
-
-pub struct SupergraphHiveConsoleLoader {
-    endpoint: String,
-    key: String,
-    http_client: ClientWithMiddleware,
-    poll_interval: Duration,
-    timeout: Duration,
-    last_etag: RwLock<Option<HeaderValue>>,
+impl From<SupergraphFetcherError> for LoadSupergraphError {
+    fn from(err: SupergraphFetcherError) -> Self {
+        match err {
+            SupergraphFetcherError::NetworkError(e) => LoadSupergraphError::NetworkError(e),
+            SupergraphFetcherError::NetworkResponseError(e) => {
+                LoadSupergraphError::NetworkResponseError(e)
+            }
+            SupergraphFetcherError::Lock(e) => LoadSupergraphError::LockError(e),
+            SupergraphFetcherError::FetcherCreationError(e) => {
+                LoadSupergraphError::InitializationError(e.to_string())
+            }
+            SupergraphFetcherError::InvalidKey(e) => {
+                LoadSupergraphError::InvalidConfiguration(format!("Invalid CDN key: {}", e))
+            }
+        }
+    }
 }
 
 #[async_trait]
 impl SupergraphLoader for SupergraphHiveConsoleLoader {
     async fn load(&self) -> Result<ReloadSupergraphResult, LoadSupergraphError> {
-        debug!(
-            "Fetching supergraph from Hive Console CDN: '{}'",
-            self.endpoint,
-        );
-
-        let mut req = self
-            .http_client
-            .get(&self.endpoint)
-            .header(AUTH_HEADER_NAME, &self.key)
-            .header(USER_AGENT, USER_AGENT_VALUE.clone())
-            .timeout(self.timeout);
-
-        let mut etag_used = false;
-
-        match self.last_etag.try_read() {
-            Ok(lock_guard) => {
-                if let Some(etag) = lock_guard.as_ref() {
-                    req = req.header(IF_NONE_MATCH, etag);
-                    etag_used = true;
-                }
+        let fetcher_result = self.fetcher.fetch_supergraph().await;
+        match fetcher_result {
+            // If there was an error fetching the supergraph, propagate it
+            Err(err) => {
+                error!("Error fetching supergraph from Hive Console: {}", err);
+                Err(LoadSupergraphError::from(err))
             }
-            Err(e) => {
-                error!("Failed to read etag record: {:?}", e);
-            }
-        };
-
-        let response = req.send().await?.error_for_status()?;
-
-        if etag_used && response.status() == StatusCode::NOT_MODIFIED {
-            Ok(ReloadSupergraphResult::Unchanged)
-        } else {
-            if let Some(new_etag) = response.headers().get(ETAG) {
-                match self.last_etag.try_write() {
-                    Ok(mut v) => {
-                        debug!("saving etag record: {:?}", new_etag);
-                        *v = Some(new_etag.clone());
-                    }
-                    Err(e) => {
-                        error!("Failed to save etag record: {:?}", e);
-                    }
-                }
-            }
-
-            let content = response
-                .text()
-                .await
-                .map_err(LoadSupergraphError::NetworkResponseError)?;
-
-            Ok(ReloadSupergraphResult::Changed { new_sdl: content })
+            // If the supergraph has not changed, return Unchanged
+            Ok(None) => Ok(ReloadSupergraphResult::Unchanged),
+            // If there is a new supergraph SDL, return it
+            Ok(Some(sdl)) => Ok(ReloadSupergraphResult::Changed { new_sdl: sdl }),
         }
     }
 
@@ -95,31 +56,34 @@ impl SupergraphLoader for SupergraphHiveConsoleLoader {
 }
 
 impl SupergraphHiveConsoleLoader {
-    pub fn new(
+    pub fn try_new(
         endpoint: String,
         key: &str,
         poll_interval: Duration,
-        timeout: Duration,
-        retry_policy: ExponentialBackoff,
+        connect_timeout: Duration,
+        request_timeout: Duration,
+        accept_invalid_certs: bool,
+        retry_count: u32,
     ) -> Result<Box<Self>, LoadSupergraphError> {
         debug!(
-            "Creating supergraph source from Hive Console CDN: '{}' (poll interval: {}ms, timeout: {}ms)",
+            "Creating supergraph source from Hive Console CDN: '{}' (poll interval: {}ms, request_timeout: {}ms)",
             endpoint,
             poll_interval.as_millis(),
-            timeout.as_millis()
+            request_timeout.as_millis()
         );
-
-        let client = ClientBuilder::new(reqwest::Client::new())
-            .with(RetryTransientMiddleware::new_with_policy(retry_policy))
-            .build();
-
-        Ok(Box::new(Self {
+        let fetcher = SupergraphFetcher::try_new_async(
             endpoint,
-            key: key.to_string(),
-            http_client: client,
+            key,
+            format!("hive-router/{}", ROUTER_VERSION),
+            connect_timeout,
+            request_timeout,
+            accept_invalid_certs,
+            retry_count,
+        )?;
+
+        Ok(Box::new(SupergraphHiveConsoleLoader {
+            fetcher,
             poll_interval,
-            timeout,
-            last_etag: RwLock::new(None),
         }))
     }
 }

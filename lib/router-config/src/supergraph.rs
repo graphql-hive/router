@@ -47,11 +47,21 @@ pub enum SupergraphSource {
         poll_interval: Duration,
         /// Request timeout for the Hive Console CDN requests.
         #[serde(
-            default = "default_hive_timeout",
+            default = "default_hive_request_timeout",
             deserialize_with = "humantime_serde::deserialize",
             serialize_with = "humantime_serde::serialize"
         )]
-        timeout: Duration,
+        request_timeout: Duration,
+        /// Connect timeout for the Hive Console CDN requests.
+        #[serde(
+            default = "default_hive_connect_timeout",
+            deserialize_with = "humantime_serde::deserialize",
+            serialize_with = "humantime_serde::serialize"
+        )]
+        connect_timeout: Duration,
+        /// Whether to accept invalid TLS certificates when connecting to the Hive Console CDN.
+        #[serde(default = "default_accept_invalid_certs")]
+        accept_invalid_certs: bool,
         /// Interval at which the Hive Console should be polled for changes.
         ///
         /// By default, an exponential backoff retry policy is used, with 10 attempts.
@@ -60,8 +70,16 @@ pub enum SupergraphSource {
     },
 }
 
-fn default_hive_timeout() -> Duration {
+fn default_accept_invalid_certs() -> bool {
+    false
+}
+
+fn default_hive_request_timeout() -> Duration {
     Duration::from_secs(60)
+}
+
+fn default_hive_connect_timeout() -> Duration {
+    Duration::from_secs(10)
 }
 
 fn default_hive_retry_policy() -> RetryPolicyConfig {
