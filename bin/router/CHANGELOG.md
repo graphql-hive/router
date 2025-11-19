@@ -116,6 +116,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.19 (2025-11-19)
+
+### Features
+
+#### Use `hive-console-sdk` to load supergraph from Hive CDN
+
+**Breaking Changes**
+
+The configuration for the `hive` source has been updated to offer more specific timeout controls and support for self-signed certificates. The `timeout` field has been renamed.
+
+```diff
+supergraph:
+  source: hive
+  endpoint: "https://cdn.graphql-hive.com/supergraph"
+  key: "YOUR_CDN_KEY"
+- timeout: 30s
++ request_timeout: 30s          # `request_timeout` replaces `timeout`
++ connect_timeout: 10s          # new option to control `connect` phase
++ accept_invalid_certs: false   # new option to allow accepting invalid TLS certificates
+```
+
 ## 0.0.18 (2025-11-18)
 
 ### Features
