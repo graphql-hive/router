@@ -10,7 +10,7 @@ use ntex::web::HttpRequest;
 use sonic_rs::Value;
 use tracing::{error, trace, warn};
 
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
+use crate::pipeline::error::PipelineErrorVariant;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 
 #[derive(Clone, Debug)]
@@ -24,14 +24,14 @@ pub fn coerce_request_variables(
     supergraph: &SupergraphData,
     graphql_params: &mut GraphQLParams,
     normalized_operation: &Arc<GraphQLNormalizationPayload>,
-) -> Result<CoerceVariablesPayload, PipelineError> {
+) -> Result<CoerceVariablesPayload, PipelineErrorVariant> {
     if req.method() == Method::GET {
         if let Some(OperationKind::Mutation) =
             normalized_operation.operation_for_plan.operation_kind
         {
             error!("Mutation is not allowed over GET, stopping");
 
-            return Err(req.new_pipeline_error(PipelineErrorVariant::MutationNotAllowedOverHttpGet));
+            return Err(PipelineErrorVariant::MutationNotAllowedOverHttpGet);
         }
     }
 
@@ -55,7 +55,7 @@ pub fn coerce_request_variables(
                 "failed to collect variables from incoming request: {}",
                 err_msg
             );
-            Err(req.new_pipeline_error(PipelineErrorVariant::VariablesCoercionError(err_msg)))
+            Err(PipelineErrorVariant::VariablesCoercionError(err_msg))
         }
     }
 }

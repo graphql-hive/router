@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
+use crate::pipeline::error::PipelineErrorVariant;
 use crate::pipeline::parser::GraphQLParserPayload;
-use crate::schema_state::{SchemaState};
+use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
 use graphql_tools::validation::validate::validate;
 use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
-use hive_router_plan_executor::hooks::on_graphql_validation::{OnGraphQLValidationEndPayload, OnGraphQLValidationStartPayload};
+use hive_router_plan_executor::hooks::on_graphql_validation::{
+    OnGraphQLValidationEndPayload, OnGraphQLValidationStartPayload,
+};
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::plugin_trait::ControlFlowResult;
 use ntex::web::HttpRequest;
@@ -14,12 +16,12 @@ use tracing::{error, trace};
 
 #[inline]
 pub async fn validate_operation_with_cache(
-    req: &HttpRequest,
+    req: &mut HttpRequest,
     supergraph: &SupergraphData,
-    schema_state: &Arc<SchemaState>,
-    app_state: &Arc<RouterSharedState>,
+    schema_state: Arc<SchemaState>,
+    app_state: Arc<RouterSharedState>,
     parser_payload: &GraphQLParserPayload,
-) -> Result<Option<PlanExecutionOutput>, PipelineError> {
+) -> Result<Option<PlanExecutionOutput>, PipelineErrorVariant> {
     let consumer_schema_ast = &supergraph.planner.consumer_schema.document;
 
     let validation_result = match schema_state
@@ -40,7 +42,7 @@ pub async fn validate_operation_with_cache(
                 "validation result of hash {} does not exists in cache",
                 parser_payload.cache_key
             );
-            
+
             /* Handle on_graphql_validate hook in the plugins - START */
             let mut start_payload = OnGraphQLValidationStartPayload::new(
                 req,
@@ -67,21 +69,14 @@ pub async fn validate_operation_with_cache(
 
             let errors = match start_payload.errors {
                 Some(errors) => errors,
-                None => {
-                    validate(
-                        consumer_schema_ast,
-                        &start_payload.document,
-                        start_payload.get_validation_plan(),
-                    )
-                }
+                None => validate(
+                    consumer_schema_ast,
+                    start_payload.document,
+                    start_payload.get_validation_plan(),
+                ),
             };
 
-            let mut end_payload = OnGraphQLValidationEndPayload {
-                router_http_request: req,
-                schema: consumer_schema_ast,
-                document: &parser_payload.parsed_operation,
-                errors,
-            };
+            let mut end_payload = OnGraphQLValidationEndPayload { errors };
 
             for callback in on_end_callbacks {
                 let result = callback(end_payload);
@@ -117,9 +112,7 @@ pub async fn validate_operation_with_cache(
         );
         trace!("Validation errors: {:?}", validation_result);
 
-        return Err(
-            req.new_pipeline_error(PipelineErrorVariant::ValidationErrors(validation_result))
-        );
+        return Err(PipelineErrorVariant::ValidationErrors(validation_result));
     }
 
     Ok(None)

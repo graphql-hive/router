@@ -1,13 +1,17 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
+use crate::pipeline::error::PipelineErrorVariant;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
-use crate::schema_state::{SchemaState};
+use crate::schema_state::SchemaState;
 use crate::RouterSharedState;
-use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
-use hive_router_plan_executor::hooks::on_query_plan::OnQueryPlanStartPayload;
+use hive_router_plan_executor::execution::plan::{
+    PlanExecutionOutput, ResultWithRequest, WithResult,
+};
+use hive_router_plan_executor::hooks::on_query_plan::{
+    OnQueryPlanEndPayload, OnQueryPlanStartPayload,
+};
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::plugin_trait::ControlFlowResult;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
@@ -28,14 +32,14 @@ pub enum QueryPlanGetterError {
 
 #[inline]
 pub async fn plan_operation_with_cache(
-    req: &HttpRequest,
+    mut req: HttpRequest,
     supergraph: &SupergraphData,
-    schema_state: &Arc<SchemaState>,
-    normalized_operation: &Arc<GraphQLNormalizationPayload>,
+    schema_state: Arc<SchemaState>,
+    normalized_operation: Arc<GraphQLNormalizationPayload>,
     request_override_context: &RequestOverrideContext,
     cancellation_token: &CancellationToken,
-    app_state: &Arc<RouterSharedState>,
-) -> Result<QueryPlanResult, PipelineError> {
+    app_state: Arc<RouterSharedState>,
+) -> Result<ResultWithRequest<QueryPlanResult>, PipelineErrorVariant> {
     let stable_override_context =
         StableOverrideContext::new(&supergraph.planner.supergraph, request_override_context);
 
@@ -47,7 +51,7 @@ pub async fn plan_operation_with_cache(
 
     let plan_result = schema_state
         .plan_cache
-        .try_get_with(plan_cache_key, async move {
+        .try_get_with(plan_cache_key, async {
             if is_pure_introspection {
                 return Ok(Arc::new(QueryPlan {
                     kind: "QueryPlan".to_string(),
@@ -57,7 +61,7 @@ pub async fn plan_operation_with_cache(
 
             /* Handle on_query_plan hook in the plugins - START */
             let mut start_payload = OnQueryPlanStartPayload {
-                router_http_request: req,
+                router_http_request: &mut req,
                 filtered_operation_for_plan,
                 planner_override_context: (&request_override_context.clone()).into(),
                 cancellation_token,
@@ -90,17 +94,10 @@ pub async fn plan_operation_with_cache(
                         (&request_override_context.clone()).into(),
                         cancellation_token,
                     )
-                    .map_err(|e| QueryPlanGetterError::Planner(e))?,
+                    .map_err(QueryPlanGetterError::Planner)?,
             };
 
-            let mut end_payload = hive_router_plan_executor::hooks::on_query_plan::OnQueryPlanEndPayload {
-                router_http_request: req,
-                filtered_operation_for_plan,
-                planner_override_context: (&request_override_context.clone()).into(),
-                cancellation_token,
-                query_plan,
-                planner: &supergraph.planner,
-            };
+            let mut end_payload = OnQueryPlanEndPayload { query_plan };
 
             for callback in on_end_callbacks {
                 let result = callback(end_payload);
@@ -124,10 +121,12 @@ pub async fn plan_operation_with_cache(
         .await;
 
     match plan_result {
-        Ok(plan) => Ok(QueryPlanResult::QueryPlan(plan)),
+        Ok(plan) => Ok(req.with_result(QueryPlanResult::QueryPlan(plan))),
         Err(e) => match e.as_ref() {
-            QueryPlanGetterError::Planner(e) => Err(req.new_pipeline_error(PipelineErrorVariant::PlannerError(e.clone()))),
-            QueryPlanGetterError::Response(response) => Ok(QueryPlanResult::Response(response.clone())),
+            QueryPlanGetterError::Planner(e) => Err(PipelineErrorVariant::PlannerError(e.clone())),
+            QueryPlanGetterError::Response(response) => {
+                Ok(req.with_result(QueryPlanResult::Response(response.clone())))
+            }
         },
     }
 }

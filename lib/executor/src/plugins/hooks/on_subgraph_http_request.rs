@@ -1,10 +1,11 @@
 use bytes::Bytes;
-use http::{Request};
+use http::Request;
 use http_body_util::Full;
 
 use crate::{
-    executors::{dedupe::SharedResponse}, plugin_trait::{EndPayload, StartPayload}}
-;
+    executors::dedupe::SharedResponse,
+    plugin_trait::{EndPayload, StartPayload},
+};
 
 pub struct OnSubgraphHttpRequestPayload<'exec> {
     pub subgraph_name: &'exec str,
@@ -18,7 +19,7 @@ pub struct OnSubgraphHttpRequestPayload<'exec> {
 impl<'exec> StartPayload<OnSubgraphHttpResponsePayload> for OnSubgraphHttpRequestPayload<'exec> {}
 
 pub struct OnSubgraphHttpResponsePayload {
-	pub response: SharedResponse,
+    pub response: SharedResponse,
 }
 
-impl<'exec> EndPayload for OnSubgraphHttpResponsePayload {}
+impl EndPayload for OnSubgraphHttpResponsePayload {}

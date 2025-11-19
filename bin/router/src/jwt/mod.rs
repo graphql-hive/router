@@ -265,26 +265,27 @@ impl JwtAuthRuntime {
         Ok(token_data)
     }
 
-    pub fn validate_request(&self, request: &mut HttpRequest) -> Result<(), JwtError> {
+    pub fn validate_request(
+        &self,
+        request: &HttpRequest,
+    ) -> Result<Option<JwtRequestContext>, JwtError> {
         let valid_jwks = self.jwks.all();
 
         match self.authenticate(&valid_jwks, request) {
-            Ok((token_payload, maybe_token_prefix, token)) => {
-                request.extensions_mut().insert(JwtRequestContext {
-                    token_payload,
-                    token_raw: token,
-                    token_prefix: maybe_token_prefix,
-                });
-            }
+            Ok((token_payload, maybe_token_prefix, token)) => Ok(Some(JwtRequestContext {
+                token_payload,
+                token_raw: token,
+                token_prefix: maybe_token_prefix,
+            })),
             Err(e) => {
                 warn!("jwt token error: {:?}", e);
 
                 if self.config.require_authentication.is_some_and(|v| v) {
                     return Err(e);
                 }
+
+                Ok(None)
             }
         }
-
-        Ok(())
     }
 }

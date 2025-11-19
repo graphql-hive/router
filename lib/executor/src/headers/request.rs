@@ -45,9 +45,9 @@ pub fn modify_subgraph_request_headers(
     Ok(())
 }
 
-pub struct RequestExpressionContext<'a, 'req> {
+pub struct RequestExpressionContext<'a> {
     pub subgraph_name: &'a str,
-    pub client_request: &'a ClientRequestDetails<'a, 'req>,
+    pub client_request: &'a ClientRequestDetails<'a>,
 }
 
 trait ApplyRequestHeader {
@@ -117,7 +117,7 @@ impl ApplyRequestHeader for RequestPropagateRegex {
         ctx: &RequestExpressionContext,
         output_headers: &mut HeaderMap,
     ) -> Result<(), HeaderRuleRuntimeError> {
-        for (header_name, header_value) in ctx.client_request.headers {
+        for (header_name, header_value) in ctx.client_request.headers.iter() {
             if is_denied_header(header_name) {
                 continue;
             }

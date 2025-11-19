@@ -1,13 +1,17 @@
 use graphql_tools::{
     static_graphql::query::Document,
-    validation::{rules::{ValidationRule, default_rules_validation_plan}, utils::ValidationError, validate::ValidationPlan},
+    validation::{
+        rules::{default_rules_validation_plan, ValidationRule},
+        utils::ValidationError,
+        validate::ValidationPlan,
+    },
 };
 use hive_router_query_planner::state::supergraph_state::SchemaDocument;
 
 use crate::plugin_trait::{EndPayload, StartPayload};
 
 pub struct OnGraphQLValidationStartPayload<'exec> {
-    pub router_http_request: &'exec ntex::web::HttpRequest,
+    pub router_http_request: &'exec mut ntex::web::HttpRequest,
     pub schema: &'exec SchemaDocument,
     pub document: &'exec Document,
     default_validation_plan: &'exec ValidationPlan,
@@ -15,14 +19,11 @@ pub struct OnGraphQLValidationStartPayload<'exec> {
     pub errors: Option<Vec<ValidationError>>,
 }
 
-impl<'exec> StartPayload<OnGraphQLValidationEndPayload<'exec>>
-    for OnGraphQLValidationStartPayload<'exec>
-{
-}
+impl<'exec> StartPayload<OnGraphQLValidationEndPayload> for OnGraphQLValidationStartPayload<'exec> {}
 
 impl<'exec> OnGraphQLValidationStartPayload<'exec> {
     pub fn new(
-        router_http_request: &'exec ntex::web::HttpRequest,
+        router_http_request: &'exec mut ntex::web::HttpRequest,
         schema: &'exec SchemaDocument,
         document: &'exec Document,
         default_validation_plan: &'exec ValidationPlan,
@@ -39,17 +40,17 @@ impl<'exec> OnGraphQLValidationStartPayload<'exec> {
 
     pub fn add_validation_rule(&mut self, rule: Box<dyn ValidationRule>) {
         self.new_validation_plan
-            .get_or_insert_with(|| default_rules_validation_plan())
+            .get_or_insert_with(default_rules_validation_plan)
             .add_rule(rule);
     }
-    
+
     pub fn filter_validation_rules<F>(&mut self, mut f: F)
     where
         F: FnMut(&Box<dyn ValidationRule>) -> bool,
     {
         let plan = self
             .new_validation_plan
-            .get_or_insert_with(|| default_rules_validation_plan());
+            .get_or_insert_with(default_rules_validation_plan);
         plan.rules.retain(|rule| f(rule));
     }
 
@@ -61,11 +62,8 @@ impl<'exec> OnGraphQLValidationStartPayload<'exec> {
     }
 }
 
-pub struct OnGraphQLValidationEndPayload<'exec> {
-    pub router_http_request: &'exec ntex::web::HttpRequest,
-    pub schema: &'exec SchemaDocument,
-    pub document: &'exec Document,
+pub struct OnGraphQLValidationEndPayload {
     pub errors: Vec<ValidationError>,
 }
 
-impl<'exec> EndPayload for OnGraphQLValidationEndPayload<'exec> {}
+impl EndPayload for OnGraphQLValidationEndPayload {}

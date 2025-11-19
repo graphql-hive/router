@@ -13,11 +13,13 @@ pub struct APQPlugin {
 impl RouterPlugin for APQPlugin {
     fn on_graphql_params<'exec>(
         &'exec self,
-        payload: OnGraphQLParamsStartPayload<'exec>,
-    ) -> HookResult<'exec, OnGraphQLParamsStartPayload<'exec>, OnGraphQLParamsEndPayload>
-    {
+        payload: OnGraphQLParamsStartPayload,
+    ) -> HookResult<'exec, OnGraphQLParamsStartPayload, OnGraphQLParamsEndPayload> {
         payload.on_end(|mut payload| {
-            let persisted_query_ext = payload.graphql_params.extensions.as_ref()
+            let persisted_query_ext = payload
+                .graphql_params
+                .extensions
+                .as_ref()
                 .and_then(|ext| ext.get("persistedQuery"))
                 .and_then(|pq| pq.as_object());
             if let Some(persisted_query_ext) = persisted_query_ext {
@@ -28,7 +30,10 @@ impl RouterPlugin for APQPlugin {
                         return payload.cont();
                     }
                 }
-                let sha256_hash = match persisted_query_ext.get(&"sha256Hash").and_then(|h| h.as_str()) {
+                let sha256_hash = match persisted_query_ext
+                    .get(&"sha256Hash")
+                    .and_then(|h| h.as_str())
+                {
                     Some(h) => h,
                     None => {
                         return payload.cont();
@@ -36,7 +41,8 @@ impl RouterPlugin for APQPlugin {
                 };
                 if let Some(query_param) = &payload.graphql_params.query {
                     // Store the query in the cache
-                    self.cache.insert(sha256_hash.to_string(), query_param.to_string());
+                    self.cache
+                        .insert(sha256_hash.to_string(), query_param.to_string());
                 } else {
                     // Try to get the query from the cache
                     if let Some(cached_query) = self.cache.get(sha256_hash) {

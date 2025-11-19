@@ -74,15 +74,15 @@ mod tests {
         );
 
         let client_details = ClientRequestDetails {
-            method: &http::Method::POST,
-            url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
                 kind: "query",
             },
-            jwt: &JwtRequestDetails::Unauthenticated,
+            jwt: JwtRequestDetails::Unauthenticated,
         };
 
         let mut out = HeaderMap::new();
@@ -108,15 +108,15 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: &http::Method::POST,
-            url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
                 kind: "query",
             },
-            jwt: &JwtRequestDetails::Unauthenticated,
+            jwt: JwtRequestDetails::Unauthenticated,
         };
         let mut out = HeaderMap::new();
         modify_subgraph_request_headers(&plan, "any", &client_details, &mut out).unwrap();
@@ -155,15 +155,15 @@ mod tests {
         );
 
         let client_details = ClientRequestDetails {
-            method: &http::Method::POST,
-            url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
                 kind: "query",
             },
-            jwt: &JwtRequestDetails::Unauthenticated,
+            jwt: JwtRequestDetails::Unauthenticated,
         };
 
         let mut out = HeaderMap::new();
@@ -193,15 +193,15 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: &http::Method::POST,
-            url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: client_headers,
             operation: OperationDetails {
                 name: Some("MyQuery"),
                 query: "{ __typename }",
                 kind: "query",
             },
-            jwt: &JwtRequestDetails::Unauthenticated,
+            jwt: JwtRequestDetails::Unauthenticated,
         };
 
         let mut out = HeaderMap::new();
@@ -227,15 +227,15 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: &http::Method::POST,
-            url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
                 kind: "query",
             },
-            jwt: &JwtRequestDetails::Unauthenticated,
+            jwt: JwtRequestDetails::Unauthenticated,
         };
 
         let mut out = HeaderMap::new();
@@ -267,15 +267,15 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: &http::Method::POST,
-            url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
                 kind: "query",
             },
-            jwt: &JwtRequestDetails::Unauthenticated,
+            jwt: JwtRequestDetails::Unauthenticated,
         };
 
         // For "accounts" subgraph, the specific rule should apply.
@@ -311,15 +311,15 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: &http::Method::POST,
-            url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
                 kind: "query",
             },
-            jwt: &JwtRequestDetails::Unauthenticated,
+            jwt: JwtRequestDetails::Unauthenticated,
         };
 
         let mut accumulator = ResponseHeaderAggregator::default();
@@ -376,15 +376,15 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: &http::Method::POST,
-            url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
                 kind: "query",
             },
-            jwt: &JwtRequestDetails::Unauthenticated,
+            jwt: JwtRequestDetails::Unauthenticated,
         };
 
         let mut accumulator = ResponseHeaderAggregator::default();
@@ -440,15 +440,15 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: &http::Method::POST,
-            url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
                 kind: "query",
             },
-            jwt: &JwtRequestDetails::Unauthenticated,
+            jwt: JwtRequestDetails::Unauthenticated,
         };
         let mut accumulator = ResponseHeaderAggregator::default();
 
@@ -497,15 +497,15 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: &http::Method::POST,
-            url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
                 kind: "query",
             },
-            jwt: &JwtRequestDetails::Unauthenticated,
+            jwt: JwtRequestDetails::Unauthenticated,
         };
         let mut accumulator = ResponseHeaderAggregator::default();
 
@@ -555,15 +555,15 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: &http::Method::POST,
-            url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
                 kind: "query",
             },
-            jwt: &JwtRequestDetails::Unauthenticated,
+            jwt: JwtRequestDetails::Unauthenticated,
         };
 
         let mut accumulator = ResponseHeaderAggregator::default();
@@ -614,15 +614,15 @@ mod tests {
         client_headers.insert(header_name_owned("x-keep"), header_value_owned("hi").into());
 
         let client_details = ClientRequestDetails {
-            method: &http::Method::POST,
-            url: &"http://example.com".parse().unwrap(),
-            headers: &client_headers,
+            method: http::Method::POST,
+            url: "http://example.com".parse().unwrap(),
+            headers: client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
                 kind: "query",
             },
-            jwt: &JwtRequestDetails::Unauthenticated,
+            jwt: JwtRequestDetails::Unauthenticated,
         };
 
         let mut out = HeaderMap::new();

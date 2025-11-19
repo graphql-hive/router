@@ -3,7 +3,13 @@ use async_trait::async_trait;
 use graphql_tools::{static_graphql::schema::Document, validation::utils::ValidationError};
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
 use hive_router_plan_executor::{
-    SubgraphExecutorMap, executors::error::SubgraphExecutorError, hooks::on_supergraph_load::{OnSupergraphLoadEndPayload, OnSupergraphLoadStartPayload, SupergraphData}, introspection::schema::SchemaWithMetadata, plugin_trait::{ControlFlowResult, RouterPlugin}
+    executors::error::SubgraphExecutorError,
+    hooks::on_supergraph_load::{
+        OnSupergraphLoadEndPayload, OnSupergraphLoadStartPayload, SupergraphData,
+    },
+    introspection::schema::SchemaWithMetadata,
+    plugin_trait::{ControlFlowResult, RouterPlugin},
+    SubgraphExecutorMap,
 };
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::{
@@ -18,10 +24,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace};
 
 use crate::{
-    RouterSharedState, background_tasks::{BackgroundTask, BackgroundTasksManager}, pipeline::normalize::GraphQLNormalizationPayload, supergraph::{
+    background_tasks::{BackgroundTask, BackgroundTasksManager},
+    pipeline::normalize::GraphQLNormalizationPayload,
+    supergraph::{
         base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
         resolve_from_config,
-    }
+    },
+    RouterSharedState,
 };
 
 pub struct SchemaState {
@@ -55,7 +64,7 @@ impl SchemaState {
     pub async fn new_from_config(
         bg_tasks_manager: &mut BackgroundTasksManager,
         router_config: Arc<HiveRouterConfig>,
-        app_state: Arc<RouterSharedState>
+        app_state: Arc<RouterSharedState>,
     ) -> Result<Self, SupergraphManagerError> {
         let (tx, mut rx) = mpsc::channel::<String>(1);
         let background_loader = SupergraphBackgroundLoader::new(&router_config.supergraph, tx)?;
@@ -91,10 +100,10 @@ impl SchemaState {
                     match result.control_flow {
                         ControlFlowResult::Continue => {
                             // continue to next plugin
-                        },
+                        }
                         ControlFlowResult::EndResponse(_) => {
                             unreachable!("Plugins should not end supergraph reload processing");
-                        },
+                        }
                         ControlFlowResult::OnEnd(callback) => {
                             on_end_callbacks.push(callback);
                         }
@@ -115,12 +124,16 @@ impl SchemaState {
                             match result.control_flow {
                                 ControlFlowResult::Continue => {
                                     // continue to next callback
-                                },
+                                }
                                 ControlFlowResult::EndResponse(_) => {
-                                    unreachable!("Plugins should not end supergraph reload processing");
-                                },
+                                    unreachable!(
+                                        "Plugins should not end supergraph reload processing"
+                                    );
+                                }
                                 ControlFlowResult::OnEnd(_) => {
-                                    unreachable!("End callbacks should not register further end callbacks");
+                                    unreachable!(
+                                        "End callbacks should not register further end callbacks"
+                                    );
                                 }
                             }
                         }
@@ -155,8 +168,8 @@ impl SchemaState {
         parsed_supergraph_sdl: &Document,
         plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
     ) -> Result<SupergraphData, SupergraphManagerError> {
-        let supergraph_state = SupergraphState::new(&parsed_supergraph_sdl);
-        let planner = Planner::new_from_supergraph(&parsed_supergraph_sdl)?;
+        let supergraph_state = SupergraphState::new(parsed_supergraph_sdl);
+        let planner = Planner::new_from_supergraph(parsed_supergraph_sdl)?;
         let metadata = planner.consumer_schema.schema_metadata();
         let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(
             supergraph_state.subgraph_endpoint_map,

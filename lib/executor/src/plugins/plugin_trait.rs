@@ -86,30 +86,27 @@ pub trait RouterPlugin {
     }
     fn on_graphql_params<'exec>(
         &'exec self,
-        start_payload: OnGraphQLParamsStartPayload<'exec>,
-    ) -> HookResult<'exec, OnGraphQLParamsStartPayload<'exec>, OnGraphQLParamsEndPayload> {
+        start_payload: OnGraphQLParamsStartPayload,
+    ) -> HookResult<'exec, OnGraphQLParamsStartPayload, OnGraphQLParamsEndPayload> {
         start_payload.cont()
     }
     fn on_graphql_parse<'exec>(
         &self,
         start_payload: OnGraphQLParseStartPayload<'exec>,
-    ) -> HookResult<'exec, OnGraphQLParseStartPayload<'exec>, OnGraphQLParseEndPayload<'exec>> {
+    ) -> HookResult<'exec, OnGraphQLParseStartPayload<'exec>, OnGraphQLParseEndPayload> {
         start_payload.cont()
     }
     fn on_graphql_validation<'exec>(
         &self,
         start_payload: OnGraphQLValidationStartPayload<'exec>,
-    ) -> HookResult<
-        'exec,
-        OnGraphQLValidationStartPayload<'exec>,
-        OnGraphQLValidationEndPayload<'exec>,
-    > {
+    ) -> HookResult<'exec, OnGraphQLValidationStartPayload<'exec>, OnGraphQLValidationEndPayload>
+    {
         start_payload.cont()
     }
     fn on_query_plan<'exec>(
         &self,
         start_payload: OnQueryPlanStartPayload<'exec>,
-    ) -> HookResult<'exec, OnQueryPlanStartPayload<'exec>, OnQueryPlanEndPayload<'exec>> {
+    ) -> HookResult<'exec, OnQueryPlanStartPayload<'exec>, OnQueryPlanEndPayload> {
         start_payload.cont()
     }
     fn on_execute<'exec>(
@@ -121,15 +118,13 @@ pub trait RouterPlugin {
     fn on_subgraph_execute<'exec>(
         &'exec self,
         start_payload: OnSubgraphExecuteStartPayload<'exec>,
-    ) -> HookResult<'exec, OnSubgraphExecuteStartPayload<'exec>, OnSubgraphExecuteEndPayload>
-    {
+    ) -> HookResult<'exec, OnSubgraphExecuteStartPayload<'exec>, OnSubgraphExecuteEndPayload> {
         start_payload.cont()
     }
     fn on_subgraph_http_request<'exec>(
         &'exec self,
         start_payload: OnSubgraphHttpRequestPayload<'exec>,
-    ) -> HookResult<'exec, OnSubgraphHttpRequestPayload<'exec>, OnSubgraphHttpResponsePayload>
-    {
+    ) -> HookResult<'exec, OnSubgraphHttpRequestPayload<'exec>, OnSubgraphHttpResponsePayload> {
         start_payload.cont()
     }
     fn on_supergraph_reload<'exec>(

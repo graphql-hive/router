@@ -5,7 +5,8 @@ use redis::Commands;
 use crate::{
     execution::plan::PlanExecutionOutput,
     hooks::{
-        on_execute::{OnExecuteEndPayload, OnExecuteStartPayload}, on_supergraph_load::{OnSupergraphLoadEndPayload, OnSupergraphLoadStartPayload},
+        on_execute::{OnExecuteEndPayload, OnExecuteStartPayload},
+        on_supergraph_load::{OnSupergraphLoadEndPayload, OnSupergraphLoadStartPayload},
     },
     plugin_trait::{EndPayload, HookResult, StartPayload},
     plugins::plugin_trait::RouterPlugin,
@@ -87,24 +88,22 @@ impl RouterPlugin for ResponseCachePlugin {
         }
         payload.cont()
     }
-    fn on_supergraph_reload<'a>(&'a self, payload: OnSupergraphLoadStartPayload) -> HookResult<'a, OnSupergraphLoadStartPayload, OnSupergraphLoadEndPayload> {
+    fn on_supergraph_reload<'a>(
+        &'a self,
+        payload: OnSupergraphLoadStartPayload,
+    ) -> HookResult<'a, OnSupergraphLoadStartPayload, OnSupergraphLoadEndPayload> {
         // Visit the schema and update ttl_per_type based on some directive
-        payload
-            .new_ast
-            .definitions
-            .iter()
-            .for_each(|def| {
-                if let graphql_parser::schema::Definition::TypeDefinition(type_def) = def {
-                    if let graphql_parser::schema::TypeDefinition::Object(obj_type) = type_def {
-                        for directive in &obj_type.directives {
-                            if directive.name == "cacheControl" {
-                                for arg in &directive.arguments {
-                                    if arg.0 == "maxAge" {
-                                        if let graphql_parser::query::Value::Int(max_age) = &arg.1 {
-                                            if let Some(max_age) = max_age.as_i64() {
-                                                self.ttl_per_type
-                                                    .insert(obj_type.name.clone(), max_age as u64);
-                                            }
+        payload.new_ast.definitions.iter().for_each(|def| {
+            if let graphql_parser::schema::Definition::TypeDefinition(type_def) = def {
+                if let graphql_parser::schema::TypeDefinition::Object(obj_type) = type_def {
+                    for directive in &obj_type.directives {
+                        if directive.name == "cacheControl" {
+                            for arg in &directive.arguments {
+                                if arg.0 == "maxAge" {
+                                    if let graphql_parser::query::Value::Int(max_age) = &arg.1 {
+                                        if let Some(max_age) = max_age.as_i64() {
+                                            self.ttl_per_type
+                                                .insert(obj_type.name.clone(), max_age as u64);
                                         }
                                     }
                                 }
@@ -112,7 +111,8 @@ impl RouterPlugin for ResponseCachePlugin {
                         }
                     }
                 }
-            });
+            }
+        });
 
         payload.cont()
     }

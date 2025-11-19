@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
-use crate::hooks::on_subgraph_http_request::{OnSubgraphHttpRequestPayload, OnSubgraphHttpResponsePayload};
+use crate::hooks::on_subgraph_http_request::{
+    OnSubgraphHttpRequestPayload, OnSubgraphHttpResponsePayload,
+};
 use crate::plugin_trait::{ControlFlowResult, RouterPlugin};
 use dashmap::DashMap;
 use hive_router_config::HiveRouterConfig;
@@ -11,8 +13,8 @@ use tokio::sync::OnceCell;
 use async_trait::async_trait;
 
 use bytes::{BufMut, Bytes, BytesMut};
-use http::{HeaderMap, StatusCode};
 use http::HeaderValue;
+use http::{HeaderMap, StatusCode};
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::Version;
@@ -169,104 +171,101 @@ async fn send_request(
     headers: HeaderMap,
     plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
 ) -> Result<SharedResponse, SubgraphExecutorError> {
-        let mut req = hyper::Request::builder()
-            .method(method)
-            .uri(endpoint)
-            .version(Version::HTTP_11)
-            .body(Full::new(Bytes::from(body)))
-            .map_err(|e| {
-                SubgraphExecutorError::RequestBuildFailure(endpoint.to_string(), e.to_string())
-            })?;
-
-        *req.headers_mut() = headers;
-
-        let mut start_payload = OnSubgraphHttpRequestPayload {
-            subgraph_name,
-            request: req,
-            response: None,
-        };
-
-        let mut on_end_callbacks = vec![];
-
-        for plugin in plugins.as_ref() {
-            let result = plugin.on_subgraph_http_request(start_payload);
-            start_payload = result.payload;
-            match result.control_flow {
-                ControlFlowResult::Continue => { /* continue to next plugin */ }
-                ControlFlowResult::EndResponse(response) => {
-                    // TODO: Fixx
-                    return Ok(SharedResponse {
-                        status: StatusCode::OK,
-                        body: response.body.into(),
-                        headers: response.headers,
-                    });
-                }
-                ControlFlowResult::OnEnd(callback) => {
-                    on_end_callbacks.push(callback);
-                }
-            }
-        }
-
-        debug!("making http request to {}", endpoint.to_string());
-
-        let req = start_payload.request;
-
-        let res = http_client.request(req).await.map_err(|e| {
-            SubgraphExecutorError::RequestFailure(endpoint.to_string(), e.to_string())
+    let mut req = hyper::Request::builder()
+        .method(method)
+        .uri(endpoint)
+        .version(Version::HTTP_11)
+        .body(Full::new(Bytes::from(body)))
+        .map_err(|e| {
+            SubgraphExecutorError::RequestBuildFailure(endpoint.to_string(), e.to_string())
         })?;
 
-        debug!(
-            "http request to {} completed, status: {}",
-            endpoint.to_string(),
-            res.status()
-        );
+    *req.headers_mut() = headers;
 
-        let (parts, body) = res.into_parts();
-        let body = body
-            .collect()
-            .await
-            .map_err(|e| {
-                SubgraphExecutorError::RequestFailure(endpoint.to_string(), e.to_string())
-            })?
-            .to_bytes();
+    let mut start_payload = OnSubgraphHttpRequestPayload {
+        subgraph_name,
+        request: req,
+        response: None,
+    };
 
-        if body.is_empty() {
-            return Err(SubgraphExecutorError::RequestFailure(
-                endpoint.to_string(),
-                "Empty response body".to_string(),
-            ));
-        }
+    let mut on_end_callbacks = vec![];
 
-        let response = SharedResponse {
-            status: parts.status,
-            body: body,
-            headers: parts.headers,
-        };
-
-        let mut end_payload = OnSubgraphHttpResponsePayload {
-            response,
-        };
-
-        for callback in on_end_callbacks {
-            let result = callback(end_payload);
-            end_payload = result.payload;
-            match result.control_flow {
-                ControlFlowResult::Continue => { /* continue to next callback */ }
-                ControlFlowResult::EndResponse(response) => {
-                    return Ok(SharedResponse {
-                        status: StatusCode::OK,
-                        body: response.body.into(),
-                        headers: response.headers,
-                    });
-                }
-                ControlFlowResult::OnEnd(_) => {
-                    // on_end callbacks should not return OnEnd again
-                    unreachable!("on_end callback returned OnEnd again");
-                }
+    for plugin in plugins.as_ref() {
+        let result = plugin.on_subgraph_http_request(start_payload);
+        start_payload = result.payload;
+        match result.control_flow {
+            ControlFlowResult::Continue => { /* continue to next plugin */ }
+            ControlFlowResult::EndResponse(response) => {
+                // TODO: Fixx
+                return Ok(SharedResponse {
+                    status: StatusCode::OK,
+                    body: response.body.into(),
+                    headers: response.headers,
+                });
+            }
+            ControlFlowResult::OnEnd(callback) => {
+                on_end_callbacks.push(callback);
             }
         }
+    }
 
-        Ok(end_payload.response)
+    debug!("making http request to {}", endpoint.to_string());
+
+    let req = start_payload.request;
+
+    let res = http_client
+        .request(req)
+        .await
+        .map_err(|e| SubgraphExecutorError::RequestFailure(endpoint.to_string(), e.to_string()))?;
+
+    debug!(
+        "http request to {} completed, status: {}",
+        endpoint.to_string(),
+        res.status()
+    );
+
+    let (parts, body) = res.into_parts();
+    let body = body
+        .collect()
+        .await
+        .map_err(|e| SubgraphExecutorError::RequestFailure(endpoint.to_string(), e.to_string()))?
+        .to_bytes();
+
+    if body.is_empty() {
+        return Err(SubgraphExecutorError::RequestFailure(
+            endpoint.to_string(),
+            "Empty response body".to_string(),
+        ));
+    }
+
+    let response = SharedResponse {
+        status: parts.status,
+        body,
+        headers: parts.headers,
+    };
+
+    let mut end_payload = OnSubgraphHttpResponsePayload { response };
+
+    for callback in on_end_callbacks {
+        let result = callback(end_payload);
+        end_payload = result.payload;
+        match result.control_flow {
+            ControlFlowResult::Continue => { /* continue to next callback */ }
+            ControlFlowResult::EndResponse(response) => {
+                return Ok(SharedResponse {
+                    status: StatusCode::OK,
+                    body: response.body.into(),
+                    headers: response.headers,
+                });
+            }
+            ControlFlowResult::OnEnd(_) => {
+                // on_end callbacks should not return OnEnd again
+                unreachable!("on_end callback returned OnEnd again");
+            }
+        }
+    }
+
+    Ok(end_payload.response)
 }
 
 #[async_trait]
@@ -298,7 +297,17 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
-            return match send_request(&self.http_client, &self.subgraph_name, &self.endpoint, method, body, headers, self.plugins.clone()).await {
+            return match send_request(
+                &self.http_client,
+                &self.subgraph_name,
+                &self.endpoint,
+                method,
+                body,
+                headers,
+                self.plugins.clone(),
+            )
+            .await
+            {
                 Ok(shared_response) => HttpExecutionResponse {
                     body: shared_response.body,
                     headers: shared_response.headers,
@@ -330,7 +339,16 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
                     let _permit = self.semaphore.acquire().await.unwrap();
-                    send_request(&self.http_client, &self.subgraph_name, &self.endpoint, method, body, headers, self.plugins.clone()).await
+                    send_request(
+                        &self.http_client,
+                        &self.subgraph_name,
+                        &self.endpoint,
+                        method,
+                        body,
+                        headers,
+                        self.plugins.clone(),
+                    )
+                    .await
                 };
                 // It's important to remove the entry from the map before returning the result.
                 // This ensures that once the OnceCell is set, no future requests can join it.
