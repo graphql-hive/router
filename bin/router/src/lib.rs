@@ -27,8 +27,7 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 use hive_router_config::{load_config, HiveRouterConfig};
 use http::header::RETRY_AFTER;
 use ntex::{
-    util::Bytes,
-    web::{self, HttpRequest},
+    util::Bytes, web::{self, HttpRequest}
 };
 use tracing::{info, warn};
 
@@ -112,16 +111,18 @@ pub async fn configure_app_from_config(
     };
 
     let router_config_arc = Arc::new(router_config);
+    let shared_state = Arc::new(RouterSharedState::new(router_config_arc.clone(), jwt_runtime)?);
     let schema_state =
-        SchemaState::new_from_config(bg_tasks_manager, router_config_arc.clone()).await?;
+        SchemaState::new_from_config(bg_tasks_manager, router_config_arc.clone(), shared_state.clone()).await?;
     let schema_state_arc = Arc::new(schema_state);
-    let shared_state = Arc::new(RouterSharedState::new(router_config_arc, jwt_runtime)?);
 
     Ok((shared_state, schema_state_arc))
 }
 
 pub fn configure_ntex_app(cfg: &mut web::ServiceConfig) {
-    cfg.route("/graphql", web::to(graphql_endpoint_handler))
+    cfg
+        .route("/graphql", web::to(graphql_endpoint_handler))
         .route("/health", web::to(health_check_handler))
         .route("/readiness", web::to(readiness_check_handler));
 }
+

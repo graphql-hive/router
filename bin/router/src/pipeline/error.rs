@@ -78,7 +78,7 @@ pub enum PipelineErrorVariant {
     #[error("Failed to execute a plan: {0}")]
     PlanExecutionError(PlanExecutionError),
     #[error("Failed to produce a plan: {0}")]
-    PlannerError(Arc<PlannerError>),
+    PlannerError(PlannerError),
     #[error(transparent)]
     LabelEvaluationError(LabelEvaluationError),
 

@@ -3,6 +3,7 @@ use hive_router_config::HiveRouterConfig;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
+use hive_router_plan_executor::plugin_trait::RouterPlugin;
 use moka::future::Cache;
 use moka::Expiry;
 use std::sync::Arc;
@@ -68,6 +69,7 @@ pub struct RouterSharedState {
     /// but no longer than `exp` date.
     pub jwt_claims_cache: JwtClaimsCache,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
+    pub plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
 }
 
 impl RouterSharedState {
@@ -92,6 +94,7 @@ impl RouterSharedState {
             )
             .map_err(Box::new)?,
             jwt_auth_runtime,
+            plugins: Arc::new(vec![]),
         })
     }
 }

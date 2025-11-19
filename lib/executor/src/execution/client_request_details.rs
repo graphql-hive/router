@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap};
 
 use bytes::Bytes;
 use http::Method;
