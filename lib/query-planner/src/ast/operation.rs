@@ -129,17 +129,12 @@ impl PrettyDisplay for SubgraphFetchOperation {
 
 impl Display for OperationDefinition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if (self.operation_kind.is_none()
-            || self
-                .operation_kind
-                .as_ref()
-                .is_none_or(|k| matches!(k, OperationKind::Query)))
-            && (self.name.is_none() || self.name.as_ref().is_none_or(|n| n.is_empty()))
-            && (self.variable_definitions.is_none()
-                || self
-                    .variable_definitions
-                    .as_ref()
-                    .is_none_or(|v| v.is_empty()))
+        if self
+            .operation_kind
+            .as_ref()
+            .is_none_or(|k| matches!(k, OperationKind::Query))
+            && self.name.as_deref().is_none_or(str::is_empty)
+            && self.variable_definitions.as_ref().is_none_or(Vec::is_empty)
         {
             // Short form for anonymous query
             return self.selection_set.fmt(f);
