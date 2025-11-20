@@ -273,7 +273,7 @@ fn provides_on_union() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{media{__typename ...on Book{title id} ...on Movie{__typename id}}}"
+            "operation": "{media{__typename ...on Book{title id} ...on Movie{__typename id}}}"
           },
           {
             "kind": "Flatten",

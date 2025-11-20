@@ -432,7 +432,7 @@ mod tests {
                 .to_string()
             ),
             @r"
-        query {
+        {
           products {
             ... on Oven {
               id
@@ -744,7 +744,7 @@ mod tests {
                 .to_string()
             ),
             @r"
-        query {
+        {
           userFromA {
             profile {
               displayName
