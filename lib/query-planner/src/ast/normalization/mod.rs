@@ -135,16 +135,16 @@ mod tests {
                 .unwrap()
                 .to_string()
             ),
-            @r#"
-            query {
-              a: __typename
-              words
-              __typename
-              __schema {
-                __typename
-              }
-            }
-          "#
+            @r"
+        {
+          a: __typename
+          words
+          __typename
+          __schema {
+            __typename
+          }
+        }
+        "
         );
     }
 
@@ -179,11 +179,11 @@ mod tests {
                 .to_string()
             ),
             @r#"
-            query {
-              words(sep: ",")
-              foo: words(len: 10, sep: ".")
-            }
-            "#
+        {
+          words(sep: ",")
+          foo: words(len: 10, sep: ".")
+        }
+        "#
         );
     }
 
@@ -261,14 +261,14 @@ mod tests {
                 .unwrap()
                 .to_string()
             ),
-            @r#"
-            query {
-              words
-              c: words(len: 1)
-              b: words
-              a: words
-            }
-            "#
+            @r"
+        {
+          words
+          c: words(len: 1)
+          b: words
+          a: words
+        }
+        "
         );
     }
 
@@ -386,7 +386,7 @@ mod tests {
                 .to_string()
             ),
             @r"
-        query {
+        {
           products {
             ... on Toaster {
               t1
@@ -529,12 +529,12 @@ mod tests {
 
         insta::assert_snapshot!(
             pretty_query(r.to_string()),
-            @r###"
-        query {
+            @r#"
+        {
           one: words(len: 10, sep: ".")
           two: words(len: 10, sep: ".")
         }
-        "###
+        "#
         );
     }
 
@@ -697,7 +697,7 @@ mod tests {
                 .to_string()
             ),
             @r"
-        query {
+        {
           userFromA {
             profile {
               displayName
@@ -792,7 +792,7 @@ mod tests {
                 .to_string()
             ),
             @r"
-        query {
+        {
           products {
             id
             ... on Book {
@@ -841,13 +841,13 @@ mod tests {
                 .to_string()
             ),
             @r"
-            query {
-              anotherUsers {
-                id
-                name
-                username
-              }
-            }
+        {
+          anotherUsers {
+            id
+            name
+            username
+          }
+        }
         ",
         );
     }
@@ -885,19 +885,19 @@ mod tests {
                 .to_string()
             ),
             @r"
-      query {
-        userFromA {
-          profile {
-            ... on AdminAccount {
-              accountType
-            }
-            ... on GuestAccount {
-              accountType
+        {
+          userFromA {
+            profile {
+              ... on AdminAccount {
+                accountType
+              }
+              ... on GuestAccount {
+                accountType
+              }
             }
           }
         }
-      }
-      ",
+        ",
         );
     }
 
@@ -940,20 +940,20 @@ mod tests {
                 .to_string()
             ),
             @r"
-      query {
-        userFromA {
-          profile {
-            ... on AdminAccount {
-              accountType
-            }
-            ... on GuestAccount {
-              accountType
-              guestToken
+        {
+          userFromA {
+            profile {
+              ... on AdminAccount {
+                accountType
+              }
+              ... on GuestAccount {
+                accountType
+                guestToken
+              }
             }
           }
         }
-      }
-      ",
+        ",
         );
     }
 
@@ -1185,7 +1185,7 @@ mod tests {
                 .to_string()
             ),
             @r"
-        query {
+        {
           results {
             __typename
             ... on MultipleColor {
@@ -1265,27 +1265,27 @@ mod tests {
                 .to_string()
             ),
             @r"
-            query {
-              results {
-                __typename
-                ... on MultipleColor {
-                  id
-                  name
-                  colorOptions {
-                    id
-                    color
-                  }
-                }
-                ... on SingleColor {
-                  id
-                  name
-                  colorOption {
-                    id
-                    color
-                  }
-                }
+        {
+          results {
+            __typename
+            ... on MultipleColor {
+              id
+              name
+              colorOptions {
+                id
+                color
               }
             }
+            ... on SingleColor {
+              id
+              name
+              colorOption {
+                id
+                color
+              }
+            }
+          }
+        }
         "
         );
     }

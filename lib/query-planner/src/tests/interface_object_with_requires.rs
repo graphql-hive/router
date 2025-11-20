@@ -79,7 +79,7 @@ fn interface_object_requiring_interface_fields() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{anotherUsers{__typename id}}"
+            "operation": "{anotherUsers{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -246,7 +246,7 @@ fn interface_field_from_remote_graph_with_requires() -> Result<(), Box<dyn Error
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "query{users{__typename id name}}",
+            "operation": "{users{__typename id name}}",
             "inputRewrites": [
               {
                 "ValueSetter": {
@@ -383,7 +383,7 @@ fn inline_fragment_on_interface_object_for_remote_type_field() -> Result<(), Box
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{anotherUsers{__typename id}}"
+            "operation": "{anotherUsers{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -480,7 +480,7 @@ fn inline_fragment_on_local_type_behind_interface() -> Result<(), Box<dyn Error>
         "kind": "Fetch",
         "serviceName": "a",
         "operationKind": "query",
-        "operation": "query{users{__typename ...on User{age}}}"
+        "operation": "{users{__typename ...on User{age}}}"
       }
     }
     "#);
@@ -575,7 +575,7 @@ fn interface_object_field_with_requires_and_inline_fragment() -> Result<(), Box<
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{anotherUsers{__typename id}}"
+            "operation": "{anotherUsers{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -754,7 +754,7 @@ fn interface_field_from_remote_graph_with_requires_and_inline_fragment(
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "query{users{__typename ...on User{__typename age id name} id name}}",
+            "operation": "{users{__typename ...on User{__typename age id name} id name}}",
             "inputRewrites": [
               {
                 "ValueSetter": {
