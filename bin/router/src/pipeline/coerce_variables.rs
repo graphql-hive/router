@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
@@ -23,7 +22,7 @@ pub fn coerce_request_variables(
     req: &HttpRequest,
     supergraph: &SupergraphData,
     graphql_params: &mut GraphQLParams,
-    normalized_operation: &Arc<GraphQLNormalizationPayload>,
+    normalized_operation: &GraphQLNormalizationPayload,
 ) -> Result<CoerceVariablesPayload, PipelineErrorVariant> {
     if req.method() == Method::GET {
         if let Some(OperationKind::Mutation) =

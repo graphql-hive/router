@@ -62,8 +62,8 @@ async fn graphql_endpoint_handler(
             &req,
             body_bytes,
             supergraph,
-            app_state.get_ref().clone(),
-            schema_state.get_ref().clone(),
+            app_state.get_ref(),
+            schema_state.get_ref(),
         )
         .await
         {

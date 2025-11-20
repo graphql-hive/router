@@ -63,8 +63,8 @@ pub async fn graphql_request_handler(
     req: &HttpRequest,
     body_bytes: Bytes,
     supergraph: &SupergraphData,
-    shared_state: Arc<RouterSharedState>,
-    schema_state: Arc<SchemaState>,
+    shared_state: &RouterSharedState,
+    schema_state: &SchemaState,
 ) -> Result<web::HttpResponse, PipelineErrorVariant> {
     if req.method() == Method::GET && req.accepts_content_type(*TEXT_HTML_CONTENT_TYPE) {
         if shared_state.router_config.graphiql.enabled {
@@ -139,14 +139,14 @@ pub async fn graphql_request_handler(
 
 #[inline]
 #[allow(clippy::await_holding_refcell_ref)]
-pub async fn execute_pipeline<'req>(
-    req: &'req HttpRequest,
+pub async fn execute_pipeline(
+    req: &HttpRequest,
     body: Bytes,
     supergraph: &SupergraphData,
-    shared_state: Arc<RouterSharedState>,
-    schema_state: Arc<SchemaState>,
+    shared_state: &RouterSharedState,
+    schema_state: &SchemaState,
     jwt_context: Option<JwtRequestContext>,
-    plugin_manager: PluginManager<'req>,
+    plugin_manager: PluginManager<'_>,
 ) -> Result<PlanExecutionOutput, PipelineErrorVariant> {
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
@@ -195,7 +195,7 @@ pub async fn execute_pipeline<'req>(
     /* Handle on_deserialize hook in the plugins - END */
 
     let parser_result =
-        parse_operation_with_cache(shared_state.clone(), &graphql_params, &plugin_manager).await?;
+        parse_operation_with_cache(shared_state, &graphql_params, &plugin_manager).await?;
 
     let parser_payload = match parser_result {
         ParseResult::Payload(payload) => payload,
@@ -206,20 +206,16 @@ pub async fn execute_pipeline<'req>(
 
     validate_operation_with_cache(
         supergraph,
-        schema_state.clone(),
-        shared_state.clone(),
+        schema_state,
+        shared_state,
         &parser_payload,
         &plugin_manager,
     )
     .await?;
 
-    let normalize_payload = normalize_request_with_cache(
-        supergraph,
-        schema_state.clone(),
-        &graphql_params,
-        &parser_payload,
-    )
-    .await?;
+    let normalize_payload =
+        normalize_request_with_cache(supergraph, schema_state, &graphql_params, &parser_payload)
+            .await?;
 
     let variable_payload =
         coerce_request_variables(req, supergraph, &mut graphql_params, &normalize_payload)?;
@@ -264,11 +260,11 @@ pub async fn execute_pipeline<'req>(
 
     let query_plan_result = plan_operation_with_cache(
         supergraph,
-        schema_state.clone(),
-        normalize_payload.clone(),
+        schema_state,
+        &normalize_payload,
         &progressive_override_ctx,
         &query_plan_cancellation_token,
-        shared_state.clone(),
+        shared_state,
         &plugin_manager,
     )
     .await?;
@@ -282,9 +278,9 @@ pub async fn execute_pipeline<'req>(
     let execution_result = execute_plan(
         req,
         supergraph,
-        shared_state.clone(),
-        normalize_payload.clone(),
-        query_plan_payload,
+        shared_state,
+        &normalize_payload,
+        &query_plan_payload,
         &variable_payload,
         &client_request_details,
         plugin_manager,

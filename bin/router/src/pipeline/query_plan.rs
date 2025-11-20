@@ -31,11 +31,11 @@ pub enum QueryPlanGetterError {
 #[inline]
 pub async fn plan_operation_with_cache<'req>(
     supergraph: &SupergraphData,
-    schema_state: Arc<SchemaState>,
-    normalized_operation: Arc<GraphQLNormalizationPayload>,
+    schema_state: &SchemaState,
+    normalized_operation: &GraphQLNormalizationPayload,
     request_override_context: &RequestOverrideContext,
     cancellation_token: &CancellationToken,
-    app_state: Arc<RouterSharedState>,
+    app_state: &RouterSharedState,
     plugin_manager: &PluginManager<'req>,
 ) -> Result<QueryPlanResult, PipelineErrorVariant> {
     let stable_override_context =

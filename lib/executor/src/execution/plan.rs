@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeSet, HashMap},
-    sync::Arc,
-};
+use std::collections::{BTreeSet, HashMap};
 
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
@@ -56,7 +53,7 @@ use crate::{
 
 pub struct QueryPlanExecutionContext<'exec, 'req> {
     pub plugin_manager: &'exec PluginManager<'exec>,
-    pub query_plan: Arc<QueryPlan>,
+    pub query_plan: &'exec QueryPlan,
     pub projection_plan: &'exec Vec<FieldProjectionPlan>,
     pub headers_plan: &'exec HeaderRulesPlan,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
@@ -87,7 +84,7 @@ impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
         let mut start_payload = OnExecuteStartPayload {
             router_http_request: &self.plugin_manager.router_http_request,
             context: &self.plugin_manager.context,
-            query_plan: &self.query_plan,
+            query_plan: self.query_plan,
             data: init_value,
             errors: Vec::new(),
             extensions: self.extensions.clone(),

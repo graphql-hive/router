@@ -29,10 +29,10 @@ pub enum ParseResult {
 }
 
 #[inline]
-pub async fn parse_operation_with_cache<'req>(
-    app_state: Arc<RouterSharedState>,
+pub async fn parse_operation_with_cache(
+    app_state: &RouterSharedState,
     graphql_params: &GraphQLParams,
-    plugin_manager: &PluginManager<'req>,
+    plugin_manager: &PluginManager<'_>,
 ) -> Result<ParseResult, PipelineErrorVariant> {
     let cache_key = {
         let mut hasher = Xxh3::new();

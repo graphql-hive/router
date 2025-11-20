@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::PipelineErrorVariant;
@@ -24,16 +23,17 @@ enum ExposeQueryPlanMode {
     DryRun,
 }
 
+#[allow(clippy::too_many_arguments)]
 #[inline]
-pub async fn execute_plan<'exec, 'req>(
+pub async fn execute_plan(
     req: &HttpRequest,
     supergraph: &SupergraphData,
-    app_state: Arc<RouterSharedState>,
-    normalized_payload: Arc<GraphQLNormalizationPayload>,
-    query_plan_payload: Arc<QueryPlan>,
+    app_state: &RouterSharedState,
+    normalized_payload: &GraphQLNormalizationPayload,
+    query_plan_payload: &QueryPlan,
     variable_payload: &CoerceVariablesPayload,
-    client_request_details: &ClientRequestDetails<'exec, 'req>,
-    plugin_manager: PluginManager<'req>,
+    client_request_details: &ClientRequestDetails<'_, '_>,
+    plugin_manager: PluginManager<'_>,
 ) -> Result<PlanExecutionOutput, PipelineErrorVariant> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 

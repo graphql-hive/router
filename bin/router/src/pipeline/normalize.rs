@@ -26,7 +26,7 @@ pub struct GraphQLNormalizationPayload {
 #[inline]
 pub async fn normalize_request_with_cache(
     supergraph: &SupergraphData,
-    schema_state: Arc<SchemaState>,
+    schema_state: &SchemaState,
     graphql_params: &GraphQLParams,
     parser_payload: &GraphQLParserPayload,
 ) -> Result<Arc<GraphQLNormalizationPayload>, PipelineErrorVariant> {
