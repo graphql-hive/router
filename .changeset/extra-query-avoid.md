@@ -1,5 +1,7 @@
 ---
 hive-router-query-planner: patch
+router: patch
+node-addon: patch
 ---
 
 # Avoid extra `query` prefix for anonymous queries
