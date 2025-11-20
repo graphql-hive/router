@@ -39,7 +39,7 @@ fn single_simple_overrides() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "b",
         "operationKind": "query",
-        "operation": "query{feed{createdAt}}"
+        "operation": "{feed{createdAt}}"
       }
     }
     "#);
@@ -116,13 +116,13 @@ fn two_fields_simple_overrides() -> Result<(), Box<dyn Error>> {
                 "kind": "Fetch",
                 "serviceName": "b",
                 "operationKind": "query",
-                "operation": "query{bFeed{createdAt}}"
+                "operation": "{bFeed{createdAt}}"
               },
               {
                 "kind": "Fetch",
                 "serviceName": "a",
                 "operationKind": "query",
-                "operation": "query{aFeed{__typename id}}"
+                "operation": "{aFeed{__typename id}}"
               }
             ]
           },

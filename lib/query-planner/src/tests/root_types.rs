@@ -80,19 +80,19 @@ fn shared_root() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "price",
             "operationKind": "query",
-            "operation": "query{product{price{id amount currency}}}"
+            "operation": "{product{price{id amount currency}}}"
           },
           {
             "kind": "Fetch",
             "serviceName": "category",
             "operationKind": "query",
-            "operation": "query{product{category{id name} id}}"
+            "operation": "{product{category{id name} id}}"
           },
           {
             "kind": "Fetch",
             "serviceName": "name",
             "operationKind": "query",
-            "operation": "query{product{name{id brand model}}}"
+            "operation": "{product{name{id brand model}}}"
           }
         ]
       }
