@@ -477,7 +477,7 @@ mod tests {
                 .to_string()
             ),
             @r"
-        query {
+        {
           toasters {
             id
             ... on Toaster {
