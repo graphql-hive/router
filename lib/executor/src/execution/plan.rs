@@ -64,6 +64,7 @@ pub struct QueryPlanExecutionContext<'exec, 'req> {
 pub struct PlanExecutionOutput {
     pub body: Vec<u8>,
     pub headers: HeaderMap,
+    pub error_count: usize,
 }
 
 pub async fn execute_query_plan<'exec, 'req>(
@@ -101,6 +102,7 @@ pub async fn execute_query_plan<'exec, 'req>(
         })?;
 
     let final_response = &exec_ctx.final_response;
+    let error_count = exec_ctx.errors.len(); // Added for usage reporting
     let body = project_by_operation(
         final_response,
         exec_ctx.errors,
@@ -118,6 +120,7 @@ pub async fn execute_query_plan<'exec, 'req>(
     Ok(PlanExecutionOutput {
         body,
         headers: response_headers,
+        error_count,
     })
 }
 
