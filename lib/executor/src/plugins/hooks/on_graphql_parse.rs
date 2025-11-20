@@ -2,11 +2,13 @@ use graphql_tools::static_graphql::query::Document;
 
 use crate::{
     hooks::on_graphql_params::GraphQLParams,
+    plugin_context::{PluginContext, RouterHttpRequest},
     plugin_trait::{EndPayload, StartPayload},
 };
 
 pub struct OnGraphQLParseStartPayload<'exec> {
-    pub router_http_request: ntex::web::HttpRequest,
+    pub router_http_request: &'exec RouterHttpRequest<'exec>,
+    pub context: &'exec PluginContext,
     pub graphql_params: &'exec GraphQLParams,
     pub document: Option<Document>,
 }

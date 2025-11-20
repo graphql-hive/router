@@ -10,17 +10,17 @@ use hive_router_plan_executor::hooks::on_graphql_validation::{
     OnGraphQLValidationEndPayload, OnGraphQLValidationStartPayload,
 };
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
+use hive_router_plan_executor::plugin_context::PluginManager;
 use hive_router_plan_executor::plugin_trait::ControlFlowResult;
-use ntex::web::HttpRequest;
 use tracing::{error, trace};
 
 #[inline]
 pub async fn validate_operation_with_cache(
-    req: &mut HttpRequest,
     supergraph: &SupergraphData,
     schema_state: Arc<SchemaState>,
     app_state: Arc<RouterSharedState>,
     parser_payload: &GraphQLParserPayload,
+    plugin_manager: &PluginManager<'_>,
 ) -> Result<Option<PlanExecutionOutput>, PipelineErrorVariant> {
     let consumer_schema_ast = &supergraph.planner.consumer_schema.document;
 
@@ -45,14 +45,14 @@ pub async fn validate_operation_with_cache(
 
             /* Handle on_graphql_validate hook in the plugins - START */
             let mut start_payload = OnGraphQLValidationStartPayload::new(
-                req,
+                plugin_manager,
                 consumer_schema_ast,
                 &parser_payload.parsed_operation,
                 &app_state.validation_plan,
             );
             let mut on_end_callbacks = vec![];
             for plugin in app_state.plugins.as_ref() {
-                let result = plugin.on_graphql_validation(start_payload);
+                let result = plugin.on_graphql_validation(start_payload).await;
                 start_payload = result.payload;
                 match result.control_flow {
                     ControlFlowResult::Continue => {

@@ -4,6 +4,7 @@ mod http_utils;
 mod jwt;
 mod logger;
 mod pipeline;
+mod plugins;
 mod schema_state;
 mod shared_state;
 mod supergraph;
@@ -24,6 +25,7 @@ use crate::{
         graphql_request_handler,
         header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR},
     },
+    plugins::plugins_service::PluginService,
 };
 
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
@@ -56,8 +58,8 @@ async fn graphql_endpoint_handler(
 
         let accept_ok = !req.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
 
-        let result = match graphql_request_handler(
-            req,
+        let mut response = match graphql_request_handler(
+            &req,
             body_bytes,
             supergraph,
             app_state.get_ref().clone(),
@@ -68,9 +70,6 @@ async fn graphql_endpoint_handler(
             Ok(response_with_req) => response_with_req,
             Err(error) => return PipelineError { accept_ok, error }.into(),
         };
-
-        let mut response = result.result;
-        let req = result.request;
 
         // Apply CORS headers to the final response if CORS is configured.
         if let Some(cors) = app_state.cors_runtime.as_ref() {
@@ -99,6 +98,7 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
 
     let maybe_error = web::HttpServer::new(move || {
         web::App::new()
+            .wrap(PluginService)
             .state(shared_state.clone())
             .state(schema_state.clone())
             .configure(configure_ntex_app)

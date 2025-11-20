@@ -45,9 +45,9 @@ pub fn modify_subgraph_request_headers(
     Ok(())
 }
 
-pub struct RequestExpressionContext<'a> {
-    pub subgraph_name: &'a str,
-    pub client_request: &'a ClientRequestDetails<'a>,
+pub struct RequestExpressionContext<'exec, 'req> {
+    pub subgraph_name: &'exec str,
+    pub client_request: &'exec ClientRequestDetails<'exec, 'req>,
 }
 
 trait ApplyRequestHeader {

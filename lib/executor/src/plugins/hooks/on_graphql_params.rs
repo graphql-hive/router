@@ -6,6 +6,8 @@ use ntex::util::Bytes;
 use serde::{de, Deserialize, Deserializer};
 use sonic_rs::Value;
 
+use crate::plugin_context::PluginContext;
+use crate::plugin_context::RouterHttpRequest;
 use crate::plugin_trait::EndPayload;
 use crate::plugin_trait::StartPayload;
 
@@ -91,13 +93,14 @@ impl<'de> Deserialize<'de> for GraphQLParams {
     }
 }
 
-pub struct OnGraphQLParamsStartPayload {
-    pub router_http_request: ntex::web::HttpRequest,
+pub struct OnGraphQLParamsStartPayload<'exec> {
+    pub router_http_request: &'exec RouterHttpRequest<'exec>,
+    pub context: &'exec PluginContext,
     pub body: Bytes,
     pub graphql_params: Option<GraphQLParams>,
 }
 
-impl StartPayload<OnGraphQLParamsEndPayload> for OnGraphQLParamsStartPayload {}
+impl<'exec> StartPayload<OnGraphQLParamsEndPayload> for OnGraphQLParamsStartPayload<'exec> {}
 
 pub struct OnGraphQLParamsEndPayload {
     pub graphql_params: GraphQLParams,

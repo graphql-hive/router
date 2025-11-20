@@ -74,9 +74,9 @@ mod tests {
         );
 
         let client_details = ClientRequestDetails {
-            method: http::Method::POST,
-            url: "http://example.com".parse().unwrap(),
-            headers: client_headers,
+            method: &http::Method::POST,
+            url: &"http://example.com".parse().unwrap(),
+            headers: &client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -108,9 +108,9 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: http::Method::POST,
-            url: "http://example.com".parse().unwrap(),
-            headers: client_headers,
+            method: &http::Method::POST,
+            url: &"http://example.com".parse().unwrap(),
+            headers: &client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -155,9 +155,9 @@ mod tests {
         );
 
         let client_details = ClientRequestDetails {
-            method: http::Method::POST,
-            url: "http://example.com".parse().unwrap(),
-            headers: client_headers,
+            method: &http::Method::POST,
+            url: &"http://example.com".parse().unwrap(),
+            headers: &client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -193,9 +193,9 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: http::Method::POST,
-            url: "http://example.com".parse().unwrap(),
-            headers: client_headers,
+            method: &http::Method::POST,
+            url: &"http://example.com".parse().unwrap(),
+            headers: &client_headers,
             operation: OperationDetails {
                 name: Some("MyQuery"),
                 query: "{ __typename }",
@@ -227,9 +227,9 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: http::Method::POST,
-            url: "http://example.com".parse().unwrap(),
-            headers: client_headers,
+            method: &http::Method::POST,
+            url: &"http://example.com".parse().unwrap(),
+            headers: &client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -267,9 +267,9 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: http::Method::POST,
-            url: "http://example.com".parse().unwrap(),
-            headers: client_headers,
+            method: &http::Method::POST,
+            url: &"http://example.com".parse().unwrap(),
+            headers: &client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -311,9 +311,9 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: http::Method::POST,
-            url: "http://example.com".parse().unwrap(),
-            headers: client_headers,
+            method: &http::Method::POST,
+            url: &"http://example.com".parse().unwrap(),
+            headers: &client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -376,9 +376,9 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: http::Method::POST,
-            url: "http://example.com".parse().unwrap(),
-            headers: client_headers,
+            method: &http::Method::POST,
+            url: &"http://example.com".parse().unwrap(),
+            headers: &client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -440,9 +440,9 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: http::Method::POST,
-            url: "http://example.com".parse().unwrap(),
-            headers: client_headers,
+            method: &http::Method::POST,
+            url: &"http://example.com".parse().unwrap(),
+            headers: &client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -497,9 +497,9 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: http::Method::POST,
-            url: "http://example.com".parse().unwrap(),
-            headers: client_headers,
+            method: &http::Method::POST,
+            url: &"http://example.com".parse().unwrap(),
+            headers: &client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -555,9 +555,9 @@ mod tests {
         let plan = compile_headers_plan(&config.headers).unwrap();
         let client_headers = NtexHeaderMap::new();
         let client_details = ClientRequestDetails {
-            method: http::Method::POST,
-            url: "http://example.com".parse().unwrap(),
-            headers: client_headers,
+            method: &http::Method::POST,
+            url: &"http://example.com".parse().unwrap(),
+            headers: &client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",
@@ -614,9 +614,9 @@ mod tests {
         client_headers.insert(header_name_owned("x-keep"), header_value_owned("hi").into());
 
         let client_details = ClientRequestDetails {
-            method: http::Method::POST,
-            url: "http://example.com".parse().unwrap(),
-            headers: client_headers,
+            method: &http::Method::POST,
+            url: &"http://example.com".parse().unwrap(),
+            headers: &client_headers,
             operation: OperationDetails {
                 name: None,
                 query: "{ __typename }",

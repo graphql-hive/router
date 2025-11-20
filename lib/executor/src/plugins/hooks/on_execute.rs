@@ -1,16 +1,16 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
-use ntex::web::HttpRequest;
 
+use crate::plugin_context::{PluginContext, RouterHttpRequest};
 use crate::plugin_trait::{EndPayload, StartPayload};
 use crate::response::graphql_error::GraphQLError;
 use crate::response::value::Value;
 
 pub struct OnExecuteStartPayload<'exec> {
-    pub router_http_request: HttpRequest,
-    pub query_plan: Arc<QueryPlan>,
+    pub router_http_request: &'exec RouterHttpRequest<'exec>,
+    pub context: &'exec PluginContext,
+    pub query_plan: &'exec QueryPlan,
 
     pub data: Value<'exec>,
     pub errors: Vec<GraphQLError>,

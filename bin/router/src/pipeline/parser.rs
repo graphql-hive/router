@@ -2,16 +2,14 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use graphql_parser::query::Document;
-use hive_router_plan_executor::execution::plan::{
-    PlanExecutionOutput, ResultWithRequest, WithResult,
-};
+use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
 use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 use hive_router_plan_executor::hooks::on_graphql_parse::{
     OnGraphQLParseEndPayload, OnGraphQLParseStartPayload,
 };
+use hive_router_plan_executor::plugin_context::PluginManager;
 use hive_router_plan_executor::plugin_trait::ControlFlowResult;
 use hive_router_query_planner::utils::parsing::safe_parse_operation;
-use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::pipeline::deserialize_graphql_params::GetQueryStr;
@@ -31,11 +29,11 @@ pub enum ParseResult {
 }
 
 #[inline]
-pub async fn parse_operation_with_cache(
-    req: HttpRequest,
+pub async fn parse_operation_with_cache<'req>(
     app_state: Arc<RouterSharedState>,
     graphql_params: &GraphQLParams,
-) -> Result<ResultWithRequest<ParseResult>, PipelineErrorVariant> {
+    plugin_manager: &PluginManager<'req>,
+) -> Result<ParseResult, PipelineErrorVariant> {
     let cache_key = {
         let mut hasher = Xxh3::new();
         graphql_params.query.hash(&mut hasher);
@@ -43,7 +41,8 @@ pub async fn parse_operation_with_cache(
     };
     /* Handle on_graphql_parse hook in the plugins - START */
     let mut start_payload = OnGraphQLParseStartPayload {
-        router_http_request: req,
+        router_http_request: &plugin_manager.router_http_request,
+        context: &plugin_manager.context,
         graphql_params,
         document: None,
     };
@@ -54,16 +53,14 @@ pub async fn parse_operation_with_cache(
     } else {
         let mut on_end_callbacks = vec![];
         for plugin in app_state.plugins.as_ref() {
-            let result = plugin.on_graphql_parse(start_payload);
+            let result = plugin.on_graphql_parse(start_payload).await;
             start_payload = result.payload;
             match result.control_flow {
                 ControlFlowResult::Continue => {
                     // continue to next plugin
                 }
                 ControlFlowResult::EndResponse(response) => {
-                    return Ok(start_payload
-                        .router_http_request
-                        .with_result(ParseResult::Response(response)));
+                    return Ok(ParseResult::Response(response));
                 }
                 ControlFlowResult::OnEnd(callback) => {
                     // store the callback to be called later
@@ -93,9 +90,7 @@ pub async fn parse_operation_with_cache(
                     // continue to next callback
                 }
                 ControlFlowResult::EndResponse(response) => {
-                    return Ok(start_payload
-                        .router_http_request
-                        .with_result(ParseResult::Response(response)));
+                    return Ok(ParseResult::Response(response));
                 }
                 ControlFlowResult::OnEnd(_) => {
                     // on_end callbacks should not return OnEnd again
@@ -114,10 +109,8 @@ pub async fn parse_operation_with_cache(
         parsed_arc
     };
 
-    Ok(start_payload
-        .router_http_request
-        .with_result(ParseResult::Payload(GraphQLParserPayload {
-            parsed_operation,
-            cache_key,
-        })))
+    Ok(ParseResult::Payload(GraphQLParserPayload {
+        parsed_operation,
+        cache_key,
+    }))
 }

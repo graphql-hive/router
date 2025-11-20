@@ -38,6 +38,7 @@ use crate::{
         http::{HTTPSubgraphExecutor, HttpClient},
     },
     hooks::on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload},
+    plugin_context::PluginManager,
     plugin_trait::{ControlFlowResult, RouterPlugin},
     response::graphql_error::GraphQLError,
 };
@@ -124,13 +125,16 @@ impl SubgraphExecutorMap {
         Ok(subgraph_executor_map)
     }
 
-    pub async fn execute<'a>(
+    pub async fn execute<'exec, 'req>(
         &self,
         subgraph_name: &str,
-        execution_request: SubgraphExecutionRequest<'a>,
-        client_request: &ClientRequestDetails<'a>,
+        execution_request: SubgraphExecutionRequest<'exec>,
+        client_request: &ClientRequestDetails<'exec, 'req>,
+        plugin_manager: &PluginManager<'req>,
     ) -> HttpExecutionResponse {
         let mut start_payload = OnSubgraphExecuteStartPayload {
+            router_http_request: &plugin_manager.router_http_request,
+            context: &plugin_manager.context,
             subgraph_name: subgraph_name.to_string(),
             execution_request,
             execution_result: None,
@@ -139,7 +143,7 @@ impl SubgraphExecutorMap {
         let mut on_end_callbacks = vec![];
 
         for plugin in self.plugins.as_ref() {
-            let result = plugin.on_subgraph_execute(start_payload);
+            let result = plugin.on_subgraph_execute(start_payload).await;
             start_payload = result.payload;
             match result.control_flow {
                 ControlFlowResult::Continue => {
@@ -227,7 +231,7 @@ impl SubgraphExecutorMap {
     fn get_or_create_executor(
         &self,
         subgraph_name: &str,
-        client_request: &ClientRequestDetails<'_>,
+        client_request: &ClientRequestDetails<'_, '_>,
     ) -> Result<Option<SubgraphExecutorBoxedArc>, SubgraphExecutorError> {
         let from_expression =
             self.get_or_create_executor_from_expression(subgraph_name, client_request)?;
@@ -246,7 +250,7 @@ impl SubgraphExecutorMap {
     fn get_or_create_executor_from_expression(
         &self,
         subgraph_name: &str,
-        client_request: &ClientRequestDetails<'_>,
+        client_request: &ClientRequestDetails<'_, '_>,
     ) -> Result<Option<SubgraphExecutorBoxedArc>, SubgraphExecutorError> {
         if let Some(expression) = self.expressions_by_subgraph.get(subgraph_name) {
             let original_url_value = VrlValue::Bytes(Bytes::from(

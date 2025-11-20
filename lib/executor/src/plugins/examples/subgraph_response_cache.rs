@@ -10,8 +10,9 @@ pub struct SubgraphResponseCachePlugin {
     cache: DashMap<String, HttpExecutionResponse>,
 }
 
+#[async_trait::async_trait]
 impl RouterPlugin for SubgraphResponseCachePlugin {
-    fn on_subgraph_execute<'exec>(
+    async fn on_subgraph_execute<'exec>(
         &'exec self,
         mut payload: OnSubgraphExecuteStartPayload<'exec>,
     ) -> HookResult<'exec, OnSubgraphExecuteStartPayload<'exec>, OnSubgraphExecuteEndPayload> {

@@ -5,7 +5,7 @@ use crate::hooks::on_graphql_parse::{OnGraphQLParseEndPayload, OnGraphQLParseSta
 use crate::hooks::on_graphql_validation::{
     OnGraphQLValidationEndPayload, OnGraphQLValidationStartPayload,
 };
-use crate::hooks::on_http_request::{OnHttpRequestPayload, OnHttpResponse};
+use crate::hooks::on_http_request::{OnHttpRequestPayload, OnHttpResponsePayload};
 use crate::hooks::on_query_plan::{OnQueryPlanEndPayload, OnQueryPlanStartPayload};
 use crate::hooks::on_subgraph_execute::{
     OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload,
@@ -77,51 +77,52 @@ where
     }
 }
 
+#[async_trait::async_trait]
 pub trait RouterPlugin {
-    fn on_http_request<'exec>(
+    fn on_http_request<'req>(
         &self,
-        start_payload: OnHttpRequestPayload<'exec>,
-    ) -> HookResult<'exec, OnHttpRequestPayload<'exec>, OnHttpResponse<'exec>> {
+        start_payload: OnHttpRequestPayload<'req>,
+    ) -> HookResult<'req, OnHttpRequestPayload<'req>, OnHttpResponsePayload> {
         start_payload.cont()
     }
-    fn on_graphql_params<'exec>(
+    async fn on_graphql_params<'exec>(
         &'exec self,
-        start_payload: OnGraphQLParamsStartPayload,
-    ) -> HookResult<'exec, OnGraphQLParamsStartPayload, OnGraphQLParamsEndPayload> {
+        start_payload: OnGraphQLParamsStartPayload<'exec>,
+    ) -> HookResult<'exec, OnGraphQLParamsStartPayload<'exec>, OnGraphQLParamsEndPayload> {
         start_payload.cont()
     }
-    fn on_graphql_parse<'exec>(
+    async fn on_graphql_parse<'exec>(
         &self,
         start_payload: OnGraphQLParseStartPayload<'exec>,
     ) -> HookResult<'exec, OnGraphQLParseStartPayload<'exec>, OnGraphQLParseEndPayload> {
         start_payload.cont()
     }
-    fn on_graphql_validation<'exec>(
+    async fn on_graphql_validation<'exec>(
         &self,
         start_payload: OnGraphQLValidationStartPayload<'exec>,
     ) -> HookResult<'exec, OnGraphQLValidationStartPayload<'exec>, OnGraphQLValidationEndPayload>
     {
         start_payload.cont()
     }
-    fn on_query_plan<'exec>(
+    async fn on_query_plan<'exec>(
         &self,
         start_payload: OnQueryPlanStartPayload<'exec>,
     ) -> HookResult<'exec, OnQueryPlanStartPayload<'exec>, OnQueryPlanEndPayload> {
         start_payload.cont()
     }
-    fn on_execute<'exec>(
+    async fn on_execute<'exec>(
         &'exec self,
         start_payload: OnExecuteStartPayload<'exec>,
     ) -> HookResult<'exec, OnExecuteStartPayload<'exec>, OnExecuteEndPayload<'exec>> {
         start_payload.cont()
     }
-    fn on_subgraph_execute<'exec>(
+    async fn on_subgraph_execute<'exec>(
         &'exec self,
         start_payload: OnSubgraphExecuteStartPayload<'exec>,
     ) -> HookResult<'exec, OnSubgraphExecuteStartPayload<'exec>, OnSubgraphExecuteEndPayload> {
         start_payload.cont()
     }
-    fn on_subgraph_http_request<'exec>(
+    async fn on_subgraph_http_request<'exec>(
         &'exec self,
         start_payload: OnSubgraphHttpRequestPayload<'exec>,
     ) -> HookResult<'exec, OnSubgraphHttpRequestPayload<'exec>, OnSubgraphHttpResponsePayload> {

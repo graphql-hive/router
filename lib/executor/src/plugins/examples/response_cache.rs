@@ -28,8 +28,9 @@ impl ResponseCachePlugin {
     }
 }
 
+#[async_trait::async_trait]
 impl RouterPlugin for ResponseCachePlugin {
-    fn on_execute<'exec>(
+    async fn on_execute<'exec>(
         &'exec self,
         payload: OnExecuteStartPayload<'exec>,
     ) -> HookResult<'exec, OnExecuteStartPayload<'exec>, OnExecuteEndPayload<'exec>> {

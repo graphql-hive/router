@@ -1,16 +1,20 @@
-use ntex::{http::Response, web::HttpRequest};
+use ntex::web::{self, DefaultError};
 
-use crate::plugin_trait::{EndPayload, StartPayload};
+use crate::{
+    plugin_context::PluginContext,
+    plugin_trait::{EndPayload, StartPayload},
+};
 
-pub struct OnHttpRequestPayload<'exec> {
-    pub client_request: &'exec HttpRequest,
+pub struct OnHttpRequestPayload<'req> {
+    pub router_http_request: web::WebRequest<DefaultError>,
+    pub context: &'req PluginContext,
+    pub response: Option<web::WebResponse>,
 }
 
-impl<'exec> StartPayload<OnHttpResponse<'exec>> for OnHttpRequestPayload<'exec> {}
+impl<'req> StartPayload<OnHttpResponsePayload> for OnHttpRequestPayload<'req> {}
 
-pub struct OnHttpResponse<'exec> {
-    pub router_http_request: &'exec HttpRequest,
-    pub response: &'exec mut Response,
+pub struct OnHttpResponsePayload {
+    pub response: web::WebResponse,
 }
 
-impl<'exec> EndPayload for OnHttpResponse<'exec> {}
+impl EndPayload for OnHttpResponsePayload {}

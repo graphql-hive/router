@@ -10,7 +10,6 @@ use hive_router_query_planner::planner::plan_nodes::{
     QueryPlan, SequenceNode,
 };
 use http::HeaderMap;
-use ntex::web::HttpRequest;
 use serde::Deserialize;
 use sonic_rs::ValueRef;
 
@@ -36,7 +35,8 @@ use crate::{
         resolve::{resolve_introspection, IntrospectionContext},
         schema::SchemaMetadata,
     },
-    plugin_trait::{ControlFlowResult, RouterPlugin},
+    plugin_context::PluginManager,
+    plugin_trait::ControlFlowResult,
     projection::{
         plan::FieldProjectionPlan,
         request::{project_requires, RequestProjectionContext},
@@ -54,15 +54,14 @@ use crate::{
     },
 };
 
-pub struct QueryPlanExecutionContext<'exec> {
-    pub router_http_request: HttpRequest,
-    pub plugins: &'exec Vec<Box<dyn RouterPlugin + 'exec + Send + Sync>>,
+pub struct QueryPlanExecutionContext<'exec, 'req> {
+    pub plugin_manager: &'exec PluginManager<'exec>,
     pub query_plan: Arc<QueryPlan>,
     pub projection_plan: &'exec Vec<FieldProjectionPlan>,
     pub headers_plan: &'exec HeaderRulesPlan,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     pub extensions: Option<HashMap<String, sonic_rs::Value>>,
-    pub client_request: &'exec ClientRequestDetails<'exec>,
+    pub client_request: &'exec ClientRequestDetails<'exec, 'req>,
     pub introspection_context: &'exec IntrospectionContext<'exec, 'static>,
     pub operation_type_name: &'exec str,
     pub executors: &'exec SubgraphExecutorMap,
@@ -75,25 +74,8 @@ pub struct PlanExecutionOutput {
     pub headers: HeaderMap,
 }
 
-pub struct ResultWithRequest<T> {
-    pub result: T,
-    pub request: HttpRequest,
-}
-
-pub trait WithResult {
-    fn with_result<T>(self, result: T) -> ResultWithRequest<T>;
-}
-
-impl WithResult for HttpRequest {
-    fn with_result<T>(self, result: T) -> ResultWithRequest<T> {
-        ResultWithRequest { result, request: self }
-    }
-}
-
-impl<'exec> QueryPlanExecutionContext<'exec> {
-    pub async fn execute_query_plan(
-        self,
-    ) -> Result<ResultWithRequest<PlanExecutionOutput>, PlanExecutionError> {
+impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
+    pub async fn execute_query_plan(self) -> Result<PlanExecutionOutput, PlanExecutionError> {
         let init_value = if let Some(introspection_query) = self.introspection_context.query {
             resolve_introspection(introspection_query, self.introspection_context)
         } else {
@@ -103,8 +85,9 @@ impl<'exec> QueryPlanExecutionContext<'exec> {
         let dedupe_subgraph_requests = self.operation_type_name == "Query";
 
         let mut start_payload = OnExecuteStartPayload {
-            router_http_request: self.router_http_request,
-            query_plan: self.query_plan,
+            router_http_request: &self.plugin_manager.router_http_request,
+            context: &self.plugin_manager.context,
+            query_plan: &self.query_plan,
             data: init_value,
             errors: Vec::new(),
             extensions: self.extensions.clone(),
@@ -114,13 +97,13 @@ impl<'exec> QueryPlanExecutionContext<'exec> {
 
         let mut on_end_callbacks = vec![];
 
-        for plugin in self.plugins {
-            let result = plugin.on_execute(start_payload);
+        for plugin in self.plugin_manager.plugins.iter() {
+            let result = plugin.on_execute(start_payload).await;
             start_payload = result.payload;
             match result.control_flow {
                 ControlFlowResult::Continue => { /* continue to next plugin */ }
                 ControlFlowResult::EndResponse(response) => {
-                    return Ok(start_payload.router_http_request.with_result(response));
+                    return Ok(response);
                 }
                 ControlFlowResult::OnEnd(callback) => {
                     on_end_callbacks.push(callback);
@@ -132,7 +115,7 @@ impl<'exec> QueryPlanExecutionContext<'exec> {
 
         let init_value = start_payload.data;
 
-        let mut exec_ctx = ExecutionContext::new(&query_plan, init_value);
+        let mut exec_ctx = ExecutionContext::new(query_plan, init_value);
         let executor = Executor::new(
             self.variable_values,
             self.executors,
@@ -142,6 +125,7 @@ impl<'exec> QueryPlanExecutionContext<'exec> {
             self.jwt_auth_forwarding,
             // Deduplicate subgraph requests only if the operation type is a query
             self.operation_type_name == "Query",
+            self.plugin_manager,
         );
 
         if query_plan.node.is_some() {
@@ -170,7 +154,7 @@ impl<'exec> QueryPlanExecutionContext<'exec> {
             match result.control_flow {
                 ControlFlowResult::Continue => { /* continue to next callback */ }
                 ControlFlowResult::EndResponse(output) => {
-                    return Ok(start_payload.router_http_request.with_result(output));
+                    return Ok(output);
                 }
                 ControlFlowResult::OnEnd(_) => {
                     // on_end callbacks should not return OnEnd again
@@ -193,23 +177,22 @@ impl<'exec> QueryPlanExecutionContext<'exec> {
             affected_path: || None,
         })?;
 
-        Ok(start_payload
-            .router_http_request
-            .with_result(PlanExecutionOutput {
-                body,
-                headers: response_headers,
-            }))
+        Ok(PlanExecutionOutput {
+            body,
+            headers: response_headers,
+        })
     }
 }
 
-pub struct Executor<'exec> {
+pub struct Executor<'exec, 'req> {
     variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     schema_metadata: &'exec SchemaMetadata,
     executors: &'exec SubgraphExecutorMap,
-    client_request: &'exec ClientRequestDetails<'exec>,
+    client_request: &'exec ClientRequestDetails<'exec, 'req>,
     headers_plan: &'exec HeaderRulesPlan,
     jwt_forwarding_plan: Option<JwtAuthForwardingPlan>,
     dedupe_subgraph_requests: bool,
+    plugin_manager: &'exec PluginManager<'exec>,
 }
 
 struct ConcurrencyScope<'exec, T> {
@@ -296,15 +279,16 @@ struct PreparedFlattenData {
     representation_hash_to_index: HashMap<u64, usize>,
 }
 
-impl<'exec> Executor<'exec> {
+impl<'exec, 'req> Executor<'exec, 'req> {
     pub fn new(
         variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
         executors: &'exec SubgraphExecutorMap,
         schema_metadata: &'exec SchemaMetadata,
-        client_request: &'exec ClientRequestDetails<'exec>,
+        client_request: &'exec ClientRequestDetails<'exec, 'req>,
         headers_plan: &'exec HeaderRulesPlan,
         jwt_forwarding_plan: Option<JwtAuthForwardingPlan>,
         dedupe_subgraph_requests: bool,
+        plugin_manager: &'exec PluginManager<'exec>,
     ) -> Self {
         Executor {
             variable_values,
@@ -314,6 +298,7 @@ impl<'exec> Executor<'exec> {
             headers_plan,
             dedupe_subgraph_requests,
             jwt_forwarding_plan,
+            plugin_manager,
         }
     }
 
@@ -803,7 +788,12 @@ impl<'exec> Executor<'exec> {
             subgraph_name: node.service_name.clone(),
             response: self
                 .executors
-                .execute(&node.service_name, subgraph_request, self.client_request)
+                .execute(
+                    &node.service_name,
+                    subgraph_request,
+                    self.client_request,
+                    self.plugin_manager,
+                )
                 .await
                 .into(),
         }))

@@ -13,10 +13,10 @@ pub struct OperationDetails<'exec> {
     pub kind: &'static str,
 }
 
-pub struct ClientRequestDetails<'exec> {
-    pub method: Method,
-    pub url: http::Uri,
-    pub headers: NtexHeaderMap,
+pub struct ClientRequestDetails<'exec, 'req> {
+    pub method: &'req Method,
+    pub url: &'req http::Uri,
+    pub headers: &'req NtexHeaderMap,
     pub operation: OperationDetails<'exec>,
     pub jwt: JwtRequestDetails,
 }
@@ -31,10 +31,10 @@ pub enum JwtRequestDetails {
     Unauthenticated,
 }
 
-impl From<&ClientRequestDetails<'_>> for Value {
+impl From<&ClientRequestDetails<'_, '_>> for Value {
     fn from(details: &ClientRequestDetails) -> Self {
         // .request.headers
-        let headers_value = client_header_map_to_vrl_value(&details.headers);
+        let headers_value = client_header_map_to_vrl_value(details.headers);
 
         // .request.url
         let url_value = Self::Object(BTreeMap::from([

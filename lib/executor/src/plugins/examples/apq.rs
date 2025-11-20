@@ -10,11 +10,12 @@ pub struct APQPlugin {
     cache: DashMap<String, String>,
 }
 
+#[async_trait::async_trait]
 impl RouterPlugin for APQPlugin {
-    fn on_graphql_params<'exec>(
+    async fn on_graphql_params<'exec>(
         &'exec self,
-        payload: OnGraphQLParamsStartPayload,
-    ) -> HookResult<'exec, OnGraphQLParamsStartPayload, OnGraphQLParamsEndPayload> {
+        payload: OnGraphQLParamsStartPayload<'exec>,
+    ) -> HookResult<'exec, OnGraphQLParamsStartPayload<'exec>, OnGraphQLParamsEndPayload> {
         payload.on_end(|mut payload| {
             let persisted_query_ext = payload
                 .graphql_params

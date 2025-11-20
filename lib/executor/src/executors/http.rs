@@ -191,7 +191,7 @@ async fn send_request(
     let mut on_end_callbacks = vec![];
 
     for plugin in plugins.as_ref() {
-        let result = plugin.on_subgraph_http_request(start_payload);
+        let result = plugin.on_subgraph_http_request(start_payload).await;
         start_payload = result.payload;
         match result.control_flow {
             ControlFlowResult::Continue => { /* continue to next plugin */ }

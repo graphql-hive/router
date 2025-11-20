@@ -6,18 +6,16 @@ use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
 use crate::schema_state::SchemaState;
 use crate::RouterSharedState;
-use hive_router_plan_executor::execution::plan::{
-    PlanExecutionOutput, ResultWithRequest, WithResult,
-};
+use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
 use hive_router_plan_executor::hooks::on_query_plan::{
     OnQueryPlanEndPayload, OnQueryPlanStartPayload,
 };
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
+use hive_router_plan_executor::plugin_context::PluginManager;
 use hive_router_plan_executor::plugin_trait::ControlFlowResult;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::planner::PlannerError;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
-use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
 
 pub enum QueryPlanResult {
@@ -31,15 +29,15 @@ pub enum QueryPlanGetterError {
 }
 
 #[inline]
-pub async fn plan_operation_with_cache(
-    mut req: HttpRequest,
+pub async fn plan_operation_with_cache<'req>(
     supergraph: &SupergraphData,
     schema_state: Arc<SchemaState>,
     normalized_operation: Arc<GraphQLNormalizationPayload>,
     request_override_context: &RequestOverrideContext,
     cancellation_token: &CancellationToken,
     app_state: Arc<RouterSharedState>,
-) -> Result<ResultWithRequest<QueryPlanResult>, PipelineErrorVariant> {
+    plugin_manager: &PluginManager<'req>,
+) -> Result<QueryPlanResult, PipelineErrorVariant> {
     let stable_override_context =
         StableOverrideContext::new(&supergraph.planner.supergraph, request_override_context);
 
@@ -61,7 +59,8 @@ pub async fn plan_operation_with_cache(
 
             /* Handle on_query_plan hook in the plugins - START */
             let mut start_payload = OnQueryPlanStartPayload {
-                router_http_request: &mut req,
+                router_http_request: &plugin_manager.router_http_request,
+                context: &plugin_manager.context,
                 filtered_operation_for_plan,
                 planner_override_context: (&request_override_context.clone()).into(),
                 cancellation_token,
@@ -71,7 +70,7 @@ pub async fn plan_operation_with_cache(
 
             let mut on_end_callbacks = vec![];
             for plugin in app_state.plugins.as_ref() {
-                let result = plugin.on_query_plan(start_payload);
+                let result = plugin.on_query_plan(start_payload).await;
                 start_payload = result.payload;
                 match result.control_flow {
                     ControlFlowResult::Continue => {
@@ -121,11 +120,11 @@ pub async fn plan_operation_with_cache(
         .await;
 
     match plan_result {
-        Ok(plan) => Ok(req.with_result(QueryPlanResult::QueryPlan(plan))),
+        Ok(plan) => Ok(QueryPlanResult::QueryPlan(plan)),
         Err(e) => match e.as_ref() {
             QueryPlanGetterError::Planner(e) => Err(PipelineErrorVariant::PlannerError(e.clone())),
             QueryPlanGetterError::Response(response) => {
-                Ok(req.with_result(QueryPlanResult::Response(response.clone())))
+                Ok(QueryPlanResult::Response(response.clone()))
             }
         },
     }
