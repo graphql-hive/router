@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct AuthenticationConfig {
+pub struct AuthorizationConfig {
     pub directives: AuthorizationDirectivesConfig,
 }
 

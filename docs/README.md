@@ -4,7 +4,7 @@
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**authentication**](#authentication)|`object`|Default: `{"directives":{"enabled":true,"unauthorized":{"mode":"filter"}}}`<br/>|yes|
+|[**authorization**](#authorization)|`object`|Default: `{"directives":{"enabled":true,"unauthorized":{"mode":"filter"}}}`<br/>|yes|
 |[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
 |[**graphiql**](#graphiql)|`object`|Configuration for the GraphiQL interface.<br/>Default: `{"enabled":true}`<br/>||
@@ -22,7 +22,7 @@
 **Example**
 
 ```yaml
-authentication:
+authorization:
   directives:
     enabled: true
     unauthorized:
@@ -119,14 +119,14 @@ traffic_shaping:
 
 ```
 
-<a name="authentication"></a>
-## authentication: object
+<a name="authorization"></a>
+## authorization: object
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|[**directives**](#authenticationdirectives)|`object`||yes|
+|[**directives**](#authorizationdirectives)|`object`||yes|
 
 **Additional Properties:** not allowed  
 **Example**
@@ -139,15 +139,15 @@ directives:
 
 ```
 
-<a name="authenticationdirectives"></a>
-### authentication\.directives: object
+<a name="authorizationdirectives"></a>
+### authorization\.directives: object
 
 **Properties**
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**enabled**|`boolean`|Default: `true`<br/>||
-|[**unauthorized**](#authenticationdirectivesunauthorized)|`object`|Default: `{"mode":"filter"}`<br/>||
+|[**unauthorized**](#authorizationdirectivesunauthorized)|`object`|Default: `{"mode":"filter"}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -159,8 +159,8 @@ unauthorized:
 
 ```
 
-<a name="authenticationdirectivesunauthorized"></a>
-#### authentication\.directives\.unauthorized: object
+<a name="authorizationdirectivesunauthorized"></a>
+#### authorization\.directives\.unauthorized: object
 
 **Properties**
 

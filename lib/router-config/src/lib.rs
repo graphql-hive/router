@@ -1,4 +1,4 @@
-pub mod authentication;
+pub mod authorization;
 pub mod cors;
 pub mod csrf;
 mod env_overrides;
@@ -95,7 +95,7 @@ pub struct HiveRouterConfig {
     pub override_labels: OverrideLabelsConfig,
 
     #[serde(default)]
-    pub authentication: authentication::AuthenticationConfig,
+    pub authorization: authorization::AuthorizationConfig,
 }
 
 #[derive(Debug, thiserror::Error)]

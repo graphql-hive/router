@@ -8,7 +8,7 @@ jwt:
   jwks_providers:
     - source: file
       path: ../jwks.rsa512.json
-authentication:
+authorization:
   directives:
     unauthorized:
       mode: reject

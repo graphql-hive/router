@@ -23,7 +23,7 @@ use crate::pipeline::authorization::tree::UnauthorizedPathTrie;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 
-use hive_router_config::authentication::UnauthorizedMode;
+use hive_router_config::authorization::UnauthorizedMode;
 use hive_router_config::HiveRouterConfig;
 use hive_router_plan_executor::execution::client_request_details::JwtRequestDetails;
 use hive_router_plan_executor::introspection::schema::SchemaMetadata;
@@ -88,7 +88,7 @@ pub fn enforce_operation_authorization(
     variable_payload: &CoerceVariablesPayload,
     jwt_request_details: &JwtRequestDetails<'_>,
 ) -> AuthorizationDecision {
-    if !router_config.authentication.directives.enabled {
+    if !router_config.authorization.directives.enabled {
         return AuthorizationDecision::NoChange;
     }
 
@@ -97,7 +97,7 @@ pub fn enforce_operation_authorization(
     }
 
     let reject_mode =
-        router_config.authentication.directives.unauthorized.mode == UnauthorizedMode::Reject;
+        router_config.authorization.directives.unauthorized.mode == UnauthorizedMode::Reject;
 
     apply_authorization_to_operation(
         normalized_payload,
