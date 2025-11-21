@@ -1,4 +1,4 @@
-use vrl::{diagnostic::DiagnosticList, prelude::ExpressionError};
+use vrl::prelude::ExpressionError;
 
 use crate::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 
@@ -34,21 +34,6 @@ impl From<SubgraphExecutorError> for GraphQLError {
 }
 
 impl SubgraphExecutorError {
-    pub fn new_endpoint_expression_build(
-        subgraph_name: String,
-        diagnostics: DiagnosticList,
-    ) -> Self {
-        SubgraphExecutorError::EndpointExpressionBuild(
-            subgraph_name,
-            diagnostics
-                .errors()
-                .into_iter()
-                .map(|d| d.code.to_string() + ": " + &d.message)
-                .collect::<Vec<_>>()
-                .join(", "),
-        )
-    }
-
     pub fn new_endpoint_expression_resolution_failure(
         subgraph_name: String,
         error: ExpressionError,

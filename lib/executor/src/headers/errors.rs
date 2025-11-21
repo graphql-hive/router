@@ -1,6 +1,6 @@
 use http::header::{InvalidHeaderName, InvalidHeaderValue};
 use regex_automata::meta::BuildError;
-use vrl::{diagnostic::DiagnosticList, prelude::ExpressionError};
+use vrl::prelude::ExpressionError;
 
 #[derive(thiserror::Error, Debug)]
 pub enum HeaderRuleCompileError {
@@ -27,16 +27,8 @@ pub enum HeaderRuleRuntimeError {
 }
 
 impl HeaderRuleCompileError {
-    pub fn new_expression_build(header_name: String, diagnostics: DiagnosticList) -> Self {
-        HeaderRuleCompileError::ExpressionBuild(
-            header_name,
-            diagnostics
-                .errors()
-                .into_iter()
-                .map(|d| d.code.to_string() + ": " + &d.message)
-                .collect::<Vec<_>>()
-                .join(", "),
-        )
+    pub fn new_expression_build(header_name: String, err: String) -> Self {
+        HeaderRuleCompileError::ExpressionBuild(header_name, err)
     }
 }
 

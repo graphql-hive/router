@@ -2091,6 +2091,7 @@ dependencies = [
  "insta",
  "itoa",
  "ntex-http",
+ "once_cell",
  "ordered-float",
  "regex-automata",
  "ryu",

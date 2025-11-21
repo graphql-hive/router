@@ -1,54 +1,28 @@
-use crate::headers::{
-    errors::HeaderRuleCompileError,
-    plan::{
-        HeaderAggregationStrategy, HeaderRulesPlan, RequestHeaderRule, RequestHeaderRules,
-        RequestInsertExpression, RequestInsertStatic, RequestPropagateNamed, RequestPropagateRegex,
-        RequestRemoveNamed, RequestRemoveRegex, ResponseHeaderRule, ResponseHeaderRules,
-        ResponseInsertExpression, ResponseInsertStatic, ResponsePropagateNamed,
-        ResponsePropagateRegex, ResponseRemoveNamed, ResponseRemoveRegex,
+use crate::{
+    headers::{
+        errors::HeaderRuleCompileError,
+        plan::{
+            HeaderAggregationStrategy, HeaderRulesPlan, RequestHeaderRule, RequestHeaderRules,
+            RequestInsertExpression, RequestInsertStatic, RequestPropagateNamed,
+            RequestPropagateRegex, RequestRemoveNamed, RequestRemoveRegex, ResponseHeaderRule,
+            ResponseHeaderRules, ResponseInsertExpression, ResponseInsertStatic,
+            ResponsePropagateNamed, ResponsePropagateRegex, ResponseRemoveNamed,
+            ResponseRemoveRegex,
+        },
     },
+    utils::expression::compile_expression,
 };
 
 use hive_router_config::headers as config;
 use http::HeaderName;
 use regex_automata::{meta, util::syntax::Config as SyntaxConfig};
-use vrl::{
-    compiler::compile as vrl_compile, prelude::Function as VrlFunction,
-    stdlib::all as vrl_build_functions,
-};
-
-pub struct HeaderRuleCompilerContext {
-    vrl_functions: Vec<Box<dyn VrlFunction>>,
-}
-
-impl Default for HeaderRuleCompilerContext {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl HeaderRuleCompilerContext {
-    pub fn new() -> Self {
-        Self {
-            vrl_functions: vrl_build_functions(),
-        }
-    }
-}
 
 pub trait HeaderRuleCompiler<A> {
-    fn compile(
-        &self,
-        ctx: &HeaderRuleCompilerContext,
-        actions: &mut A,
-    ) -> Result<(), HeaderRuleCompileError>;
+    fn compile(&self, actions: &mut A) -> Result<(), HeaderRuleCompileError>;
 }
 
 impl HeaderRuleCompiler<Vec<RequestHeaderRule>> for config::RequestHeaderRule {
-    fn compile(
-        &self,
-        ctx: &HeaderRuleCompilerContext,
-        actions: &mut Vec<RequestHeaderRule>,
-    ) -> Result<(), HeaderRuleCompileError> {
+    fn compile(&self, actions: &mut Vec<RequestHeaderRule>) -> Result<(), HeaderRuleCompileError> {
         match self {
             config::RequestHeaderRule::Propagate(rule) => {
                 let spec = materialize_match_spec(
@@ -79,15 +53,13 @@ impl HeaderRuleCompiler<Vec<RequestHeaderRule>> for config::RequestHeaderRule {
                     }));
                 }
                 config::InsertSource::Expression { expression } => {
-                    let compilation_result =
-                        vrl_compile(expression, &ctx.vrl_functions).map_err(|e| {
-                            HeaderRuleCompileError::new_expression_build(rule.name.clone(), e)
-                        })?;
-
+                    let program = compile_expression(expression, None).map_err(|err| {
+                        HeaderRuleCompileError::ExpressionBuild(rule.name.clone(), err)
+                    })?;
                     actions.push(RequestHeaderRule::InsertExpression(
                         RequestInsertExpression {
                             name: build_header_name(&rule.name)?,
-                            expression: Box::new(compilation_result.program),
+                            expression: Box::new(program),
                         },
                     ));
                 }
@@ -112,11 +84,7 @@ impl HeaderRuleCompiler<Vec<RequestHeaderRule>> for config::RequestHeaderRule {
 }
 
 impl HeaderRuleCompiler<Vec<ResponseHeaderRule>> for config::ResponseHeaderRule {
-    fn compile(
-        &self,
-        ctx: &HeaderRuleCompilerContext,
-        actions: &mut Vec<ResponseHeaderRule>,
-    ) -> Result<(), HeaderRuleCompileError> {
+    fn compile(&self, actions: &mut Vec<ResponseHeaderRule>) -> Result<(), HeaderRuleCompileError> {
         match self {
             config::ResponseHeaderRule::Propagate(rule) => {
                 let aggregation_strategy = rule.algorithm.into();
@@ -159,15 +127,13 @@ impl HeaderRuleCompiler<Vec<ResponseHeaderRule>> for config::ResponseHeaderRule 
                         // - compilation_result.program.info().target_assignments
                         // - compilation_result.program.info().target_queries
                         // to determine what parts of the context are actually needed by the expression
-                        let compilation_result = vrl_compile(expression, &ctx.vrl_functions)
-                            .map_err(|e| {
-                                HeaderRuleCompileError::new_expression_build(rule.name.clone(), e)
-                            })?;
-
+                        let program = compile_expression(expression, None).map_err(|err| {
+                            HeaderRuleCompileError::ExpressionBuild(rule.name.clone(), err)
+                        })?;
                         actions.push(ResponseHeaderRule::InsertExpression(
                             ResponseInsertExpression {
                                 name: build_header_name(&rule.name)?,
-                                expression: Box::new(compilation_result.program),
+                                expression: Box::new(program),
                                 strategy: aggregation_strategy,
                             },
                         ));
@@ -196,19 +162,18 @@ impl HeaderRuleCompiler<Vec<ResponseHeaderRule>> for config::ResponseHeaderRule 
 pub fn compile_headers_plan(
     cfg: &config::HeadersConfig,
 ) -> Result<HeaderRulesPlan, HeaderRuleCompileError> {
-    let ctx = HeaderRuleCompilerContext::new();
     let mut request_plan = RequestHeaderRules::default();
     let mut response_plan = ResponseHeaderRules::default();
 
     if let Some(global_rules) = &cfg.all {
-        request_plan.global = compile_request_header_rules(&ctx, global_rules)?;
-        response_plan.global = compile_response_header_rules(&ctx, global_rules)?;
+        request_plan.global = compile_request_header_rules(global_rules)?;
+        response_plan.global = compile_response_header_rules(global_rules)?;
     }
 
     if let Some(subgraph_rules_map) = &cfg.subgraphs {
         for (subgraph_name, subgraph_rules) in subgraph_rules_map {
-            let request_actions = compile_request_header_rules(&ctx, subgraph_rules)?;
-            let response_actions = compile_response_header_rules(&ctx, subgraph_rules)?;
+            let request_actions = compile_request_header_rules(subgraph_rules)?;
+            let response_actions = compile_response_header_rules(subgraph_rules)?;
             request_plan
                 .by_subgraph
                 .insert(subgraph_name.clone(), request_actions);
@@ -225,26 +190,24 @@ pub fn compile_headers_plan(
 }
 
 fn compile_request_header_rules(
-    ctx: &HeaderRuleCompilerContext,
     header_rules: &config::HeaderRules,
 ) -> Result<Vec<RequestHeaderRule>, HeaderRuleCompileError> {
     let mut request_actions = Vec::new();
     if let Some(request_rule_entries) = &header_rules.request {
         for request_rule in request_rule_entries {
-            request_rule.compile(ctx, &mut request_actions)?;
+            request_rule.compile(&mut request_actions)?;
         }
     }
     Ok(request_actions)
 }
 
 fn compile_response_header_rules(
-    ctx: &HeaderRuleCompilerContext,
     header_rules: &config::HeaderRules,
 ) -> Result<Vec<ResponseHeaderRule>, HeaderRuleCompileError> {
     let mut response_actions = Vec::new();
     if let Some(response_rule_entries) = &header_rules.response {
         for response_rule in response_rule_entries {
-            response_rule.compile(ctx, &mut response_actions)?;
+            response_rule.compile(&mut response_actions)?;
         }
     }
     Ok(response_actions)
@@ -358,7 +321,7 @@ mod tests {
     use http::HeaderName;
 
     use crate::headers::{
-        compile::{build_header_value, HeaderRuleCompiler, HeaderRuleCompilerContext},
+        compile::{build_header_value, HeaderRuleCompiler},
         errors::HeaderRuleCompileError,
         plan::{HeaderAggregationStrategy, RequestHeaderRule, ResponseHeaderRule},
     };
@@ -378,9 +341,8 @@ mod tests {
             rename: None,
             default: None,
         });
-        let ctx = HeaderRuleCompilerContext::new();
         let mut actions = Vec::new();
-        rule.compile(&ctx, &mut actions).unwrap();
+        rule.compile(&mut actions).unwrap();
         assert_eq!(actions.len(), 1);
         match &actions[0] {
             RequestHeaderRule::PropagateNamed(data) => {
@@ -401,8 +363,7 @@ mod tests {
             },
         });
         let mut actions = Vec::new();
-        let ctx = HeaderRuleCompilerContext::new();
-        rule.compile(&ctx, &mut actions).unwrap();
+        rule.compile(&mut actions).unwrap();
         assert_eq!(actions.len(), 1);
         match &actions[0] {
             RequestHeaderRule::InsertStatic(data) => {
@@ -423,8 +384,7 @@ mod tests {
             },
         });
         let mut actions = Vec::new();
-        let ctx = HeaderRuleCompilerContext::new();
-        rule.compile(&ctx, &mut actions).unwrap();
+        rule.compile(&mut actions).unwrap();
         assert_eq!(actions.len(), 1);
         match &actions[0] {
             RequestHeaderRule::RemoveNamed(data) => {
@@ -449,8 +409,7 @@ mod tests {
             default: Some("def".to_string()),
         });
         let mut actions = Vec::new();
-        let ctx = HeaderRuleCompilerContext::new();
-        let err = rule.compile(&ctx, &mut actions).unwrap_err();
+        let err = rule.compile(&mut actions).unwrap_err();
         match err {
             HeaderRuleCompileError::InvalidDefault => {}
             _ => panic!("Expected InvalidDefault error"),
@@ -470,8 +429,7 @@ mod tests {
             algorithm: config::AggregationAlgo::First,
         });
         let mut actions = Vec::new();
-        let ctx = HeaderRuleCompilerContext::new();
-        rule.compile(&ctx, &mut actions).unwrap();
+        rule.compile(&mut actions).unwrap();
         assert_eq!(actions.len(), 1);
         match &actions[0] {
             ResponseHeaderRule::PropagateNamed(data) => {
