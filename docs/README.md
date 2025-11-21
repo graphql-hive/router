@@ -4,6 +4,7 @@
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**authorization**](#authorization)|`object`|Default: `{"directives":{"enabled":true,"unauthorized":{"mode":"filter"}}}`<br/>|yes|
 |[**cors**](#cors)|`object`|Configuration for CORS (Cross-Origin Resource Sharing).<br/>Default: `{"allow_any_origin":false,"allow_credentials":false,"enabled":false,"policies":[]}`<br/>|yes|
 |[**csrf**](#csrf)|`object`|Configuration for CSRF prevention.<br/>Default: `{"enabled":false,"required_headers":[]}`<br/>||
 |[**graphiql**](#graphiql)|`object`|Configuration for the GraphiQL interface.<br/>Default: `{"enabled":true}`<br/>||
@@ -21,6 +22,11 @@
 **Example**
 
 ```yaml
+authorization:
+  directives:
+    enabled: true
+    unauthorized:
+      mode: filter
 cors:
   allow_any_origin: false
   allow_credentials: false
@@ -110,6 +116,63 @@ traffic_shaping:
   dedupe_enabled: true
   max_connections_per_host: 100
   pool_idle_timeout: 50s
+
+```
+
+<a name="authorization"></a>
+## authorization: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**directives**](#authorizationdirectives)|`object`||yes|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+directives:
+  enabled: true
+  unauthorized:
+    mode: filter
+
+```
+
+<a name="authorizationdirectives"></a>
+### authorization\.directives: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**enabled**|`boolean`|Default: `true`<br/>||
+|[**unauthorized**](#authorizationdirectivesunauthorized)|`object`|Default: `{"mode":"filter"}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+enabled: true
+unauthorized:
+  mode: filter
+
+```
+
+<a name="authorizationdirectivesunauthorized"></a>
+#### authorization\.directives\.unauthorized: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**mode**|`string`|Default: `"filter"`<br/>Enum: `"filter"`, `"reject"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+mode: filter
 
 ```
 

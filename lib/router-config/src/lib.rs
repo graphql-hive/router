@@ -1,3 +1,4 @@
+pub mod authorization;
 pub mod cors;
 pub mod csrf;
 mod env_overrides;
@@ -92,6 +93,9 @@ pub struct HiveRouterConfig {
     /// Configuration for overriding labels.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub override_labels: OverrideLabelsConfig,
+
+    #[serde(default)]
+    pub authorization: authorization::AuthorizationConfig,
 }
 
 #[derive(Debug, thiserror::Error)]

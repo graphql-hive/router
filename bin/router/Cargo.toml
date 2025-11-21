@@ -54,3 +54,13 @@ tokio-util = "0.7.16"
 cookie = "0.18.1"
 regex-automata = "0.4.10"
 arc-swap = "1.7.1"
+lasso2 = "0.8.2"
+ahash = "0.8.12"
+
+[dev-dependencies]
+criterion = { workspace = true }
+insta = { workspace = true }
+
+[[bench]]
+name = "router_benches"
+harness = false

@@ -117,7 +117,7 @@ impl Planner {
             cancellation_token,
         )?;
         let query_tree =
-            find_best_combination(&self.graph, best_paths_per_leaf, cancellation_token).unwrap();
+            find_best_combination(&self.graph, best_paths_per_leaf, cancellation_token)?;
         let mut fetch_graph = build_fetch_graph_from_query_tree(
             &self.graph,
             &self.supergraph,

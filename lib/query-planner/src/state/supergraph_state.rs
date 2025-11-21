@@ -11,8 +11,9 @@ use tracing::instrument;
 
 use crate::{
     federation_spec::directives::{
-        FederationDirective, InaccessibleDirective, JoinEnumValueDirective, JoinFieldDirective,
-        JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective, JoinUnionMemberDirective,
+        AuthenticatedDirective, FederationDirective, InaccessibleDirective, JoinEnumValueDirective,
+        JoinFieldDirective, JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective,
+        JoinUnionMemberDirective, RequiresScopesDirective,
     },
     graph::edge::{OverrideLabel, Percentage},
 };
@@ -55,6 +56,91 @@ pub struct ProgressiveOverrides {
 type InterfaceObjectToSubgraphsMap = HashMap<String, HashSet<String>>;
 type DefinitionMap = HashMap<String, SupergraphDefinition>;
 
+/// Information about linked specifications used in the supergraph
+/// (e.g., authenticated, requiresScopes)
+struct LinkedSpecifications {
+    pub authenticated: bool,
+    pub requires_scopes: bool,
+}
+
+impl LinkedSpecifications {
+    fn from_schema(schema: &SchemaDocument) -> Self {
+        let Some(schema_def) = schema.definitions.iter().find_map(|def| match def {
+            input::Definition::SchemaDefinition(schema_def) => Some(schema_def),
+            _ => None,
+        }) else {
+            return Self {
+                authenticated: false,
+                requires_scopes: false,
+            };
+        };
+
+        let mut authenticated = false;
+        let mut requires_scopes = false;
+
+        for directive in &schema_def.directives {
+            // Found both? Stop searching.
+            if authenticated && requires_scopes {
+                break;
+            }
+
+            if directive.name != "link" {
+                continue;
+            }
+
+            let url = directive.arguments.iter().find_map(|(name, value)| {
+                if name == "url" {
+                    if let graphql_parser::query::Value::String(s) = value {
+                        return Some(s);
+                    }
+                }
+                None
+            });
+
+            let Some(url) = url else {
+                continue;
+            };
+
+            if !authenticated && url.starts_with("https://specs.apollo.dev/authenticated/") {
+                authenticated = true;
+            } else if !requires_scopes
+                && url.starts_with("https://specs.apollo.dev/requiresScopes/")
+            {
+                requires_scopes = true;
+            }
+        }
+
+        Self {
+            authenticated,
+            requires_scopes,
+        }
+    }
+
+    /// Conditionally extract @authenticated directives based on whether the spec is enabled
+    fn extract_authenticated_directives(
+        &self,
+        directives: &[Directive<'static, String>],
+    ) -> Vec<AuthenticatedDirective> {
+        if self.authenticated {
+            SupergraphState::extract_directives::<AuthenticatedDirective>(directives)
+        } else {
+            Default::default()
+        }
+    }
+
+    /// Conditionally extract @requiresScopes directives based on whether the spec is enabled
+    fn extract_requires_scopes_directives(
+        &self,
+        directives: &[Directive<'static, String>],
+    ) -> Vec<RequiresScopesDirective> {
+        if self.requires_scopes {
+            SupergraphState::extract_directives::<RequiresScopesDirective>(directives)
+        } else {
+            Default::default()
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct SupergraphState {
     /// A map all of definitions (def_name, def) that exists in the schema.
@@ -83,7 +169,8 @@ impl SupergraphState {
     pub fn new(schema: &SchemaDocument) -> Self {
         let (known_subgraphs, subgraph_endpoint_map) =
             Self::extract_subgraph_names_and_endpoints(schema);
-        let definitions = Self::build_map(schema);
+        let linked_specs = LinkedSpecifications::from_schema(schema);
+        let definitions = Self::build_map(schema, linked_specs);
         let interface_object_types_in_subgraphs =
             Self::create_interface_object_in_subgraph(&definitions);
         let progressive_overrides = Self::extract_progressive_overrides(&definitions);
@@ -245,8 +332,11 @@ impl SupergraphState {
         (subgraph_names_map, subgraph_endpoints_map)
     }
 
-    #[instrument(level = "trace", skip(schema))]
-    fn build_map(schema: &SchemaDocument) -> HashMap<String, SupergraphDefinition> {
+    #[instrument(level = "trace", skip_all)]
+    fn build_map(
+        schema: &SchemaDocument,
+        linked_specs: LinkedSpecifications,
+    ) -> HashMap<String, SupergraphDefinition> {
         schema
             .definitions
             .iter()
@@ -254,19 +344,26 @@ impl SupergraphState {
                 input::Definition::TypeDefinition(input::TypeDefinition::Object(object_type)) => {
                     Some((
                         object_type.name.to_string(),
-                        SupergraphDefinition::Object(Self::build_object_type(object_type, schema)),
+                        SupergraphDefinition::Object(Self::build_object_type(
+                            object_type,
+                            schema,
+                            &linked_specs,
+                        )),
                     ))
                 }
                 input::Definition::TypeDefinition(input::TypeDefinition::Interface(
                     interface_type,
                 )) => Some((
                     interface_type.name.to_string(),
-                    SupergraphDefinition::Interface(Self::build_interface_type(interface_type)),
+                    SupergraphDefinition::Interface(Self::build_interface_type(
+                        interface_type,
+                        &linked_specs,
+                    )),
                 )),
                 input::Definition::TypeDefinition(input::TypeDefinition::Enum(enum_type)) => {
                     Some((
                         enum_type.name.to_string(),
-                        SupergraphDefinition::Enum(Self::build_enum_type(enum_type)),
+                        SupergraphDefinition::Enum(Self::build_enum_type(enum_type, &linked_specs)),
                     ))
                 }
                 input::Definition::TypeDefinition(input::TypeDefinition::Union(union_type)) => {
@@ -278,7 +375,10 @@ impl SupergraphState {
                 input::Definition::TypeDefinition(input::TypeDefinition::Scalar(scalar_type)) => {
                     Some((
                         scalar_type.name.to_string(),
-                        SupergraphDefinition::Scalar(Self::build_scalar_type(scalar_type)),
+                        SupergraphDefinition::Scalar(Self::build_scalar_type(
+                            scalar_type,
+                            &linked_specs,
+                        )),
                     ))
                 }
                 input::Definition::TypeDefinition(input::TypeDefinition::InputObject(
@@ -294,7 +394,7 @@ impl SupergraphState {
             .collect()
     }
 
-    #[instrument(level = "trace",skip(input_object_type), fields(name = input_object_type.name))]
+    #[instrument(level = "trace", skip_all, fields(name = input_object_type.name))]
     fn build_input_object_type(
         input_object_type: &input::InputObjectType<'static, String>,
     ) -> SupergraphInputObjectType {
@@ -305,11 +405,17 @@ impl SupergraphState {
         }
     }
 
-    #[instrument(level = "trace",skip(scalar_type), fields(name = scalar_type.name))]
-    fn build_scalar_type(scalar_type: &input::ScalarType<'static, String>) -> SupergraphScalarType {
+    #[instrument(level = "trace", skip_all, fields(name = scalar_type.name))]
+    fn build_scalar_type(
+        scalar_type: &input::ScalarType<'static, String>,
+        linked_specs: &LinkedSpecifications,
+    ) -> SupergraphScalarType {
         SupergraphScalarType {
             name: scalar_type.name.to_string(),
             join_type: Self::extract_directives::<JoinTypeDirective>(&scalar_type.directives),
+            authenticated: linked_specs.extract_authenticated_directives(&scalar_type.directives),
+            requires_scopes: linked_specs
+                .extract_requires_scopes_directives(&scalar_type.directives),
         }
     }
 
@@ -325,11 +431,16 @@ impl SupergraphState {
         }
     }
 
-    #[instrument(level = "trace",skip(enum_type), fields(name = enum_type.name))]
-    fn build_enum_type(enum_type: &input::EnumType<'static, String>) -> SupergraphEnumType {
+    #[instrument(level = "trace",skip_all, fields(name = enum_type.name))]
+    fn build_enum_type(
+        enum_type: &input::EnumType<'static, String>,
+        linked_specs: &LinkedSpecifications,
+    ) -> SupergraphEnumType {
         SupergraphEnumType {
             name: enum_type.name.to_string(),
             join_type: Self::extract_directives::<JoinTypeDirective>(&enum_type.directives),
+            authenticated: linked_specs.extract_authenticated_directives(&enum_type.directives),
+            requires_scopes: linked_specs.extract_requires_scopes_directives(&enum_type.directives),
             values: enum_type
                 .values
                 .iter()
@@ -343,8 +454,11 @@ impl SupergraphState {
         }
     }
 
-    #[instrument(level = "trace",skip(fields), fields(fields_count = fields.len()))]
-    fn build_fields(fields: &[input::Field<'static, String>]) -> HashMap<String, SupergraphField> {
+    #[instrument(level = "trace",skip_all, fields(fields_count = fields.len()))]
+    fn build_fields(
+        fields: &[input::Field<'static, String>],
+        linked_specs: &LinkedSpecifications,
+    ) -> HashMap<String, SupergraphField> {
         fields
             .iter()
             .map(|field| {
@@ -356,6 +470,10 @@ impl SupergraphState {
                         join_field: Self::extract_directives::<JoinFieldDirective>(
                             &field.directives,
                         ),
+                        authenticated: linked_specs
+                            .extract_authenticated_directives(&field.directives),
+                        requires_scopes: linked_specs
+                            .extract_requires_scopes_directives(&field.directives),
                         inaccessible: !Self::extract_directives::<InaccessibleDirective>(
                             &field.directives,
                         )
@@ -381,6 +499,8 @@ impl SupergraphState {
                         join_field: Self::extract_directives::<JoinFieldDirective>(
                             &field.directives,
                         ),
+                        authenticated: Default::default(),
+                        requires_scopes: Default::default(),
                         inaccessible: !Self::extract_directives::<InaccessibleDirective>(
                             &field.directives,
                         )
@@ -391,11 +511,12 @@ impl SupergraphState {
             .collect()
     }
 
-    #[instrument(level = "trace",skip(interface_type), fields(name = interface_type.name))]
+    #[instrument(level = "trace",skip_all, fields(name = interface_type.name))]
     fn build_interface_type(
         interface_type: &input::InterfaceType<'static, String>,
+        linked_specs: &LinkedSpecifications,
     ) -> SupergraphInterfaceType {
-        let fields = Self::build_fields(&interface_type.fields);
+        let fields = Self::build_fields(&interface_type.fields, linked_specs);
         let used_in_subgraphs = Self::build_subgraph_usage_from_fields(&fields);
 
         SupergraphInterfaceType {
@@ -405,16 +526,21 @@ impl SupergraphState {
             join_implements: Self::extract_directives::<JoinImplementsDirective>(
                 &interface_type.directives,
             ),
+            authenticated: linked_specs
+                .extract_authenticated_directives(&interface_type.directives),
+            requires_scopes: linked_specs
+                .extract_requires_scopes_directives(&interface_type.directives),
             used_in_subgraphs,
         }
     }
 
-    #[instrument(level = "trace",skip(object_type, schema), fields(name = object_type.name))]
+    #[instrument(level = "trace",skip_all, fields(name = object_type.name))]
     fn build_object_type(
         object_type: &input::ObjectType<'static, String>,
         schema: &SchemaDocument,
+        linked_specs: &LinkedSpecifications,
     ) -> SupergraphObjectType {
-        let fields = Self::build_fields(&object_type.fields);
+        let fields = Self::build_fields(&object_type.fields, linked_specs);
 
         let root_type = if object_type.name == schema.query_type().name {
             Some(OperationKind::Query)
@@ -443,6 +569,9 @@ impl SupergraphState {
             ),
             root_type,
             used_in_subgraphs,
+            authenticated: linked_specs.extract_authenticated_directives(&object_type.directives),
+            requires_scopes: linked_specs
+                .extract_requires_scopes_directives(&object_type.directives),
         }
     }
 
@@ -521,6 +650,8 @@ pub struct SupergraphObjectType {
     pub join_implements: Vec<JoinImplementsDirective>,
     pub root_type: Option<OperationKind>,
     pub used_in_subgraphs: HashSet<String>,
+    pub requires_scopes: Vec<RequiresScopesDirective>,
+    pub authenticated: Vec<AuthenticatedDirective>,
 }
 
 impl SupergraphObjectType {
@@ -581,6 +712,8 @@ pub struct SupergraphInterfaceType {
     pub join_type: Vec<JoinTypeDirective>,
     pub join_implements: Vec<JoinImplementsDirective>,
     pub used_in_subgraphs: HashSet<String>,
+    pub requires_scopes: Vec<RequiresScopesDirective>,
+    pub authenticated: Vec<AuthenticatedDirective>,
 }
 
 #[derive(Debug)]
@@ -600,6 +733,8 @@ pub struct SupergraphInputObjectType {
 pub struct SupergraphScalarType {
     pub name: String,
     pub join_type: Vec<JoinTypeDirective>,
+    pub requires_scopes: Vec<RequiresScopesDirective>,
+    pub authenticated: Vec<AuthenticatedDirective>,
 }
 
 #[derive(Debug)]
@@ -607,6 +742,8 @@ pub struct SupergraphEnumType {
     pub name: String,
     pub values: Vec<SupergraphEnumValueType>,
     pub join_type: Vec<JoinTypeDirective>,
+    pub requires_scopes: Vec<RequiresScopesDirective>,
+    pub authenticated: Vec<AuthenticatedDirective>,
 }
 
 impl SupergraphEnumType {
@@ -752,6 +889,8 @@ pub struct SupergraphField {
     pub field_type: TypeNode,
     pub inaccessible: bool,
     pub join_field: Vec<JoinFieldDirective>,
+    pub requires_scopes: Vec<RequiresScopesDirective>,
+    pub authenticated: Vec<AuthenticatedDirective>,
 }
 
 impl SupergraphField {

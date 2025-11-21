@@ -1,10 +1,19 @@
 schema
   @link(url: "https://specs.apollo.dev/link/v1.0")
-  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
+  @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION)
+  @link(url: "https://specs.apollo.dev/requiresScopes/v0.1", for: SECURITY)
+  @link(url: "https://specs.apollo.dev/authenticated/v0.1", for: SECURITY) {
   query: Query
 }
 
 directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
+
+directive @requiresScopes(
+  scopes: [[requiresScopes__Scope!]!]!
+) on FIELD_DEFINITION | OBJECT | INTERFACE | SCALAR | ENUM
+directive @authenticated on FIELD_DEFINITION | OBJECT | INTERFACE | SCALAR | ENUM
+
+scalar requiresScopes__Scope
 
 directive @join__field(
   graph: join__Graph
@@ -75,15 +84,22 @@ type Product
   weight: Int
     @join__field(graph: INVENTORY, external: true)
     @join__field(graph: PRODUCTS)
-  price: Int
+  price: Int!
     @join__field(graph: INVENTORY, external: true)
     @join__field(graph: PRODUCTS)
+    @requiresScopes(scopes: [["read:price"]])
   inStock: Boolean @join__field(graph: INVENTORY)
-  shippingEstimate: Int @join__field(graph: INVENTORY, requires: "price weight")
+  shippingEstimate: Int
+    @join__field(graph: INVENTORY, requires: "price weight")
+    @requiresScopes(scopes: [["read:shipping"]])
   name: String @join__field(graph: PRODUCTS)
   reviews: [Review] @join__field(graph: REVIEWS)
-  notes: String @join__field(graph: PRODUCTS)
-  internal: String @join__field(graph: PRODUCTS)
+  notes: String
+    @join__field(graph: PRODUCTS)
+    @requiresScopes(scopes: [["read:notes"], ["admin"]])
+  internal: String
+    @join__field(graph: PRODUCTS)
+    @requiresScopes(scopes: [["read:internal", "admin"]])
 }
 
 type Query
@@ -91,7 +107,7 @@ type Query
   @join__type(graph: INVENTORY)
   @join__type(graph: PRODUCTS)
   @join__type(graph: REVIEWS) {
-  me: User @join__field(graph: ACCOUNTS)
+  me: User @join__field(graph: ACCOUNTS) @authenticated
   user(id: ID!): User @join__field(graph: ACCOUNTS)
   users: [User] @join__field(graph: ACCOUNTS)
   topProducts(first: Int = 5): [Product] @join__field(graph: PRODUCTS)
@@ -99,9 +115,31 @@ type Query
 
 type Review @join__type(graph: REVIEWS, key: "id") {
   id: ID!
-  body: String
+  body: String @authenticated
   product: Product
   author: User @join__field(graph: REVIEWS, provides: "username")
+}
+
+interface SocialAccount @join__type(graph: ACCOUNTS) {
+  url: String! @authenticated
+  handle: String!
+    @requiresScopes(scopes: [["read:twitter_handle", "read:github_handle"]])
+}
+
+type TwitterAccount implements SocialAccount
+  @join__implements(graph: ACCOUNTS, interface: "SocialAccount")
+  @join__type(graph: ACCOUNTS) {
+  url: String! @authenticated
+  handle: String! @requiresScopes(scopes: [["read:twitter_handle"]])
+  followers: Int!
+}
+
+type GitHubAccount implements SocialAccount
+  @join__implements(graph: ACCOUNTS, interface: "SocialAccount")
+  @join__type(graph: ACCOUNTS) {
+  url: String! @authenticated
+  handle: String! @requiresScopes(scopes: [["read:github_handle"]])
+  repoCount: Int!
 }
 
 type User
@@ -112,6 +150,9 @@ type User
   username: String
     @join__field(graph: ACCOUNTS)
     @join__field(graph: REVIEWS, external: true)
-  birthday: Int @join__field(graph: ACCOUNTS)
+  birthday: Int
+    @join__field(graph: ACCOUNTS)
+    @requiresScopes(scopes: [["read:birthday"]])
   reviews: [Review] @join__field(graph: REVIEWS)
+  socialAccounts: [SocialAccount!]! @join__field(graph: ACCOUNTS)
 }

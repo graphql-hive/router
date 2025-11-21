@@ -14,13 +14,13 @@ use crate::pipeline::parser::GraphQLParserPayload;
 use crate::schema_state::{SchemaState, SupergraphData};
 use tracing::{error, trace};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GraphQLNormalizationPayload {
     /// The operation to execute, without introspection fields.
-    pub operation_for_plan: OperationDefinition,
-    pub operation_for_introspection: Option<OperationDefinition>,
+    pub operation_for_plan: Arc<OperationDefinition>,
+    pub operation_for_introspection: Option<Arc<OperationDefinition>>,
     pub root_type_name: &'static str,
-    pub projection_plan: Vec<FieldProjectionPlan>,
+    pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
 }
 
 #[inline]
@@ -70,9 +70,11 @@ pub async fn normalize_request_with_cache(
 
                 let payload = GraphQLNormalizationPayload {
                     root_type_name,
-                    projection_plan,
-                    operation_for_plan: partitioned_operation.downstream_operation,
-                    operation_for_introspection: partitioned_operation.introspection_operation,
+                    projection_plan: Arc::new(projection_plan),
+                    operation_for_plan: Arc::new(partitioned_operation.downstream_operation),
+                    operation_for_introspection: partitioned_operation
+                        .introspection_operation
+                        .map(Arc::new),
                 };
                 let payload_arc = Arc::new(payload);
                 schema_state
