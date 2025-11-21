@@ -404,7 +404,7 @@ fn interface_object_with_inline_fragment_resolving_remote_interface_field(
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{anotherUsers{__typename id}}"
+            "operation": "{anotherUsers{__typename id}}"
           },
           {
             "kind": "Flatten",

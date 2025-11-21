@@ -129,6 +129,16 @@ impl PrettyDisplay for SubgraphFetchOperation {
 
 impl Display for OperationDefinition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self
+            .operation_kind
+            .as_ref()
+            .is_none_or(|k| matches!(k, OperationKind::Query))
+            && self.name.as_deref().is_none_or(str::is_empty)
+            && self.variable_definitions.as_ref().is_none_or(Vec::is_empty)
+        {
+            // Short form for anonymous query
+            return self.selection_set.fmt(f);
+        }
         if let Some(operation_kind) = &self.operation_kind {
             write!(f, "{}", operation_kind)?;
         }

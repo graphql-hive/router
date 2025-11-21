@@ -77,7 +77,7 @@ fn one() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{product{__typename id hasDiscount}}"
+            "operation": "{product{__typename id hasDiscount}}"
           },
           {
             "kind": "Flatten",
@@ -229,7 +229,7 @@ fn one_with_one_local() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{product{__typename id hasDiscount}}"
+            "operation": "{product{__typename id hasDiscount}}"
           },
           {
             "kind": "Flatten",
@@ -381,7 +381,7 @@ fn two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{product{__typename id hasDiscount}}"
+            "operation": "{product{__typename id hasDiscount}}"
           },
           {
             "kind": "Flatten",
@@ -545,7 +545,7 @@ fn one_more() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{product{__typename id}}"
+            "operation": "{product{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -741,7 +741,7 @@ fn another_two_fields_with_the_same_requirements() -> Result<(), Box<dyn Error>>
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{product{__typename id}}"
+            "operation": "{product{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -957,7 +957,7 @@ fn two_fields() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{product{__typename id hasDiscount}}"
+            "operation": "{product{__typename id hasDiscount}}"
           },
           {
             "kind": "Parallel",
@@ -1216,7 +1216,7 @@ fn two_fields_same_requirement_different_order() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{product{__typename id hasDiscount}}"
+            "operation": "{product{__typename id hasDiscount}}"
           },
           {
             "kind": "Parallel",
@@ -1484,7 +1484,7 @@ fn many() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{product{__typename id hasDiscount}}"
+            "operation": "{product{__typename id hasDiscount}}"
           },
           {
             "kind": "Parallel",
