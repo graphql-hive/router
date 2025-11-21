@@ -37,6 +37,7 @@ strum = { version = "0.27.2", features = ["derive"] }
 ntex-http = "0.1.15"
 ordered-float = "4.2.0"
 hyper-tls = { version = "0.6.0", features = ["vendored"] }
+async-compression = { version = "0.4.3", features = ["all"]}
 hyper-util = { version = "0.1.16", features = [
   "client",
   "client-legacy",
