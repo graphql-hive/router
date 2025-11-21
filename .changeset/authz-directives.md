@@ -1,5 +1,7 @@
 ---
 router: minor
+executor: minor
+query-planner: minor
 ---
 
 ## Directive-Based Authorization
