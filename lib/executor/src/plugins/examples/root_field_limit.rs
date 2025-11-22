@@ -1,18 +1,42 @@
+use graphql_tools::{
+    ast::{visit_document, OperationVisitor, OperationVisitorContext, TypeDefinitionExtension},
+    static_graphql,
+    validation::{
+        rules::ValidationRule,
+        utils::{ValidationError, ValidationErrorContext},
+    },
+};
 use hive_router_query_planner::ast::selection_item::SelectionItem;
 use sonic_rs::json;
 
 use crate::{
     execution::plan::PlanExecutionOutput,
-    hooks::on_query_plan::{OnQueryPlanEndPayload, OnQueryPlanStartPayload},
+    hooks::{
+        on_graphql_validation::{OnGraphQLValidationEndPayload, OnGraphQLValidationStartPayload},
+        on_query_plan::{OnQueryPlanEndPayload, OnQueryPlanStartPayload},
+    },
     plugin_trait::{HookResult, RouterPlugin, StartPayload},
 };
 
-pub struct RootFieldLimitPlugin {
-    pub max_root_fields: usize,
-}
+// This example shows two ways of limiting the number of root fields in a query:
+// 1. During validation step
+// 2. During query planning step
 
 #[async_trait::async_trait]
 impl RouterPlugin for RootFieldLimitPlugin {
+    // Using validation step
+    async fn on_graphql_validation<'exec>(
+        &'exec self,
+        mut payload: OnGraphQLValidationStartPayload<'exec>,
+    ) -> HookResult<'exec, OnGraphQLValidationStartPayload<'exec>, OnGraphQLValidationEndPayload>
+    {
+        let rule = RootFieldLimitRule {
+            max_root_fields: self.max_root_fields,
+        };
+        payload.add_validation_rule(Box::new(rule));
+        payload.cont()
+    }
+    // Or during query planning
     async fn on_query_plan<'exec>(
         &'exec self,
         payload: OnQueryPlanStartPayload<'exec>,
@@ -58,5 +82,64 @@ impl RouterPlugin for RootFieldLimitPlugin {
             }
         }
         payload.cont()
+    }
+}
+
+pub struct RootFieldLimitPlugin {
+    max_root_fields: usize,
+}
+
+pub struct RootFieldLimitRule {
+    max_root_fields: usize,
+}
+
+struct RootFieldSelections {
+    max_root_fields: usize,
+    count: usize,
+}
+
+impl<'a> OperationVisitor<'a, ValidationErrorContext> for RootFieldSelections {
+    fn enter_field(
+        &mut self,
+        visitor_context: &mut OperationVisitorContext,
+        user_context: &mut ValidationErrorContext,
+        field: &static_graphql::query::Field,
+    ) {
+        let parent_type_name = visitor_context.current_parent_type().map(|t| t.name());
+        if parent_type_name == Some("Query") {
+            self.count += 1;
+            if self.count > self.max_root_fields {
+                let err_msg = format!(
+                    "Query has too many root fields: {}, maximum allowed is {}",
+                    self.count, self.max_root_fields
+                );
+                user_context.report_error(ValidationError {
+                    error_code: "TOO_MANY_ROOT_FIELDS",
+                    locations: vec![field.position],
+                    message: err_msg,
+                });
+            }
+        }
+    }
+}
+
+impl ValidationRule for RootFieldLimitRule {
+    fn error_code<'a>(&self) -> &'a str {
+        "TOO_MANY_ROOT_FIELDS"
+    }
+    fn validate(
+        &self,
+        ctx: &mut OperationVisitorContext<'_>,
+        error_collector: &mut ValidationErrorContext,
+    ) {
+        visit_document(
+            &mut RootFieldSelections {
+                max_root_fields: self.max_root_fields,
+                count: 0,
+            },
+            ctx.operation,
+            ctx,
+            error_collector,
+        );
     }
 }

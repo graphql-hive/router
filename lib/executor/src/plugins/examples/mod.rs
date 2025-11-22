@@ -4,6 +4,7 @@ pub mod async_auth;
 pub mod context_data;
 pub mod forbid_anonymous_operations;
 pub mod multipart;
+pub mod one_of;
 pub mod propagate_status_code;
 pub mod response_cache;
 pub mod root_field_limit;

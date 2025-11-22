@@ -88,6 +88,7 @@ pub async fn execute_plan(
     let ctx = QueryPlanExecutionContext {
         plugin_manager: &plugin_manager,
         query_plan: query_plan_payload,
+        operation_for_plan: &normalized_payload.operation_for_plan,
         projection_plan: &normalized_payload.projection_plan,
         headers_plan: &app_state.headers_plan,
         variable_values: &variable_payload.variables_map,

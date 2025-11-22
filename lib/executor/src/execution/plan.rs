@@ -2,9 +2,12 @@ use std::collections::{BTreeSet, HashMap};
 
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
-use hive_router_query_planner::planner::plan_nodes::{
-    ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
-    QueryPlan, SequenceNode,
+use hive_router_query_planner::{
+    ast::operation::OperationDefinition,
+    planner::plan_nodes::{
+        ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode,
+        PlanNode, QueryPlan, SequenceNode,
+    },
 };
 use http::HeaderMap;
 use serde::Deserialize;
@@ -54,6 +57,7 @@ use crate::{
 pub struct QueryPlanExecutionContext<'exec, 'req> {
     pub plugin_manager: &'exec PluginManager<'exec>,
     pub query_plan: &'exec QueryPlan,
+    pub operation_for_plan: &'exec OperationDefinition,
     pub projection_plan: &'exec Vec<FieldProjectionPlan>,
     pub headers_plan: &'exec HeaderRulesPlan,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
@@ -81,11 +85,11 @@ impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
         };
 
         let dedupe_subgraph_requests = self.operation_type_name == "Query";
-
         let mut start_payload = OnExecuteStartPayload {
             router_http_request: &self.plugin_manager.router_http_request,
             context: &self.plugin_manager.context,
             query_plan: self.query_plan,
+            operation_for_plan: self.operation_for_plan,
             data: init_value,
             errors: Vec::new(),
             extensions: self.extensions.clone(),

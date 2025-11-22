@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use hive_router_query_planner::ast::operation::OperationDefinition;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 
 use crate::plugin_context::{PluginContext, RouterHttpRequest};
@@ -11,6 +12,7 @@ pub struct OnExecuteStartPayload<'exec> {
     pub router_http_request: &'exec RouterHttpRequest<'exec>,
     pub context: &'exec PluginContext,
     pub query_plan: &'exec QueryPlan,
+    pub operation_for_plan: &'exec OperationDefinition,
 
     pub data: Value<'exec>,
     pub errors: Vec<GraphQLError>,

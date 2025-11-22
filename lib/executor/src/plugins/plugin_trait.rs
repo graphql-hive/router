@@ -98,7 +98,7 @@ pub trait RouterPlugin {
         start_payload.cont()
     }
     async fn on_graphql_validation<'exec>(
-        &self,
+        &'exec self,
         start_payload: OnGraphQLValidationStartPayload<'exec>,
     ) -> HookResult<'exec, OnGraphQLValidationStartPayload<'exec>, OnGraphQLValidationEndPayload>
     {
