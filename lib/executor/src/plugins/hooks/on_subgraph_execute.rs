@@ -14,10 +14,14 @@ pub struct OnSubgraphExecuteStartPayload<'exec> {
     pub execution_result: Option<HttpExecutionResponse>,
 }
 
-impl<'exec> StartPayload<OnSubgraphExecuteEndPayload> for OnSubgraphExecuteStartPayload<'exec> {}
-
-pub struct OnSubgraphExecuteEndPayload {
-    pub execution_result: HttpExecutionResponse,
+impl<'exec> StartPayload<OnSubgraphExecuteEndPayload<'exec>>
+    for OnSubgraphExecuteStartPayload<'exec>
+{
 }
 
-impl EndPayload for OnSubgraphExecuteEndPayload {}
+pub struct OnSubgraphExecuteEndPayload<'exec> {
+    pub execution_result: HttpExecutionResponse,
+    pub context: &'exec PluginContext,
+}
+
+impl<'exec> EndPayload for OnSubgraphExecuteEndPayload<'exec> {}

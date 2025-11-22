@@ -92,7 +92,7 @@ pub trait RouterPlugin {
         start_payload.cont()
     }
     async fn on_graphql_parse<'exec>(
-        &self,
+        &'exec self,
         start_payload: OnGraphQLParseStartPayload<'exec>,
     ) -> HookResult<'exec, OnGraphQLParseStartPayload<'exec>, OnGraphQLParseEndPayload> {
         start_payload.cont()
@@ -105,7 +105,7 @@ pub trait RouterPlugin {
         start_payload.cont()
     }
     async fn on_query_plan<'exec>(
-        &self,
+        &'exec self,
         start_payload: OnQueryPlanStartPayload<'exec>,
     ) -> HookResult<'exec, OnQueryPlanStartPayload<'exec>, OnQueryPlanEndPayload> {
         start_payload.cont()

@@ -1,4 +1,4 @@
-use ntex::web::{self, DefaultError};
+use ntex::web::{self, DefaultError, WebRequest};
 
 use crate::{
     plugin_context::PluginContext,
@@ -6,9 +6,8 @@ use crate::{
 };
 
 pub struct OnHttpRequestPayload<'req> {
-    pub router_http_request: web::WebRequest<DefaultError>,
+    pub router_http_request: WebRequest<DefaultError>,
     pub context: &'req PluginContext,
-    pub response: Option<web::WebResponse>,
 }
 
 impl<'req> StartPayload<OnHttpResponsePayload> for OnHttpRequestPayload<'req> {}

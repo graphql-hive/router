@@ -100,10 +100,11 @@ pub struct OnGraphQLParamsStartPayload<'exec> {
     pub graphql_params: Option<GraphQLParams>,
 }
 
-impl<'exec> StartPayload<OnGraphQLParamsEndPayload> for OnGraphQLParamsStartPayload<'exec> {}
+impl<'exec> StartPayload<OnGraphQLParamsEndPayload<'exec>> for OnGraphQLParamsStartPayload<'exec> {}
 
-pub struct OnGraphQLParamsEndPayload {
+pub struct OnGraphQLParamsEndPayload<'exec> {
     pub graphql_params: GraphQLParams,
+    pub context: &'exec PluginContext,
 }
 
-impl EndPayload for OnGraphQLParamsEndPayload {}
+impl<'exec> EndPayload for OnGraphQLParamsEndPayload<'exec> {}

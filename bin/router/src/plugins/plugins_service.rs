@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
 use hive_router_plan_executor::{
+    execution::plan::PlanExecutionOutput,
     hooks::on_http_request::{OnHttpRequestPayload, OnHttpResponsePayload},
     plugin_context::PluginContext,
     plugin_trait::ControlFlowResult,
 };
+use http::StatusCode;
 use ntex::{
+    http::ResponseBuilder,
     service::{Service, ServiceCtx},
     web::{self, DefaultError},
     Middleware,
@@ -52,11 +55,11 @@ where
             let mut start_payload = OnHttpRequestPayload {
                 router_http_request: req,
                 context: &plugin_context,
-                response: None,
             };
 
             let mut on_end_callbacks = vec![];
 
+            let mut early_response: Option<PlanExecutionOutput> = None;
             for plugin in plugins.iter() {
                 let result = plugin.on_http_request(start_payload);
                 start_payload = result.payload;
@@ -67,18 +70,24 @@ where
                     ControlFlowResult::OnEnd(callback) => {
                         on_end_callbacks.push(callback);
                     }
-                    ControlFlowResult::EndResponse(_response) => {
-                        // Short-circuit the request with the provided response
-                        unimplemented!();
+                    ControlFlowResult::EndResponse(response) => {
+                        early_response = Some(response);
+                        break;
                     }
                 }
             }
 
             let req = start_payload.router_http_request;
 
-            let response = match start_payload.response {
-                Some(response) => response,
-                None => ctx.call(&self.service, req).await?,
+            let response = if let Some(early_response) = early_response {
+                let mut builder = ResponseBuilder::new(StatusCode::OK);
+                for (key, value) in early_response.headers.iter() {
+                    builder.header(key, value);
+                }
+                let res = builder.body(early_response.body);
+                req.into_response(res)
+            } else {
+                ctx.call(&self.service, req).await?
             };
 
             let mut end_payload = OnHttpResponsePayload { response };

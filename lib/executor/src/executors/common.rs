@@ -49,4 +49,5 @@ impl SubgraphExecutionRequest<'_> {
 pub struct HttpExecutionResponse {
     pub body: Bytes,
     pub headers: HeaderMap,
+    pub status: http::StatusCode,
 }

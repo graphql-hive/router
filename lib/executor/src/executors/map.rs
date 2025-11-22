@@ -154,6 +154,7 @@ impl SubgraphExecutorMap {
                     return HttpExecutionResponse {
                         body: response.body.into(),
                         headers: response.headers,
+                        status: response.status,
                     };
                 }
                 ControlFlowResult::OnEnd(callback) => {
@@ -182,7 +183,10 @@ impl SubgraphExecutorMap {
             }
         };
 
-        let mut end_payload = OnSubgraphExecuteEndPayload { execution_result };
+        let mut end_payload = OnSubgraphExecuteEndPayload {
+            context: &plugin_manager.context,
+            execution_result,
+        };
 
         for callback in on_end_callbacks {
             let result = callback(end_payload);
@@ -196,6 +200,7 @@ impl SubgraphExecutorMap {
                     return HttpExecutionResponse {
                         body: response.body.into(),
                         headers: response.headers,
+                        status: response.status,
                     };
                 }
                 ControlFlowResult::OnEnd(_) => {
@@ -222,6 +227,7 @@ impl SubgraphExecutorMap {
         HttpExecutionResponse {
             body: buffer.freeze(),
             headers: Default::default(),
+            status: http::StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 

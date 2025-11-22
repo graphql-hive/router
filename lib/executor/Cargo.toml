@@ -30,6 +30,7 @@ xxhash-rust = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 dashmap = { workspace = true }
 vrl = { workspace = true }
+reqwest = { workspace = true, features = ["multipart"] }
 
 ahash = "0.8.12"
 regex-automata = "0.4.10"
@@ -53,6 +54,8 @@ ryu = "1.0.20"
 indexmap = "2.10.0"
 bumpalo = "3.19.0"
 redis = "0.32.7"
+multer = "3.1.0"
+futures-util = "0.3.31"
 
 [dev-dependencies]
 subgraphs = { path = "../../bench/subgraphs" }

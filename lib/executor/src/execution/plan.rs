@@ -69,6 +69,7 @@ pub struct QueryPlanExecutionContext<'exec, 'req> {
 pub struct PlanExecutionOutput {
     pub body: Vec<u8>,
     pub headers: HeaderMap,
+    pub status: http::StatusCode,
 }
 
 impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
@@ -177,6 +178,7 @@ impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
         Ok(PlanExecutionOutput {
             body,
             headers: response_headers,
+            status: http::StatusCode::OK,
         })
     }
 }

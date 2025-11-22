@@ -1,5 +1,5 @@
 use dashmap::DashMap;
-use http::HeaderMap;
+use http::{HeaderMap, StatusCode};
 use redis::Commands;
 
 use crate::{
@@ -44,6 +44,7 @@ impl RouterPlugin for ResponseCachePlugin {
                 return payload.end_response(PlanExecutionOutput {
                     body: cached_response,
                     headers: HeaderMap::new(),
+                    status: StatusCode::OK,
                 });
             }
             return payload.on_end(move |mut payload: OnExecuteEndPayload<'exec>| {

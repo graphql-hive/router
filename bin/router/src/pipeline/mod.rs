@@ -176,7 +176,10 @@ pub async fn execute_pipeline(
             .expect("Failed to parse execution request")
     });
 
-    let mut payload = OnGraphQLParamsEndPayload { graphql_params };
+    let mut payload = OnGraphQLParamsEndPayload {
+        graphql_params,
+        context: &plugin_manager.context,
+    };
     for deserialization_end_callback in deserialization_end_callbacks {
         let result = deserialization_end_callback(payload);
         payload = result.payload;

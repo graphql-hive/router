@@ -282,6 +282,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 return HttpExecutionResponse {
                     body: self.error_to_graphql_bytes(e),
                     headers: Default::default(),
+                    status: StatusCode::OK,
                 };
             }
         };
@@ -311,12 +312,14 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 Ok(shared_response) => HttpExecutionResponse {
                     body: shared_response.body,
                     headers: shared_response.headers,
+                    status: shared_response.status,
                 },
                 Err(e) => {
                     self.log_error(&e);
                     HttpExecutionResponse {
                         body: self.error_to_graphql_bytes(e),
                         headers: Default::default(),
+                        status: StatusCode::OK,
                     }
                 }
             };
@@ -362,12 +365,14 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             Ok(shared_response) => HttpExecutionResponse {
                 body: shared_response.body.clone(),
                 headers: shared_response.headers.clone(),
+                status: shared_response.status,
             },
             Err(e) => {
                 self.log_error(&e);
                 HttpExecutionResponse {
                     body: self.error_to_graphql_bytes(e.clone()),
                     headers: Default::default(),
+                    status: StatusCode::OK,
                 }
             }
         }
