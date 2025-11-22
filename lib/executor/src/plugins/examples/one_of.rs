@@ -7,6 +7,7 @@
 use std::{collections::BTreeMap, sync::RwLock};
 
 use crate::{
+    execution::plan::PlanExecutionOutput,
     hooks::{
         on_execute::{OnExecuteEndPayload, OnExecuteStartPayload},
         on_graphql_validation::{OnGraphQLValidationEndPayload, OnGraphQLValidationStartPayload},
@@ -26,6 +27,7 @@ use graphql_tools::{
         utils::{ValidationError, ValidationErrorContext},
     },
 };
+use sonic_rs::{json, JsonContainerTrait};
 
 pub struct OneOfPlugin {
     pub one_of_types: RwLock<Vec<String>>,
@@ -50,6 +52,42 @@ impl RouterPlugin for OneOfPlugin {
         &'exec self,
         payload: OnExecuteStartPayload<'exec>,
     ) -> HookResult<'exec, OnExecuteStartPayload<'exec>, OnExecuteEndPayload> {
+        if let (Some(variable_values), Some(variable_defs)) = (
+            &payload.variable_values,
+            &payload.operation_for_plan.variable_definitions,
+        ) {
+            for def in variable_defs {
+                let variable_named_type = def.variable_type.inner_type();
+                let one_of_types = self.one_of_types.read().unwrap();
+                if one_of_types.contains(&variable_named_type.to_string()) {
+                    let var_name = &def.name;
+                    if let Some(value) = variable_values.get(var_name).and_then(|v| v.as_object()) {
+                        let keys_num = value.len();
+                        if keys_num > 1 {
+                            let err_msg = format!(
+                                "Variable '${}' of input object type '{}' with @oneOf directive has multiple fields set: {:?}. Only one field must be set.",
+                                var_name,
+                                variable_named_type,
+                                keys_num
+                            );
+                            return payload.end_response(PlanExecutionOutput {
+                                body: sonic_rs::to_vec(&json!({
+                                    "errors": [{
+                                        "message": err_msg,
+                                        "extensions": {
+                                            "code": "TOO_MANY_FIELDS_SET_IN_ONEOF"
+                                        }
+                                    }]
+                                }))
+                                .unwrap(),
+                                headers: Default::default(),
+                                status: http::StatusCode::BAD_REQUEST,
+                            });
+                        }
+                    }
+                }
+            }
+        }
         payload.cont()
     }
     fn on_supergraph_reload<'exec>(
