@@ -3,6 +3,47 @@
 // 2. During execution step
 
 // We handle execution too to validate input objects at runtime as well.
+/*
+    Let's say we have the following input type with `@oneOf` directive:
+    input PaymentMethod @oneOf {
+        creditCard: CreditCardInput
+        bankTransfer: BankTransferInput
+        paypal: PayPalInput
+    }
+
+    During validation, if a variable of type `PaymentMethod` is provided with multiple fields set,
+    we will raise a validation error.
+
+    ```graphql
+    mutation MakePayment {
+        makePayment(method: {
+            creditCard: { number: "1234", expiry: "12/24" },
+            paypal: { email: "john@doe.com" }
+        }) {
+            success
+        }
+    }
+    ```
+
+    But since variables can be dynamic, we also validate during execution. If the input object has multiple fields set,
+    we return an error in the response.
+
+    ```graphql
+    mutation MakePayment($method: PaymentMethod!) {
+        makePayment(method: $method) {
+            success
+        }
+    }
+    ```
+
+    with variables:
+    {
+        "method": {
+            "creditCard": { "number": "1234", "expiry": "12/24" },
+            "paypal": { "email": "john@doe.com" }
+        }
+    }
+*/
 
 use std::{collections::BTreeMap, sync::RwLock};
 
