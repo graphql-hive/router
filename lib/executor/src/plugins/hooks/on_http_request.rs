@@ -10,10 +10,11 @@ pub struct OnHttpRequestPayload<'req> {
     pub context: &'req PluginContext,
 }
 
-impl<'req> StartPayload<OnHttpResponsePayload> for OnHttpRequestPayload<'req> {}
+impl<'req> StartPayload<OnHttpResponsePayload<'req>> for OnHttpRequestPayload<'req> {}
 
-pub struct OnHttpResponsePayload {
+pub struct OnHttpResponsePayload<'req> {
     pub response: web::WebResponse,
+    pub context: &'req PluginContext,
 }
 
-impl EndPayload for OnHttpResponsePayload {}
+impl<'req> EndPayload for OnHttpResponsePayload<'req> {}

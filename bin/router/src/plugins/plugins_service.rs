@@ -90,7 +90,10 @@ where
                 ctx.call(&self.service, req).await?
             };
 
-            let mut end_payload = OnHttpResponsePayload { response };
+            let mut end_payload = OnHttpResponsePayload {
+                response,
+                context: &plugin_context,
+            };
 
             for callback in on_end_callbacks.into_iter().rev() {
                 let result = callback(end_payload);

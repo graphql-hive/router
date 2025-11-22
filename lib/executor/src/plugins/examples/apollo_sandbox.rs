@@ -125,9 +125,9 @@ pub struct ApolloSandboxPlugin {
 
 impl RouterPlugin for ApolloSandboxPlugin {
     fn on_http_request<'req>(
-        &self,
+        &'req self,
         payload: OnHttpRequestPayload<'req>,
-    ) -> HookResult<'req, OnHttpRequestPayload<'req>, OnHttpResponsePayload> {
+    ) -> HookResult<'req, OnHttpRequestPayload<'req>, OnHttpResponsePayload<'req>> {
         if payload.router_http_request.path() == "/apollo-sandbox" {
             let config = sonic_rs::to_string(&self.options).unwrap_or_else(|_| "{}".to_string());
             let html = format!(

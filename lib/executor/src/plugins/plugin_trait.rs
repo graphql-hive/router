@@ -80,9 +80,9 @@ where
 #[async_trait::async_trait]
 pub trait RouterPlugin {
     fn on_http_request<'req>(
-        &self,
+        &'req self,
         start_payload: OnHttpRequestPayload<'req>,
-    ) -> HookResult<'req, OnHttpRequestPayload<'req>, OnHttpResponsePayload> {
+    ) -> HookResult<'req, OnHttpRequestPayload<'req>, OnHttpResponsePayload<'req>> {
         start_payload.cont()
     }
     async fn on_graphql_params<'exec>(

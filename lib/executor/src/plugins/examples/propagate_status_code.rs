@@ -3,7 +3,10 @@
 use http::StatusCode;
 
 use crate::{
-    hooks::on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload},
+    hooks::{
+        on_http_request::{OnHttpRequestPayload, OnHttpResponsePayload},
+        on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload},
+    },
     plugin_trait::{EndPayload, HookResult, RouterPlugin, StartPayload},
 };
 
@@ -39,6 +42,21 @@ impl RouterPlugin for PropagateStatusCodePlugin {
                     let new_ctx = PropagateStatusCodeCtx { status_code };
                     payload.context.insert(new_ctx);
                 }
+            }
+            payload.cont()
+        })
+    }
+    fn on_http_request<'exec>(
+        &'exec self,
+        payload: OnHttpRequestPayload<'exec>,
+    ) -> HookResult<'exec, OnHttpRequestPayload<'exec>, OnHttpResponsePayload<'exec>> {
+        payload.on_end(|mut payload| {
+            // Checking if there is a context entry
+            let ctx_entry = payload.context.get_ref_entry();
+            let ctx: Option<&PropagateStatusCodeCtx> = ctx_entry.get_ref();
+            if let Some(ctx) = ctx {
+                // Update the HTTP response status code
+                *payload.response.response_mut().status_mut() = ctx.status_code;
             }
             payload.cont()
         })
