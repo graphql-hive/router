@@ -1,4 +1,21 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.4 (2025-11-24)
+
+### Fixes
+
+#### Avoid extra `query` prefix for anonymous queries
+
+When there is no variable definitions and no operation name, GraphQL queries can be sent without the `query` prefix. For example, instead of sending:
+
+```diff
+- query {
++ {
+  user(id: "1") {
+    name
+  }
+}
+```
+
 ## 0.0.3 (2025-11-06)
 
 ### Fixes
