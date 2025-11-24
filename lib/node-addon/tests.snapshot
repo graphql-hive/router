@@ -9,13 +9,13 @@ exports[`fixtures > should plan federation-example/query.graphql 1`] = `
         "nodes": [
           {
             "kind": "Fetch",
-            "operation": "query{topProducts{__typename upc name price weight}}",
+            "operation": "{topProducts{__typename upc name price weight}}",
             "operationKind": "query",
             "serviceName": "products"
           },
           {
             "kind": "Fetch",
-            "operation": "query{users{__typename id username name}}",
+            "operation": "{users{__typename id username name}}",
             "operationKind": "query",
             "serviceName": "accounts"
           }
@@ -524,7 +524,7 @@ exports[`fixtures > should plan simple-inaccessible/test-2.graphql 1`] = `
   "kind": "QueryPlan",
   "node": {
     "kind": "Fetch",
-    "operation": "query{usersInFriends{id friends(type: FRIEND){id}}}",
+    "operation": "{usersInFriends{id friends(type: FRIEND){id}}}",
     "operationKind": "query",
     "serviceName": "friends"
   }
