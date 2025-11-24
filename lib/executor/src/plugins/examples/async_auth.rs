@@ -7,13 +7,26 @@ use sonic_rs::json;
 use crate::{
     execution::plan::PlanExecutionOutput,
     hooks::on_graphql_params::{OnGraphQLParamsEndPayload, OnGraphQLParamsStartPayload},
-    plugin_trait::{HookResult, RouterPlugin, StartPayload},
+    plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
 
 #[derive(Deserialize)]
 pub struct AllowClientIdConfig {
     pub header: String,
     pub path: String,
+}
+
+impl RouterPluginWithConfig for AllowClientIdFromFile {
+    type Config = AllowClientIdConfig;
+    fn plugin_name() -> &'static str {
+        "allow_client_id_from_file"
+    }
+    fn new(config: AllowClientIdConfig) -> Self {
+        AllowClientIdFromFile {
+            header_key: config.header,
+            allowed_ids_path: PathBuf::from(config.path),
+        }
+    }
 }
 
 pub struct AllowClientIdFromFile {

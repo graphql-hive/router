@@ -7,6 +7,7 @@ use graphql_tools::{
     },
 };
 use hive_router_query_planner::ast::selection_item::SelectionItem;
+use serde::Deserialize;
 use sonic_rs::json;
 
 use crate::{
@@ -15,7 +16,7 @@ use crate::{
         on_graphql_validation::{OnGraphQLValidationEndPayload, OnGraphQLValidationStartPayload},
         on_query_plan::{OnQueryPlanEndPayload, OnQueryPlanStartPayload},
     },
-    plugin_trait::{HookResult, RouterPlugin, StartPayload},
+    plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
 
 // This example shows two ways of limiting the number of root fields in a query:
@@ -82,6 +83,23 @@ impl RouterPlugin for RootFieldLimitPlugin {
             }
         }
         payload.cont()
+    }
+}
+
+#[derive(Deserialize)]
+pub struct RootFieldLimitPluginConfig {
+    max_root_fields: usize,
+}
+
+impl RouterPluginWithConfig for RootFieldLimitPlugin {
+    type Config = RootFieldLimitPluginConfig;
+    fn plugin_name() -> &'static str {
+        "root_field_limit_plugin"
+    }
+    fn new(config: Self::Config) -> Self {
+        RootFieldLimitPlugin {
+            max_root_fields: config.max_root_fields,
+        }
     }
 }
 

@@ -3,8 +3,20 @@ use dashmap::DashMap;
 use crate::{
     executors::common::HttpExecutionResponse,
     hooks::on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload},
-    plugin_trait::{EndPayload, HookResult, RouterPlugin, StartPayload},
+    plugin_trait::{EndPayload, HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
+
+impl RouterPluginWithConfig for SubgraphResponseCachePlugin {
+    type Config = ();
+    fn plugin_name() -> &'static str {
+        "subgraph_response_cache_plugin"
+    }
+    fn new(_config: ()) -> Self {
+        SubgraphResponseCachePlugin {
+            cache: DashMap::new(),
+        }
+    }
+}
 
 pub struct SubgraphResponseCachePlugin {
     cache: DashMap<String, HttpExecutionResponse>,

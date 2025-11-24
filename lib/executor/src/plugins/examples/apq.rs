@@ -3,11 +3,23 @@ use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 
 use crate::{
     hooks::on_graphql_params::{OnGraphQLParamsEndPayload, OnGraphQLParamsStartPayload},
-    plugin_trait::{EndPayload, HookResult, RouterPlugin, StartPayload},
+    plugin_trait::{EndPayload, HookResult, RouterPluginWithConfig, RouterPlugin, StartPayload},
 };
 
 pub struct APQPlugin {
     cache: DashMap<String, String>,
+}
+
+impl RouterPluginWithConfig for APQPlugin {
+    type Config = ();
+    fn plugin_name() -> &'static str {
+        "apq_plugin"
+    }
+    fn new(_config: Self::Config) -> Self {
+        APQPlugin {
+            cache: DashMap::new(), 
+        }
+    }
 }
 
 #[async_trait::async_trait]

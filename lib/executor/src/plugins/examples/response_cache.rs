@@ -1,6 +1,7 @@
 use dashmap::DashMap;
 use http::{HeaderMap, StatusCode};
 use redis::Commands;
+use serde::Deserialize;
 
 use crate::{
     execution::plan::PlanExecutionOutput,
@@ -8,24 +9,34 @@ use crate::{
         on_execute::{OnExecuteEndPayload, OnExecuteStartPayload},
         on_supergraph_load::{OnSupergraphLoadEndPayload, OnSupergraphLoadStartPayload},
     },
-    plugin_trait::{EndPayload, HookResult, StartPayload},
+    plugin_trait::{EndPayload, HookResult, RouterPluginWithConfig, StartPayload},
     plugins::plugin_trait::RouterPlugin,
     utils::consts::TYPENAME_FIELD_NAME,
 };
 
+#[derive(Deserialize)]
+pub struct ResponseCachePluginOptions {
+    pub redis_url: String,
+}
+
+impl RouterPluginWithConfig for ResponseCachePlugin {
+    type Config = ResponseCachePluginOptions;
+    fn plugin_name() -> &'static str {
+        "response_cache_plugin"
+    }
+    fn new(config: ResponseCachePluginOptions) -> Self {
+        let redis_client = redis::Client::open(config.redis_url)
+            .expect("Failed to create Redis client");
+        Self {
+            redis_client,
+            ttl_per_type: DashMap::new(),
+        }
+    }
+}
+
 pub struct ResponseCachePlugin {
     redis_client: redis::Client,
     ttl_per_type: DashMap<String, u64>,
-}
-
-impl ResponseCachePlugin {
-    pub fn try_new(redis_url: &str) -> Result<Self, redis::RedisError> {
-        let redis_client = redis::Client::open(redis_url)?;
-        Ok(Self {
-            redis_client,
-            ttl_per_type: DashMap::new(),
-        })
-    }
 }
 
 #[async_trait::async_trait]

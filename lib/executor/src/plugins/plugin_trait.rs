@@ -1,3 +1,5 @@
+use serde::de::DeserializeOwned;
+
 use crate::execution::plan::PlanExecutionOutput;
 use crate::hooks::on_execute::{OnExecuteEndPayload, OnExecuteStartPayload};
 use crate::hooks::on_graphql_params::{OnGraphQLParamsEndPayload, OnGraphQLParamsStartPayload};
@@ -74,6 +76,24 @@ where
             payload: self,
             control_flow: ControlFlowResult::EndResponse(output),
         }
+    }
+}
+
+pub trait RouterPluginWithConfig where
+    Self: Sized,
+    Self: RouterPlugin,
+{
+    fn plugin_name() -> &'static str;
+    type Config: Send + Sync + DeserializeOwned;
+    fn new(config: Self::Config) -> Self;
+    fn from_config_value(value: serde_json::Value) -> serde_json::Result<Box<Self>>
+    where
+        Self: Sized,
+    {
+        let config: Self::Config = serde_json::from_value(value)?;
+        Ok(
+            Box::new(Self::new(config))
+        )
     }
 }
 

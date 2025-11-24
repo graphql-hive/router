@@ -6,10 +6,20 @@ use sonic_rs::json;
 use crate::{
     execution::plan::PlanExecutionOutput,
     hooks::on_graphql_params::{OnGraphQLParamsEndPayload, OnGraphQLParamsStartPayload},
-    plugin_trait::{HookResult, RouterPlugin, StartPayload},
+    plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
 
 pub struct ForbidAnonymousOperations {}
+
+impl RouterPluginWithConfig for ForbidAnonymousOperations {
+    type Config = ();
+    fn plugin_name() -> &'static str {
+        "forbid_anonymous_operations"
+    }
+    fn new(_config: Self::Config) -> Self {
+        ForbidAnonymousOperations {}
+    }
+}
 
 #[async_trait::async_trait]
 impl RouterPlugin for ForbidAnonymousOperations {

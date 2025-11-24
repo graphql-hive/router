@@ -5,7 +5,7 @@ use http::{HeaderMap, StatusCode};
 use crate::{
     execution::plan::PlanExecutionOutput,
     hooks::on_http_request::{OnHttpRequestPayload, OnHttpResponsePayload},
-    plugin_trait::{HookResult, RouterPlugin, StartPayload},
+    plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
 
 #[derive(Default, Serialize, Deserialize, Debug, Clone)]
@@ -117,6 +117,16 @@ pub struct ApolloSandboxInitialStateOptions {
      * ```
      */
     pub shared_headers: HashMap<String, String>,
+}
+
+impl RouterPluginWithConfig for ApolloSandboxPlugin {
+    type Config = ApolloSandboxOptions;
+    fn plugin_name() -> &'static str {
+        "apollo_sandbox"
+    }
+    fn new(config: ApolloSandboxOptions) -> Self {
+        ApolloSandboxPlugin { options: config }
+    }
 }
 
 pub struct ApolloSandboxPlugin {

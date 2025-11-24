@@ -31,6 +31,7 @@ tokio = { workspace = true, features = ["sync"] }
 dashmap = { workspace = true }
 vrl = { workspace = true }
 reqwest = { workspace = true, features = ["multipart"] }
+serde_json = { workspace = true }
 
 ahash = "0.8.12"
 regex-automata = "0.4.10"

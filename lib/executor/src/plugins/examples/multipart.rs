@@ -8,7 +8,7 @@ use crate::{
         },
         on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload},
     },
-    plugin_trait::{HookResult, RouterPlugin, StartPayload},
+    plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
 use bytes::Bytes;
 use dashmap::DashMap;
@@ -32,6 +32,16 @@ struct MultipartOperations<'a> {
     pub query: &'a str,
     pub variables: Option<&'a HashMap<&'a str, &'a sonic_rs::Value>>,
     pub operation_name: Option<&'a str>,
+}
+
+impl RouterPluginWithConfig for MultipartPlugin {
+    type Config = ();
+    fn plugin_name() -> &'static str {
+        "multipart_plugin"
+    }
+    fn new(_config: ()) -> Self {
+        MultipartPlugin {}
+    }
 }
 
 #[async_trait::async_trait]

@@ -6,7 +6,7 @@ use crate::{
         on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload},
     },
     plugin_context::PluginContextMutEntry,
-    plugin_trait::{EndPayload, HookResult, RouterPlugin, StartPayload},
+    plugin_trait::{EndPayload, HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
 
 pub struct ContextDataPlugin {}
@@ -14,6 +14,16 @@ pub struct ContextDataPlugin {}
 pub struct ContextData {
     incoming_data: String,
     response_count: u64,
+}
+
+impl RouterPluginWithConfig for ContextDataPlugin {
+    type Config = ();
+    fn plugin_name() -> &'static str {
+        "context_data_plugin"
+    }
+    fn new(_config: ()) -> Self {
+        ContextDataPlugin {}
+    }
 }
 
 #[async_trait::async_trait]

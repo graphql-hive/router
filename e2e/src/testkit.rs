@@ -1,8 +1,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use hive_router::{
-    background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    RouterSharedState, SchemaState,
+    PluginRegistry, RouterSharedState, SchemaState, background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use ntex::{
@@ -181,7 +180,7 @@ pub async fn init_router_from_config(
 > {
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let (shared_state, schema_state) =
-        configure_app_from_config(router_config, &mut bg_tasks_manager).await?;
+        configure_app_from_config(router_config, &mut bg_tasks_manager, PluginRegistry::new()).await?;
 
     let ntex_app = test::init_service(
         web::App::new()

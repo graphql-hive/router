@@ -92,6 +92,10 @@ pub struct HiveRouterConfig {
     /// Configuration for overriding labels.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub override_labels: OverrideLabelsConfig,
+
+    /// Configuration for plugins.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub plugins: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, thiserror::Error)]

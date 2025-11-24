@@ -2077,6 +2077,7 @@ dependencies = [
  "reqwest",
  "ryu",
  "serde",
+ "serde_json",
  "sonic-rs",
  "strum 0.27.2",
  "subgraphs",

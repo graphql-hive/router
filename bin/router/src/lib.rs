@@ -9,7 +9,7 @@ mod schema_state;
 mod shared_state;
 mod supergraph;
 
-use std::sync::Arc;
+use std::{sync::Arc};
 
 use crate::{
     background_tasks::BackgroundTasksManager,
@@ -37,6 +37,7 @@ use ntex::{
     web::{self, HttpRequest},
 };
 use tracing::{info, warn};
+pub use crate::plugins::registry::PluginRegistry;
 
 async fn graphql_endpoint_handler(
     req: HttpRequest,
@@ -86,7 +87,9 @@ async fn graphql_endpoint_handler(
     }
 }
 
-pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn router_entrypoint(
+    plugin_factories: PluginRegistry 
+) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
     configure_logging(&router_config.log);
@@ -94,7 +97,7 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
     let addr = router_config.http.address();
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let (shared_state, schema_state) =
-        configure_app_from_config(router_config, &mut bg_tasks_manager).await?;
+        configure_app_from_config(router_config, &mut bg_tasks_manager, plugin_factories).await?;
 
     let maybe_error = web::HttpServer::new(move || {
         web::App::new()
@@ -118,16 +121,20 @@ pub async fn router_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
 pub async fn configure_app_from_config(
     router_config: HiveRouterConfig,
     bg_tasks_manager: &mut BackgroundTasksManager,
+    plugin_factories: PluginRegistry
 ) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), Box<dyn std::error::Error>> {
     let jwt_runtime = match router_config.jwt.is_jwt_auth_enabled() {
         true => Some(JwtAuthRuntime::init(bg_tasks_manager, &router_config.jwt).await?),
         false => None,
     };
 
+    let plugins = plugin_factories.initialize_plugins(&router_config);
+
     let router_config_arc = Arc::new(router_config);
     let shared_state = Arc::new(RouterSharedState::new(
         router_config_arc.clone(),
         jwt_runtime,
+        plugins,
     )?);
     let schema_state = SchemaState::new_from_config(
         bg_tasks_manager,

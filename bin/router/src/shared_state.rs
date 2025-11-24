@@ -26,6 +26,7 @@ impl RouterSharedState {
     pub fn new(
         router_config: Arc<HiveRouterConfig>,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
+        plugins: Vec<Box<dyn RouterPlugin + Send + Sync>>,
     ) -> Result<Self, SharedStateError> {
         Ok(Self {
             validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
@@ -38,7 +39,7 @@ impl RouterSharedState {
             )
             .map_err(Box::new)?,
             jwt_auth_runtime,
-            plugins: Arc::new(vec![]),
+            plugins: Arc::new(plugins),
         })
     }
 }

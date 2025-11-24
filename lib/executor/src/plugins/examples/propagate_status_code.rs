@@ -1,14 +1,35 @@
 // From https://github.com/apollographql/router/blob/dev/examples/status-code-propagation/rust/src/propagate_status_code.rs
 
 use http::StatusCode;
+use serde::Deserialize;
 
 use crate::{
     hooks::{
         on_http_request::{OnHttpRequestPayload, OnHttpResponsePayload},
         on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload},
     },
-    plugin_trait::{EndPayload, HookResult, RouterPlugin, StartPayload},
+    plugin_trait::{EndPayload, HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
+
+#[derive(Deserialize)]
+pub struct PropagateStatusCodePluginConfig {
+    pub status_codes: Vec<u64>
+}
+
+impl RouterPluginWithConfig for PropagateStatusCodePlugin {
+    type Config = PropagateStatusCodePluginConfig;
+    fn plugin_name() -> &'static str {
+        "propagate_status_code_plugin"
+    }
+    fn new(config: PropagateStatusCodePluginConfig) -> Self {
+        let status_codes = config
+            .status_codes
+            .into_iter()
+            .filter_map(|code| StatusCode::from_u16(code as u16).ok())
+            .collect();
+        PropagateStatusCodePlugin { status_codes }
+    }
+}
 
 pub struct PropagateStatusCodePlugin {
     pub status_codes: Vec<StatusCode>,

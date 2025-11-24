@@ -54,7 +54,7 @@ use crate::{
         on_graphql_validation::{OnGraphQLValidationEndPayload, OnGraphQLValidationStartPayload},
         on_supergraph_load::{OnSupergraphLoadEndPayload, OnSupergraphLoadStartPayload},
     },
-    plugin_trait::{HookResult, RouterPlugin, StartPayload},
+    plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
 use graphql_parser::{
     query::Value,
@@ -69,6 +69,18 @@ use graphql_tools::{
     },
 };
 use sonic_rs::{json, JsonContainerTrait};
+
+impl RouterPluginWithConfig for OneOfPlugin {
+    type Config = ();
+    fn plugin_name() -> &'static str {
+        "one_of_plugin"
+    }
+    fn new(_config: ()) -> Self {
+        OneOfPlugin {
+            one_of_types: RwLock::new(vec![]),
+        }
+    }
+}
 
 pub struct OneOfPlugin {
     pub one_of_types: RwLock<Vec<String>>,
