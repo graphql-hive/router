@@ -13,6 +13,7 @@ use crate::{
 
 #[derive(Deserialize)]
 pub struct PropagateStatusCodePluginConfig {
+    pub enabled: bool,
     pub status_codes: Vec<u64>,
 }
 
@@ -21,13 +22,16 @@ impl RouterPluginWithConfig for PropagateStatusCodePlugin {
     fn plugin_name() -> &'static str {
         "propagate_status_code_plugin"
     }
-    fn new(config: PropagateStatusCodePluginConfig) -> Self {
+    fn from_config(config: PropagateStatusCodePluginConfig) -> Option<Self> {
+        if !config.enabled {
+            return None;
+        }
         let status_codes = config
             .status_codes
             .into_iter()
             .filter_map(|code| StatusCode::from_u16(code as u16).ok())
             .collect();
-        PropagateStatusCodePlugin { status_codes }
+        Some(PropagateStatusCodePlugin { status_codes })
     }
 }
 

@@ -11,6 +11,7 @@ use crate::{
 #[derive(Default, Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ApolloSandboxOptions {
+    pub enabled: bool,
     /**
      * The URL of the GraphQL endpoint that Sandbox introspects on initial load. Sandbox populates its pages using the schema obtained from this endpoint.
      * The default value is `http://localhost:4000`.
@@ -39,6 +40,7 @@ pub struct ApolloSandboxOptions {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ApolloSandboxInitialStateOptions {
+    pub enabled: bool,
     /**
      * Set this value to `true` if you want Sandbox to pass `{ credentials: 'include' }` for its requests by default.If you set `hideCookieToggle` to `false`, users can override this default setting with the **Include cookies** toggle. (By default, the embedded Sandbox does not show the **Include cookies** toggle in its connection settings.)If you also pass the `handleRequest` option, this option is ignored.Read more about the `fetch` API and credentials [here](https://developer.mozilla.org/en-US/docs/Web/API/fetch#credentials).
      */
@@ -124,8 +126,12 @@ impl RouterPluginWithConfig for ApolloSandboxPlugin {
     fn plugin_name() -> &'static str {
         "apollo_sandbox"
     }
-    fn new(config: ApolloSandboxOptions) -> Self {
-        ApolloSandboxPlugin { options: config }
+    fn from_config(config: ApolloSandboxOptions) -> Option<Self> {
+        if config.enabled {
+            Some(ApolloSandboxPlugin { options: config })
+        } else {
+            None
+        }
     }
 }
 

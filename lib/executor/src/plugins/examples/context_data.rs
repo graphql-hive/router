@@ -1,5 +1,7 @@
 // From https://github.com/apollographql/router/blob/dev/examples/context/rust/src/context_data.rs
 
+use serde::Deserialize;
+
 use crate::{
     hooks::{
         on_graphql_params::{OnGraphQLParamsEndPayload, OnGraphQLParamsStartPayload},
@@ -9,6 +11,11 @@ use crate::{
     plugin_trait::{EndPayload, HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
 
+#[derive(Deserialize)]
+pub struct ContextDataPluginConfig {
+    pub enabled: bool,
+}
+
 pub struct ContextDataPlugin {}
 
 pub struct ContextData {
@@ -17,12 +24,16 @@ pub struct ContextData {
 }
 
 impl RouterPluginWithConfig for ContextDataPlugin {
-    type Config = ();
+    type Config = ContextDataPluginConfig;
     fn plugin_name() -> &'static str {
         "context_data_plugin"
     }
-    fn new(_config: ()) -> Self {
-        ContextDataPlugin {}
+    fn from_config(config: ContextDataPluginConfig) -> Option<Self> {
+        if config.enabled {
+            Some(ContextDataPlugin {})
+        } else {
+            None
+        }
     }
 }
 

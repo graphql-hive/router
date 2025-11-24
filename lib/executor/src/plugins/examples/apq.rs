@@ -1,4 +1,5 @@
 use dashmap::DashMap;
+use serde::Deserialize;
 use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 
 use crate::{
@@ -6,18 +7,27 @@ use crate::{
     plugin_trait::{EndPayload, HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
 
+#[derive(Deserialize)]
+pub struct APQPluginConfig {
+    pub enabled: bool,
+}
+
 pub struct APQPlugin {
     cache: DashMap<String, String>,
 }
 
 impl RouterPluginWithConfig for APQPlugin {
-    type Config = ();
+    type Config = APQPluginConfig;
     fn plugin_name() -> &'static str {
         "apq_plugin"
     }
-    fn new(_config: Self::Config) -> Self {
-        APQPlugin {
-            cache: DashMap::new(),
+    fn from_config(config: Self::Config) -> Option<Self> {
+        if config.enabled {
+            Some(APQPlugin {
+                cache: DashMap::new(),
+            })
+        } else {
+            None
         }
     }
 }

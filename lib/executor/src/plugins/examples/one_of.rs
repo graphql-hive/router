@@ -68,16 +68,26 @@ use graphql_tools::{
         utils::{ValidationError, ValidationErrorContext},
     },
 };
+use serde::Deserialize;
 use sonic_rs::{json, JsonContainerTrait};
 
+#[derive(Deserialize)]
+pub struct OneOfPluginConfig {
+    pub enabled: bool,
+}
+
 impl RouterPluginWithConfig for OneOfPlugin {
-    type Config = ();
+    type Config = OneOfPluginConfig;
     fn plugin_name() -> &'static str {
         "one_of_plugin"
     }
-    fn new(_config: ()) -> Self {
-        OneOfPlugin {
-            one_of_types: RwLock::new(vec![]),
+    fn from_config(config: OneOfPluginConfig) -> Option<Self> {
+        if config.enabled {
+            Some(OneOfPlugin {
+                one_of_types: RwLock::new(vec![]),
+            })
+        } else {
+            None
         }
     }
 }

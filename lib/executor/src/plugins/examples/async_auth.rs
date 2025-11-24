@@ -12,30 +12,35 @@ use crate::{
 
 #[derive(Deserialize)]
 pub struct AllowClientIdConfig {
+    pub enabled: bool,
     pub header: String,
     pub path: String,
 }
 
-impl RouterPluginWithConfig for AllowClientIdFromFile {
+impl RouterPluginWithConfig for AllowClientIdFromFilePlugin {
     type Config = AllowClientIdConfig;
     fn plugin_name() -> &'static str {
         "allow_client_id_from_file"
     }
-    fn new(config: AllowClientIdConfig) -> Self {
-        AllowClientIdFromFile {
-            header_key: config.header,
-            allowed_ids_path: PathBuf::from(config.path),
+    fn from_config(config: AllowClientIdConfig) -> Option<Self> {
+        if config.enabled {
+            Some(AllowClientIdFromFilePlugin {
+                header_key: config.header,
+                allowed_ids_path: PathBuf::from(config.path),
+            })
+        } else {
+            None
         }
     }
 }
 
-pub struct AllowClientIdFromFile {
+pub struct AllowClientIdFromFilePlugin {
     header_key: String,
     allowed_ids_path: PathBuf,
 }
 
 #[async_trait::async_trait]
-impl RouterPlugin for AllowClientIdFromFile {
+impl RouterPlugin for AllowClientIdFromFilePlugin {
     // Whenever it is a GraphQL request,
     // We don't use on_http_request here because we want to run this only when it is a GraphQL request
     async fn on_graphql_params<'exec>(

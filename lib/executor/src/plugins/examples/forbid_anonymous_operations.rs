@@ -1,6 +1,7 @@
 // Same with https://github.com/apollographql/router/blob/dev/examples/forbid-anonymous-operations/rust/src/forbid_anonymous_operations.rs
 
 use http::StatusCode;
+use serde::Deserialize;
 use sonic_rs::json;
 
 use crate::{
@@ -9,20 +10,28 @@ use crate::{
     plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
 
-pub struct ForbidAnonymousOperations {}
+#[derive(Deserialize)]
+pub struct ForbidAnonymousOperationsPluginConfig {
+    pub enabled: bool,
+}
+pub struct ForbidAnonymousOperationsPlugin {}
 
-impl RouterPluginWithConfig for ForbidAnonymousOperations {
-    type Config = ();
+impl RouterPluginWithConfig for ForbidAnonymousOperationsPlugin {
+    type Config = ForbidAnonymousOperationsPluginConfig;
     fn plugin_name() -> &'static str {
         "forbid_anonymous_operations"
     }
-    fn new(_config: Self::Config) -> Self {
-        ForbidAnonymousOperations {}
+    fn from_config(config: Self::Config) -> Option<Self> {
+        if config.enabled {
+            Some(ForbidAnonymousOperationsPlugin {})
+        } else {
+            None
+        }
     }
 }
 
 #[async_trait::async_trait]
-impl RouterPlugin for ForbidAnonymousOperations {
+impl RouterPlugin for ForbidAnonymousOperationsPlugin {
     async fn on_graphql_params<'exec>(
         &'exec self,
         payload: OnGraphQLParamsStartPayload<'exec>,

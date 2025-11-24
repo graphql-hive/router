@@ -8,7 +8,9 @@ use tracing::{info, warn};
 pub struct PluginRegistry {
     map: HashMap<
         &'static str,
-        Box<dyn Fn(Value) -> Result<Box<dyn RouterPlugin + Send + Sync>, serde_json::Error>>,
+        Box<
+            dyn Fn(Value) -> Result<Option<Box<dyn RouterPlugin + Send + Sync>>, serde_json::Error>,
+        >,
     >,
 }
 
@@ -27,7 +29,13 @@ impl PluginRegistry {
     pub fn register<P: RouterPluginWithConfig + Send + Sync + 'static>(&mut self) {
         self.map.insert(
             P::plugin_name(),
-            Box::new(|plugin_config: Value| Ok(P::from_config_value(plugin_config)?)),
+            Box::new(|plugin_config: Value| {
+                let config: P::Config = serde_json::from_value(plugin_config)?;
+                match P::from_config(config) {
+                    Some(plugin) => Ok(Some(Box::new(plugin))),
+                    None => Ok(None),
+                }
+            }),
         );
     }
     pub fn initialize_plugins(
@@ -41,7 +49,10 @@ impl PluginRegistry {
                 match factory(plugin_config_value.clone()) {
                     Ok(plugin) => {
                         info!("Loaded plugin: {}", plugin_name);
-                        plugins.push(plugin);
+                        match plugin {
+                            Some(plugin) => plugins.push(plugin),
+                            None => info!("Plugin '{}' is disabled, skipping", plugin_name),
+                        }
                     }
                     Err(err) => {
                         warn!(

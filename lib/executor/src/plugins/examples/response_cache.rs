@@ -16,6 +16,7 @@ use crate::{
 
 #[derive(Deserialize)]
 pub struct ResponseCachePluginOptions {
+    pub enabled: bool,
     pub redis_url: String,
 }
 
@@ -24,13 +25,16 @@ impl RouterPluginWithConfig for ResponseCachePlugin {
     fn plugin_name() -> &'static str {
         "response_cache_plugin"
     }
-    fn new(config: ResponseCachePluginOptions) -> Self {
+    fn from_config(config: ResponseCachePluginOptions) -> Option<Self> {
+        if !config.enabled {
+            return None;
+        }
         let redis_client =
             redis::Client::open(config.redis_url).expect("Failed to create Redis client");
-        Self {
+        Some(Self {
             redis_client,
             ttl_per_type: DashMap::new(),
-        }
+        })
     }
 }
 

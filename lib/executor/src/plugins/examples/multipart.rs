@@ -13,7 +13,12 @@ use crate::{
 use bytes::Bytes;
 use dashmap::DashMap;
 use multer::Multipart;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize)]
+pub struct MultipartPluginConfig {
+    pub enabled: bool,
+}
 pub struct MultipartPlugin {}
 
 pub struct MultipartFile {
@@ -35,12 +40,16 @@ struct MultipartOperations<'a> {
 }
 
 impl RouterPluginWithConfig for MultipartPlugin {
-    type Config = ();
+    type Config = MultipartPluginConfig;
     fn plugin_name() -> &'static str {
         "multipart_plugin"
     }
-    fn new(_config: ()) -> Self {
-        MultipartPlugin {}
+    fn from_config(config: MultipartPluginConfig) -> Option<Self> {
+        if config.enabled {
+            Some(MultipartPlugin {})
+        } else {
+            None
+        }
     }
 }
 

@@ -88,6 +88,7 @@ impl RouterPlugin for RootFieldLimitPlugin {
 
 #[derive(Deserialize)]
 pub struct RootFieldLimitPluginConfig {
+    enabled: bool,
     max_root_fields: usize,
 }
 
@@ -96,10 +97,13 @@ impl RouterPluginWithConfig for RootFieldLimitPlugin {
     fn plugin_name() -> &'static str {
         "root_field_limit_plugin"
     }
-    fn new(config: Self::Config) -> Self {
-        RootFieldLimitPlugin {
-            max_root_fields: config.max_root_fields,
+    fn from_config(config: Self::Config) -> Option<Self> {
+        if !config.enabled {
+            return None;
         }
+        Some(RootFieldLimitPlugin {
+            max_root_fields: config.max_root_fields,
+        })
     }
 }
 

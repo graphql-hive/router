@@ -1,4 +1,5 @@
 use dashmap::DashMap;
+use serde::Deserialize;
 
 use crate::{
     executors::common::HttpExecutionResponse,
@@ -6,14 +7,23 @@ use crate::{
     plugin_trait::{EndPayload, HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
 
+#[derive(Deserialize)]
+pub struct SubgraphResponseCachePluginConfig {
+    enabled: bool,
+}
+
 impl RouterPluginWithConfig for SubgraphResponseCachePlugin {
-    type Config = ();
+    type Config = SubgraphResponseCachePluginConfig;
     fn plugin_name() -> &'static str {
         "subgraph_response_cache_plugin"
     }
-    fn new(_config: ()) -> Self {
-        SubgraphResponseCachePlugin {
-            cache: DashMap::new(),
+    fn from_config(config: SubgraphResponseCachePluginConfig) -> Option<Self> {
+        if config.enabled {
+            Some(SubgraphResponseCachePlugin {
+                cache: DashMap::new(),
+            })
+        } else {
+            None
         }
     }
 }
