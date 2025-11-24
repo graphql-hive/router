@@ -97,7 +97,7 @@ fn fed_audit_requires_with_argument_conflict() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "b",
             "operationKind": "query",
-            "operation": "query{products{__typename upc name price(currency: \"USD\") weight _internal_qp_alias_0: price(currency: \"EUR\") category{averagePrice(currency: \"USD\")}}}"
+            "operation": "{products{__typename upc name price(currency: \"USD\") weight _internal_qp_alias_0: price(currency: \"EUR\") category{averagePrice(currency: \"USD\")}}}"
           },
           {
             "kind": "Parallel",
@@ -306,7 +306,7 @@ fn requires_arguments_deeply_nested_requires() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "c",
             "operationKind": "query",
-            "operation": "query{feed{__typename id}}"
+            "operation": "{feed{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -528,7 +528,7 @@ fn requires_arguments_deeply_nested_requires_with_variable() -> Result<(), Box<d
             "kind": "Fetch",
             "serviceName": "c",
             "operationKind": "query",
-            "operation": "query{feed{__typename id}}"
+            "operation": "{feed{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -764,7 +764,7 @@ fn requires_arguments_deeply_nested_requires_with_variables_and_fragments(
             "kind": "Fetch",
             "serviceName": "c",
             "operationKind": "query",
-            "operation": "query{feed{__typename id}}"
+            "operation": "{feed{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -982,7 +982,7 @@ fn multiple_requires_with_args_that_conflicts() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "query{test{id __typename}}"
+            "operation": "{test{id __typename}}"
           },
           {
             "kind": "Flatten",
@@ -1195,7 +1195,7 @@ fn multiple_plain_field_and_requires_with_args_that_conflicts() -> Result<(), Bo
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "query{test{__typename id}}"
+            "operation": "{test{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -1388,7 +1388,7 @@ fn multiple_plain_field_and_requires_with_args_that_does_not_conflicts_should_me
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "query{test{__typename id}}"
+            "operation": "{test{__typename id}}"
           },
           {
             "kind": "Flatten",
@@ -1535,7 +1535,7 @@ fn simple_requires_arguments() -> Result<(), Box<dyn Error>> {
             "kind": "Fetch",
             "serviceName": "a",
             "operationKind": "query",
-            "operation": "query{test{id __typename}}"
+            "operation": "{test{id __typename}}"
           },
           {
             "kind": "Flatten",
@@ -1749,7 +1749,7 @@ fn arguments_in_different_levels() -> Result<(), Box<dyn Error>> {
         "kind": "Fetch",
         "serviceName": "spotify",
         "operationKind": "query",
-        "operation": "query{album(id: \"5\"){albumType name genres tracks(limit: 5, offset: 10){edges{node{name}}}}}"
+        "operation": "{album(id: \"5\"){albumType name genres tracks(limit: 5, offset: 10){edges{node{name}}}}}"
       }
     }
     "#);

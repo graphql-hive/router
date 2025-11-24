@@ -195,7 +195,7 @@ mod field_authorization {
 
             insta::assert_snapshot!(decision, @r#"
             [Modified]
-            Operation: query{posts{title}}
+            Operation: {posts{title}}
             Errors:    ["me"]
             "#);
         }
@@ -219,7 +219,7 @@ mod field_authorization {
 
             insta::assert_snapshot!(decision, @r#"
             [Modified]
-            Operation: query{posts{title}}
+            Operation: {posts{title}}
             Errors:    ["my_account"]
             "#);
         }
@@ -241,7 +241,7 @@ mod field_authorization {
 
             insta::assert_snapshot!(decision, @r#"
             [Modified]
-            Operation: query{posts{title}}
+            Operation: {posts{title}}
             Errors:    ["posts.internalNotes"]
             "#);
         }
@@ -268,7 +268,7 @@ mod field_authorization {
 
             insta::assert_snapshot!(decision, @r#"
             [Modified]
-            Operation: query{posts{title}}
+            Operation: {posts{title}}
             Errors:    ["posts.comments"]
             "#);
         }
@@ -494,7 +494,7 @@ mod type_authorization {
             let decision = supergraph_data.decide(None, query);
             insta::assert_snapshot!(decision, @r#"
             [Modified]
-            Operation: query{media{score}}
+            Operation: {media{score}}
             Errors:    ["media.id"]
             "#);
         }
@@ -520,7 +520,7 @@ mod type_authorization {
             let decision = supergraph_data.decide(None, query);
             insta::assert_snapshot!(decision, @r#"
             [Modified]
-            Operation: query{media{...on Book{score} ...on Movie{score}}}
+            Operation: {media{...on Book{score} ...on Movie{score}}}
             Errors:    ["media.id", "media.id"]
             "#);
         }
@@ -838,7 +838,7 @@ mod fragments {
             let decision = supergraph_data.decide(None, query);
             insta::assert_snapshot!(decision, @r#"
             [Modified]
-            Operation: query{posts{title}}
+            Operation: {posts{title}}
             Errors:    ["node"]
             "#);
         }
@@ -864,7 +864,7 @@ mod fragments {
             let decision = supergraph_data.decide(Some(vec!["read:user"]), query);
             insta::assert_snapshot!(decision, @r#"
             [Modified]
-            Operation: query{posts{title} node(id: "id"){id ...on User{uid: id}}}
+            Operation: {posts{title} node(id: "id"){id ...on User{uid: id}}}
             Errors:    ["node.username"]
             "#);
         }
@@ -918,7 +918,7 @@ mod fragments {
             let decision = supergraph_data.decide(None, query);
             insta::assert_snapshot!(decision, @r#"
               [Modified]
-              Operation: query{posts{title}}
+              Operation: {posts{title}}
               Errors:    ["posts.comments"]
             "#);
         }
@@ -946,7 +946,7 @@ mod fragments {
             let decision = supergraph_data.decide(None, query);
             insta::assert_snapshot!(decision, @r#"
               [Modified]
-              Operation: query{posts{title}}
+              Operation: {posts{title}}
               Errors:    ["node"]
             "#);
         }
@@ -974,7 +974,7 @@ mod fragments {
             let decision = supergraph_data.decide(Some(vec!["read:user"]), query);
             insta::assert_snapshot!(decision, @r#"
               [Modified]
-              Operation: query{posts{title} node(id: "id"){id ...on User{uid: id}}}
+              Operation: {posts{title} node(id: "id"){id ...on User{uid: id}}}
               Errors:    ["node.username"]
             "#);
         }
@@ -1047,7 +1047,7 @@ mod variable_cleanup {
         let decision = supergraph_data.decide(None, query);
         insta::assert_snapshot!(decision, @r#"
           [Modified]
-          Operation: query{version}
+          Operation: {version}
           Errors:    ["node"]
         "#);
     }
@@ -1455,7 +1455,7 @@ mod authenticated_directive {
             let decision = supergraph_data.decide(None, query);
             insta::assert_snapshot!(decision, @r#"
             [Modified]
-            Operation: query{publicPosts{id title}}
+            Operation: {publicPosts{id title}}
             Errors:    ["me"]
             "#);
         }
@@ -1525,7 +1525,7 @@ mod authenticated_directive {
             let decision = supergraph_data.decide(None, query);
             insta::assert_snapshot!(decision, @r#"
             [Modified]
-            Operation: query{publicPosts{id title}}
+            Operation: {publicPosts{id title}}
             Errors:    ["publicPosts.author"]
             "#);
         }
@@ -1944,7 +1944,7 @@ mod authenticated_directive {
             // optionalUser is nullable and unauthorized - should be marked as UnauthorizedNullable
             insta::assert_snapshot!(decision, @r#"
             [Modified]
-            Operation: query{publicData}
+            Operation: {publicData}
             Errors:    ["privateUser", "optionalUser"]
             "#);
         }
@@ -2089,7 +2089,7 @@ mod authenticated_directive {
             let decision = supergraph_data.decide(None, query);
             insta::assert_snapshot!(decision, @r#"
             [Modified]
-            Operation: query{publicPosts{id title}}
+            Operation: {publicPosts{id title}}
             Errors:    ["adminPanel"]
             "#);
         }
@@ -2113,7 +2113,7 @@ mod authenticated_directive {
             let decision = supergraph_data.decide(Some(vec![]), query);
             insta::assert_snapshot!(decision, @r#"
             [Modified]
-            Operation: query{publicPosts{id}}
+            Operation: {publicPosts{id}}
             Errors:    ["adminPanel"]
             "#);
         }
@@ -2159,7 +2159,7 @@ mod authenticated_directive {
             let decision = supergraph_data.decide(Some(vec!["admin"]), query);
             insta::assert_snapshot!(decision, @r#"
             [Modified]
-            Operation: query{adminPanel{settings{theme}}}
+            Operation: {adminPanel{settings{theme}}}
             Errors:    ["adminPanel.users"]
             "#);
         }
@@ -2208,7 +2208,7 @@ mod authenticated_directive {
             let decision = supergraph_data.decide(None, query);
             insta::assert_snapshot!(decision, @r#"
             [Modified]
-            Operation: query{publicPosts{id}}
+            Operation: {publicPosts{id}}
             Errors:    ["profile"]
             "#);
         }
