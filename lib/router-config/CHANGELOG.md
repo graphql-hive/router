@@ -66,6 +66,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.0.12 (2025-11-24)
+
+### Features
+
+#### Breaking
+
+Removed `pool_idle_timeout_seconds` from `traffic_shaping`, instead use `pool_idle_timeout` with duration format.
+
+```diff
+traffic_shaping:
+-  pool_idle_timeout_seconds: 30
++  pool_idle_timeout: 30s
+```
+
+##540 by @ardatan
+
 ## 0.0.11 (2025-11-04)
 
 ### Fixes

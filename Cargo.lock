@@ -2011,7 +2011,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router"
-version = "0.0.19"
+version = "0.0.20"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -2057,7 +2057,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-config"
-version = "0.0.11"
+version = "0.0.12"
 dependencies = [
  "config",
  "envconfig",
@@ -2074,7 +2074,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-plan-executor"
-version = "6.0.1"
+version = "6.1.0"
 dependencies = [
  "ahash",
  "async-trait",
@@ -2113,7 +2113,7 @@ dependencies = [
 
 [[package]]
 name = "hive-router-query-planner"
-version = "2.0.2"
+version = "2.1.0"
 dependencies = [
  "bitflags 2.10.0",
  "criterion",
@@ -3056,7 +3056,7 @@ dependencies = [
 
 [[package]]
 name = "node-addon"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "hive-router-query-planner",
  "napi",
