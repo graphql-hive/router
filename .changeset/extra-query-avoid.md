@@ -1,5 +1,5 @@
 ---
-hive-router-query-planner: patch
+query-planner: patch
 router: patch
 node-addon: patch
 ---
