@@ -79,7 +79,8 @@ where
     }
 }
 
-pub trait RouterPluginWithConfig where
+pub trait RouterPluginWithConfig
+where
     Self: Sized,
     Self: RouterPlugin,
 {
@@ -91,9 +92,7 @@ pub trait RouterPluginWithConfig where
         Self: Sized,
     {
         let config: Self::Config = serde_json::from_value(value)?;
-        Ok(
-            Box::new(Self::new(config))
-        )
+        Ok(Box::new(Self::new(config)))
     }
 }
 

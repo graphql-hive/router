@@ -25,8 +25,8 @@ impl RouterPluginWithConfig for ResponseCachePlugin {
         "response_cache_plugin"
     }
     fn new(config: ResponseCachePluginOptions) -> Self {
-        let redis_client = redis::Client::open(config.redis_url)
-            .expect("Failed to create Redis client");
+        let redis_client =
+            redis::Client::open(config.redis_url).expect("Failed to create Redis client");
         Self {
             redis_client,
             ttl_per_type: DashMap::new(),

@@ -9,7 +9,7 @@ mod schema_state;
 mod shared_state;
 mod supergraph;
 
-use std::{sync::Arc};
+use std::sync::Arc;
 
 use crate::{
     background_tasks::BackgroundTasksManager,
@@ -30,6 +30,7 @@ use crate::{
 
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
+pub use crate::plugins::registry::PluginRegistry;
 use hive_router_config::{load_config, HiveRouterConfig};
 use http::header::RETRY_AFTER;
 use ntex::{
@@ -37,7 +38,6 @@ use ntex::{
     web::{self, HttpRequest},
 };
 use tracing::{info, warn};
-pub use crate::plugins::registry::PluginRegistry;
 
 async fn graphql_endpoint_handler(
     req: HttpRequest,
@@ -88,7 +88,7 @@ async fn graphql_endpoint_handler(
 }
 
 pub async fn router_entrypoint(
-    plugin_factories: PluginRegistry 
+    plugin_factories: PluginRegistry,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
@@ -121,7 +121,7 @@ pub async fn router_entrypoint(
 pub async fn configure_app_from_config(
     router_config: HiveRouterConfig,
     bg_tasks_manager: &mut BackgroundTasksManager,
-    plugin_factories: PluginRegistry
+    plugin_factories: PluginRegistry,
 ) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), Box<dyn std::error::Error>> {
     let jwt_runtime = match router_config.jwt.is_jwt_auth_enabled() {
         true => Some(JwtAuthRuntime::init(bg_tasks_manager, &router_config.jwt).await?),

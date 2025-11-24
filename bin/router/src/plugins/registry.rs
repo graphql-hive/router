@@ -12,6 +12,12 @@ pub struct PluginRegistry {
     >,
 }
 
+impl Default for PluginRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PluginRegistry {
     pub fn new() -> Self {
         Self {
@@ -24,7 +30,10 @@ impl PluginRegistry {
             Box::new(|plugin_config: Value| Ok(P::from_config_value(plugin_config)?)),
         );
     }
-    pub fn initialize_plugins(&self, router_config: &HiveRouterConfig) -> Vec<Box<dyn RouterPlugin + Send + Sync>> {
+    pub fn initialize_plugins(
+        &self,
+        router_config: &HiveRouterConfig,
+    ) -> Vec<Box<dyn RouterPlugin + Send + Sync>> {
         let mut plugins: Vec<Box<dyn RouterPlugin + Send + Sync>> = vec![];
 
         for (plugin_name, plugin_config_value) in router_config.plugins.iter() {
@@ -43,7 +52,7 @@ impl PluginRegistry {
                 }
             } else {
                 warn!(
-                    "No factory found for plugin '{}', skipping plugin",
+                    "No plugin found registered '{}', skipping plugin",
                     plugin_name
                 );
             }

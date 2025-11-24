@@ -13,7 +13,7 @@ use crate::{
 
 #[derive(Deserialize)]
 pub struct PropagateStatusCodePluginConfig {
-    pub status_codes: Vec<u64>
+    pub status_codes: Vec<u64>,
 }
 
 impl RouterPluginWithConfig for PropagateStatusCodePlugin {
