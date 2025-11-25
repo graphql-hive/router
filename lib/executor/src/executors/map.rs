@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
+    time::Duration,
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -137,6 +138,13 @@ impl SubgraphExecutorMap {
                 );
                 self.internal_server_error_response(err.into(), subgraph_name)
             }
+            Ok(None) => {
+                error!(
+                    "Subgraph executor not found for subgraph '{}'",
+                    subgraph_name
+                );
+                self.internal_server_error_response("Internal server error".into(), subgraph_name)
+            }
         }
     }
 
@@ -165,22 +173,15 @@ impl SubgraphExecutorMap {
         &self,
         subgraph_name: &str,
         client_request: &ClientRequestDetails<'_, '_>,
-    ) -> Result<SubgraphExecutorBoxedArc, SubgraphExecutorError> {
-        self.expressions_by_subgraph
-            .get(subgraph_name)
-            .map(|expression| {
-                self.get_or_create_executor_from_expression(
-                    subgraph_name,
-                    expression,
-                    client_request,
-                )
-            })
-            .unwrap_or_else(|| {
-                self.get_executor_from_static_endpoint(subgraph_name)
-                    .ok_or_else(|| {
-                        SubgraphExecutorError::StaticEndpointNotFound(subgraph_name.to_string())
-                    })
-            })
+    ) -> Result<Option<SubgraphExecutorBoxedArc>, SubgraphExecutorError> {
+        let from_expression =
+            self.get_or_create_executor_from_expression(subgraph_name, client_request)?;
+
+        if from_expression.is_some() {
+            return Ok(from_expression);
+        }
+
+        Ok(self.get_executor_from_static_endpoint(subgraph_name))
     }
 
     /// Looks up a subgraph executor,
@@ -190,7 +191,6 @@ impl SubgraphExecutorMap {
     fn get_or_create_executor_from_expression(
         &self,
         subgraph_name: &str,
-        expression: &VrlProgram,
         client_request: &ClientRequestDetails<'_, '_>,
     ) -> Result<Option<SubgraphExecutorBoxedArc>, SubgraphExecutorError> {
         if let Some(expression) = self.expressions_by_subgraph.get(subgraph_name) {
@@ -228,37 +228,23 @@ impl SubgraphExecutorMap {
             let existing_executor = self
                 .executors_by_subgraph
                 .get(subgraph_name)
-                .map(|endpoint| endpoint.value().clone())
-                .ok_or_else(|| {
-                    SubgraphExecutorError::StaticEndpointNotFound(subgraph_name.to_string())
-                })?,
-        ));
-        let value = VrlValue::Object(BTreeMap::from([
-            ("request".into(), client_request.into()),
-            ("original_url".into(), original_url_value),
-        ]));
+                .and_then(|endpoints| endpoints.get(&endpoint_str).map(|e| e.clone()));
 
-        // Resolve the expression to get an endpoint URL.
-        let endpoint_result = execute_expression_with_value(expression, value).map_err(|err| {
-            SubgraphExecutorError::new_endpoint_expression_resolution_failure(
-                subgraph_name.to_string(),
-                err,
-            )
-        })?;
-        let endpoint_str = match endpoint_result.as_str() {
-            Some(s) => Ok(s),
-            None => Err(SubgraphExecutorError::EndpointExpressionWrongType(
-                subgraph_name.to_string(),
-            )),
-        }?;
+            if let Some(executor) = existing_executor {
+                return Ok(Some(executor));
+            }
 
-        // Check if an executor for this endpoint already exists.
-        self.executors_by_subgraph
-            .get(subgraph_name)
-            .and_then(|endpoints| endpoints.get(endpoint_str.as_ref()).map(|e| e.clone()))
-            .map(Ok)
             // If not, create and register a new one.
-            .unwrap_or_else(|| self.register_executor(subgraph_name, endpoint_str.as_ref()))
+            self.register_executor(subgraph_name, &endpoint_str)?;
+
+            let endpoints = self
+                .executors_by_subgraph
+                .get(subgraph_name)
+                .expect("Executor was just registered, should be present");
+            return Ok(endpoints.get(&endpoint_str).map(|e| e.clone()));
+        }
+
+        Ok(None)
     }
 
     /// Looks up a subgraph executor based on a static endpoint URL.
@@ -307,7 +293,7 @@ impl SubgraphExecutorMap {
         &self,
         subgraph_name: &str,
         endpoint_str: &str,
-    ) -> Result<SubgraphExecutorBoxedArc, SubgraphExecutorError> {
+    ) -> Result<(), SubgraphExecutorError> {
         let endpoint_uri = endpoint_str.parse::<Uri>().map_err(|e| {
             SubgraphExecutorError::EndpointParseFailure(endpoint_str.to_string(), e.to_string())
         })?;
@@ -333,22 +319,19 @@ impl SubgraphExecutorMap {
 
         let mut client = self.client.clone();
         let mut timeout_config = &self.config.traffic_shaping.all.request_timeout;
-        let pool_idle_timeout_seconds = self.config.traffic_shaping.all.pool_idle_timeout;
+        let pool_idle_timeout = self.config.traffic_shaping.all.pool_idle_timeout;
         let mut dedupe_enabled = self.config.traffic_shaping.all.dedupe_enabled;
         if let Some(subgraph_traffic_shaping_config) =
             self.config.traffic_shaping.subgraphs.get(subgraph_name)
         {
-            if subgraph_traffic_shaping_config
-                .pool_idle_timeout_seconds
-                .is_some()
-            {
+            if subgraph_traffic_shaping_config.pool_idle_timeout.is_some() {
                 client = Arc::new(
                     Client::builder(TokioExecutor::new())
                         .pool_timer(TokioTimer::new())
                         .pool_idle_timeout(
                             subgraph_traffic_shaping_config
-                                .pool_idle_timeout_seconds
-                                .unwrap_or(pool_idle_timeout_seconds),
+                                .pool_idle_timeout
+                                .unwrap_or(pool_idle_timeout),
                         )
                         .pool_max_idle_per_host(self.max_connections_per_host)
                         .build(HttpsConnector::new()),
@@ -384,14 +367,12 @@ impl SubgraphExecutorMap {
             self.in_flight_requests.clone(),
         );
 
-        let executor_arc = executor.to_boxed_arc();
-
         self.executors_by_subgraph
             .entry(subgraph_name.to_string())
             .or_default()
-            .insert(endpoint_str.to_string(), executor_arc.clone());
+            .insert(endpoint_str.to_string(), executor.to_boxed_arc());
 
-        Ok(executor_arc)
+        Ok(())
     }
 }
 

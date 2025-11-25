@@ -48,7 +48,7 @@ pub struct TrafficShapingExecutorSubgraphConfig {
         serialize_with = "humantime_serde::serialize"
     )]
     #[schemars(with = "String")]
-    pub pool_idle_timeout_seconds: Option<Duration>,
+    pub pool_idle_timeout: Option<Duration>,
 
     /// Enables/disables request deduplication to subgraphs.
     ///
