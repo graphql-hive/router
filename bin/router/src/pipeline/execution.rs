@@ -9,7 +9,7 @@ use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionContext};
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
-use hive_router_plan_executor::plugin_context::PluginManager;
+use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
 use ntex::web::HttpRequest;
@@ -33,7 +33,7 @@ pub async fn execute_plan(
     query_plan_payload: &QueryPlan,
     variable_payload: &CoerceVariablesPayload,
     client_request_details: &ClientRequestDetails<'_, '_>,
-    plugin_manager: PluginManager<'_>,
+    plugin_req_state: &Option<PluginRequestState<'_>>,
 ) -> Result<PlanExecutionOutput, PipelineErrorVariant> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
@@ -86,7 +86,7 @@ pub async fn execute_plan(
     };
 
     let ctx = QueryPlanExecutionContext {
-        plugin_manager: &plugin_manager,
+        plugin_req_state: &plugin_req_state,
         query_plan: query_plan_payload,
         operation_for_plan: &normalized_payload.operation_for_plan,
         projection_plan: &normalized_payload.projection_plan,

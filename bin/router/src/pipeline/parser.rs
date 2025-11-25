@@ -7,7 +7,7 @@ use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 use hive_router_plan_executor::hooks::on_graphql_parse::{
     OnGraphQLParseEndPayload, OnGraphQLParseStartPayload,
 };
-use hive_router_plan_executor::plugin_context::PluginManager;
+use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::ControlFlowResult;
 use hive_router_query_planner::utils::parsing::safe_parse_operation;
 use xxhash_rust::xxh3::Xxh3;
@@ -32,44 +32,48 @@ pub enum ParseResult {
 pub async fn parse_operation_with_cache(
     app_state: &RouterSharedState,
     graphql_params: &GraphQLParams,
-    plugin_manager: &PluginManager<'_>,
+    plugin_req_state: &Option<PluginRequestState<'_>>,
 ) -> Result<ParseResult, PipelineErrorVariant> {
     let cache_key = {
         let mut hasher = Xxh3::new();
         graphql_params.query.hash(&mut hasher);
         hasher.finish()
     };
-    /* Handle on_graphql_parse hook in the plugins - START */
-    let mut start_payload = OnGraphQLParseStartPayload {
-        router_http_request: &plugin_manager.router_http_request,
-        context: &plugin_manager.context,
-        graphql_params,
-        document: None,
-    };
 
     let parsed_operation = if let Some(cached) = app_state.parse_cache.get(&cache_key).await {
         trace!("Found cached parsed operation for query");
         cached
     } else {
+        let mut document = None;
         let mut on_end_callbacks = vec![];
-        for plugin in app_state.plugins.as_ref() {
-            let result = plugin.on_graphql_parse(start_payload).await;
-            start_payload = result.payload;
-            match result.control_flow {
-                ControlFlowResult::Continue => {
-                    // continue to next plugin
-                }
-                ControlFlowResult::EndResponse(response) => {
-                    return Ok(ParseResult::Response(response));
-                }
-                ControlFlowResult::OnEnd(callback) => {
-                    // store the callback to be called later
-                    on_end_callbacks.push(callback);
+        if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+            /* Handle on_graphql_parse hook in the plugins - START */
+            let mut start_payload = OnGraphQLParseStartPayload {
+                router_http_request: &plugin_req_state.router_http_request,
+                context: &plugin_req_state.context,
+                graphql_params,
+                document,
+            };
+            for plugin in plugin_req_state.plugins.as_ref() {
+                let result = plugin.on_graphql_parse(start_payload).await;
+                start_payload = result.payload;
+                match result.control_flow {
+                    ControlFlowResult::Continue => {
+                        // continue to next plugin
+                    }
+                    ControlFlowResult::EndResponse(response) => {
+                        return Ok(ParseResult::Response(response));
+                    }
+                    ControlFlowResult::OnEnd(callback) => {
+                        // store the callback to be called later
+                        on_end_callbacks.push(callback);
+                    }
                 }
             }
+            document = start_payload.document;
         }
 
-        let document = match start_payload.document {
+        let document = match document {
             Some(parsed) => parsed,
             None => {
                 let query_str = graphql_params.get_query()?;

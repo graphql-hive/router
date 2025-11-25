@@ -9,7 +9,7 @@ use graphql_tools::{
 use hive_router_query_planner::state::supergraph_state::SchemaDocument;
 
 use crate::{
-    plugin_context::{PluginContext, PluginManager, RouterHttpRequest},
+    plugin_context::{PluginContext, PluginRequestState, RouterHttpRequest},
     plugin_trait::{EndPayload, StartPayload},
 };
 
@@ -27,14 +27,14 @@ impl<'exec> StartPayload<OnGraphQLValidationEndPayload> for OnGraphQLValidationS
 
 impl<'exec> OnGraphQLValidationStartPayload<'exec> {
     pub fn new(
-        plugin_manager: &'exec PluginManager<'exec>,
+        plugin_req_state: &'exec PluginRequestState<'exec>,
         schema: &'exec SchemaDocument,
         document: &'exec Document,
         default_validation_plan: &'exec ValidationPlan,
     ) -> Self {
         OnGraphQLValidationStartPayload {
-            router_http_request: &plugin_manager.router_http_request,
-            context: &plugin_manager.context,
+            router_http_request: &plugin_req_state.router_http_request,
+            context: &plugin_req_state.context,
             schema,
             document,
             default_validation_plan,

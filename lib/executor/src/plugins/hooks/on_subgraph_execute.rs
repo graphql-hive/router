@@ -8,7 +8,7 @@ pub struct OnSubgraphExecuteStartPayload<'exec> {
     pub router_http_request: &'exec RouterHttpRequest<'exec>,
     pub context: &'exec PluginContext,
 
-    pub subgraph_name: String,
+    pub subgraph_name: &'exec str,
 
     pub execution_request: SubgraphExecutionRequest<'exec>,
     pub execution_result: Option<HttpExecutionResponse>,

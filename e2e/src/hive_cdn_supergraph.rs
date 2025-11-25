@@ -30,7 +30,7 @@ mod hive_cdn_supergraph_e2e_tests {
                 endpoint: http://{host}/supergraph
                 key: dummy_key
           "#,
-        ))
+        ), None)
         .await
         .expect("failed to start router");
 
@@ -84,7 +84,7 @@ mod hive_cdn_supergraph_e2e_tests {
               key: dummy_key
               poll_interval: 100ms
         "#,
-        ))
+        ), None)
         .await
         .expect("failed to start router");
 
@@ -142,7 +142,7 @@ mod hive_cdn_supergraph_e2e_tests {
               key: dummy_key
               poll_interval: 100ms
         "#,
-        ))
+        ), None)
         .await
         .expect("failed to start router");
 
@@ -206,7 +206,7 @@ mod hive_cdn_supergraph_e2e_tests {
               key: dummy_key
               poll_interval: 800ms
         "#,
-        ))
+        ), None)
         .await
         .expect("failed to start router");
 
@@ -285,7 +285,7 @@ mod hive_cdn_supergraph_e2e_tests {
               retry_policy:
                 max_retries: 10
         "#,
-        ))
+        ), None)
         .await
         .expect("failed to start router");
 
@@ -313,7 +313,7 @@ mod hive_cdn_supergraph_e2e_tests {
               retry_policy:
                 max_retries: 3
         "#,
-        ))
+        ), None)
         .await
         .expect("failed to start router");
 

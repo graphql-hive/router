@@ -10,7 +10,7 @@ use hive_router_query_planner::ast::selection_item::SelectionItem;
 use serde::Deserialize;
 use sonic_rs::json;
 
-use crate::{
+use hive_router_plan_executor::{
     execution::plan::PlanExecutionOutput,
     hooks::{
         on_graphql_validation::{OnGraphQLValidationEndPayload, OnGraphQLValidationStartPayload},

@@ -9,7 +9,7 @@ use hive_router_plan_executor::{
         on_graphql_params::{OnGraphQLParamsEndPayload, OnGraphQLParamsStartPayload},
         on_supergraph_load::SupergraphData,
     },
-    plugin_context::{PluginContext, PluginManager, RouterHttpRequest},
+    plugin_context::{PluginContext, PluginRequestState, RouterHttpRequest},
     plugin_trait::ControlFlowResult,
 };
 use hive_router_query_planner::{
@@ -92,25 +92,29 @@ pub async fn graphql_request_handler(
             &APPLICATION_JSON
         };
 
-    let plugin_context = req
-        .extensions()
-        .get::<Arc<PluginContext>>()
-        .cloned()
-        .expect("Plugin manager should be loaded");
+    let mut plugin_req_state = None;
+    if let Some(plugins) = shared_state.plugins.as_ref() {
+        let plugin_context = req
+            .extensions()
+            .get::<Arc<PluginContext>>()
+            .cloned()
+            .expect("Plugin manager should be loaded");
 
-    let plugin_manager = PluginManager {
-        plugins: shared_state.plugins.clone(),
-        router_http_request: RouterHttpRequest {
-            uri: req.uri(),
-            method: req.method(),
-            version: req.version(),
-            headers: req.headers(),
-            match_info: req.match_info(),
-            query_string: req.query_string(),
-            path: req.path(),
-        },
-        context: plugin_context,
-    };
+        plugin_req_state = Some(PluginRequestState {
+            plugins: plugins.clone(),
+            router_http_request: RouterHttpRequest {
+                uri: req.uri(),
+                method: req.method(),
+                version: req.version(),
+                headers: req.headers(),
+                match_info: req.match_info(),
+                query_string: req.query_string(),
+                path: req.path(),
+            },
+            context: plugin_context,
+        });
+    }
+
 
     let response = execute_pipeline(
         req,
@@ -119,7 +123,7 @@ pub async fn graphql_request_handler(
         shared_state,
         schema_state,
         jwt_context,
-        plugin_manager,
+        plugin_req_state,
     )
     .await?;
     let response_bytes = Bytes::from(response.body);
@@ -146,59 +150,69 @@ pub async fn execute_pipeline(
     shared_state: &RouterSharedState,
     schema_state: &SchemaState,
     jwt_context: Option<JwtRequestContext>,
-    plugin_manager: PluginManager<'_>,
+    plugin_req_state: Option<PluginRequestState<'_>>,
 ) -> Result<PlanExecutionOutput, PipelineErrorVariant> {
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
     /* Handle on_deserialize hook in the plugins - START */
     let mut deserialization_end_callbacks = vec![];
-    let mut deserialization_payload: OnGraphQLParamsStartPayload = OnGraphQLParamsStartPayload {
-        router_http_request: &plugin_manager.router_http_request,
-        context: &plugin_manager.context,
-        body,
-        graphql_params: None,
-    };
-    for plugin in shared_state.plugins.as_ref() {
-        let result = plugin.on_graphql_params(deserialization_payload).await;
-        deserialization_payload = result.payload;
-        match result.control_flow {
-            ControlFlowResult::Continue => { /* continue to next plugin */ }
-            ControlFlowResult::EndResponse(response) => {
-                return Ok(response);
-            }
-            ControlFlowResult::OnEnd(callback) => {
-                deserialization_end_callbacks.push(callback);
+
+    let mut graphql_params = None;
+    let mut body = body;
+    if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+        let mut deserialization_payload: OnGraphQLParamsStartPayload = OnGraphQLParamsStartPayload {
+            router_http_request: &plugin_req_state.router_http_request,
+            context: &plugin_req_state.context,
+            body,
+            graphql_params: None,
+        };
+        for plugin in plugin_req_state.plugins.as_ref() {
+            let result = plugin.on_graphql_params(deserialization_payload).await;
+            deserialization_payload = result.payload;
+            match result.control_flow {
+                ControlFlowResult::Continue => { /* continue to next plugin */ }
+                ControlFlowResult::EndResponse(response) => {
+                    return Ok(response);
+                }
+                ControlFlowResult::OnEnd(callback) => {
+                    deserialization_end_callbacks.push(callback);
+                }
             }
         }
+        graphql_params = deserialization_payload.graphql_params;
+        body = deserialization_payload.body;
     }
-    let graphql_params = deserialization_payload.graphql_params.unwrap_or_else(|| {
-        deserialize_graphql_params(req, deserialization_payload.body)
+    let mut graphql_params = graphql_params.unwrap_or_else(|| {
+        deserialize_graphql_params(req, body)
             .expect("Failed to parse execution request")
     });
 
-    let mut payload = OnGraphQLParamsEndPayload {
-        graphql_params,
-        context: &plugin_manager.context,
-    };
-    for deserialization_end_callback in deserialization_end_callbacks {
-        let result = deserialization_end_callback(payload);
-        payload = result.payload;
-        match result.control_flow {
-            ControlFlowResult::Continue => { /* continue to next plugin */ }
-            ControlFlowResult::EndResponse(response) => {
-                return Ok(response);
-            }
-            ControlFlowResult::OnEnd(_) => {
-                // on_end callbacks should not return OnEnd again
-                unreachable!("on_end callback returned OnEnd again");
+    if let Some(plugin_req_state) = &plugin_req_state {
+        let mut payload = OnGraphQLParamsEndPayload {
+            graphql_params,
+            context: &plugin_req_state.context,
+        };
+        for deserialization_end_callback in deserialization_end_callbacks {
+            let result = deserialization_end_callback(payload);
+            payload = result.payload;
+            match result.control_flow {
+                ControlFlowResult::Continue => { /* continue to next plugin */ }
+                ControlFlowResult::EndResponse(response) => {
+                    return Ok(response);
+                }
+                ControlFlowResult::OnEnd(_) => {
+                    // on_end callbacks should not return OnEnd again
+                    unreachable!("on_end callback returned OnEnd again");
+                }
             }
         }
+        graphql_params = payload.graphql_params;
     }
-    let mut graphql_params = payload.graphql_params;
+    
     /* Handle on_deserialize hook in the plugins - END */
 
     let parser_result =
-        parse_operation_with_cache(shared_state, &graphql_params, &plugin_manager).await?;
+        parse_operation_with_cache(shared_state, &graphql_params, &plugin_req_state).await?;
 
     let parser_payload = match parser_result {
         ParseResult::Payload(payload) => payload,
@@ -212,7 +226,7 @@ pub async fn execute_pipeline(
         schema_state,
         shared_state,
         &parser_payload,
-        &plugin_manager,
+        &plugin_req_state,
     )
     .await?;
 
@@ -267,8 +281,7 @@ pub async fn execute_pipeline(
         &normalize_payload,
         &progressive_override_ctx,
         &query_plan_cancellation_token,
-        shared_state,
-        &plugin_manager,
+        &plugin_req_state,
     )
     .await?;
     let query_plan_payload = match query_plan_result {
@@ -286,7 +299,7 @@ pub async fn execute_pipeline(
         &query_plan_payload,
         &variable_payload,
         &client_request_details,
-        plugin_manager,
+        &plugin_req_state,
     )
     .await?;
 

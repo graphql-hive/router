@@ -40,7 +40,7 @@ pub struct HTTPSubgraphExecutor {
     pub semaphore: Arc<Semaphore>,
     pub config: Arc<HiveRouterConfig>,
     pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
-    pub plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
+    pub plugins: Option<Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>>,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -56,7 +56,7 @@ impl HTTPSubgraphExecutor {
         semaphore: Arc<Semaphore>,
         config: Arc<HiveRouterConfig>,
         in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
-        plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
+        plugins: Option<Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>>,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -169,7 +169,7 @@ async fn send_request(
     method: http::Method,
     body: Vec<u8>,
     headers: HeaderMap,
-    plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
+    plugins: Option<Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>>,
 ) -> Result<SharedResponse, SubgraphExecutorError> {
     let mut req = hyper::Request::builder()
         .method(method)
@@ -182,36 +182,38 @@ async fn send_request(
 
     *req.headers_mut() = headers;
 
-    let mut start_payload = OnSubgraphHttpRequestPayload {
-        subgraph_name,
-        request: req,
-        response: None,
-    };
+    let mut req = req;
 
     let mut on_end_callbacks = vec![];
 
-    for plugin in plugins.as_ref() {
-        let result = plugin.on_subgraph_http_request(start_payload).await;
-        start_payload = result.payload;
-        match result.control_flow {
-            ControlFlowResult::Continue => { /* continue to next plugin */ }
-            ControlFlowResult::EndResponse(response) => {
-                // TODO: Fixx
-                return Ok(SharedResponse {
-                    status: StatusCode::OK,
-                    body: response.body.into(),
-                    headers: response.headers,
-                });
-            }
-            ControlFlowResult::OnEnd(callback) => {
-                on_end_callbacks.push(callback);
+    if let Some(plugins) = plugins.as_ref() {
+        let mut start_payload = OnSubgraphHttpRequestPayload {
+            subgraph_name,
+            request: req,
+            response: None,
+        };
+        for plugin in plugins.as_ref() {
+            let result = plugin.on_subgraph_http_request(start_payload).await;
+            start_payload = result.payload;
+            match result.control_flow {
+                ControlFlowResult::Continue => { /* continue to next plugin */ }
+                ControlFlowResult::EndResponse(response) => {
+                    // TODO: Fixx
+                    return Ok(SharedResponse {
+                        status: StatusCode::OK,
+                        body: response.body.into(),
+                        headers: response.headers,
+                    });
+                }
+                ControlFlowResult::OnEnd(callback) => {
+                    on_end_callbacks.push(callback);
+                }
             }
         }
+        req = start_payload.request;
     }
 
     debug!("making http request to {}", endpoint.to_string());
-
-    let req = start_payload.request;
 
     let res = http_client
         .request(req)

@@ -1,8 +1,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use hive_router::{
-    background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    PluginRegistry, RouterSharedState, SchemaState,
+    PluginRegistry, RouterSharedState, SchemaState, background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app, plugins::plugins_service::PluginService
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use ntex::{
@@ -124,6 +123,7 @@ impl SubgraphsServer {
 
 pub async fn init_router_from_config_file(
     config_path: &str,
+    plugin_registry: Option<PluginRegistry>,
 ) -> Result<
     TestRouterApp<
         impl ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
@@ -133,11 +133,12 @@ pub async fn init_router_from_config_file(
     let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(config_path);
     let router_config = load_config(Some(supergraph_path.to_str().unwrap().to_string()))?;
 
-    init_router_from_config(router_config).await
+    init_router_from_config(router_config, plugin_registry).await
 }
 
 pub async fn init_router_from_config_inline(
     config_yaml: &str,
+    plugin_registry: Option<PluginRegistry>,
 ) -> Result<
     TestRouterApp<
         impl ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
@@ -145,7 +146,7 @@ pub async fn init_router_from_config_inline(
     Box<dyn std::error::Error>,
 > {
     let router_config = parse_yaml_config(config_yaml.to_string())?;
-    init_router_from_config(router_config).await
+    init_router_from_config(router_config, plugin_registry).await
 }
 
 pub struct TestRouterApp<T> {
@@ -173,6 +174,7 @@ impl<S> TestRouterApp<S> {
 
 pub async fn init_router_from_config(
     router_config: HiveRouterConfig,
+    plugin_registry: Option<PluginRegistry>,
 ) -> Result<
     TestRouterApp<
         impl ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
@@ -181,11 +183,12 @@ pub async fn init_router_from_config(
 > {
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let (shared_state, schema_state) =
-        configure_app_from_config(router_config, &mut bg_tasks_manager, PluginRegistry::new())
+        configure_app_from_config(router_config, &mut bg_tasks_manager, plugin_registry)
             .await?;
 
     let ntex_app = test::init_service(
         web::App::new()
+            .wrap(PluginService)
             .state(shared_state.clone())
             .state(schema_state.clone())
             .configure(configure_ntex_app),

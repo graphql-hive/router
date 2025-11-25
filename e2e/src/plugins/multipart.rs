@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{
+use hive_router_plan_executor::{
     executors::common::HttpExecutionResponse,
     hooks::{
         on_graphql_params::{

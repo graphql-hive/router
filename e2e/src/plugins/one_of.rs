@@ -47,7 +47,7 @@
 
 use std::{collections::BTreeMap, sync::RwLock};
 
-use crate::{
+use hive_router_plan_executor::{
     execution::plan::PlanExecutionOutput,
     hooks::{
         on_execute::{OnExecuteEndPayload, OnExecuteStartPayload},

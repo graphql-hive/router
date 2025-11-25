@@ -19,14 +19,14 @@ pub struct RouterSharedState {
     pub override_labels_evaluator: OverrideLabelsEvaluator,
     pub cors_runtime: Option<Cors>,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
-    pub plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
+    pub plugins: Option<Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>>,
 }
 
 impl RouterSharedState {
     pub fn new(
         router_config: Arc<HiveRouterConfig>,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
-        plugins: Vec<Box<dyn RouterPlugin + Send + Sync>>,
+        plugins: Option<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
     ) -> Result<Self, SharedStateError> {
         Ok(Self {
             validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),
@@ -39,7 +39,7 @@ impl RouterSharedState {
             )
             .map_err(Box::new)?,
             jwt_auth_runtime,
-            plugins: Arc::new(plugins),
+            plugins: plugins.map(|p| Arc::new(p)),
         })
     }
 }

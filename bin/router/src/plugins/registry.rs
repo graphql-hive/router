@@ -26,7 +26,7 @@ impl PluginRegistry {
             map: HashMap::new(),
         }
     }
-    pub fn register<P: RouterPluginWithConfig + Send + Sync + 'static>(&mut self) {
+    pub fn register<P: RouterPluginWithConfig + Send + Sync + 'static>(mut self)  -> Self {
         self.map.insert(
             P::plugin_name(),
             Box::new(|plugin_config: Value| {
@@ -37,6 +37,7 @@ impl PluginRegistry {
                 }
             }),
         );
+        return self;
     }
     pub fn initialize_plugins(
         &self,

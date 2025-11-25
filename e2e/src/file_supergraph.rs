@@ -26,7 +26,7 @@ mod file_supergraph_e2e_tests {
                 source: file
                 path: {supergraph_file_path}
           "#,
-        ))
+        ), None)
         .await
         .expect("failed to start router");
         wait_for_readiness(&app.app).await;
@@ -70,7 +70,7 @@ mod file_supergraph_e2e_tests {
                 path: {supergraph_file_path}
                 poll_interval: 100ms
           "#,
-        ))
+        ), None)
         .await
         .expect("failed to start router");
         wait_for_readiness(&app.app).await;

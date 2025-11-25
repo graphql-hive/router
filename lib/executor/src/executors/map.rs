@@ -38,7 +38,7 @@ use crate::{
         http::{HTTPSubgraphExecutor, HttpClient},
     },
     hooks::on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload},
-    plugin_context::PluginManager,
+    plugin_context::PluginRequestState,
     plugin_trait::{ControlFlowResult, RouterPlugin},
     response::graphql_error::GraphQLError,
 };
@@ -64,13 +64,13 @@ pub struct SubgraphExecutorMap {
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
     max_connections_per_host: usize,
     in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
-    plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
+    plugins: Option<Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>>,
 }
 
 impl SubgraphExecutorMap {
     pub fn new(
         config: Arc<HiveRouterConfig>,
-        plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
+        plugins: Option<Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>>,
     ) -> Self {
         let https = HttpsConnector::new();
         let client: HttpClient = Client::builder(TokioExecutor::new())
@@ -100,7 +100,7 @@ impl SubgraphExecutorMap {
     pub fn from_http_endpoint_map(
         subgraph_endpoint_map: HashMap<SubgraphName, SubgraphEndpoint>,
         config: Arc<HiveRouterConfig>,
-        plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
+        plugins: Option<Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>>,
     ) -> Result<Self, SubgraphExecutorError> {
         let mut subgraph_executor_map = SubgraphExecutorMap::new(config.clone(), plugins);
 
@@ -130,42 +130,44 @@ impl SubgraphExecutorMap {
         subgraph_name: &str,
         execution_request: SubgraphExecutionRequest<'exec>,
         client_request: &ClientRequestDetails<'exec, 'req>,
-        plugin_manager: &PluginManager<'req>,
+        plugin_req_state: &Option<PluginRequestState<'req>>,
     ) -> HttpExecutionResponse {
-        let mut start_payload = OnSubgraphExecuteStartPayload {
-            router_http_request: &plugin_manager.router_http_request,
-            context: &plugin_manager.context,
-            subgraph_name: subgraph_name.to_string(),
-            execution_request,
-            execution_result: None,
-        };
 
         let mut on_end_callbacks = vec![];
 
-        for plugin in self.plugins.as_ref() {
-            let result = plugin.on_subgraph_execute(start_payload).await;
-            start_payload = result.payload;
-            match result.control_flow {
-                ControlFlowResult::Continue => {
-                    // continue to next plugin
-                }
-                ControlFlowResult::EndResponse(response) => {
-                    // TODO: FFIX
-                    return HttpExecutionResponse {
-                        body: response.body.into(),
-                        headers: response.headers,
-                        status: response.status,
-                    };
-                }
-                ControlFlowResult::OnEnd(callback) => {
-                    on_end_callbacks.push(callback);
+        let mut execution_request = execution_request;
+        if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+            let mut start_payload = OnSubgraphExecuteStartPayload {
+                router_http_request: &plugin_req_state.router_http_request,
+                context: &plugin_req_state.context,
+                subgraph_name,
+                execution_request,
+                execution_result: None,
+            };
+            for plugin in plugin_req_state.plugins.as_ref() {
+                let result = plugin.on_subgraph_execute(start_payload).await;
+                start_payload = result.payload;
+                match result.control_flow {
+                    ControlFlowResult::Continue => {
+                        // continue to next plugin
+                    }
+                    ControlFlowResult::EndResponse(response) => {
+                        // TODO: FFIX
+                        return HttpExecutionResponse {
+                            body: response.body.into(),
+                            headers: response.headers,
+                            status: response.status,
+                        };
+                    }
+                    ControlFlowResult::OnEnd(callback) => {
+                        on_end_callbacks.push(callback);
+                    }
                 }
             }
+            execution_request = start_payload.execution_request;
         }
 
-        let execution_request = start_payload.execution_request;
-
-        let execution_result = match self.get_or_create_executor(subgraph_name, client_request) {
+        let mut execution_result = match self.get_or_create_executor(subgraph_name, client_request) {
             Ok(Some(executor)) => executor.execute(execution_request).await,
             Err(err) => {
                 error!(
@@ -183,33 +185,38 @@ impl SubgraphExecutorMap {
             }
         };
 
-        let mut end_payload = OnSubgraphExecuteEndPayload {
-            context: &plugin_manager.context,
-            execution_result,
-        };
+        if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+            let mut end_payload = OnSubgraphExecuteEndPayload {
+                context: &plugin_req_state.context,
+                execution_result,
+            };
 
-        for callback in on_end_callbacks {
-            let result = callback(end_payload);
-            end_payload = result.payload;
-            match result.control_flow {
-                ControlFlowResult::Continue => {
-                    // continue to next callback
-                }
-                ControlFlowResult::EndResponse(response) => {
-                    // TODO: FFIX
-                    return HttpExecutionResponse {
-                        body: response.body.into(),
-                        headers: response.headers,
-                        status: response.status,
-                    };
-                }
-                ControlFlowResult::OnEnd(_) => {
-                    unreachable!("End callbacks should not register further end callbacks");
+            for callback in on_end_callbacks {
+                let result = callback(end_payload);
+                end_payload = result.payload;
+                match result.control_flow {
+                    ControlFlowResult::Continue => {
+                        // continue to next callback
+                    }
+                    ControlFlowResult::EndResponse(response) => {
+                        // TODO: FFIX
+                        return HttpExecutionResponse {
+                            body: response.body.into(),
+                            headers: response.headers,
+                            status: response.status,
+                        };
+                    }
+                    ControlFlowResult::OnEnd(_) => {
+                        unreachable!("End callbacks should not register further end callbacks");
+                    }
                 }
             }
+
+            execution_result = end_payload.execution_result;
         }
 
-        end_payload.execution_result
+
+        execution_result
     }
 
     fn internal_server_error_response(

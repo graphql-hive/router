@@ -12,3 +12,5 @@ mod probes;
 mod supergraph;
 #[cfg(test)]
 mod testkit;
+#[cfg(test)]
+mod plugins;

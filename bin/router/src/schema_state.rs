@@ -85,32 +85,34 @@ impl SchemaState {
             while let Some(new_sdl) = rx.recv().await {
                 debug!("Received new supergraph SDL, building new supergraph state...");
 
-                let new_ast = parse_schema(&new_sdl);
-
-                let mut start_payload = OnSupergraphLoadStartPayload {
-                    current_supergraph_data: swappable_data_spawn_clone.clone(),
-                    new_ast,
-                };
+                let mut new_ast = parse_schema(&new_sdl);
 
                 let mut on_end_callbacks = vec![];
 
-                for plugin in app_state.plugins.as_ref() {
-                    let result = plugin.on_supergraph_reload(start_payload);
-                    start_payload = result.payload;
-                    match result.control_flow {
-                        ControlFlowResult::Continue => {
-                            // continue to next plugin
-                        }
-                        ControlFlowResult::EndResponse(_) => {
-                            unreachable!("Plugins should not end supergraph reload processing");
-                        }
-                        ControlFlowResult::OnEnd(callback) => {
-                            on_end_callbacks.push(callback);
+                if let Some(plugins) = app_state.plugins.as_ref() {
+
+                    let mut start_payload = OnSupergraphLoadStartPayload {
+                        current_supergraph_data: swappable_data_spawn_clone.clone(),
+                        new_ast,
+                    };
+                    for plugin in plugins.as_ref() {
+                        let result = plugin.on_supergraph_reload(start_payload);
+                        start_payload = result.payload;
+                        match result.control_flow {
+                            ControlFlowResult::Continue => {
+                                // continue to next plugin
+                            }
+                            ControlFlowResult::EndResponse(_) => {
+                                unreachable!("Plugins should not end supergraph reload processing");
+                            }
+                            ControlFlowResult::OnEnd(callback) => {
+                                on_end_callbacks.push(callback);
+                            }
                         }
                     }
+                    new_ast = start_payload.new_ast;
                 }
 
-                let new_ast = start_payload.new_ast;
 
                 match Self::build_data(router_config.clone(), &new_ast, app_state.plugins.clone()) {
                     Ok(new_supergraph_data) => {
@@ -166,7 +168,7 @@ impl SchemaState {
     fn build_data(
         router_config: Arc<HiveRouterConfig>,
         parsed_supergraph_sdl: &Document,
-        plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
+        plugins: Option<Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>>,
     ) -> Result<SupergraphData, SupergraphManagerError> {
         let supergraph_state = SupergraphState::new(parsed_supergraph_sdl);
         let planner = Planner::new_from_supergraph(parsed_supergraph_sdl)?;

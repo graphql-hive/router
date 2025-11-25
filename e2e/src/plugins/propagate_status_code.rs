@@ -3,7 +3,7 @@
 use http::StatusCode;
 use serde::Deserialize;
 
-use crate::{
+use hive_router_plan_executor::{
     hooks::{
         on_http_request::{OnHttpRequestPayload, OnHttpResponsePayload},
         on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload},

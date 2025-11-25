@@ -1,23 +1,18 @@
-use ::serde::{Deserialize, Serialize};
-use ahash::HashMap;
-use http::{HeaderMap, StatusCode};
+use std::collections::HashMap;
 
-use crate::{
+use hive_router_plan_executor::{
     execution::plan::PlanExecutionOutput,
     hooks::on_http_request::{OnHttpRequestPayload, OnHttpResponsePayload},
     plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
+use http::HeaderMap;
+use reqwest::StatusCode;
+pub(crate) use sonic_rs::{Deserialize, Serialize};
 
 #[derive(Default, Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct ApolloSandboxOptions {
     pub enabled: bool,
-    /**
-     * The URL of the GraphQL endpoint that Sandbox introspects on initial load. Sandbox populates its pages using the schema obtained from this endpoint.
-     * The default value is `http://localhost:4000`.
-     * You should only pass non-production endpoints to Sandbox. Sandbox is powered by schema introspection, and we recommend [disabling introspection in production](https://www.apollographql.com/blog/graphql/security/why-you-should-disable-graphql-introspection-in-production/).
-     * To provide a "Sandbox-like" experience for production endpoints, we recommend using either a [public variant](https://www.apollographql.com/docs/graphos/platform/graph-management/variants#public-variants) or the [embedded Explorer](https://www.apollographql.com/docs/graphos/platform/explorer/embed).
-     */
     pub initial_endpoint: String,
     /**
      * By default, the embedded Sandbox does not show the **Include cookies** toggle in its connection settings.Set `hideCookieToggle` to `false` to enable users of your embedded Sandbox instance to toggle the **Include cookies** setting.
@@ -128,7 +123,10 @@ impl RouterPluginWithConfig for ApolloSandboxPlugin {
     }
     fn from_config(config: ApolloSandboxOptions) -> Option<Self> {
         if config.enabled {
-            Some(ApolloSandboxPlugin { options: config })
+            Some(ApolloSandboxPlugin {
+                serialized_options: sonic_rs::to_string(&config)
+                    .unwrap_or_else(|_| "{}".to_string()),
+            })
         } else {
             None
         }
@@ -136,7 +134,7 @@ impl RouterPluginWithConfig for ApolloSandboxPlugin {
 }
 
 pub struct ApolloSandboxPlugin {
-    pub options: ApolloSandboxOptions,
+    serialized_options: String,
 }
 
 impl RouterPlugin for ApolloSandboxPlugin {
@@ -145,7 +143,8 @@ impl RouterPlugin for ApolloSandboxPlugin {
         payload: OnHttpRequestPayload<'req>,
     ) -> HookResult<'req, OnHttpRequestPayload<'req>, OnHttpResponsePayload<'req>> {
         if payload.router_http_request.path() == "/apollo-sandbox" {
-            let config = sonic_rs::to_string(&self.options).unwrap_or_else(|_| "{}".to_string());
+            let config =
+                sonic_rs::to_string(&self.serialized_options).unwrap_or_else(|_| "{}".to_string());
             let html = format!(
                 r#"
                     <div style=\"width: 100%; height: 100%;\" id=\"embedded-sandbox\"></div>
@@ -167,5 +166,37 @@ impl RouterPlugin for ApolloSandboxPlugin {
             });
         }
         payload.cont()
+    }
+}
+
+#[cfg(test)]
+mod apollo_sandbox_tests {
+    use hive_router::PluginRegistry;
+
+    #[ntex::test]
+    async fn renders_apollo_sandbox_page() {
+        use crate::testkit::init_router_from_config_inline;
+        use ntex::web::test;
+
+        let app = init_router_from_config_inline(
+            r#"
+            plugins:
+              apollo_sandbox:
+                enabled: true
+        "#,
+            Some(PluginRegistry::new().register::<super::ApolloSandboxPlugin>()),
+        )
+        .await
+        .expect("failed to start router");
+
+        let req = test::TestRequest::get().uri("/apollo-sandbox").to_request();
+        let response = app.call(req).await.expect("failed to call /apollo-sandbox");
+        let status = response.status();
+
+        let body_bytes = test::read_body(response).await;
+        let body_str = std::str::from_utf8(&body_bytes).expect("response body is not valid UTF-8");
+
+        assert_eq!(status, 200);
+        assert!(body_str.contains("EmbeddedSandbox"));
     }
 }

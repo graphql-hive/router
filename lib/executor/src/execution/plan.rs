@@ -35,7 +35,7 @@ use crate::{
         resolve::{resolve_introspection, IntrospectionContext},
         schema::SchemaMetadata,
     },
-    plugin_context::PluginManager,
+    plugin_context::PluginRequestState,
     plugin_trait::ControlFlowResult,
     projection::{
         plan::FieldProjectionPlan,
@@ -55,7 +55,7 @@ use crate::{
 };
 
 pub struct QueryPlanExecutionContext<'exec, 'req> {
-    pub plugin_manager: &'exec PluginManager<'exec>,
+    pub plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
     pub query_plan: &'exec QueryPlan,
     pub operation_for_plan: &'exec OperationDefinition,
     pub projection_plan: &'exec Vec<FieldProjectionPlan>,
@@ -78,44 +78,51 @@ pub struct PlanExecutionOutput {
 
 impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
     pub async fn execute_query_plan(self) -> Result<PlanExecutionOutput, PlanExecutionError> {
-        let init_value = if let Some(introspection_query) = self.introspection_context.query {
+        let mut init_value = if let Some(introspection_query) = self.introspection_context.query {
             resolve_introspection(introspection_query, self.introspection_context)
         } else {
             Value::Null
         };
 
+        let mut query_plan = self.query_plan;
+
         let dedupe_subgraph_requests = self.operation_type_name == "Query";
-        let mut start_payload = OnExecuteStartPayload {
-            router_http_request: &self.plugin_manager.router_http_request,
-            context: &self.plugin_manager.context,
-            query_plan: self.query_plan,
-            operation_for_plan: self.operation_for_plan,
-            data: init_value,
-            errors: Vec::new(),
-            extensions: self.extensions.clone(),
-            variable_values: self.variable_values,
-            dedupe_subgraph_requests,
-        };
+        let mut extensions = self.extensions;
 
         let mut on_end_callbacks = vec![];
 
-        for plugin in self.plugin_manager.plugins.iter() {
-            let result = plugin.on_execute(start_payload).await;
-            start_payload = result.payload;
-            match result.control_flow {
-                ControlFlowResult::Continue => { /* continue to next plugin */ }
-                ControlFlowResult::EndResponse(response) => {
-                    return Ok(response);
-                }
-                ControlFlowResult::OnEnd(callback) => {
-                    on_end_callbacks.push(callback);
+        if let Some(plugin_req_state) = self.plugin_req_state.as_ref() {
+            let mut start_payload = OnExecuteStartPayload {
+                router_http_request: &plugin_req_state.router_http_request,
+                context: &plugin_req_state.context,
+                query_plan,
+                operation_for_plan: self.operation_for_plan,
+                data: init_value,
+                errors: Vec::new(),
+                extensions,
+                variable_values: self.variable_values,
+                dedupe_subgraph_requests,
+            };
+
+            for plugin in plugin_req_state.plugins.iter() {
+                let result = plugin.on_execute(start_payload).await;
+                start_payload = result.payload;
+                match result.control_flow {
+                    ControlFlowResult::Continue => { /* continue to next plugin */ }
+                    ControlFlowResult::EndResponse(response) => {
+                        return Ok(response);
+                    }
+                    ControlFlowResult::OnEnd(callback) => {
+                        on_end_callbacks.push(callback);
+                    }
                 }
             }
+            query_plan = start_payload.query_plan;
+
+            init_value = start_payload.data;
+
+            extensions = start_payload.extensions;
         }
-
-        let query_plan = start_payload.query_plan;
-
-        let init_value = start_payload.data;
 
         let mut exec_ctx = ExecutionContext::new(query_plan, init_value);
         let executor = Executor::new(
@@ -127,7 +134,7 @@ impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
             self.jwt_auth_forwarding,
             // Deduplicate subgraph requests only if the operation type is a query
             self.operation_type_name == "Query",
-            self.plugin_manager,
+            self.plugin_req_state,
         );
 
         if query_plan.node.is_some() {
@@ -143,36 +150,47 @@ impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
                 affected_path: || None,
             })?;
 
-        let mut end_payload = OnExecuteEndPayload {
-            data: exec_ctx.final_response,
-            errors: exec_ctx.errors,
-            extensions: start_payload.extensions,
-            response_size_estimate: exec_ctx.response_storage.estimate_final_response_size(),
-        };
+        let mut data = exec_ctx.final_response;
+        let mut errors = exec_ctx.errors;
+        let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
-        for callback in on_end_callbacks {
-            let result = callback(end_payload);
-            end_payload = result.payload;
-            match result.control_flow {
-                ControlFlowResult::Continue => { /* continue to next callback */ }
-                ControlFlowResult::EndResponse(output) => {
-                    return Ok(output);
-                }
-                ControlFlowResult::OnEnd(_) => {
-                    // on_end callbacks should not return OnEnd again
-                    unreachable!("on_end callback returned OnEnd again");
+        if on_end_callbacks.len() > 0 {
+            let mut end_payload = OnExecuteEndPayload {
+                data,
+                errors,
+                extensions,
+                response_size_estimate,
+            };
+
+            for callback in on_end_callbacks {
+                let result = callback(end_payload);
+                end_payload = result.payload;
+                match result.control_flow {
+                    ControlFlowResult::Continue => { /* continue to next callback */ }
+                    ControlFlowResult::EndResponse(output) => {
+                        return Ok(output);
+                    }
+                    ControlFlowResult::OnEnd(_) => {
+                        // on_end callbacks should not return OnEnd again
+                        unreachable!("on_end callback returned OnEnd again");
+                    }
                 }
             }
+
+            data = end_payload.data;
+            errors = end_payload.errors;
+            extensions = end_payload.extensions;
+            response_size_estimate = end_payload.response_size_estimate;
         }
 
         let body = project_by_operation(
-            &end_payload.data,
-            end_payload.errors,
-            &self.extensions,
+            &data,
+            errors,
+            &extensions,
             self.operation_type_name,
             self.projection_plan,
             self.variable_values,
-            end_payload.response_size_estimate,
+            response_size_estimate,
         )
         .with_plan_context(LazyPlanContext {
             subgraph_name: || None,
@@ -195,7 +213,7 @@ pub struct Executor<'exec, 'req> {
     headers_plan: &'exec HeaderRulesPlan,
     jwt_forwarding_plan: Option<JwtAuthForwardingPlan>,
     dedupe_subgraph_requests: bool,
-    plugin_manager: &'exec PluginManager<'exec>,
+    plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
 }
 
 struct ConcurrencyScope<'exec, T> {
@@ -291,7 +309,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         headers_plan: &'exec HeaderRulesPlan,
         jwt_forwarding_plan: Option<JwtAuthForwardingPlan>,
         dedupe_subgraph_requests: bool,
-        plugin_manager: &'exec PluginManager<'exec>,
+        plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
     ) -> Self {
         Executor {
             variable_values,
@@ -301,7 +319,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
             headers_plan,
             dedupe_subgraph_requests,
             jwt_forwarding_plan,
-            plugin_manager,
+            plugin_req_state,
         }
     }
 
@@ -795,7 +813,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                     &node.service_name,
                     subgraph_request,
                     self.client_request,
-                    self.plugin_manager,
+                    self.plugin_req_state,
                 )
                 .await
                 .into(),

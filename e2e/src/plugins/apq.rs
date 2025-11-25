@@ -2,7 +2,7 @@ use dashmap::DashMap;
 use serde::Deserialize;
 use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 
-use crate::{
+use hive_router_plan_executor::{
     hooks::on_graphql_params::{OnGraphQLParamsEndPayload, OnGraphQLParamsStartPayload},
     plugin_trait::{EndPayload, HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };

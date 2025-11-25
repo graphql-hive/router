@@ -47,11 +47,12 @@ where
     ) -> Result<Self::Response, Self::Error> {
         let plugins = req
             .app_state::<Arc<RouterSharedState>>()
-            .map(|shared_state| shared_state.plugins.clone());
+            .and_then(|shared_state| shared_state.plugins.clone());
 
-        if let Some(plugins) = plugins {
+        if let Some(plugins) = plugins.as_ref() {
             let plugin_context = Arc::new(PluginContext::default());
             req.extensions_mut().insert(plugin_context.clone());
+
             let mut start_payload = OnHttpRequestPayload {
                 router_http_request: req,
                 context: &plugin_context,

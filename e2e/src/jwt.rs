@@ -27,7 +27,7 @@ mod jwt_e2e_tests {
     #[ntex::test]
     async fn should_forward_claims_to_subgraph_via_extensions() {
         let subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth_forward.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth_forward.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -69,7 +69,7 @@ mod jwt_e2e_tests {
     #[ntex::test]
     async fn should_allow_expressions_to_access_jwt_details() {
         let subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth_header_expression.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth_header_expression.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -132,7 +132,7 @@ mod jwt_e2e_tests {
     #[ntex::test]
     async fn should_allow_expressions_to_access_jwt_scopes() {
         let subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth_header_expression.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth_header_expression.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -243,7 +243,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_without_token_when_auth_is_required() {
-        let app = init_router_from_config_file("configs/jwt_auth.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -270,7 +270,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_with_malformed_token() {
-        let app = init_router_from_config_file("configs/jwt_auth.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -301,7 +301,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_with_invalid_signature() {
-        let app = init_router_from_config_file("configs/jwt_auth.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -324,7 +324,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn accepts_request_with_valid_token() {
-        let app = init_router_from_config_file("configs/jwt_auth.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -358,7 +358,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_with_expired_token() {
-        let app = init_router_from_config_file("configs/jwt_auth.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.router.yaml", None)
             .await
             .unwrap();
 
@@ -391,7 +391,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_with_wrong_issuer() {
-        let app = init_router_from_config_file("configs/jwt_auth_issuer.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth_issuer.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -413,7 +413,7 @@ mod jwt_e2e_tests {
 
     #[ntex::test]
     async fn rejects_request_with_wrong_audience() {
-        let app = init_router_from_config_file("configs/jwt_auth_audience.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth_audience.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;

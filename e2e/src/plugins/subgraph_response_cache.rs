@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use serde::Deserialize;
 
-use crate::{
+use hive_router_plan_executor::{
     executors::common::HttpExecutionResponse,
     hooks::on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload},
     plugin_trait::{EndPayload, HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},

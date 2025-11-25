@@ -4,7 +4,7 @@ use http::StatusCode;
 use serde::Deserialize;
 use sonic_rs::json;
 
-use crate::{
+use hive_router_plan_executor::{
     execution::plan::PlanExecutionOutput,
     hooks::on_graphql_params::{OnGraphQLParamsEndPayload, OnGraphQLParamsStartPayload},
     plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},

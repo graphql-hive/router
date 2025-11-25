@@ -91,7 +91,7 @@ impl PluginContext {
     }
 }
 
-pub struct PluginManager<'req> {
+pub struct PluginRequestState<'req> {
     pub plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
     pub router_http_request: RouterHttpRequest<'req>,
     pub context: Arc<PluginContext>,

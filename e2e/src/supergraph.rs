@@ -36,7 +36,7 @@ mod supergraph_e2e_tests {
               key: dummy_key
               poll_interval: 500ms
         "#,
-        ))
+        ), None)
         .await
         .expect("failed to start router");
 
@@ -198,7 +198,7 @@ mod supergraph_e2e_tests {
               key: dummy_key
               poll_interval: 300ms
         "#,
-            ))
+            ), None)
             .await
             .expect("failed to start router"),
         );
