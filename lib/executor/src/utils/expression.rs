@@ -24,7 +24,12 @@ pub fn compile_expression(
         diagnostics
             .errors()
             .iter()
-            .map(|d| format!("{}: {}", d.code, d.message))
+            .map(|d| {
+                format!(
+                    "https://vector.dev/docs/reference/vrl/errors/#{} - {}",
+                    d.code, d.message
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ")
     })?;
