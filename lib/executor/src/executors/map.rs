@@ -6,7 +6,10 @@ use std::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use dashmap::DashMap;
-use hive_router_config::{override_subgraph_urls::UrlOrExpression, HiveRouterConfig};
+use hive_router_config::{
+    override_subgraph_urls::UrlOrExpression, traffic_shaping::DurationOrExpression,
+    HiveRouterConfig,
+};
 use http::Uri;
 use hyper_tls::HttpsConnector;
 use hyper_util::{
@@ -40,6 +43,12 @@ type ExecutorsBySubgraphMap =
 type EndpointsBySubgraphMap = DashMap<SubgraphName, SubgraphEndpoint>;
 type ExpressionsBySubgraphMap = HashMap<SubgraphName, VrlProgram>;
 type TimeoutsBySubgraph = DashMap<SubgraphName, DurationOrProgram>;
+
+struct ResolvedSubgraphConfig<'a> {
+    client: Arc<HttpClient>,
+    timeout_config: &'a DurationOrExpression,
+    dedupe_enabled: bool,
+}
 
 pub struct SubgraphExecutorMap {
     executors_by_subgraph: ExecutorsBySubgraphMap,
@@ -317,53 +326,15 @@ impl SubgraphExecutorMap {
             .or_insert_with(|| Arc::new(Semaphore::new(self.max_connections_per_host)))
             .clone();
 
-        let mut client = self.client.clone();
-        let mut timeout_config = &self.config.traffic_shaping.all.request_timeout;
-        let pool_idle_timeout = self.config.traffic_shaping.all.pool_idle_timeout;
-        let mut dedupe_enabled = self.config.traffic_shaping.all.dedupe_enabled;
-        if let Some(subgraph_traffic_shaping_config) =
-            self.config.traffic_shaping.subgraphs.get(subgraph_name)
-        {
-            if subgraph_traffic_shaping_config.pool_idle_timeout.is_some() {
-                client = Arc::new(
-                    Client::builder(TokioExecutor::new())
-                        .pool_timer(TokioTimer::new())
-                        .pool_idle_timeout(
-                            subgraph_traffic_shaping_config
-                                .pool_idle_timeout
-                                .unwrap_or(pool_idle_timeout),
-                        )
-                        .pool_max_idle_per_host(self.max_connections_per_host)
-                        .build(HttpsConnector::new()),
-                );
-            }
-            dedupe_enabled = subgraph_traffic_shaping_config
-                .dedupe_enabled
-                .unwrap_or(dedupe_enabled);
-            timeout_config = subgraph_traffic_shaping_config
-                .request_timeout
-                .as_ref()
-                .unwrap_or(timeout_config);
-        }
-
-        if !self.timeouts_by_subgraph.contains_key(subgraph_name) {
-            let timeout_prog: DurationOrProgram = compile_duration_expression(timeout_config, None)
-                .map_err(|err| {
-                    SubgraphExecutorError::RequestTimeoutExpressionBuild(
-                        subgraph_name.to_string(),
-                        err,
-                    )
-                })?;
-            self.timeouts_by_subgraph
-                .insert(subgraph_name.to_string(), timeout_prog);
-        }
+        let subgraph_config = self.resolve_subgraph_config(subgraph_name);
+        self.register_timeout_if_absent(subgraph_name, &subgraph_config.timeout_config)?;
 
         let executor = HTTPSubgraphExecutor::new(
             subgraph_name.to_string(),
             endpoint_uri,
-            client,
+            subgraph_config.client,
             semaphore,
-            dedupe_enabled,
+            subgraph_config.dedupe_enabled,
             self.in_flight_requests.clone(),
         );
 
@@ -371,6 +342,62 @@ impl SubgraphExecutorMap {
             .entry(subgraph_name.to_string())
             .or_default()
             .insert(endpoint_str.to_string(), executor.to_boxed_arc());
+
+        Ok(())
+    }
+
+    /// Resolves traffic shaping configuration for a specific subgraph, applying subgraph-specific
+    /// overrides on top of global settings
+    fn resolve_subgraph_config<'a>(&'a self, subgraph_name: &'a str) -> ResolvedSubgraphConfig<'a> {
+        let mut config = ResolvedSubgraphConfig {
+            client: self.client.clone(),
+            timeout_config: &self.config.traffic_shaping.all.request_timeout,
+            dedupe_enabled: self.config.traffic_shaping.all.dedupe_enabled,
+        };
+
+        let Some(subgraph_config) = self.config.traffic_shaping.subgraphs.get(subgraph_name) else {
+            return config;
+        };
+
+        // Override client only if pool idle timeout is customized
+        if let Some(pool_idle_timeout) = subgraph_config.pool_idle_timeout {
+            config.client = Arc::new(
+                Client::builder(TokioExecutor::new())
+                    .pool_timer(TokioTimer::new())
+                    .pool_idle_timeout(pool_idle_timeout)
+                    .pool_max_idle_per_host(self.max_connections_per_host)
+                    .build(HttpsConnector::new()),
+            );
+        }
+
+        // Apply other subgraph-specific overrides
+        if let Some(dedupe_enabled) = subgraph_config.dedupe_enabled {
+            config.dedupe_enabled = dedupe_enabled;
+        }
+
+        if let Some(custom_timeout) = &subgraph_config.request_timeout {
+            config.timeout_config = custom_timeout;
+        }
+
+        config
+    }
+
+    /// Compiles and caches the timeout configuration for the given subgraph if not already registered
+    fn register_timeout_if_absent(
+        &self,
+        subgraph_name: &str,
+        timeout_config: &hive_router_config::traffic_shaping::DurationOrExpression,
+    ) -> Result<(), SubgraphExecutorError> {
+        if self.timeouts_by_subgraph.contains_key(subgraph_name) {
+            return Ok(());
+        }
+
+        let timeout_prog = compile_duration_expression(timeout_config, None).map_err(|err| {
+            SubgraphExecutorError::RequestTimeoutExpressionBuild(subgraph_name.to_string(), err)
+        })?;
+
+        self.timeouts_by_subgraph
+            .insert(subgraph_name.to_string(), timeout_prog);
 
         Ok(())
     }

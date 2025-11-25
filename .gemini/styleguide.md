@@ -81,6 +81,33 @@ async fn handle(user: &User, req: &Request) -> Result<Response> {
     Ok(...)
 }
 
+---
+
+## `std::time::Duration` in `router-config` Crate
+
+When using `std::time::Duration` in the `router-config` crate **only**, you **must** add both serde and schemars attributes:
+
+```rust
+use std::time::Duration;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Config {
+    #[serde(
+        deserialize_with = "humantime_serde::deserialize",
+        serialize_with = "humantime_serde::serialize",
+    )]
+    #[schemars(with = "String")]
+    timeout: Duration,
+}
+```
+
+- **`#[serde(...)]`** enables human-readable time formats (e.g., `"30s"`, `"1m30s"`) in config files.
+- **`#[schemars(with = "String")]`** ensures the JSON schema correctly represents the field as a string, not as a numeric value.
+
+**Important:** This pattern applies **only** to the `router-config` crate.
+
+---
+
 ## Releasing
 
 We are using `knope` with changesets for declaring changes. If you detect a new file in a PR under `.changeset/` directory, please confirm the following rules:

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct TrafficShapingConfig {
     /// The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.
     #[serde(default)]
-    pub all: TrafficShapingExecutorConfig,
+    pub all: TrafficShapingExecutorGlobalConfig,
     /// Optional per-subgraph configurations that will override the default configuration for specific subgraphs.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub subgraphs: HashMap<String, TrafficShapingExecutorSubgraphConfig>,
@@ -20,7 +20,7 @@ pub struct TrafficShapingConfig {
 impl Default for TrafficShapingConfig {
     fn default() -> Self {
         Self {
-            all: TrafficShapingExecutorConfig::default(),
+            all: TrafficShapingExecutorGlobalConfig::default(),
             subgraphs: HashMap::new(),
             max_connections_per_host: default_max_connections_per_host(),
         }
@@ -79,7 +79,7 @@ pub struct TrafficShapingExecutorSubgraphConfig {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct TrafficShapingExecutorConfig {
+pub struct TrafficShapingExecutorGlobalConfig {
     /// Timeout for idle sockets being kept-alive.
     #[serde(
         default = "default_pool_idle_timeout",
@@ -130,12 +130,13 @@ pub enum DurationOrExpression {
         deserialize_with = "humantime_serde::deserialize",
         serialize_with = "humantime_serde::serialize"
     )]
+    #[schemars(with = "String")]
     Duration(Duration),
     /// A VRL expression that evaluates to a duration. The result can be an integer (milliseconds), a float (milliseconds), or a duration string (e.g. "5s").
     Expression { expression: String },
 }
 
-impl Default for TrafficShapingExecutorConfig {
+impl Default for TrafficShapingExecutorGlobalConfig {
     fn default() -> Self {
         Self {
             pool_idle_timeout: default_pool_idle_timeout(),
