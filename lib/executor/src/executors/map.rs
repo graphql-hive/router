@@ -41,7 +41,7 @@ type SubgraphEndpoint = String;
 type ExecutorsBySubgraphMap =
     DashMap<SubgraphName, DashMap<SubgraphEndpoint, SubgraphExecutorBoxedArc>>;
 type EndpointsBySubgraphMap = DashMap<SubgraphName, SubgraphEndpoint>;
-type ExpressionsBySubgraphMap = HashMap<SubgraphName, VrlProgram>;
+type EndpointExpressionsBySubgraphMap = HashMap<SubgraphName, VrlProgram>;
 type TimeoutsBySubgraph = DashMap<SubgraphName, DurationOrProgram>;
 
 struct ResolvedSubgraphConfig<'a> {
@@ -55,8 +55,8 @@ pub struct SubgraphExecutorMap {
     /// Mapping from subgraph name to endpoint for quick lookup
     /// based on supergrah sdl and static overrides from router's config.
     static_endpoints_by_subgraph: EndpointsBySubgraphMap,
-    /// Mapping from subgraph name to VRL expression program
-    expressions_by_subgraph: ExpressionsBySubgraphMap,
+    /// Mapping from subgraph name to VRL expression program for endpoint resolution.
+    endpoint_expressions_by_subgraph: EndpointExpressionsBySubgraphMap,
     timeouts_by_subgraph: TimeoutsBySubgraph,
     config: Arc<HiveRouterConfig>,
     client: Arc<HttpClient>,
@@ -79,7 +79,7 @@ impl SubgraphExecutorMap {
         SubgraphExecutorMap {
             executors_by_subgraph: Default::default(),
             static_endpoints_by_subgraph: Default::default(),
-            expressions_by_subgraph: Default::default(),
+            endpoint_expressions_by_subgraph: Default::default(),
             config,
             client: Arc::new(client),
             semaphores_by_origin: Default::default(),
@@ -103,7 +103,8 @@ impl SubgraphExecutorMap {
             let endpoint_str = match endpoint_str {
                 Some(UrlOrExpression::Url(url)) => url,
                 Some(UrlOrExpression::Expression { expression }) => {
-                    subgraph_executor_map.register_expression(&subgraph_name, expression)?;
+                    subgraph_executor_map
+                        .register_endpoint_expression(&subgraph_name, expression)?;
                     &original_endpoint_str
                 }
                 None => &original_endpoint_str,
@@ -202,7 +203,7 @@ impl SubgraphExecutorMap {
         subgraph_name: &str,
         client_request: &ClientRequestDetails<'_, '_>,
     ) -> Result<Option<SubgraphExecutorBoxedArc>, SubgraphExecutorError> {
-        if let Some(expression) = self.expressions_by_subgraph.get(subgraph_name) {
+        if let Some(expression) = self.endpoint_expressions_by_subgraph.get(subgraph_name) {
             let original_url_value = VrlValue::Bytes(Bytes::from(
                 self.static_endpoints_by_subgraph
                     .get(subgraph_name)
@@ -274,7 +275,7 @@ impl SubgraphExecutorMap {
     /// Registers a VRL expression for the given subgraph name.
     /// The expression can later be used to resolve the endpoint URL cheaply,
     /// without needing to recompile it every time.
-    fn register_expression(
+    fn register_endpoint_expression(
         &mut self,
         subgraph_name: &str,
         expression: &str,
@@ -282,7 +283,7 @@ impl SubgraphExecutorMap {
         let program = compile_expression(expression, None).map_err(|err| {
             SubgraphExecutorError::EndpointExpressionBuild(subgraph_name.to_string(), err)
         })?;
-        self.expressions_by_subgraph
+        self.endpoint_expressions_by_subgraph
             .insert(subgraph_name.to_string(), program);
 
         Ok(())

@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../supergraph.graphql
+traffic_shaping:
+  all:
+    request_timeout: 2s
+    # Disable deduplication to better hunt for deadlocks in tests
+    dedupe_enabled: false
+  subgraphs:
+    accounts:
+      request_timeout:
+        expression: |
+          if (.request.headers["x-timeout"] == "short") {
+            "10s"
+          } else {
+            "15s"
+          }

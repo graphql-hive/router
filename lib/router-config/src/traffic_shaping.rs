@@ -45,9 +45,11 @@ pub struct TrafficShapingExecutorSubgraphConfig {
     /// Timeout for idle sockets being kept-alive.
     #[serde(
         deserialize_with = "humantime_serde::deserialize",
-        serialize_with = "humantime_serde::serialize"
+        serialize_with = "humantime_serde::serialize",
+        skip_serializing_if = "Option::is_none",
+        default = "default_subgraph_pool_idle_timeout"
     )]
-    #[schemars(with = "String")]
+    #[schemars(with = "Option<String>")]
     pub pool_idle_timeout: Option<Duration>,
 
     /// Enables/disables request deduplication to subgraphs.
@@ -116,6 +118,10 @@ pub struct TrafficShapingExecutorGlobalConfig {
     /// ```
     #[serde(default = "default_request_timeout")]
     pub request_timeout: DurationOrExpression,
+}
+
+fn default_subgraph_pool_idle_timeout() -> Option<Duration> {
+    None
 }
 
 fn default_request_timeout() -> DurationOrExpression {
