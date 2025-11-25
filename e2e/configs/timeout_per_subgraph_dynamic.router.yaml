@@ -11,8 +11,8 @@ traffic_shaping:
     accounts:
       request_timeout:
         expression: |
-          if (.request.headers["x-timeout"] == "short") {
+          if (.request.headers."x-timeout" == "short") {
             "10s"
           } else {
-            "15s"
+            "20s"
           }
