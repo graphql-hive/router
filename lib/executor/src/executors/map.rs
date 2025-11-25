@@ -110,6 +110,14 @@ impl SubgraphExecutorMap {
                 None => &original_endpoint_str,
             };
 
+            let timeout_config = config
+                .traffic_shaping
+                .subgraphs
+                .get(&subgraph_name)
+                .and_then(|s| s.request_timeout.as_ref())
+                .unwrap_or(&config.traffic_shaping.all.request_timeout);
+            subgraph_executor_map.register_timeout_if_absent(&subgraph_name, timeout_config)?;
+
             subgraph_executor_map.register_executor(&subgraph_name, endpoint_str)?;
             subgraph_executor_map.register_static_endpoint(&subgraph_name, endpoint_str);
         }
@@ -328,7 +336,6 @@ impl SubgraphExecutorMap {
             .clone();
 
         let subgraph_config = self.resolve_subgraph_config(subgraph_name);
-        self.register_timeout_if_absent(subgraph_name, &subgraph_config.timeout_config)?;
 
         let executor = HTTPSubgraphExecutor::new(
             subgraph_name.to_string(),
