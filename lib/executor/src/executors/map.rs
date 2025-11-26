@@ -147,7 +147,7 @@ impl SubgraphExecutorMap {
                     .get(subgraph_name)
                     .map(|t| {
                         let global_timeout_duration =
-                            resolve_timeout(&self.global_timeout, client_request, None, "global")?;
+                            resolve_timeout(&self.global_timeout, client_request, None, "all")?;
                         resolve_timeout(
                             t.value(),
                             client_request,

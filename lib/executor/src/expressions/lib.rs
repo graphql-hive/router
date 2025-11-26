@@ -46,19 +46,22 @@ impl CompileExpression for str {
         let functions = functions.unwrap_or(&VRL_FUNCTIONS);
 
         let compilation_result = vrl_compile(self, functions).map_err(|diagnostics| {
-            let diag_str = diagnostics
-                .errors()
-                .iter()
-                .map(|d| {
-                    format!(
-                        "https://vector.dev/docs/reference/vrl/errors/#{} - {}",
-                        d.code, d.message
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            ExpressionCompileError::new(self.to_string(), diag_str)
+            ExpressionCompileError::new(
+                self.to_string(),
+                // Format diagnostics into a human-readable string like this:
+                // error[E203]: syntax error
+                //   ┌─ :1:23
+                //   │
+                // 1 │ if (.request.headerss["x-timeout"] == "short") {
+                //   │                       ^^^^^^^^^^^
+                //   │                       │
+                //   │                       unexpected syntax token: "StringLiteral"
+                //   │                       expected one of: "integer literal"
+                //   │
+                //   = see language documentation at https://vrl.dev
+                //   = try your code in the VRL REPL, learn more at https://vrl.dev/examples
+                vrl::diagnostic::Formatter::new(self, diagnostics).to_string(),
+            )
         })?;
 
         Ok(compilation_result.program)
