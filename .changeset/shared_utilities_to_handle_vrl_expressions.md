@@ -1,5 +1,7 @@
 ---
-default: minor
+router: minor
+executor: patch
+config: minor
 ---
 
 # Breaking
