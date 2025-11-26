@@ -163,7 +163,7 @@ impl HTTPSubgraphExecutor {
                 .map_err(|_| {
                     SubgraphExecutorError::RequestTimeout(
                         self.endpoint.to_string(),
-                        timeout_duration.as_secs(),
+                        timeout_duration.as_millis(),
                     )
                 })?
         } else {
