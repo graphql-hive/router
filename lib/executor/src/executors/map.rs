@@ -18,6 +18,7 @@ use hyper_util::{
 };
 use tokio::sync::{OnceCell, Semaphore};
 use tracing::error;
+use vrl::compiler::Program as VrlProgram;
 use vrl::core::Value as VrlValue;
 
 use crate::{
@@ -31,14 +32,16 @@ use crate::{
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClient},
     },
-    expressions::{CompileExpression, DurationOrProgram, StringOrProgram},
+    expressions::{CompileExpression, DurationOrProgram, ExecutableProgram},
     response::graphql_error::GraphQLError,
 };
 
 type SubgraphName = String;
-type EndpointOrProgram = StringOrProgram;
-type ExecutorsBySubgraphMap = DashMap<SubgraphName, DashMap<String, SubgraphExecutorBoxedArc>>;
-type EndpointsBySubgraphMap = DashMap<SubgraphName, EndpointOrProgram>;
+type SubgraphEndpoint = String;
+type ExecutorsBySubgraphMap =
+    DashMap<SubgraphName, DashMap<SubgraphEndpoint, SubgraphExecutorBoxedArc>>;
+type StaticEndpointsBySubgraphMap = DashMap<SubgraphName, SubgraphEndpoint>;
+type ExpressionEndpointsBySubgraphMap = HashMap<SubgraphName, VrlProgram>;
 type TimeoutsBySubgraph = DashMap<SubgraphName, DurationOrProgram>;
 
 struct ResolvedSubgraphConfig<'a> {
@@ -49,9 +52,12 @@ struct ResolvedSubgraphConfig<'a> {
 
 pub struct SubgraphExecutorMap {
     executors_by_subgraph: ExecutorsBySubgraphMap,
-    /// Mapping from subgraph name to endpoint for quick lookup
-    /// Can be either a static URL or a VRL expression that computes the endpoint
-    endpoints_by_subgraph: EndpointsBySubgraphMap,
+    /// Mapping from subgraph name to static endpoint for quick lookup
+    /// based on subgraph SDL and static overrides from router's config.
+    static_endpoints_by_subgraph: StaticEndpointsBySubgraphMap,
+    /// Mapping from subgraph name to VRL expression program
+    /// Only contains subgraphs with expression-based endpoint overrides
+    expression_endpoints_by_subgraph: ExpressionEndpointsBySubgraphMap,
     timeouts_by_subgraph: TimeoutsBySubgraph,
     global_timeout: DurationOrProgram,
     config: Arc<HiveRouterConfig>,
@@ -74,7 +80,8 @@ impl SubgraphExecutorMap {
 
         SubgraphExecutorMap {
             executors_by_subgraph: Default::default(),
-            endpoints_by_subgraph: Default::default(),
+            static_endpoints_by_subgraph: Default::default(),
+            expression_endpoints_by_subgraph: Default::default(),
             config,
             client: Arc::new(client),
             semaphores_by_origin: Default::default(),
@@ -89,45 +96,32 @@ impl SubgraphExecutorMap {
         subgraph_endpoint_map: HashMap<SubgraphName, String>,
         config: Arc<HiveRouterConfig>,
     ) -> Result<Self, SubgraphExecutorError> {
-        let global_timeout =
-            DurationOrProgram::compile(&config.traffic_shaping.all.request_timeout, None).map_err(
-                |err| {
-                    SubgraphExecutorError::RequestTimeoutExpressionBuild(
-                        "global".to_string(),
-                        err.diagnostics,
-                    )
-                },
-            )?;
-        let subgraph_executor_map = SubgraphExecutorMap::new(config.clone(), global_timeout);
+        let global_timeout = DurationOrProgram::compile(
+            &config.traffic_shaping.all.request_timeout,
+            None,
+        )
+        .map_err(|err| {
+            SubgraphExecutorError::RequestTimeoutExpressionBuild("all".to_string(), err.diagnostics)
+        })?;
+        let mut subgraph_executor_map = SubgraphExecutorMap::new(config.clone(), global_timeout);
 
         for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.into_iter() {
             let endpoint_config = config
                 .override_subgraph_urls
                 .get_subgraph_url(&subgraph_name);
 
-            let endpoint_or_prog = match endpoint_config {
-                Some(UrlOrExpression::Url(url)) => StringOrProgram::Value(url.clone()),
+            let endpoint_str = match endpoint_config {
+                Some(UrlOrExpression::Url(url)) => url.clone(),
                 Some(UrlOrExpression::Expression { expression }) => {
-                    let program = expression.compile_expression(None).map_err(|err| {
-                        SubgraphExecutorError::EndpointExpressionBuild(
-                            subgraph_name.to_string(),
-                            err.diagnostics,
-                        )
-                    })?;
-                    StringOrProgram::Program(Box::new(program))
+                    subgraph_executor_map
+                        .register_endpoint_expression(&subgraph_name, expression)?;
+                    original_endpoint_str.clone()
                 }
-                None => StringOrProgram::Value(original_endpoint_str.clone()),
+                None => original_endpoint_str.clone(),
             };
 
-            subgraph_executor_map
-                .endpoints_by_subgraph
-                .insert(subgraph_name.to_string(), endpoint_or_prog);
-
-            subgraph_executor_map
-                .register_executor(&subgraph_name, &original_endpoint_str)
-                .ok();
-
-            // Register the timeout configuration for this subgraph
+            subgraph_executor_map.register_static_endpoint(&subgraph_name, &endpoint_str);
+            subgraph_executor_map.register_executor(&subgraph_name, &endpoint_str)?;
             subgraph_executor_map.register_subgraph_timeout(&subgraph_name)?;
         }
 
@@ -141,7 +135,7 @@ impl SubgraphExecutorMap {
         client_request: &ClientRequestDetails<'a, 'req>,
     ) -> HttpExecutionResponse {
         match self.get_or_create_executor(subgraph_name, client_request) {
-            Ok(Some(executor)) => {
+            Ok(executor) => {
                 let timeout = self
                     .timeouts_by_subgraph
                     .get(subgraph_name)
@@ -175,13 +169,6 @@ impl SubgraphExecutorMap {
                 );
                 self.internal_server_error_response(err.into(), subgraph_name)
             }
-            Ok(None) => {
-                error!(
-                    "Subgraph executor not found for subgraph '{}'",
-                    subgraph_name
-                );
-                self.internal_server_error_response("Internal server error".into(), subgraph_name)
-            }
         }
     }
 
@@ -203,60 +190,91 @@ impl SubgraphExecutorMap {
         }
     }
 
-    /// Looks up or creates a subgraph executor based on the subgraph name.
-    /// Resolves the endpoint URL (static or from expression) and creates an executor if needed.
+    /// Looks up a subgraph executor based on the subgraph name.
+    /// Looks for an expression first, falling back to a static endpoint.
+    /// If nothing is found, returns an error.
     fn get_or_create_executor(
         &self,
         subgraph_name: &str,
         client_request: &ClientRequestDetails<'_, '_>,
-    ) -> Result<Option<SubgraphExecutorBoxedArc>, SubgraphExecutorError> {
-        // Resolve the endpoint URL (static or from expression)
-        let endpoint_url = match self.resolve_endpoint(subgraph_name, client_request) {
-            Ok(url) => url,
-            Err(err) => {
-                error!(
-                    "Failed to resolve endpoint for subgraph '{}': {}",
-                    subgraph_name, err
-                );
-                return Err(err);
-            }
-        };
-
-        // Check if executor exists
-        if let Some(executor) = self.get_executor_from_endpoint(subgraph_name, &endpoint_url) {
-            return Ok(Some(executor));
-        }
-
-        // Create executor if it doesn't exist
-        self.register_executor(subgraph_name, &endpoint_url)?;
-        Ok(self.get_executor_from_endpoint(subgraph_name, &endpoint_url))
+    ) -> Result<SubgraphExecutorBoxedArc, SubgraphExecutorError> {
+        self.expression_endpoints_by_subgraph
+            .get(subgraph_name)
+            .map(|expression| {
+                self.get_or_create_executor_from_expression(
+                    subgraph_name,
+                    expression,
+                    client_request,
+                )
+            })
+            .unwrap_or_else(|| {
+                self.get_executor_from_static_endpoint(subgraph_name)
+                    .ok_or_else(|| {
+                        SubgraphExecutorError::StaticEndpointNotFound(subgraph_name.to_string())
+                    })
+            })
     }
 
-    /// Resolves the endpoint URL for a subgraph, which can be either static or computed via expression
-    fn resolve_endpoint(
+    /// Looks up a subgraph executor,
+    /// or creates one if a VRL expression is defined for the subgraph.
+    /// The expression is resolved to get the endpoint URL,
+    /// and a new executor is created and stored for future requests.
+    fn get_or_create_executor_from_expression(
         &self,
         subgraph_name: &str,
+        expression: &VrlProgram,
         client_request: &ClientRequestDetails<'_, '_>,
-    ) -> Result<String, SubgraphExecutorError> {
-        let endpoint_or_prog = self
-            .endpoints_by_subgraph
-            .get(subgraph_name)
-            .ok_or_else(|| {
-                SubgraphExecutorError::StaticEndpointNotFound(subgraph_name.to_string())
-            })?;
+    ) -> Result<SubgraphExecutorBoxedArc, SubgraphExecutorError> {
+        let original_url_value = VrlValue::Bytes(
+            self.static_endpoints_by_subgraph
+                .get(subgraph_name)
+                .map(|endpoint| endpoint.value().clone())
+                .ok_or_else(|| {
+                    SubgraphExecutorError::StaticEndpointNotFound(subgraph_name.to_string())
+                })?
+                .into(),
+        );
 
-        let context = VrlValue::Object(BTreeMap::from([("request".into(), client_request.into())]));
+        let value = VrlValue::Object(BTreeMap::from([
+            ("request".into(), client_request.into()),
+            ("original_url".into(), original_url_value),
+        ]));
 
-        endpoint_or_prog.value().resolve(context).map_err(|err| {
+        // Resolve the expression to get an endpoint URL.
+        let endpoint_result = expression.execute(value).map_err(|err| {
             SubgraphExecutorError::EndpointExpressionResolutionFailure(
                 subgraph_name.to_string(),
                 err.to_string(),
             )
-        })
+        })?;
+
+        let endpoint_str = match endpoint_result.as_str() {
+            Some(s) => Ok(s.to_string()),
+            None => Err(SubgraphExecutorError::EndpointExpressionWrongType(
+                subgraph_name.to_string(),
+            )),
+        }?;
+
+        // Check if an executor for this endpoint already exists.
+        if let Some(executor) = self.get_executor_from_endpoint(subgraph_name, &endpoint_str) {
+            return Ok(executor);
+        }
+
+        // If not, create and register a new one.
+        self.register_executor(subgraph_name, &endpoint_str)
+    }
+
+    /// Looks up a subgraph executor based on a static endpoint URL.
+    fn get_executor_from_static_endpoint(
+        &self,
+        subgraph_name: &str,
+    ) -> Option<SubgraphExecutorBoxedArc> {
+        let endpoint_ref = self.static_endpoints_by_subgraph.get(subgraph_name)?;
+        let endpoint_str = endpoint_ref.value();
+        self.get_executor_from_endpoint(subgraph_name, endpoint_str)
     }
 
     /// Looks up a subgraph executor for a given endpoint URL.
-    /// Returns None if no executor exists for this endpoint.
     #[inline]
     fn get_executor_from_endpoint(
         &self,
@@ -266,6 +284,33 @@ impl SubgraphExecutorMap {
         self.executors_by_subgraph
             .get(subgraph_name)
             .and_then(|endpoints| endpoints.get(endpoint_str).map(|e| e.clone()))
+    }
+
+    /// Registers a new HTTP subgraph executor for the given subgraph name and endpoint URL.
+    /// It makes it availble for future requests.
+    fn register_endpoint_expression(
+        &mut self,
+        subgraph_name: &str,
+        expression: &str,
+    ) -> Result<(), SubgraphExecutorError> {
+        let program = expression.compile_expression(None).map_err(|err| {
+            SubgraphExecutorError::EndpointExpressionBuild(
+                subgraph_name.to_string(),
+                err.diagnostics,
+            )
+        })?;
+        self.expression_endpoints_by_subgraph
+            .insert(subgraph_name.to_string(), program);
+
+        Ok(())
+    }
+
+    /// Registers a static endpoint for the given subgraph name.
+    /// This is used for quick lookup when no expression is defined
+    /// or when resolving the expression (to have the original URL available there).
+    fn register_static_endpoint(&self, subgraph_name: &str, endpoint_str: &str) {
+        self.static_endpoints_by_subgraph
+            .insert(subgraph_name.to_string(), endpoint_str.to_string());
     }
 
     /// Registers a new HTTP subgraph executor for the given subgraph name and endpoint URL.
@@ -310,6 +355,7 @@ impl SubgraphExecutorMap {
         );
 
         let executor_arc = executor.to_boxed_arc();
+
         self.executors_by_subgraph
             .entry(subgraph_name.to_string())
             .or_default()

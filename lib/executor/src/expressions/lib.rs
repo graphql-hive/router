@@ -15,7 +15,7 @@ use vrl::{
 
 use crate::expressions::error::{ExpressionCompileError, ExpressionExecutionError};
 
-static VRL_FUNCTIONS: Lazy<Vec<Box<dyn Function>>> = Lazy::new(|| vrl::stdlib::all());
+static VRL_FUNCTIONS: Lazy<Vec<Box<dyn Function>>> = Lazy::new(vrl::stdlib::all);
 static VRL_TIMEZONE: Lazy<VrlTimeZone> = Lazy::new(VrlTimeZone::default);
 
 /// This trait provides a unified way to convert VRL values to specific Rust types.
@@ -127,10 +127,10 @@ where
             ValueOrProgram::Program(vrl_program) => {
                 let result_value = vrl_program
                     .execute(vrl_context)
-                    .map_err(|e| ProgramResolutionError::ExecutionFailed(e))?;
+                    .map_err(ProgramResolutionError::ExecutionFailed)?;
 
                 T::from_vrl_value(result_value)
-                    .map_err(|e| ProgramResolutionError::ConversionFailed(e))
+                    .map_err(ProgramResolutionError::ConversionFailed)
             }
         }
     }
