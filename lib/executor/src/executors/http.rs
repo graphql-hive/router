@@ -224,7 +224,7 @@ impl HTTPSubgraphExecutor {
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
-    #[tracing::instrument(skip_all, fields(subgraph_name = %self.subgraph_name))]
+    #[tracing::instrument(level = "trace", skip_all, fields(subgraph_name = %self.subgraph_name))]
     async fn execute<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
