@@ -14,5 +14,5 @@ traffic_shaping:
           if (.request.headers."x-timeout" == "short") {
             "10s"
           } else {
-            "20s"
+            .default
           }

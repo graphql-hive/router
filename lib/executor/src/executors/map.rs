@@ -58,6 +58,7 @@ pub struct SubgraphExecutorMap {
     /// Mapping from subgraph name to VRL expression program for endpoint resolution.
     endpoint_expressions_by_subgraph: EndpointExpressionsBySubgraphMap,
     timeouts_by_subgraph: TimeoutsBySubgraph,
+    global_timeout: DurationOrProgram,
     config: Arc<HiveRouterConfig>,
     client: Arc<HttpClient>,
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
@@ -66,7 +67,7 @@ pub struct SubgraphExecutorMap {
 }
 
 impl SubgraphExecutorMap {
-    pub fn new(config: Arc<HiveRouterConfig>) -> Self {
+    pub fn new(config: Arc<HiveRouterConfig>, global_timeout: DurationOrProgram) -> Self {
         let https = HttpsConnector::new();
         let client: HttpClient = Client::builder(TokioExecutor::new())
             .pool_timer(TokioTimer::new())
@@ -86,6 +87,7 @@ impl SubgraphExecutorMap {
             max_connections_per_host,
             in_flight_requests: Arc::new(DashMap::with_hasher(ABuildHasher::default())),
             timeouts_by_subgraph: Default::default(),
+            global_timeout,
         }
     }
 
@@ -93,7 +95,12 @@ impl SubgraphExecutorMap {
         subgraph_endpoint_map: HashMap<SubgraphName, SubgraphEndpoint>,
         config: Arc<HiveRouterConfig>,
     ) -> Result<Self, SubgraphExecutorError> {
-        let mut subgraph_executor_map = SubgraphExecutorMap::new(config.clone());
+        let global_timeout =
+            compile_duration_expression(&config.traffic_shaping.all.request_timeout, None)
+                .map_err(|err| {
+                    SubgraphExecutorError::RequestTimeoutExpressionBuild("global".to_string(), err)
+                })?;
+        let mut subgraph_executor_map = SubgraphExecutorMap::new(config.clone(), global_timeout);
 
         for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.into_iter() {
             let endpoint_str = config
@@ -133,10 +140,14 @@ impl SubgraphExecutorMap {
     ) -> HttpExecutionResponse {
         match self.get_or_create_executor(subgraph_name, client_request) {
             Ok(Some(executor)) => {
-                let timeout = self
-                    .timeouts_by_subgraph
-                    .get(subgraph_name)
-                    .map(|t| resolve_duration_prog(t.value(), subgraph_name, client_request));
+                let timeout = self.timeouts_by_subgraph.get(subgraph_name).map(|t| {
+                    resolve_duration_prog(
+                        t.value(),
+                        subgraph_name,
+                        client_request,
+                        &self.global_timeout,
+                    )
+                });
                 match timeout {
                     Some(Ok(dur)) => executor.execute(execution_request, Some(dur)).await,
                     Some(Err(err)) => {
@@ -411,9 +422,46 @@ impl SubgraphExecutorMap {
     }
 }
 
-fn resolve_duration_prog(
+/// Converts a VRL value to a Duration
+fn vrl_value_to_duration(value: VrlValue, name: &str) -> Result<Duration, SubgraphExecutorError> {
+    match value {
+        VrlValue::Integer(i) => {
+            if i < 0 {
+                return Err(SubgraphExecutorError::TimeoutExpressionResolution(
+                    name.to_string(),
+                    "Timeout expression resolved to a negative integer".to_string(),
+                ));
+            }
+            Ok(std::time::Duration::from_millis(i as u64))
+        }
+        VrlValue::Bytes(b) => {
+            let s = std::str::from_utf8(&b).map_err(|e| {
+                SubgraphExecutorError::TimeoutExpressionResolution(
+                    name.to_string(),
+                    format!("Failed to parse duration string from bytes: {}", e),
+                )
+            })?;
+            Ok(humantime::parse_duration(s).map_err(|e| {
+                SubgraphExecutorError::TimeoutExpressionResolution(
+                    name.to_string(),
+                    format!("Failed to parse duration string '{}': {}", s, e),
+                )
+            })?)
+        }
+        other => Err(SubgraphExecutorError::TimeoutExpressionResolution(
+            name.to_string(),
+            format!(
+                "Timeout expression resolved to an unexpected type: {}. Expected a non-negative integer (ms) or a human-readable duration string.",
+                other.kind()
+            ),
+        )),
+    }
+}
+
+/// Resolves a global timeout DurationOrProgram to a concrete Duration.
+/// Global timeout programs only receive request context, no default value.
+fn resolve_global_timeout(
     duration_or_program: &DurationOrProgram,
-    subgraph_name: &str,
     client_request: &ClientRequestDetails<'_, '_>,
 ) -> Result<Duration, SubgraphExecutorError> {
     match duration_or_program {
@@ -423,54 +471,43 @@ fn resolve_duration_prog(
                 VrlValue::Object(BTreeMap::from([("request".into(), client_request.into())]));
             let result = execute_expression_with_value(program, value).map_err(|err| {
                 SubgraphExecutorError::TimeoutExpressionResolution(
+                    "global".to_string(),
+                    err.to_string(),
+                )
+            })?;
+            vrl_value_to_duration(result, "global")
+        }
+    }
+}
+
+/// Resolves a subgraph-specific timeout DurationOrProgram to a concrete Duration.
+/// Subgraph timeout programs receive request context and the resolved global timeout as default.
+fn resolve_duration_prog(
+    duration_or_program: &DurationOrProgram,
+    subgraph_name: &str,
+    client_request: &ClientRequestDetails<'_, '_>,
+    global_timeout: &DurationOrProgram,
+) -> Result<Duration, SubgraphExecutorError> {
+    match duration_or_program {
+        DurationOrProgram::Duration(dur) => Ok(*dur),
+        DurationOrProgram::Program(program) => {
+            // First resolve the global timeout to a concrete duration
+            let global_timeout_duration = resolve_global_timeout(global_timeout, client_request)?;
+
+            let value = VrlValue::Object(BTreeMap::from([
+                ("request".into(), client_request.into()),
+                (
+                    "default".into(),
+                    VrlValue::Integer(global_timeout_duration.as_millis() as i64),
+                ),
+            ]));
+            let result = execute_expression_with_value(program, value).map_err(|err| {
+                SubgraphExecutorError::TimeoutExpressionResolution(
                     subgraph_name.to_string(),
                     err.to_string(),
                 )
             })?;
-            match result {
-                VrlValue::Integer(i) => {
-                    if i < 0 {
-                        return Err(SubgraphExecutorError::TimeoutExpressionResolution(
-                            subgraph_name.to_string(),
-                            "Timeout expression resolved to a negative integer".to_string(),
-                        ));
-                    }
-                    Ok(std::time::Duration::from_millis(i as u64))
-                }
-                VrlValue::Float(f) => {
-                    let f = f.into_inner();
-                    if f < 0.0 {
-                        return Err(SubgraphExecutorError::TimeoutExpressionResolution(
-                            subgraph_name.to_string(),
-                            "Timeout expression resolved to a negative float".to_string(),
-                        ));
-                    }
-                    Ok(std::time::Duration::from_millis(f as u64))
-                }
-                VrlValue::Bytes(b) => {
-                    let s = std::str::from_utf8(&b).map_err(|e| {
-                        SubgraphExecutorError::TimeoutExpressionResolution(
-                            subgraph_name.to_string(),
-                            format!("Failed to parse duration string from bytes: {}", e),
-                        )
-                    })?;
-                    Ok(humantime::parse_duration(s).map_err(|e| {
-                        SubgraphExecutorError::TimeoutExpressionResolution(
-                            subgraph_name.to_string(),
-                            format!("Failed to parse duration string '{}': {}", s, e),
-                        )
-                    })?)
-                }
-                other => {
-                    Err(SubgraphExecutorError::TimeoutExpressionResolution(
-                                subgraph_name.to_string(),
-                            format!(
-                                "Timeout expression resolved to an unexpected type: {}. Expected a non-negative integer/float (ms) or a duration string.",
-                                other.kind()
-                            ),
-                        ))
-                }
-            }
+            vrl_value_to_duration(result, subgraph_name)
         }
     }
 }
