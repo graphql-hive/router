@@ -56,7 +56,7 @@ jsonwebtoken = { version = "10.0.0", features = ["rust_crypto"] }
 ntex = { version = "2", features = ["tokio"] }
 reqwest = "0.12.23"
 retry-policies = "0.4.0"
-reqwest-retry = "0.7.0"
+reqwest-retry = "0.8.0"
 reqwest-middleware = "0.4.2"
 vrl = { version = "0.28.0", features = ["compiler", "parser", "value", "diagnostic", "stdlib", "core"] }
 regex-automata = "0.4.10"
