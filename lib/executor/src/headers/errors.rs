@@ -24,6 +24,8 @@ pub enum HeaderRuleRuntimeError {
     ExpressionEvaluation(String, Box<ExpressionError>),
     #[error("Invalid header value for header '{0}'.")]
     BadHeaderValue(String),
+    #[error("Failed to convert VRL value to header value for '{0}': {1}")]
+    ValueConversion(String, String),
 }
 
 impl HeaderRuleCompileError {
@@ -35,5 +37,9 @@ impl HeaderRuleCompileError {
 impl HeaderRuleRuntimeError {
     pub fn new_expression_evaluation(header_name: String, error: Box<ExpressionError>) -> Self {
         HeaderRuleRuntimeError::ExpressionEvaluation(header_name, error)
+    }
+
+    pub fn new_value_conversion(header_name: String, reason: String) -> Self {
+        HeaderRuleRuntimeError::ValueConversion(header_name, reason)
     }
 }

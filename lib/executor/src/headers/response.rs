@@ -1,5 +1,6 @@
 use std::iter::once;
 
+use crate::expressions::ExecutableProgram;
 use crate::{
     execution::client_request_details::ClientRequestDetails,
     headers::{
@@ -13,7 +14,6 @@ use crate::{
         },
         sanitizer::is_denied_header,
     },
-    utils::expression::execute_expression_with_value,
 };
 
 use super::sanitizer::is_never_join_header;
@@ -189,8 +189,11 @@ impl ApplyResponseHeader for ResponseInsertExpression {
         if is_denied_header(&self.name) {
             return Ok(());
         }
-        let value = execute_expression_with_value(&self.expression, ctx.into()).map_err(|err| {
-            HeaderRuleRuntimeError::new_expression_evaluation(self.name.to_string(), Box::new(err))
+        let value = self.expression.execute(ctx.into()).map_err(|err| {
+            HeaderRuleRuntimeError::new_expression_evaluation(
+                self.name.to_string(),
+                Box::new(err.0),
+            )
         })?;
         if let Some(header_value) = vrl_value_to_header_value(value) {
             let strategy = if is_never_join_header(&self.name) {

@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, BytesMut};
 use dashmap::DashMap;
 use hive_router_config::{
     override_subgraph_urls::UrlOrExpression, traffic_shaping::DurationOrExpression,
@@ -18,7 +18,7 @@ use hyper_util::{
 };
 use tokio::sync::{OnceCell, Semaphore};
 use tracing::error;
-use vrl::{compiler::Program as VrlProgram, core::Value as VrlValue};
+use vrl::core::Value as VrlValue;
 
 use crate::{
     execution::client_request_details::ClientRequestDetails,
@@ -28,20 +28,17 @@ use crate::{
             SubgraphExecutorBoxedArc,
         },
         dedupe::{ABuildHasher, SharedResponse},
-        duration_or_prog::{compile_duration_expression, DurationOrProgram},
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClient},
     },
+    expressions::{CompileExpression, DurationOrProgram, StringOrProgram},
     response::graphql_error::GraphQLError,
-    utils::expression::{compile_expression, execute_expression_with_value},
 };
 
 type SubgraphName = String;
-type SubgraphEndpoint = String;
-type ExecutorsBySubgraphMap =
-    DashMap<SubgraphName, DashMap<SubgraphEndpoint, SubgraphExecutorBoxedArc>>;
-type EndpointsBySubgraphMap = DashMap<SubgraphName, SubgraphEndpoint>;
-type EndpointExpressionsBySubgraphMap = HashMap<SubgraphName, VrlProgram>;
+type EndpointOrProgram = StringOrProgram;
+type ExecutorsBySubgraphMap = DashMap<SubgraphName, DashMap<String, SubgraphExecutorBoxedArc>>;
+type EndpointsBySubgraphMap = DashMap<SubgraphName, EndpointOrProgram>;
 type TimeoutsBySubgraph = DashMap<SubgraphName, DurationOrProgram>;
 
 struct ResolvedSubgraphConfig<'a> {
@@ -53,10 +50,8 @@ struct ResolvedSubgraphConfig<'a> {
 pub struct SubgraphExecutorMap {
     executors_by_subgraph: ExecutorsBySubgraphMap,
     /// Mapping from subgraph name to endpoint for quick lookup
-    /// based on supergrah sdl and static overrides from router's config.
-    static_endpoints_by_subgraph: EndpointsBySubgraphMap,
-    /// Mapping from subgraph name to VRL expression program for endpoint resolution.
-    endpoint_expressions_by_subgraph: EndpointExpressionsBySubgraphMap,
+    /// Can be either a static URL or a VRL expression that computes the endpoint
+    endpoints_by_subgraph: EndpointsBySubgraphMap,
     timeouts_by_subgraph: TimeoutsBySubgraph,
     global_timeout: DurationOrProgram,
     config: Arc<HiveRouterConfig>,
@@ -79,8 +74,7 @@ impl SubgraphExecutorMap {
 
         SubgraphExecutorMap {
             executors_by_subgraph: Default::default(),
-            static_endpoints_by_subgraph: Default::default(),
-            endpoint_expressions_by_subgraph: Default::default(),
+            endpoints_by_subgraph: Default::default(),
             config,
             client: Arc::new(client),
             semaphores_by_origin: Default::default(),
@@ -92,41 +86,49 @@ impl SubgraphExecutorMap {
     }
 
     pub fn from_http_endpoint_map(
-        subgraph_endpoint_map: HashMap<SubgraphName, SubgraphEndpoint>,
+        subgraph_endpoint_map: HashMap<SubgraphName, String>,
         config: Arc<HiveRouterConfig>,
     ) -> Result<Self, SubgraphExecutorError> {
         let global_timeout =
-            compile_duration_expression(&config.traffic_shaping.all.request_timeout, None)
-                .map_err(|err| {
-                    SubgraphExecutorError::RequestTimeoutExpressionBuild("global".to_string(), err)
-                })?;
-        let mut subgraph_executor_map = SubgraphExecutorMap::new(config.clone(), global_timeout);
+            DurationOrProgram::compile(&config.traffic_shaping.all.request_timeout, None).map_err(
+                |err| {
+                    SubgraphExecutorError::RequestTimeoutExpressionBuild(
+                        "global".to_string(),
+                        err.diagnostics,
+                    )
+                },
+            )?;
+        let subgraph_executor_map = SubgraphExecutorMap::new(config.clone(), global_timeout);
 
         for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.into_iter() {
-            let endpoint_str = config
+            let endpoint_config = config
                 .override_subgraph_urls
                 .get_subgraph_url(&subgraph_name);
 
-            let endpoint_str = match endpoint_str {
-                Some(UrlOrExpression::Url(url)) => url,
+            let endpoint_or_prog = match endpoint_config {
+                Some(UrlOrExpression::Url(url)) => StringOrProgram::Value(url.clone()),
                 Some(UrlOrExpression::Expression { expression }) => {
-                    subgraph_executor_map
-                        .register_endpoint_expression(&subgraph_name, expression)?;
-                    &original_endpoint_str
+                    let program = expression.compile_expression(None).map_err(|err| {
+                        SubgraphExecutorError::EndpointExpressionBuild(
+                            subgraph_name.to_string(),
+                            err.diagnostics,
+                        )
+                    })?;
+                    StringOrProgram::Program(Box::new(program))
                 }
-                None => &original_endpoint_str,
+                None => StringOrProgram::Value(original_endpoint_str.clone()),
             };
 
-            let timeout_config = config
-                .traffic_shaping
-                .subgraphs
-                .get(&subgraph_name)
-                .and_then(|s| s.request_timeout.as_ref())
-                .unwrap_or(&config.traffic_shaping.all.request_timeout);
-            subgraph_executor_map.register_timeout_if_absent(&subgraph_name, timeout_config)?;
+            subgraph_executor_map
+                .endpoints_by_subgraph
+                .insert(subgraph_name.to_string(), endpoint_or_prog);
 
-            subgraph_executor_map.register_executor(&subgraph_name, endpoint_str)?;
-            subgraph_executor_map.register_static_endpoint(&subgraph_name, endpoint_str);
+            subgraph_executor_map
+                .register_executor(&subgraph_name, &original_endpoint_str)
+                .ok();
+
+            // Register the timeout configuration for this subgraph
+            subgraph_executor_map.register_subgraph_timeout(&subgraph_name)?;
         }
 
         Ok(subgraph_executor_map)
@@ -140,24 +142,30 @@ impl SubgraphExecutorMap {
     ) -> HttpExecutionResponse {
         match self.get_or_create_executor(subgraph_name, client_request) {
             Ok(Some(executor)) => {
-                let timeout = self.timeouts_by_subgraph.get(subgraph_name).map(|t| {
-                    resolve_duration_prog(
-                        t.value(),
-                        subgraph_name,
-                        client_request,
-                        &self.global_timeout,
-                    )
-                });
+                let timeout = self
+                    .timeouts_by_subgraph
+                    .get(subgraph_name)
+                    .map(|t| {
+                        let global_timeout_duration =
+                            resolve_timeout(&self.global_timeout, client_request, None, "global")?;
+                        resolve_timeout(
+                            t.value(),
+                            client_request,
+                            Some(global_timeout_duration),
+                            subgraph_name,
+                        )
+                    })
+                    .transpose();
+
                 match timeout {
-                    Some(Ok(dur)) => executor.execute(execution_request, Some(dur)).await,
-                    Some(Err(err)) => {
+                    Ok(timeout) => executor.execute(execution_request, timeout).await,
+                    Err(err) => {
                         error!(
                             "Failed to resolve timeout for subgraph '{}': {}",
                             subgraph_name, err,
                         );
                         self.internal_server_error_response(err.into(), subgraph_name)
                     }
-                    None => executor.execute(execution_request, None).await,
                 }
             }
             Err(err) => {
@@ -195,134 +203,78 @@ impl SubgraphExecutorMap {
         }
     }
 
-    /// Looks up a subgraph executor based on the subgraph name.
-    /// Looks for an expression first, falling back to a static endpoint.
-    /// If nothing is found, returns None.
+    /// Looks up or creates a subgraph executor based on the subgraph name.
+    /// Resolves the endpoint URL (static or from expression) and creates an executor if needed.
     fn get_or_create_executor(
         &self,
         subgraph_name: &str,
         client_request: &ClientRequestDetails<'_, '_>,
     ) -> Result<Option<SubgraphExecutorBoxedArc>, SubgraphExecutorError> {
-        let from_expression =
-            self.get_or_create_executor_from_expression(subgraph_name, client_request)?;
+        // Resolve the endpoint URL (static or from expression)
+        let endpoint_url = match self.resolve_endpoint(subgraph_name, client_request) {
+            Ok(url) => url,
+            Err(err) => {
+                error!(
+                    "Failed to resolve endpoint for subgraph '{}': {}",
+                    subgraph_name, err
+                );
+                return Err(err);
+            }
+        };
 
-        if from_expression.is_some() {
-            return Ok(from_expression);
+        // Check if executor exists
+        if let Some(executor) = self.get_executor_from_endpoint(subgraph_name, &endpoint_url) {
+            return Ok(Some(executor));
         }
 
-        Ok(self.get_executor_from_static_endpoint(subgraph_name))
+        // Create executor if it doesn't exist
+        self.register_executor(subgraph_name, &endpoint_url)?;
+        Ok(self.get_executor_from_endpoint(subgraph_name, &endpoint_url))
     }
 
-    /// Looks up a subgraph executor,
-    /// or creates one if a VRL expression is defined for the subgraph.
-    /// The expression is resolved to get the endpoint URL,
-    /// and a new executor is created and stored for future requests.
-    fn get_or_create_executor_from_expression(
+    /// Resolves the endpoint URL for a subgraph, which can be either static or computed via expression
+    fn resolve_endpoint(
         &self,
         subgraph_name: &str,
         client_request: &ClientRequestDetails<'_, '_>,
-    ) -> Result<Option<SubgraphExecutorBoxedArc>, SubgraphExecutorError> {
-        if let Some(expression) = self.endpoint_expressions_by_subgraph.get(subgraph_name) {
-            let original_url_value = VrlValue::Bytes(Bytes::from(
-                self.static_endpoints_by_subgraph
-                    .get(subgraph_name)
-                    .map(|endpoint| endpoint.value().clone())
-                    .ok_or_else(|| {
-                        SubgraphExecutorError::StaticEndpointNotFound(subgraph_name.to_string())
-                    })?,
-            ));
-            let value = VrlValue::Object(BTreeMap::from([
-                ("request".into(), client_request.into()),
-                ("original_url".into(), original_url_value),
-            ]));
+    ) -> Result<String, SubgraphExecutorError> {
+        let endpoint_or_prog = self
+            .endpoints_by_subgraph
+            .get(subgraph_name)
+            .ok_or_else(|| {
+                SubgraphExecutorError::StaticEndpointNotFound(subgraph_name.to_string())
+            })?;
 
-            // Resolve the expression to get an endpoint URL.
-            let endpoint_result =
-                execute_expression_with_value(expression, value).map_err(|err| {
-                    SubgraphExecutorError::new_endpoint_expression_resolution_failure(
-                        subgraph_name.to_string(),
-                        err,
-                    )
-                })?;
-            let endpoint_str = match endpoint_result.as_str() {
-                Some(s) => s.to_string(),
-                None => {
-                    return Err(SubgraphExecutorError::EndpointExpressionWrongType(
-                        subgraph_name.to_string(),
-                    ));
-                }
-            };
+        let context = VrlValue::Object(BTreeMap::from([("request".into(), client_request.into())]));
 
-            // Check if an executor for this endpoint already exists.
-            let existing_executor = self
-                .executors_by_subgraph
-                .get(subgraph_name)
-                .and_then(|endpoints| endpoints.get(&endpoint_str).map(|e| e.clone()));
-
-            if let Some(executor) = existing_executor {
-                return Ok(Some(executor));
-            }
-
-            // If not, create and register a new one.
-            self.register_executor(subgraph_name, &endpoint_str)?;
-
-            let endpoints = self
-                .executors_by_subgraph
-                .get(subgraph_name)
-                .expect("Executor was just registered, should be present");
-            return Ok(endpoints.get(&endpoint_str).map(|e| e.clone()));
-        }
-
-        Ok(None)
+        endpoint_or_prog.value().resolve(context).map_err(|err| {
+            SubgraphExecutorError::EndpointExpressionResolutionFailure(
+                subgraph_name.to_string(),
+                err.to_string(),
+            )
+        })
     }
 
-    /// Looks up a subgraph executor based on a static endpoint URL.
-    fn get_executor_from_static_endpoint(
+    /// Looks up a subgraph executor for a given endpoint URL.
+    /// Returns None if no executor exists for this endpoint.
+    #[inline]
+    fn get_executor_from_endpoint(
         &self,
         subgraph_name: &str,
+        endpoint_str: &str,
     ) -> Option<SubgraphExecutorBoxedArc> {
-        self.static_endpoints_by_subgraph
+        self.executors_by_subgraph
             .get(subgraph_name)
-            .and_then(|endpoint_ref| {
-                let endpoint_str = endpoint_ref.value();
-                self.executors_by_subgraph
-                    .get(subgraph_name)
-                    .and_then(|endpoints| endpoints.get(endpoint_str).map(|e| e.clone()))
-            })
-    }
-
-    /// Registers a VRL expression for the given subgraph name.
-    /// The expression can later be used to resolve the endpoint URL cheaply,
-    /// without needing to recompile it every time.
-    fn register_endpoint_expression(
-        &mut self,
-        subgraph_name: &str,
-        expression: &str,
-    ) -> Result<(), SubgraphExecutorError> {
-        let program = compile_expression(expression, None).map_err(|err| {
-            SubgraphExecutorError::EndpointExpressionBuild(subgraph_name.to_string(), err)
-        })?;
-        self.endpoint_expressions_by_subgraph
-            .insert(subgraph_name.to_string(), program);
-
-        Ok(())
-    }
-
-    /// Registers a static endpoint for the given subgraph name.
-    /// This is used for quick lookup when no expression is defined
-    /// or when resolving the expression (to have the original URL available there).
-    fn register_static_endpoint(&self, subgraph_name: &str, endpoint_str: &str) {
-        self.static_endpoints_by_subgraph
-            .insert(subgraph_name.to_string(), endpoint_str.to_string());
+            .and_then(|endpoints| endpoints.get(endpoint_str).map(|e| e.clone()))
     }
 
     /// Registers a new HTTP subgraph executor for the given subgraph name and endpoint URL.
-    /// It makes it availble for future requests.
+    /// It makes it available for future requests.
     fn register_executor(
         &self,
         subgraph_name: &str,
         endpoint_str: &str,
-    ) -> Result<(), SubgraphExecutorError> {
+    ) -> Result<SubgraphExecutorBoxedArc, SubgraphExecutorError> {
         let endpoint_uri = endpoint_str.parse::<Uri>().map_err(|e| {
             SubgraphExecutorError::EndpointParseFailure(endpoint_str.to_string(), e.to_string())
         })?;
@@ -357,12 +309,13 @@ impl SubgraphExecutorMap {
             self.in_flight_requests.clone(),
         );
 
+        let executor_arc = executor.to_boxed_arc();
         self.executors_by_subgraph
             .entry(subgraph_name.to_string())
             .or_default()
-            .insert(endpoint_str.to_string(), executor.to_boxed_arc());
+            .insert(endpoint_str.to_string(), executor_arc.clone());
 
-        Ok(())
+        Ok(executor_arc)
     }
 
     /// Resolves traffic shaping configuration for a specific subgraph, applying subgraph-specific
@@ -401,20 +354,33 @@ impl SubgraphExecutorMap {
         config
     }
 
-    /// Compiles and caches the timeout configuration for the given subgraph if not already registered
-    fn register_timeout_if_absent(
-        &self,
-        subgraph_name: &str,
-        timeout_config: &hive_router_config::traffic_shaping::DurationOrExpression,
-    ) -> Result<(), SubgraphExecutorError> {
+    /// Compiles and registers a timeout for a specific subgraph.
+    /// If the subgraph has a custom timeout configuration, it will be used.
+    /// Otherwise, the global timeout configuration will be used.
+    fn register_subgraph_timeout(&self, subgraph_name: &str) -> Result<(), SubgraphExecutorError> {
+        // Check if this subgraph already has a timeout registered
         if self.timeouts_by_subgraph.contains_key(subgraph_name) {
             return Ok(());
         }
 
-        let timeout_prog = compile_duration_expression(timeout_config, None).map_err(|err| {
-            SubgraphExecutorError::RequestTimeoutExpressionBuild(subgraph_name.to_string(), err)
+        // Get the timeout configuration for this subgraph, or fall back to global
+        let timeout_config = self
+            .config
+            .traffic_shaping
+            .subgraphs
+            .get(subgraph_name)
+            .and_then(|s| s.request_timeout.as_ref())
+            .unwrap_or(&self.config.traffic_shaping.all.request_timeout);
+
+        // Compile the timeout configuration into a DurationOrProgram
+        let timeout_prog = DurationOrProgram::compile(timeout_config, None).map_err(|err| {
+            SubgraphExecutorError::RequestTimeoutExpressionBuild(
+                subgraph_name.to_string(),
+                err.diagnostics,
+            )
         })?;
 
+        // Register the compiled timeout
         self.timeouts_by_subgraph
             .insert(subgraph_name.to_string(), timeout_prog);
 
@@ -422,92 +388,30 @@ impl SubgraphExecutorMap {
     }
 }
 
-/// Converts a VRL value to a Duration
-fn vrl_value_to_duration(value: VrlValue, name: &str) -> Result<Duration, SubgraphExecutorError> {
-    match value {
-        VrlValue::Integer(i) => {
-            if i < 0 {
-                return Err(SubgraphExecutorError::TimeoutExpressionResolution(
-                    name.to_string(),
-                    "Timeout expression resolved to a negative integer".to_string(),
-                ));
-            }
-            Ok(std::time::Duration::from_millis(i as u64))
-        }
-        VrlValue::Bytes(b) => {
-            let s = std::str::from_utf8(&b).map_err(|e| {
-                SubgraphExecutorError::TimeoutExpressionResolution(
-                    name.to_string(),
-                    format!("Failed to parse duration string from bytes: {}", e),
-                )
-            })?;
-            Ok(humantime::parse_duration(s).map_err(|e| {
-                SubgraphExecutorError::TimeoutExpressionResolution(
-                    name.to_string(),
-                    format!("Failed to parse duration string '{}': {}", s, e),
-                )
-            })?)
-        }
-        other => Err(SubgraphExecutorError::TimeoutExpressionResolution(
-            name.to_string(),
-            format!(
-                "Timeout expression resolved to an unexpected type: {}. Expected a non-negative integer (ms) or a human-readable duration string.",
-                other.kind()
-            ),
-        )),
-    }
-}
-
-/// Resolves a global timeout DurationOrProgram to a concrete Duration.
-/// Global timeout programs only receive request context, no default value.
-fn resolve_global_timeout(
+/// Resolves a timeout DurationOrProgram to a concrete Duration.
+/// Optionally includes a default timeout value in the VRL context.
+fn resolve_timeout(
     duration_or_program: &DurationOrProgram,
     client_request: &ClientRequestDetails<'_, '_>,
+    default_timeout: Option<Duration>,
+    timeout_name: &str,
 ) -> Result<Duration, SubgraphExecutorError> {
-    match duration_or_program {
-        DurationOrProgram::Duration(dur) => Ok(*dur),
-        DurationOrProgram::Program(program) => {
-            let value =
-                VrlValue::Object(BTreeMap::from([("request".into(), client_request.into())]));
-            let result = execute_expression_with_value(program, value).map_err(|err| {
-                SubgraphExecutorError::TimeoutExpressionResolution(
-                    "global".to_string(),
-                    err.to_string(),
-                )
-            })?;
-            vrl_value_to_duration(result, "global")
-        }
-    }
-}
+    let mut context_map = BTreeMap::new();
+    context_map.insert("request".into(), client_request.into());
 
-/// Resolves a subgraph-specific timeout DurationOrProgram to a concrete Duration.
-/// Subgraph timeout programs receive request context and the resolved global timeout as default.
-fn resolve_duration_prog(
-    duration_or_program: &DurationOrProgram,
-    subgraph_name: &str,
-    client_request: &ClientRequestDetails<'_, '_>,
-    global_timeout: &DurationOrProgram,
-) -> Result<Duration, SubgraphExecutorError> {
-    match duration_or_program {
-        DurationOrProgram::Duration(dur) => Ok(*dur),
-        DurationOrProgram::Program(program) => {
-            // First resolve the global timeout to a concrete duration
-            let global_timeout_duration = resolve_global_timeout(global_timeout, client_request)?;
-
-            let value = VrlValue::Object(BTreeMap::from([
-                ("request".into(), client_request.into()),
-                (
-                    "default".into(),
-                    VrlValue::Integer(global_timeout_duration.as_millis() as i64),
-                ),
-            ]));
-            let result = execute_expression_with_value(program, value).map_err(|err| {
-                SubgraphExecutorError::TimeoutExpressionResolution(
-                    subgraph_name.to_string(),
-                    err.to_string(),
-                )
-            })?;
-            vrl_value_to_duration(result, subgraph_name)
-        }
+    if let Some(default) = default_timeout {
+        context_map.insert(
+            "default".into(),
+            VrlValue::Integer(default.as_millis() as i64),
+        );
     }
+
+    let context = VrlValue::Object(context_map);
+
+    duration_or_program.resolve(context).map_err(|err| {
+        SubgraphExecutorError::TimeoutExpressionResolution(
+            timeout_name.to_string(),
+            err.to_string(),
+        )
+    })
 }

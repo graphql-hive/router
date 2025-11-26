@@ -2,6 +2,7 @@ use http::HeaderMap;
 
 use crate::{
     execution::client_request_details::ClientRequestDetails,
+    expressions::ExecutableProgram,
     headers::{
         errors::HeaderRuleRuntimeError,
         expression::vrl_value_to_header_value,
@@ -11,7 +12,6 @@ use crate::{
         },
         sanitizer::{is_denied_header, is_never_join_header},
     },
-    utils::expression::execute_expression_with_value,
 };
 
 pub fn modify_subgraph_request_headers(
@@ -167,8 +167,11 @@ impl ApplyRequestHeader for RequestInsertExpression {
         if is_denied_header(&self.name) {
             return Ok(());
         }
-        let value = execute_expression_with_value(&self.expression, ctx.into()).map_err(|err| {
-            HeaderRuleRuntimeError::new_expression_evaluation(self.name.to_string(), Box::new(err))
+        let value = self.expression.execute(ctx.into()).map_err(|err| {
+            HeaderRuleRuntimeError::new_expression_evaluation(
+                self.name.to_string(),
+                Box::new(err.0),
+            )
         })?;
 
         if let Some(header_value) = vrl_value_to_header_value(value) {

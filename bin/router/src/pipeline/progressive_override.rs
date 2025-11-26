@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use hive_router_config::override_labels::{LabelOverrideValue, OverrideLabelsConfig};
 use hive_router_plan_executor::{
-    execution::client_request_details::ClientRequestDetails, utils::expression::compile_expression,
+    execution::client_request_details::ClientRequestDetails, expressions::CompileExpression,
 };
 use hive_router_query_planner::{
     graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
@@ -135,7 +135,7 @@ impl OverrideLabelsEvaluator {
                     static_enabled_labels.insert(label.clone());
                 }
                 LabelOverrideValue::Expression { expression } => {
-                    let program = compile_expression(expression, None).map_err(|err| {
+                    let program = expression.compile_expression(None).map_err(|err| {
                         OverrideLabelsCompileError {
                             label: label.clone(),
                             error: err.to_string(),
