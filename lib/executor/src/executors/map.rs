@@ -379,13 +379,16 @@ impl SubgraphExecutorMap {
 
         // Override client only if pool idle timeout is customized
         if let Some(pool_idle_timeout) = subgraph_config.pool_idle_timeout {
-            config.client = Arc::new(
-                Client::builder(TokioExecutor::new())
-                    .pool_timer(TokioTimer::new())
-                    .pool_idle_timeout(pool_idle_timeout)
-                    .pool_max_idle_per_host(self.max_connections_per_host)
-                    .build(HttpsConnector::new()),
-            );
+            // Only override if it's different from the global setting
+            if pool_idle_timeout != self.config.traffic_shaping.all.pool_idle_timeout {
+                config.client = Arc::new(
+                    Client::builder(TokioExecutor::new())
+                        .pool_timer(TokioTimer::new())
+                        .pool_idle_timeout(pool_idle_timeout)
+                        .pool_max_idle_per_host(self.max_connections_per_host)
+                        .build(HttpsConnector::new()),
+                );
+            }
         }
 
         // Apply other subgraph-specific overrides
