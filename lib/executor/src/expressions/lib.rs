@@ -1,6 +1,5 @@
 use once_cell::sync::Lazy;
 use std::collections::BTreeMap;
-use std::fmt::Debug;
 use std::time::Duration;
 
 use hive_router_config::traffic_shaping::DurationOrExpression;
@@ -13,7 +12,10 @@ use vrl::{
     value::Secrets as VrlSecrets,
 };
 
-use crate::expressions::error::{ExpressionCompileError, ExpressionExecutionError};
+use crate::expressions::{
+    error::{ExpressionCompileError, ExpressionExecutionError},
+    ProgramResolutionError,
+};
 
 static VRL_FUNCTIONS: Lazy<Vec<Box<dyn Function>>> = Lazy::new(vrl::stdlib::all);
 static VRL_TIMEZONE: Lazy<VrlTimeZone> = Lazy::new(VrlTimeZone::default);
@@ -87,18 +89,8 @@ impl ExecutableProgram for VrlProgram {
         let mut state = VrlState::default();
         let mut ctx = VrlContext::new(&mut target, &mut state, &VRL_TIMEZONE);
 
-        self.resolve(&mut ctx).map_err(ExpressionExecutionError)
+        Ok(self.resolve(&mut ctx)?)
     }
-}
-
-/// Errors that can occur during program resolution
-#[derive(Debug, thiserror::Error)]
-pub enum ProgramResolutionError<T: std::error::Error> {
-    #[error("Failed to execute expression: {0}")]
-    ExecutionFailed(#[source] ExpressionExecutionError),
-
-    #[error("Failed to convert result: {0}")]
-    ConversionFailed(#[source] T),
 }
 
 /// Generic enum for a value that can be either static or computed via VRL expression

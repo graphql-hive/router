@@ -1,3 +1,5 @@
+use std::string::FromUtf8Error;
+
 use crate::expressions::{FromVrlValue, ValueOrProgram};
 use vrl::core::Value as VrlValue;
 
@@ -9,8 +11,8 @@ pub type StringOrProgram = ValueOrProgram<String>;
 /// Error type for String conversion failures
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum StringConversionError {
-    #[error("Failed to convert bytes to UTF-8 string: {reason}")]
-    InvalidUtf8 { reason: String },
+    #[error("Failed to convert bytes to UTF-8 string: {0}")]
+    InvalidUtf8(#[from] FromUtf8Error),
 
     #[error("Cannot convert {type_name} to string")]
     UnsupportedType { type_name: String },
@@ -22,11 +24,7 @@ impl FromVrlValue for String {
     #[inline]
     fn from_vrl_value(value: VrlValue) -> Result<Self, Self::Error> {
         match value {
-            VrlValue::Bytes(b) => {
-                String::from_utf8(b.to_vec()).map_err(|e| StringConversionError::InvalidUtf8 {
-                    reason: e.to_string(),
-                })
-            }
+            VrlValue::Bytes(b) => Ok(String::from_utf8(b.to_vec())?),
             VrlValue::Integer(i) => Ok(i.to_string()),
             VrlValue::Float(f) => Ok(f.to_string()),
             VrlValue::Boolean(b) => Ok(if b { "true" } else { "false" }.to_string()),
