@@ -129,8 +129,7 @@ where
                     .execute(vrl_context)
                     .map_err(ProgramResolutionError::ExecutionFailed)?;
 
-                T::from_vrl_value(result_value)
-                    .map_err(ProgramResolutionError::ConversionFailed)
+                T::from_vrl_value(result_value).map_err(ProgramResolutionError::ConversionFailed)
             }
         }
     }
