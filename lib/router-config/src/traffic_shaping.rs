@@ -138,7 +138,7 @@ pub enum DurationOrExpression {
     )]
     #[schemars(with = "String")]
     Duration(Duration),
-    /// A VRL expression that evaluates to a duration. The result can be an integer (milliseconds), a float (milliseconds), or a duration string (e.g. "5s").
+    /// A VRL expression that evaluates to a duration. The result can be an integer (milliseconds) or a duration string (e.g. "5s").
     Expression { expression: String },
 }
 
