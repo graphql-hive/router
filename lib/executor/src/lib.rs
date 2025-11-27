@@ -1,6 +1,7 @@
 pub mod context;
 pub mod execution;
 pub mod executors;
+pub mod expressions;
 pub mod headers;
 pub mod introspection;
 pub mod json_writer;

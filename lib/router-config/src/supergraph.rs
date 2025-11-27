@@ -23,6 +23,7 @@ pub enum SupergraphSource {
             deserialize_with = "humantime_serde::deserialize",
             serialize_with = "humantime_serde::serialize"
         )]
+        #[schemars(with = "String")]
         poll_interval: Option<Duration>,
     },
     /// Loads a supergraph from Hive Console CDN.
@@ -44,6 +45,7 @@ pub enum SupergraphSource {
             deserialize_with = "humantime_serde::deserialize",
             serialize_with = "humantime_serde::serialize"
         )]
+        #[schemars(with = "String")]
         poll_interval: Duration,
         /// Request timeout for the Hive Console CDN requests.
         #[serde(
@@ -51,6 +53,7 @@ pub enum SupergraphSource {
             deserialize_with = "humantime_serde::deserialize",
             serialize_with = "humantime_serde::serialize"
         )]
+        #[schemars(with = "String")]
         request_timeout: Duration,
         /// Connect timeout for the Hive Console CDN requests.
         #[serde(
@@ -58,6 +61,7 @@ pub enum SupergraphSource {
             deserialize_with = "humantime_serde::deserialize",
             serialize_with = "humantime_serde::serialize"
         )]
+        #[schemars(with = "String")]
         connect_timeout: Duration,
         /// Whether to accept invalid TLS certificates when connecting to the Hive Console CDN.
         #[serde(default = "default_accept_invalid_certs")]

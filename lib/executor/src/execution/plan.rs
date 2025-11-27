@@ -19,7 +19,7 @@ use crate::{
         rewrites::FetchRewriteExt,
     },
     executors::{
-        common::{HttpExecutionRequest, HttpExecutionResponse},
+        common::{HttpExecutionResponse, SubgraphExecutionRequest},
         map::SubgraphExecutorMap,
     },
     headers::{
@@ -703,7 +703,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         let variable_refs =
             select_fetch_variables(self.variable_values, node.variable_usages.as_ref());
 
-        let mut subgraph_request = HttpExecutionRequest {
+        let mut subgraph_request = SubgraphExecutionRequest {
             query: node.operation.document_str.as_str(),
             dedupe: self.dedupe_subgraph_requests,
             operation_name: node.operation_name.as_deref(),

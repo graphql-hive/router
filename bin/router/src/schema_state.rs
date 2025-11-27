@@ -54,7 +54,7 @@ pub enum SupergraphManagerError {
     PlannerBuilderError(#[from] PlannerError),
     #[error("Failed to build authorization: {0}")]
     AuthorizationMetadataError(#[from] AuthorizationMetadataError),
-    #[error("Failed to init executor: {0}")]
+    #[error(transparent)]
     ExecutorInitError(#[from] SubgraphExecutorError),
     #[error("Unexpected: failed to load initial supergraph")]
     FailedToLoadInitialSupergraph,

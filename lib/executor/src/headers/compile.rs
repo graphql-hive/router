@@ -1,4 +1,5 @@
 use crate::{
+    expressions::CompileExpression,
     headers::{
         errors::HeaderRuleCompileError,
         plan::{
@@ -10,7 +11,6 @@ use crate::{
             ResponseRemoveRegex,
         },
     },
-    utils::expression::compile_expression,
 };
 
 use hive_router_config::headers as config;
@@ -53,8 +53,8 @@ impl HeaderRuleCompiler<Vec<RequestHeaderRule>> for config::RequestHeaderRule {
                     }));
                 }
                 config::InsertSource::Expression { expression } => {
-                    let program = compile_expression(expression, None).map_err(|err| {
-                        HeaderRuleCompileError::ExpressionBuild(rule.name.clone(), err)
+                    let program = expression.compile_expression(None).map_err(|err| {
+                        HeaderRuleCompileError::ExpressionBuild(rule.name.clone(), err.diagnostics)
                     })?;
                     actions.push(RequestHeaderRule::InsertExpression(
                         RequestInsertExpression {
@@ -127,8 +127,11 @@ impl HeaderRuleCompiler<Vec<ResponseHeaderRule>> for config::ResponseHeaderRule 
                         // - compilation_result.program.info().target_assignments
                         // - compilation_result.program.info().target_queries
                         // to determine what parts of the context are actually needed by the expression
-                        let program = compile_expression(expression, None).map_err(|err| {
-                            HeaderRuleCompileError::ExpressionBuild(rule.name.clone(), err)
+                        let program = expression.compile_expression(None).map_err(|err| {
+                            HeaderRuleCompileError::ExpressionBuild(
+                                rule.name.clone(),
+                                err.diagnostics,
+                            )
                         })?;
                         actions.push(ResponseHeaderRule::InsertExpression(
                             ResponseInsertExpression {

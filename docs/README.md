@@ -16,7 +16,7 @@
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
-|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"dedupe_enabled":true,"max_connections_per_host":100,"pool_idle_timeout":"50s"}`<br/>||
+|[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -113,9 +113,11 @@ query_planner:
   timeout: 10s
 supergraph: {}
 traffic_shaping:
-  dedupe_enabled: true
+  all:
+    dedupe_enabled: true
+    pool_idle_timeout: 50s
+    request_timeout: 30s
   max_connections_per_host: 100
-  pool_idle_timeout: 50s
 
 ```
 
@@ -1744,7 +1746,7 @@ The path can be either absolute or relative to the router's working directory.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**path**|`string`|The path to the supergraph file.<br/><br/>Can also be set using the `SUPERGRAPH_FILE_PATH` environment variable.<br/>Format: `"path"`<br/>|yes|
-|[**poll\_interval**](#option1poll_interval)|`object`, `null`|Optional interval at which the file should be polled for changes.<br/>|yes|
+|**poll\_interval**|`string`|Optional interval at which the file should be polled for changes.<br/>If not provided, the file will only be loaded once when the router starts.<br/>|no|
 |**source**|`string`|Constant Value: `"file"`<br/>|yes|
 
 **Additional Properties:** not allowed  
@@ -1766,11 +1768,11 @@ Loads a supergraph from Hive Console CDN.
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
 |**accept\_invalid\_certs**|`boolean`|Whether to accept invalid TLS certificates when connecting to the Hive Console CDN.<br/>Default: `false`<br/>|no|
-|[**connect\_timeout**](#option2connect_timeout)|`object`|Connect timeout for the Hive Console CDN requests.<br/>Default: `"10s"`<br/>|yes|
+|**connect\_timeout**|`string`|Connect timeout for the Hive Console CDN requests.<br/>Default: `"10s"`<br/>|no|
 |**endpoint**|`string`|The CDN endpoint from Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.<br/>|yes|
 |**key**|`string`|The CDN Access Token with from the Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_KEY` environment variable.<br/>|yes|
-|[**poll\_interval**](#option2poll_interval)|`object`|Interval at which the Hive Console should be polled for changes.<br/>Default: `"10s"`<br/>|yes|
-|[**request\_timeout**](#option2request_timeout)|`object`|Request timeout for the Hive Console CDN requests.<br/>Default: `"1m"`<br/>|yes|
+|**poll\_interval**|`string`|Interval at which the Hive Console should be polled for changes.<br/><br/>Can also be set using the `HIVE_CDN_POLL_INTERVAL` environment variable.<br/>Default: `"10s"`<br/>|no|
+|**request\_timeout**|`string`|Request timeout for the Hive Console CDN requests.<br/>Default: `"1m"`<br/>|no|
 |[**retry\_policy**](#option2retry_policy)|`object`|Interval at which the Hive Console should be polled for changes.<br/>Default: `{"max_retries":10}`<br/>|yes|
 |**source**|`string`|Constant Value: `"hive"`<br/>|yes|
 
@@ -1787,89 +1789,6 @@ retry_policy:
 
 ```
 
-
-<a name="option1poll_interval"></a>
-## Option 1: poll\_interval: object,null
-
-Optional interval at which the file should be polled for changes.
-If not provided, the file will only be loaded once when the router starts.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**nanos**|`integer`|Format: `"uint32"`<br/>Minimum: `0`<br/>|yes|
-|**secs**|`integer`|Format: `"uint64"`<br/>Minimum: `0`<br/>|yes|
-
-**Example**
-
-```yaml
-{}
-
-```
-
-<a name="option2connect_timeout"></a>
-## Option 2: connect\_timeout: object
-
-Connect timeout for the Hive Console CDN requests.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**nanos**|`integer`|Format: `"uint32"`<br/>Minimum: `0`<br/>|yes|
-|**secs**|`integer`|Format: `"uint64"`<br/>Minimum: `0`<br/>|yes|
-
-**Example**
-
-```yaml
-10s
-
-```
-
-<a name="option2poll_interval"></a>
-## Option 2: poll\_interval: object
-
-Interval at which the Hive Console should be polled for changes.
-
-Can also be set using the `HIVE_CDN_POLL_INTERVAL` environment variable.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**nanos**|`integer`|Format: `"uint32"`<br/>Minimum: `0`<br/>|yes|
-|**secs**|`integer`|Format: `"uint64"`<br/>Minimum: `0`<br/>|yes|
-
-**Example**
-
-```yaml
-10s
-
-```
-
-<a name="option2request_timeout"></a>
-## Option 2: request\_timeout: object
-
-Request timeout for the Hive Console CDN requests.
-
-
-**Properties**
-
-|Name|Type|Description|Required|
-|----|----|-----------|--------|
-|**nanos**|`integer`|Format: `"uint32"`<br/>Minimum: `0`<br/>|yes|
-|**secs**|`integer`|Format: `"uint64"`<br/>Minimum: `0`<br/>|yes|
-
-**Example**
-
-```yaml
-1m
-
-```
 
 <a name="option2retry_policy"></a>
 ## Option 2: retry\_policy: object
@@ -1902,18 +1821,68 @@ Configuration for the traffic-shaping of the executor. Use these configurations 
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**dedupe\_enabled**|`boolean`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>Default: `true`<br/>||
+|[**all**](#traffic_shapingall)|`object`|The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.<br/>Default: `{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"}`<br/>||
 |**max\_connections\_per\_host**|`integer`|Limits the concurrent amount of requests/connections per host/subgraph.<br/>Default: `100`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|[**subgraphs**](#traffic_shapingsubgraphs)|`object`|Optional per-subgraph configurations that will override the default configuration for specific subgraphs.<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+all:
+  dedupe_enabled: true
+  pool_idle_timeout: 50s
+  request_timeout: 30s
+max_connections_per_host: 100
+
+```
+
+<a name="traffic_shapingall"></a>
+### traffic\_shaping\.all: object
+
+The default configuration that will be applied to all subgraphs, unless overridden by a specific subgraph configuration.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**dedupe\_enabled**|`boolean`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>Default: `true`<br/>||
 |**pool\_idle\_timeout**|`string`|Timeout for idle sockets being kept-alive.<br/>Default: `"50s"`<br/>||
+|**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>Default: `"30s"`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
 dedupe_enabled: true
-max_connections_per_host: 100
 pool_idle_timeout: 50s
+request_timeout: 30s
 
 ```
 
+<a name="traffic_shapingsubgraphs"></a>
+### traffic\_shaping\.subgraphs: object
+
+Optional per-subgraph configurations that will override the default configuration for specific subgraphs.
+
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**Additional Properties**](#traffic_shapingsubgraphsadditionalproperties)|`object`|||
+
+<a name="traffic_shapingsubgraphsadditionalproperties"></a>
+#### traffic\_shaping\.subgraphs\.additionalProperties: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**dedupe\_enabled**|`boolean`, `null`|Enables/disables request deduplication to subgraphs.<br/><br/>When requests exactly matches the hashing mechanism (e.g., subgraph name, URL, headers, query, variables), and are executed at the same time, they will<br/>be deduplicated by sharing the response of other in-flight requests.<br/>||
+|**pool\_idle\_timeout**|`string`, `null`|Timeout for idle sockets being kept-alive.<br/>||
+|**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>||
+
+**Additional Properties:** not allowed  
 
