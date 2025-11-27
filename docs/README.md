@@ -105,7 +105,7 @@ override_subgraph_urls:
                 } else if .request.headers."x-region" == "eu-west" {
                     "https://products-eu-west.example.com/graphql"
                 } else {
-                  .original_url
+                  .default
                 }
             
 query_planner:
@@ -1691,7 +1691,7 @@ products:
               } else if .request.headers."x-region" == "eu-west" {
                   "https://products-eu-west.example.com/graphql"
               } else {
-                .original_url
+                .default
               }
           
 
@@ -1704,7 +1704,7 @@ products:
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**url**||Overrides for the URL of the subgraph.<br/><br/>For convenience, a plain string in your configuration will be treated as a static URL.<br/><br/>### Static URL Example<br/>```yaml<br/>url: "https://api.example.com/graphql"<br/>```<br/><br/>### Dynamic Expression Example<br/><br/>The expression has access to the following variables:<br/>- `request`: The incoming HTTP request, including headers and other metadata.<br/>- `original_url`: The original URL of the subgraph (from supergraph sdl).<br/><br/>```yaml<br/>url:<br/>  expression: \|<br/>    if .request.headers."x-region" == "us-east" {<br/>      "https://products-us-east.example.com/graphql"<br/>    } else if .request.headers."x-region" == "eu-west" {<br/>      "https://products-eu-west.example.com/graphql"<br/>    } else {<br/>      .original_url<br/>    }<br/>|yes|
+|**url**||Overrides for the URL of the subgraph.<br/><br/>For convenience, a plain string in your configuration will be treated as a static URL.<br/><br/>### Static URL Example<br/>```yaml<br/>url: "https://api.example.com/graphql"<br/>```<br/><br/>### Dynamic Expression Example<br/><br/>The expression has access to the following variables:<br/>- `request`: The incoming HTTP request, including headers and other metadata.<br/>- `default`: The original URL of the subgraph (from supergraph sdl).<br/><br/>```yaml<br/>url:<br/>  expression: \|<br/>    if .request.headers."x-region" == "us-east" {<br/>      "https://products-us-east.example.com/graphql"<br/>    } else if .request.headers."x-region" == "eu-west" {<br/>      "https://products-eu-west.example.com/graphql"<br/>    } else {<br/>      .default<br/>    }<br/>|yes|
 
 <a name="query_planner"></a>
 ## query\_planner: object

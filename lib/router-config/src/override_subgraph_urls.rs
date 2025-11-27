@@ -32,7 +32,7 @@ pub struct PerSubgraphConfig {
     ///
     /// The expression has access to the following variables:
     /// - `request`: The incoming HTTP request, including headers and other metadata.
-    /// - `original_url`: The original URL of the subgraph (from supergraph sdl).
+    /// - `default`: The original URL of the subgraph (from supergraph sdl).
     ///
     /// ```yaml
     /// url:
@@ -42,7 +42,7 @@ pub struct PerSubgraphConfig {
     ///     } else if .request.headers."x-region" == "eu-west" {
     ///       "https://products-eu-west.example.com/graphql"
     ///     } else {
-    ///       .original_url
+    ///       .default
     ///     }
     pub url: UrlOrExpression,
 }
@@ -62,7 +62,7 @@ fn override_subgraph_urls_example_1() -> OverrideSubgraphUrlsConfig {
         } else if .request.headers."x-region" == "eu-west" {
             "https://products-eu-west.example.com/graphql"
         } else {
-          .original_url
+          .default
         }
     "#;
     let mut subgraphs = HashMap::new();
