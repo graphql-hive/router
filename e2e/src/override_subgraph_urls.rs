@@ -43,7 +43,7 @@ mod override_subgraph_urls_e2e_tests {
     /// The router config overrides the URL for the "accounts" subgraph to point to 4100
     /// when a specific header is present.
     /// This way we can verify that the override is applied correctly.
-    /// Without the header, the request goes to 4200 and fail (thanks to `.original_url`).
+    /// Without the header, the request goes to 4200 and fail (thanks to `.default`).
     async fn should_override_subgraph_url_based_on_header_value() {
         let subgraphs_server = SubgraphsServer::start_with_port(4100).await;
         let app = init_router_from_config_file(
@@ -68,7 +68,7 @@ mod override_subgraph_urls_e2e_tests {
             "expected 1 request to accounts subgraph"
         );
 
-        // Makes the expression to evaluate to port 4200 (value of .original_url)
+        // Makes the expression to evaluate to port 4200 (value of .default)
         // which is not running, so the request fails
         let req = init_graphql_request("{ users { id } }", None);
         let resp = test::call_service(&app.app, req.to_request()).await;
