@@ -13,7 +13,7 @@ use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_plan_executor::plugin_trait::ControlFlowResult;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
-use hive_router_query_planner::planner::{PlannerError};
+use hive_router_query_planner::planner::PlannerError;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
 use xxhash_rust::xxh3::Xxh3;
 

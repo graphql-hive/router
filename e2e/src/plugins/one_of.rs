@@ -47,15 +47,6 @@
 
 use std::{collections::BTreeMap, sync::RwLock};
 
-use hive_router_plan_executor::{
-    execution::plan::PlanExecutionOutput,
-    hooks::{
-        on_execute::{OnExecuteEndPayload, OnExecuteStartPayload},
-        on_graphql_validation::{OnGraphQLValidationEndPayload, OnGraphQLValidationStartPayload},
-        on_supergraph_load::{OnSupergraphLoadEndPayload, OnSupergraphLoadStartPayload},
-    },
-    plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
-};
 use graphql_parser::{
     query::Value,
     schema::{Definition, TypeDefinition},
@@ -67,6 +58,15 @@ use graphql_tools::{
         rules::ValidationRule,
         utils::{ValidationError, ValidationErrorContext},
     },
+};
+use hive_router_plan_executor::{
+    execution::plan::PlanExecutionOutput,
+    hooks::{
+        on_execute::{OnExecuteEndPayload, OnExecuteStartPayload},
+        on_graphql_validation::{OnGraphQLValidationEndPayload, OnGraphQLValidationStartPayload},
+        on_supergraph_load::{OnSupergraphLoadEndPayload, OnSupergraphLoadStartPayload},
+    },
+    plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
 use serde::Deserialize;
 use sonic_rs::{json, JsonContainerTrait};

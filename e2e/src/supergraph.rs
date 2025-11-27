@@ -29,14 +29,17 @@ mod supergraph_e2e_tests {
             .with_body("type Query { dummyNew: NewType } type NewType { id: ID! }")
             .create();
 
-        let test_app = init_router_from_config_inline(&format!(
-            r#"supergraph:
+        let test_app = init_router_from_config_inline(
+            &format!(
+                r#"supergraph:
               source: hive
               endpoint: http://{host}/supergraph
               key: dummy_key
               poll_interval: 500ms
         "#,
-        ), None)
+            ),
+            None,
+        )
         .await
         .expect("failed to start router");
 
@@ -191,14 +194,17 @@ mod supergraph_e2e_tests {
             .create();
 
         let test_app = Arc::new(
-            init_router_from_config_inline(&format!(
-                r#"supergraph:
+            init_router_from_config_inline(
+                &format!(
+                    r#"supergraph:
               source: hive
               endpoint: http://{host}/supergraph
               key: dummy_key
               poll_interval: 300ms
         "#,
-            ), None)
+                ),
+                None,
+            )
             .await
             .expect("failed to start router"),
         );

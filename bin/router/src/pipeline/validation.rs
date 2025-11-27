@@ -46,7 +46,7 @@ pub async fn validate_operation_with_cache(
             let mut on_end_callbacks = vec![];
             let document = &parser_payload.parsed_operation;
             let errors = if let Some(plugin_req_state) = plugin_req_state.as_ref() {
-            /* Handle on_graphql_validate hook in the plugins - START */
+                /* Handle on_graphql_validate hook in the plugins - START */
                 let mut start_payload = OnGraphQLValidationStartPayload::new(
                     plugin_req_state,
                     consumer_schema_ast,
@@ -77,11 +77,7 @@ pub async fn validate_operation_with_cache(
                     ),
                 }
             } else {
-                validate(
-                    consumer_schema_ast,
-                    document,
-                    &app_state.validation_plan,
-                )
+                validate(consumer_schema_ast, document, &app_state.validation_plan)
             };
 
             let mut end_payload = OnGraphQLValidationEndPayload { errors };

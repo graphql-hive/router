@@ -20,7 +20,7 @@ pub struct PropagateStatusCodePluginConfig {
 impl RouterPluginWithConfig for PropagateStatusCodePlugin {
     type Config = PropagateStatusCodePluginConfig;
     fn plugin_name() -> &'static str {
-        "propagate_status_code_plugin"
+        "propagate_status_code"
     }
     fn from_config(config: PropagateStatusCodePluginConfig) -> Option<Self> {
         if !config.enabled {
@@ -85,5 +85,96 @@ impl RouterPlugin for PropagateStatusCodePlugin {
             }
             payload.cont()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[ntex::test]
+    async fn propagates_highest_status_code() {
+        let mut subgraphs_server = mockito::Server::new_async().await;
+        let accounts_mock_207 = subgraphs_server
+            .mock("POST", "/accounts")
+            .with_status(207)
+            .with_body(r#"{"data": {"users": [{"id": "1"}]}}"#)
+            .create_async()
+            .await;
+        let products_mock_206 = subgraphs_server
+            .mock("POST", "/products")
+            .with_status(206)
+            .with_body(r#"{"data": {"topProducts": [{"upc": "a"}]}}"#)
+            .create_async()
+            .await;
+        let app = crate::testkit::init_router_from_config_inline(
+            &format!(
+                r#"
+                override_subgraph_urls:
+                    accounts:
+                        url: http://{}/accounts
+                    products:
+                        url: http://{}/products
+                plugins:
+                  propagate_status_code:
+                    enabled: true
+                    status_codes: [206, 207]
+            "#,
+                subgraphs_server.host_with_port(),
+                subgraphs_server.host_with_port()
+            ),
+            Some(hive_router::PluginRegistry::new().register::<super::PropagateStatusCodePlugin>()),
+        )
+        .await
+        .expect("failed to start router");
+        crate::testkit::wait_for_readiness(&app.app).await;
+
+        let req =
+            crate::testkit::init_graphql_request("{ users { id } topProducts { upc } }", None);
+        let resp = ntex::web::test::call_service(&app.app, req.to_request()).await;
+        assert_eq!(resp.status().as_u16(), 207);
+        accounts_mock_207.assert_async().await;
+        products_mock_206.assert_async().await;
+    }
+    #[ntex::test]
+    async fn ignores_unlisted_status_codes() {
+        let mut subgraphs_server = mockito::Server::new_async().await;
+        let accounts_mock_208 = subgraphs_server
+            .mock("POST", "/accounts")
+            .with_status(208)
+            .with_body(r#"{"data": {"users": [{"id": "1"}]}}"#)
+            .create_async()
+            .await;
+        let products_mock_209 = subgraphs_server
+            .mock("POST", "/products")
+            .with_status(209)
+            .with_body(r#"{"data": {"topProducts": [{"upc": "a"}]}}"#)
+            .create_async()
+            .await;
+        let app = crate::testkit::init_router_from_config_inline(
+            &format!(
+                r#"
+                override_subgraph_urls:
+                    accounts:
+                        url: http://{}/accounts
+                    products:
+                        url: http://{}/products
+                plugins:
+                  propagate_status_code:
+                    enabled: true
+                    status_codes: [208]
+            "#,
+                subgraphs_server.host_with_port(),
+                subgraphs_server.host_with_port()
+            ),
+            Some(hive_router::PluginRegistry::new().register::<super::PropagateStatusCodePlugin>()),
+        )
+        .await
+        .expect("failed to start router");
+        crate::testkit::wait_for_readiness(&app.app).await;
+        let req =
+            crate::testkit::init_graphql_request("{ users { id } topProducts { upc } }", None);
+        let resp = ntex::web::test::call_service(&app.app, req.to_request()).await;
+        assert_eq!(resp.status().as_u16(), 208);
+        accounts_mock_208.assert_async().await;
+        products_mock_209.assert_async().await;
     }
 }

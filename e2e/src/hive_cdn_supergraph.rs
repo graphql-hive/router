@@ -24,13 +24,16 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_body(include_str!("../supergraph.graphql"))
             .create();
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
+        let app = init_router_from_config_inline(
+            &format!(
+                r#"supergraph:
                 source: hive
                 endpoint: http://{host}/supergraph
                 key: dummy_key
           "#,
-        ), None)
+            ),
+            None,
+        )
         .await
         .expect("failed to start router");
 
@@ -77,14 +80,17 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_status(304)
             .create();
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
+        let app = init_router_from_config_inline(
+            &format!(
+                r#"supergraph:
               source: hive
               endpoint: http://{host}/supergraph
               key: dummy_key
               poll_interval: 100ms
         "#,
-        ), None)
+            ),
+            None,
+        )
         .await
         .expect("failed to start router");
 
@@ -135,14 +141,17 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_status(304)
             .create();
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
+        let app = init_router_from_config_inline(
+            &format!(
+                r#"supergraph:
               source: hive
               endpoint: http://{host}/supergraph
               key: dummy_key
               poll_interval: 100ms
         "#,
-        ), None)
+            ),
+            None,
+        )
         .await
         .expect("failed to start router");
 
@@ -199,14 +208,17 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_body(include_str!("../supergraph.graphql"))
             .create();
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
+        let app = init_router_from_config_inline(
+            &format!(
+                r#"supergraph:
               source: hive
               endpoint: http://{host}/supergraph
               key: dummy_key
               poll_interval: 800ms
         "#,
-        ), None)
+            ),
+            None,
+        )
         .await
         .expect("failed to start router");
 
@@ -276,8 +288,9 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_body("type Query { dummy: String }")
             .create();
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
+        let app = init_router_from_config_inline(
+            &format!(
+                r#"supergraph:
               source: hive
               endpoint: http://{host}/supergraph
               key: dummy_key
@@ -285,7 +298,9 @@ mod hive_cdn_supergraph_e2e_tests {
               retry_policy:
                 max_retries: 10
         "#,
-        ), None)
+            ),
+            None,
+        )
         .await
         .expect("failed to start router");
 
@@ -304,8 +319,9 @@ mod hive_cdn_supergraph_e2e_tests {
             .with_status(500)
             .create();
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
+        let app = init_router_from_config_inline(
+            &format!(
+                r#"supergraph:
               source: hive
               endpoint: http://{host}/supergraph
               key: dummy_key
@@ -313,7 +329,9 @@ mod hive_cdn_supergraph_e2e_tests {
               retry_policy:
                 max_retries: 3
         "#,
-        ), None)
+            ),
+            None,
+        )
         .await
         .expect("failed to start router");
 

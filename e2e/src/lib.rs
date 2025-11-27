@@ -7,10 +7,10 @@ mod jwt;
 #[cfg(test)]
 mod override_subgraph_urls;
 #[cfg(test)]
+mod plugins;
+#[cfg(test)]
 mod probes;
 #[cfg(test)]
 mod supergraph;
 #[cfg(test)]
 mod testkit;
-#[cfg(test)]
-mod plugins;

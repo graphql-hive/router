@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use hive_router_config::HiveRouterConfig;
 use hive_router_plan_executor::plugin_trait::{RouterPlugin, RouterPluginWithConfig};
 use serde_json::Value;
-use tracing::{info, warn};
+use tracing::info;
 
 pub struct PluginRegistry {
     map: HashMap<
@@ -20,13 +20,23 @@ impl Default for PluginRegistry {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum PluginRegistryError {
+    #[error("Failed to initialize plugin '{0}': {1}")]
+    Config(String, serde_json::Error),
+    #[error(
+        "Plugin '{0}' is not registered in the registry but is specified in the configuration"
+    )]
+    MissingInRegistry(String),
+}
+
 impl PluginRegistry {
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
         }
     }
-    pub fn register<P: RouterPluginWithConfig + Send + Sync + 'static>(mut self)  -> Self {
+    pub fn register<P: RouterPluginWithConfig + Send + Sync + 'static>(mut self) -> Self {
         self.map.insert(
             P::plugin_name(),
             Box::new(|plugin_config: Value| {
@@ -37,12 +47,12 @@ impl PluginRegistry {
                 }
             }),
         );
-        return self;
+        self
     }
     pub fn initialize_plugins(
         &self,
         router_config: &HiveRouterConfig,
-    ) -> Vec<Box<dyn RouterPlugin + Send + Sync>> {
+    ) -> Result<Option<Vec<Box<dyn RouterPlugin + Send + Sync>>>, PluginRegistryError> {
         let mut plugins: Vec<Box<dyn RouterPlugin + Send + Sync>> = vec![];
 
         for (plugin_name, plugin_config_value) in router_config.plugins.iter() {
@@ -56,19 +66,18 @@ impl PluginRegistry {
                         }
                     }
                     Err(err) => {
-                        warn!(
-                            "Failed to load plugin '{}': {}, skipping plugin",
-                            plugin_name, err
-                        );
+                        return Err(PluginRegistryError::Config(plugin_name.clone(), err));
                     }
                 }
             } else {
-                warn!(
-                    "No plugin found registered '{}', skipping plugin",
-                    plugin_name
-                );
+                return Err(PluginRegistryError::MissingInRegistry(plugin_name.clone()));
             }
         }
-        plugins
+
+        if plugins.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(plugins))
+        }
     }
 }

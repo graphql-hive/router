@@ -1,4 +1,4 @@
-use hive_router::{router_entrypoint};
+use hive_router::router_entrypoint;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

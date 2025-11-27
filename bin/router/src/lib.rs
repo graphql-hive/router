@@ -128,8 +128,10 @@ pub async fn configure_app_from_config(
         false => None,
     };
 
-    let plugins = 
-        plugin_registry.map(|plugin_registry| plugin_registry.initialize_plugins(&router_config));
+    let plugins = match plugin_registry {
+        Some(plugin_registry) => plugin_registry.initialize_plugins(&router_config)?,
+        None => None,
+    };
 
     let router_config_arc = Arc::new(router_config);
     let shared_state = Arc::new(RouterSharedState::new(

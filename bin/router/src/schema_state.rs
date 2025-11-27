@@ -90,7 +90,6 @@ impl SchemaState {
                 let mut on_end_callbacks = vec![];
 
                 if let Some(plugins) = app_state.plugins.as_ref() {
-
                     let mut start_payload = OnSupergraphLoadStartPayload {
                         current_supergraph_data: swappable_data_spawn_clone.clone(),
                         new_ast,
@@ -112,7 +111,6 @@ impl SchemaState {
                     }
                     new_ast = start_payload.new_ast;
                 }
-
 
                 match Self::build_data(router_config.clone(), &new_ast, app_state.plugins.clone()) {
                     Ok(new_supergraph_data) => {

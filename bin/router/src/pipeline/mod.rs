@@ -115,7 +115,6 @@ pub async fn graphql_request_handler(
         });
     }
 
-
     let response = execute_pipeline(
         req,
         body_bytes,
@@ -126,6 +125,7 @@ pub async fn graphql_request_handler(
         plugin_req_state,
     )
     .await?;
+    let response_status = response.status;
     let response_bytes = Bytes::from(response.body);
     let response_headers = response.headers;
 
@@ -138,6 +138,7 @@ pub async fn graphql_request_handler(
 
     Ok(response_builder
         .header(http::header::CONTENT_TYPE, response_content_type)
+        .status(response_status)
         .body(response_bytes))
 }
 
@@ -160,12 +161,13 @@ pub async fn execute_pipeline(
     let mut graphql_params = None;
     let mut body = body;
     if let Some(plugin_req_state) = plugin_req_state.as_ref() {
-        let mut deserialization_payload: OnGraphQLParamsStartPayload = OnGraphQLParamsStartPayload {
-            router_http_request: &plugin_req_state.router_http_request,
-            context: &plugin_req_state.context,
-            body,
-            graphql_params: None,
-        };
+        let mut deserialization_payload: OnGraphQLParamsStartPayload =
+            OnGraphQLParamsStartPayload {
+                router_http_request: &plugin_req_state.router_http_request,
+                context: &plugin_req_state.context,
+                body,
+                graphql_params: None,
+            };
         for plugin in plugin_req_state.plugins.as_ref() {
             let result = plugin.on_graphql_params(deserialization_payload).await;
             deserialization_payload = result.payload;
@@ -183,8 +185,7 @@ pub async fn execute_pipeline(
         body = deserialization_payload.body;
     }
     let mut graphql_params = graphql_params.unwrap_or_else(|| {
-        deserialize_graphql_params(req, body)
-            .expect("Failed to parse execution request")
+        deserialize_graphql_params(req, body).expect("Failed to parse execution request")
     });
 
     if let Some(plugin_req_state) = &plugin_req_state {
@@ -208,7 +209,7 @@ pub async fn execute_pipeline(
         }
         graphql_params = payload.graphql_params;
     }
-    
+
     /* Handle on_deserialize hook in the plugins - END */
 
     let parser_result =

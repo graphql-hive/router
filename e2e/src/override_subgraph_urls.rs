@@ -15,7 +15,8 @@ mod override_subgraph_urls_e2e_tests {
     async fn should_override_subgraph_url_based_on_static_value() {
         let subgraphs_server = SubgraphsServer::start_with_port(4100).await;
         let app = init_router_from_config_file(
-            "configs/override_subgraph_urls/override_static.router.yaml", None,
+            "configs/override_subgraph_urls/override_static.router.yaml",
+            None,
         )
         .await
         .unwrap();

@@ -1,7 +1,17 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
+use bollard::{
+    container::StartContainerOptions,
+    exec::{CreateExecOptions, StartExecResults},
+    image,
+    query_parameters::CreateImageOptionsBuilder,
+    secret::{ContainerCreateBody, ContainerCreateResponse, CreateImageInfo, HostConfig, PortMap},
+    Docker,
+};
+use futures_util::TryStreamExt;
 use hive_router::{
-    PluginRegistry, RouterSharedState, SchemaState, background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app, plugins::plugins_service::PluginService
+    background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
+    plugins::plugins_service::PluginService, PluginRegistry, RouterSharedState, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use ntex::{
@@ -183,8 +193,7 @@ pub async fn init_router_from_config(
 > {
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let (shared_state, schema_state) =
-        configure_app_from_config(router_config, &mut bg_tasks_manager, plugin_registry)
-            .await?;
+        configure_app_from_config(router_config, &mut bg_tasks_manager, plugin_registry).await?;
 
     let ntex_app = test::init_service(
         web::App::new()
@@ -206,5 +215,137 @@ pub async fn init_router_from_config(
 impl<T> Drop for TestRouterApp<T> {
     fn drop(&mut self) {
         self.bg_tasks_manager.shutdown();
+    }
+}
+
+#[derive(Default)]
+pub struct TestDockerContainerOpts {
+    pub name: String,
+    pub image: String,
+    pub ports: HashMap<u16, u16>,
+    pub env: Vec<String>,
+}
+
+pub struct TestDockerContainer {
+    docker: Docker,
+    image: Vec<CreateImageInfo>,
+    container: ContainerCreateResponse,
+}
+
+impl TestDockerContainer {
+    pub async fn async_new(opts: TestDockerContainerOpts) -> Result<Self, bollard::errors::Error> {
+        let docker =
+            Docker::connect_with_local_defaults().expect("Failed to connect to Docker daemon");
+        let mut port_bindings = PortMap::new();
+        for (container_port, host_port) in opts.ports.iter() {
+            port_bindings.insert(
+                format!("{}/tcp", container_port),
+                Some(vec![bollard::models::PortBinding {
+                    host_port: Some(host_port.to_string()),
+                    ..Default::default()
+                }]),
+            );
+        }
+        let image: Vec<CreateImageInfo> = docker
+            .create_image(
+                Some(
+                    CreateImageOptionsBuilder::default()
+                        .from_image(&opts.image)
+                        .build(),
+                ),
+                None,
+                None,
+            )
+            .try_collect()
+            .await
+            .expect("Failed to pull the image");
+        let container_exists = docker
+            .list_containers(Some(bollard::container::ListContainersOptions::<String> {
+                all: true,
+                ..Default::default()
+            }))
+            .await?
+            .into_iter()
+            .any(|c| {
+                c.names
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|name| name.trim_start_matches('/').eq(&opts.name))
+            });
+        if container_exists {
+            docker
+                .remove_container(
+                    &opts.name,
+                    Some(bollard::query_parameters::RemoveContainerOptions {
+                        force: true,
+                        ..Default::default()
+                    }),
+                )
+                .await
+                .expect("Failed to remove existing container");
+        }
+        let container = docker
+            .create_container(
+                Some(
+                    bollard::query_parameters::CreateContainerOptionsBuilder::default()
+                        .name(&opts.name)
+                        .build(),
+                ),
+                ContainerCreateBody {
+                    image: Some(opts.image.to_string()),
+                    host_config: Some(HostConfig {
+                        port_bindings: Some(port_bindings),
+                        ..Default::default()
+                    }),
+                    env: Some(opts.env),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("Failed to create the container");
+        docker
+            .start_container(&container.id, None::<StartContainerOptions<String>>)
+            .await
+            .expect("Failed to start the container");
+        Ok(Self {
+            docker,
+            image,
+            container,
+        })
+    }
+    pub async fn exec(&self, cmd: Vec<&str>) -> Result<(), bollard::errors::Error> {
+        let exec = self
+            .docker
+            .create_exec(
+                &self.container.id,
+                CreateExecOptions {
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    cmd: Some(cmd),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        match self.docker.start_exec(&exec.id, None).await? {
+            StartExecResults::Attached { mut output, .. } => {
+                while let Some(msg) = output.try_next().await? {
+                    print!("{}", msg);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    pub async fn stop(&self) {
+        self.docker
+            .remove_container(
+                &self.container.id,
+                Some(bollard::query_parameters::RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .expect("Failed to remove the container");
     }
 }

@@ -1,8 +1,7 @@
-use std::path::PathBuf;
-
 // From https://github.com/apollographql/router/blob/dev/examples/async-auth/rust/src/allow_client_id_from_file.rs
 use serde::Deserialize;
 use sonic_rs::json;
+use std::path::PathBuf;
 
 use hive_router_plan_executor::{
     execution::plan::PlanExecutionOutput,
@@ -82,7 +81,7 @@ impl RouterPlugin for AllowClientIdFromFilePlugin {
                         }
                     }
                     Err(_not_a_string_error) => {
-                        let message = format!("'{}' value is not a string", self.header_key);
+                        let message = format!("'{}' value is not a string", &self.header_key);
                         tracing::error!(message);
                         let body = json!(
                             {
@@ -105,7 +104,7 @@ impl RouterPlugin for AllowClientIdFromFilePlugin {
                 }
             }
             None => {
-                let message = format!("Missing '{}' header", self.header_key);
+                let message = format!("Missing '{}' header", &self.header_key);
                 tracing::error!(message);
                 let body = json!(
                     {
@@ -127,5 +126,90 @@ impl RouterPlugin for AllowClientIdFromFilePlugin {
             }
         }
         payload.cont()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testkit::{
+        init_graphql_request, init_router_from_config_inline, wait_for_readiness, SubgraphsServer,
+    };
+
+    use hive_router::PluginRegistry;
+    use ntex::web::test;
+    use serde_json::Value;
+    #[ntex::test]
+    async fn should_allow_only_allowed_client_ids() {
+        SubgraphsServer::start().await;
+
+        let app = init_router_from_config_inline(
+            r#"
+            plugins:
+              allow_client_id_from_file:
+                enabled: true
+                path: "./src/plugins/allowed_clients.json"
+                header: "x-client-id"
+            "#,
+            Some(PluginRegistry::new().register::<super::AllowClientIdFromFilePlugin>()),
+        )
+        .await
+        .expect("Router should initialize successfully");
+        wait_for_readiness(&app.app).await;
+        // Test with an allowed client id
+        let req = init_graphql_request("{ users { id } }", None).header("x-client-id", "urql");
+        let resp = test::call_service(&app.app, req.to_request()).await;
+        let status = resp.status();
+        assert!(status.is_success(), "Expected 200 OK for allowed client id");
+        // Test with a disallowed client id
+        let req = init_graphql_request("{ users { id } }", None)
+            .header("x-client-id", "forbidden-client");
+        let resp = test::call_service(&app.app, req.to_request()).await;
+        assert_eq!(
+            resp.status(),
+            http::StatusCode::FORBIDDEN,
+            "Expected 403 FORBIDDEN for disallowed client id"
+        );
+        let body_bytes = test::read_body(resp).await;
+        let body_json: Value =
+            serde_json::from_slice(&body_bytes).expect("Response body should be valid JSON");
+        assert_eq!(
+            body_json,
+            serde_json::json!({
+                "errors": [
+                    {
+                        "message": "client-id is not allowed",
+                        "extensions": {
+                            "code": "UNAUTHORIZED_CLIENT_ID"
+                        }
+                    }
+                ]
+            }),
+            "Expected error message for disallowed client id"
+        );
+        // Test with missing client id
+        let req = init_graphql_request("{ users { id } }", None);
+        let resp = test::call_service(&app.app, req.to_request()).await;
+        assert_eq!(
+            resp.status(),
+            http::StatusCode::UNAUTHORIZED,
+            "Expected 401 UNAUTHORIZED for missing client id"
+        );
+        let body_bytes = test::read_body(resp).await;
+        let body_json: Value =
+            serde_json::from_slice(&body_bytes).expect("Response body should be valid JSON");
+        assert_eq!(
+            body_json,
+            serde_json::json!({
+                "errors": [
+                    {
+                        "message": "Missing 'x-client-id' header",
+                        "extensions": {
+                            "code": "AUTH_ERROR"
+                        }
+                    }
+                ]
+            }),
+            "Expected error message for missing client id"
+        );
     }
 }

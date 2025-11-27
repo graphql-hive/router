@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use bytes::Bytes;
+use dashmap::DashMap;
 use hive_router_plan_executor::{
     executors::common::HttpExecutionResponse,
     hooks::{
@@ -10,8 +12,6 @@ use hive_router_plan_executor::{
     },
     plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
-use bytes::Bytes;
-use dashmap::DashMap;
 use multer::Multipart;
 use serde::{Deserialize, Serialize};
 
@@ -42,7 +42,7 @@ struct MultipartOperations<'a> {
 impl RouterPluginWithConfig for MultipartPlugin {
     type Config = MultipartPluginConfig;
     fn plugin_name() -> &'static str {
-        "multipart_plugin"
+        "multipart"
     }
     fn from_config(config: MultipartPluginConfig) -> Option<Self> {
         if config.enabled {

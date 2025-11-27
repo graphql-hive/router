@@ -154,7 +154,7 @@ impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
         let mut errors = exec_ctx.errors;
         let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
-        if on_end_callbacks.len() > 0 {
+        if !on_end_callbacks.is_empty() {
             let mut end_payload = OnExecuteEndPayload {
                 data,
                 errors,

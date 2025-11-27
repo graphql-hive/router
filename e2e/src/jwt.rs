@@ -69,9 +69,10 @@ mod jwt_e2e_tests {
     #[ntex::test]
     async fn should_allow_expressions_to_access_jwt_details() {
         let subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth_header_expression.router.yaml", None)
-            .await
-            .unwrap();
+        let app =
+            init_router_from_config_file("configs/jwt_auth_header_expression.router.yaml", None)
+                .await
+                .unwrap();
         wait_for_readiness(&app.app).await;
         let exp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -132,9 +133,10 @@ mod jwt_e2e_tests {
     #[ntex::test]
     async fn should_allow_expressions_to_access_jwt_scopes() {
         let subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth_header_expression.router.yaml", None)
-            .await
-            .unwrap();
+        let app =
+            init_router_from_config_file("configs/jwt_auth_header_expression.router.yaml", None)
+                .await
+                .unwrap();
         wait_for_readiness(&app.app).await;
 
         // First request with a token and "scope: read:accounts"

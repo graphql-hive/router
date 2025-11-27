@@ -39,7 +39,7 @@ impl RouterSharedState {
             )
             .map_err(Box::new)?,
             jwt_auth_runtime,
-            plugins: plugins.map(|p| Arc::new(p)),
+            plugins: plugins.map(Arc::new),
         })
     }
 }

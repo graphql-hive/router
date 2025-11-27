@@ -95,7 +95,7 @@ pub struct RootFieldLimitPluginConfig {
 impl RouterPluginWithConfig for RootFieldLimitPlugin {
     type Config = RootFieldLimitPluginConfig;
     fn plugin_name() -> &'static str {
-        "root_field_limit_plugin"
+        "root_field_limit"
     }
     fn from_config(config: Self::Config) -> Option<Self> {
         if !config.enabled {
@@ -162,6 +162,49 @@ impl ValidationRule for RootFieldLimitRule {
             ctx.operation,
             ctx,
             error_collector,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testkit::{init_router_from_config_inline, wait_for_readiness, SubgraphsServer};
+    use hive_router::PluginRegistry;
+    use ntex::web::test;
+    #[ntex::test]
+    async fn rejects_query_with_too_many_root_fields() {
+        SubgraphsServer::start().await;
+        let app = init_router_from_config_inline(
+            r#"
+            plugins:
+                root_field_limit:
+                    enabled: true
+                    max_root_fields: 1
+        "#,
+            Some(PluginRegistry::new().register::<super::RootFieldLimitPlugin>()),
+        )
+        .await
+        .expect("failed to start router");
+        wait_for_readiness(&app.app).await;
+        let resp = test::call_service(
+            &app.app,
+            test::TestRequest::post()
+                .uri("/graphql")
+                .set_payload(
+                    r#"{"query":"query TooManyRootFields { users { id } topProducts { upc } }"}"#,
+                )
+                .header("content-type", "application/json")
+                .to_request(),
+        )
+        .await;
+        let json_body: serde_json::Value =
+            serde_json::from_slice(&test::read_body(resp).await).unwrap();
+
+        let error_msg = json_body["errors"][0]["message"].as_str().unwrap();
+        assert!(
+            error_msg.contains("Query has too many root fields"),
+            "Unexpected error message: {}",
+            error_msg
         );
     }
 }

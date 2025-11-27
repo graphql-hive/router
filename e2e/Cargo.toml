@@ -24,6 +24,7 @@ http = { workspace = true }
 bytes = { workspace = true }
 graphql-tools = { workspace = true }
 graphql-parser = { workspace = true }
+serde_json = { workspace = true }
 
 hive-router = { path = "../bin/router" }
 hive-router-config = { path = "../lib/router-config" }
@@ -33,7 +34,9 @@ subgraphs = { path = "../bench/subgraphs" }
 
 mockito = "1.7.0"
 tempfile = "3.23.0"
-redis = "0.32.7"
+redis = { version= "0.32.7", features = ["r2d2"]}
+r2d2 = "0.8.10"
 multer = "3.1.0"
 futures-util = "0.3.31"
+bollard = "0.19.4"
 

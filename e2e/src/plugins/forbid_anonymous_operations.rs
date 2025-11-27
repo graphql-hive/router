@@ -65,10 +65,59 @@ impl RouterPlugin for ForbidAnonymousOperationsPlugin {
                 headers: http::HeaderMap::new(),
                 status: StatusCode::BAD_REQUEST,
             });
-        } else {
-            // we're good to go!
-            tracing::info!("operation is allowed!");
-            return payload.cont();
         }
+        // we're good to go!
+        tracing::info!("operation is allowed!");
+        payload.cont()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::testkit::{init_router_from_config_inline, wait_for_readiness, SubgraphsServer};
+    use hive_router::PluginRegistry;
+    use http::StatusCode;
+    use ntex::web::test;
+    use serde_json::{json, Value};
+    #[ntex::test]
+    async fn should_forbid_anonymous_operations() {
+        SubgraphsServer::start().await;
+        let app = init_router_from_config_inline(
+            r#"
+            plugins:
+                forbid_anonymous_operations:
+                    enabled: true
+        "#,
+            Some(PluginRegistry::new().register::<super::ForbidAnonymousOperationsPlugin>()),
+        )
+        .await
+        .expect("failed to start router");
+        wait_for_readiness(&app.app).await;
+
+        let resp = test::call_service(
+            &app.app,
+            test::TestRequest::post()
+                .uri("/graphql")
+                .set_payload(r#"{"query":"{ __schema { types { name } } }"}"#)
+                .header("content-type", "application/json")
+                .to_request(),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let json_body: Value = serde_json::from_slice(&test::read_body(resp).await).unwrap();
+        assert_eq!(
+            json_body,
+            json!({
+                "errors": [
+                    {
+                        "message": "Anonymous operations are not allowed",
+                        "extensions": {
+                            "code": "ANONYMOUS_OPERATION"
+                        }
+                    }
+                ]
+            })
+        );
     }
 }

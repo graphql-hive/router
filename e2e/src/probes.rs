@@ -23,14 +23,17 @@ mod probes_e2e_tests {
             })
             .create();
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
+        let app = init_router_from_config_inline(
+            &format!(
+                r#"supergraph:
               source: hive
               endpoint: http://{host}/supergraph
               key: dummy_key
               poll_interval: 500ms
         "#,
-        ), None)
+            ),
+            None,
+        )
         .await
         .expect("failed to start router");
 
@@ -76,14 +79,17 @@ mod probes_e2e_tests {
             .with_status(500)
             .create();
 
-        let app = init_router_from_config_inline(&format!(
-            r#"supergraph:
+        let app = init_router_from_config_inline(
+            &format!(
+                r#"supergraph:
             source: hive
             endpoint: http://{host}/supergraph
             key: dummy_key
             poll_interval: 500ms
       "#,
-        ), None)
+            ),
+            None,
+        )
         .await
         .expect("failed to start router");
 
