@@ -25,7 +25,7 @@ pub enum SubgraphExecutorError {
     #[error("Failed to resolve VRL expression for timeout for subgraph '{0}'. Runtime error: {1}")]
     TimeoutExpressionResolution(String, String),
     #[error("Request to subgraph \"{0}\" timed out after {1} milliseconds")]
-    RequestTimeout(String, u64),
+    RequestTimeout(String, u128),
 }
 
 impl From<SubgraphExecutorError> for GraphQLError {
