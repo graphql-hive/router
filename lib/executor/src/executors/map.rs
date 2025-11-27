@@ -237,7 +237,7 @@ impl SubgraphExecutorMap {
 
         let value = VrlValue::Object(BTreeMap::from([
             ("request".into(), client_request.into()),
-            ("original_url".into(), original_url_value),
+            ("default".into(), original_url_value),
         ]));
 
         // Resolve the expression to get an endpoint URL.
