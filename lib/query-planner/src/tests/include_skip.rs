@@ -159,3 +159,37 @@ fn skip_basic_test() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[test]
+fn include_at_root_fetch_test() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query ($bool: Boolean) {
+          product {
+            id
+            price @include(if: $bool)
+          }
+        }
+      "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/tests/simple-include-skip.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "a") {
+        query ($bool:Boolean) {
+          product {
+            id
+            price @include(if: $bool)
+          }
+        }
+      },
+    },
+    "#);
+
+    Ok(())
+}

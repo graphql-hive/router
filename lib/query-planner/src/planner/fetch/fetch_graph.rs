@@ -186,6 +186,26 @@ impl FetchGraph {
 
         Ok(())
     }
+
+    /// Checks whether the given step is an ancestor of a step that has the given condition
+    pub fn is_ancestor_of_condition(&self, step_index: NodeIndex, condition: &Condition) -> bool {
+        let mut bfs = Bfs::new(&self.graph, step_index);
+
+        while let Some(current_index) = bfs.next(&self.graph) {
+            let current_step = match self.get_step_data(current_index) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            if let Some(step_condition) = &current_step.condition {
+                if step_condition == condition {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
 }
 
 impl Display for FetchGraph {
@@ -1111,6 +1131,11 @@ fn process_plain_field_edge(
         fetch_graph.connect(parent_fetch_step_index, requiring_fetch_step_index);
     }
 
+    let is_ancestor_of_condition = match condition {
+        Some(c) => fetch_graph.is_ancestor_of_condition(parent_fetch_step_index, c),
+        None => false,
+    };
+
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
     trace!(
         "adding output field '{}' to fetch step [{}]",
@@ -1126,8 +1151,20 @@ fn process_plain_field_edge(
                     alias: query_node.selection_alias().map(|a| a.to_string()),
                     selections: SelectionSet::default(),
                     arguments: query_node.selection_arguments().cloned(),
-                    skip_if: None,
-                    include_if: None,
+                    skip_if: condition.and_then(|c| {
+                        if is_ancestor_of_condition {
+                            None
+                        } else {
+                            c.to_skip_if()
+                        }
+                    }),
+                    include_if: condition.and_then(|c| {
+                        if is_ancestor_of_condition {
+                            None
+                        } else {
+                            c.to_include_if()
+                        }
+                    }),
                 })],
             },
             type_name: field_move.type_name.to_string(),
