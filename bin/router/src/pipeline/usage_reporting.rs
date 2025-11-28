@@ -49,9 +49,8 @@ pub fn collect_usage_report(
     usage_config: &UsageReportingConfig,
     execution_result: &PlanExecutionOutput,
 ) {
-    let mut rng = rand::rng();
-    let sampled = rng.random::<f64>() < usage_config.sample_rate.as_f64();
-    if !sampled {
+    let sample_rate = usage_config.sample_rate.as_f64();
+    if sample_rate < 1.0 && !rand::rng().random_bool(sample_rate) {
         return;
     }
     if client_request_details
