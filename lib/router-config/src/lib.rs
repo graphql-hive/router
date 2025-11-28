@@ -13,6 +13,7 @@ pub mod primitives;
 pub mod query_planner;
 pub mod supergraph;
 pub mod traffic_shaping;
+pub mod usage_reporting;
 
 use config::{Config, File, FileFormat, FileSourceFile};
 use envconfig::Envconfig;
@@ -96,6 +97,9 @@ pub struct HiveRouterConfig {
 
     #[serde(default)]
     pub authorization: authorization::AuthorizationConfig,
+    /// Configuration for usage reporting to GraphQL Hive.
+    #[serde(default)]
+    pub usage_reporting: usage_reporting::UsageReportingConfig,
 }
 
 #[derive(Debug, thiserror::Error)]

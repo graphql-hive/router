@@ -2064,6 +2064,7 @@ dependencies = [
  "http",
  "humantime-serde",
  "jsonwebtoken",
+ "regex-automata",
  "retry-policies",
  "schemars 1.0.5",
  "serde",

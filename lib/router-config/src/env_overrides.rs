@@ -33,6 +33,10 @@ pub struct EnvVarOverrides {
     pub hive_console_cdn_key: Option<String>,
     #[envconfig(from = "HIVE_CDN_POLL_INTERVAL")]
     pub hive_console_cdn_poll_interval: Option<String>,
+    #[envconfig(from = "HIVE_ACCESS_TOKEN")]
+    pub hive_access_token: Option<String>,
+    #[envconfig(from = "HIVE_TARGET")]
+    pub hive_target: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -97,6 +101,14 @@ impl EnvVarOverrides {
                 config = config
                     .set_override("supergraph.poll_interval", hive_console_cdn_poll_interval)?;
             }
+        }
+
+        if let Some(hive_access_token) = self.hive_access_token.take() {
+            config = config.set_override("usage_reporting.access_token", hive_access_token)?;
+            if let Some(hive_target) = self.hive_target.take() {
+                config = config.set_override("usage_reporting.target_id", hive_target)?;
+            }
+            config = config.set_override("usage_reporting.enabled", true)?;
         }
 
         // GraphiQL overrides
