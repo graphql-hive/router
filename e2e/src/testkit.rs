@@ -81,7 +81,7 @@ where
 
 pub struct SubgraphsServer {
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
-    subgraph_shared_state: SubgraphsServiceState,
+    subgraph_shared_state: Arc<SubgraphsServiceState>,
 }
 
 impl Drop for SubgraphsServer {
@@ -123,9 +123,10 @@ impl SubgraphsServer {
     }
 
     pub async fn get_subgraph_requests_log(&self, subgraph_name: &str) -> Option<Vec<RequestLog>> {
-        let log = self.subgraph_shared_state.request_log.lock().await;
-
-        log.get(&format!("/{}", subgraph_name)).cloned()
+        self.subgraph_shared_state
+            .request_log
+            .get(&format!("/{}", subgraph_name))
+            .map(|entry| entry.value().clone())
     }
 }
 
