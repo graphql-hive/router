@@ -230,6 +230,8 @@ fn process_inline_fragment<'a>(
     };
 
     if tail_type_name == &fragment.type_condition {
+        // It's the same type and no conditions are applied, we can skip the fragment processing
+        // and go directly to its selections.
         if fragment.include_if.is_none() && fragment.skip_if.is_none() {
             return process_selection_set(
                 graph,
@@ -242,6 +244,9 @@ fn process_inline_fragment<'a>(
             );
         }
 
+        // Looks like the fragment has conditions, we need to process them differently.
+        // We aim to preserve the inline fragment due to conditions, instead of eliminating it,
+        // and jumping straight to its selections.
         let condition: Option<Condition> = fragment.into();
 
         let mut next_paths: Vec<OperationPath> = Vec::with_capacity(paths.len());
@@ -253,6 +258,7 @@ fn process_inline_fragment<'a>(
             );
             let _enter = path_span.enter();
 
+            // Find a direct path that references the same type as the current tail,
             let direct_path = find_self_referencing_direct_path(
                 graph,
                 override_context,
@@ -267,6 +273,7 @@ fn process_inline_fragment<'a>(
             next_paths.push(direct_path);
         }
 
+        // Now process the selections under the fragment using the advanced paths
         return process_selection_set(
             graph,
             supergraph,

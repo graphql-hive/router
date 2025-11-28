@@ -416,11 +416,13 @@ fn include_union_fragment_at_root_fetch_test() -> Result<(), Box<dyn Error>> {
             __typename
             ... on UserReview {
               product @include(if: $bool) {
-    ...a          }
+                ...a
+              }
             }
             ... on AnonymousReview {
               product @include(if: $bool) {
-    ...a          }
+                ...a
+              }
             }
           }
         }
