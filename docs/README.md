@@ -1760,7 +1760,7 @@ The path can be either absolute or relative to the router's working directory.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**path**|`string`|The path to the supergraph file.<br/><br/>Can also be set using the `SUPERGRAPH_FILE_PATH` environment variable.<br/>Format: `"path"`<br/>|yes|
+|**path**|`string`, `null`|The path to the supergraph file.<br/><br/>Can also be set using the `SUPERGRAPH_FILE_PATH` environment variable.<br/>Format: `"path"`<br/>|no|
 |**poll\_interval**|`string`|Optional interval at which the file should be polled for changes.<br/>If not provided, the file will only be loaded once when the router starts.<br/>|no|
 |**source**|`string`|Constant Value: `"file"`<br/>|yes|
 
@@ -1784,8 +1784,8 @@ Loads a supergraph from Hive Console CDN.
 |----|----|-----------|--------|
 |**accept\_invalid\_certs**|`boolean`|Whether to accept invalid TLS certificates when connecting to the Hive Console CDN.<br/>Default: `false`<br/>|no|
 |**connect\_timeout**|`string`|Connect timeout for the Hive Console CDN requests.<br/>Default: `"10s"`<br/>|no|
-|**endpoint**|`string`|The CDN endpoint from Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.<br/>|yes|
-|**key**|`string`|The CDN Access Token with from the Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_KEY` environment variable.<br/>|yes|
+|**endpoint**|`string`, `null`|The CDN endpoint from Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.<br/>|no|
+|**key**|`string`, `null`|The CDN Access Token with from the Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_KEY` environment variable.<br/>|no|
 |**poll\_interval**|`string`|Interval at which the Hive Console should be polled for changes.<br/><br/>Can also be set using the `HIVE_CDN_POLL_INTERVAL` environment variable.<br/>Default: `"10s"`<br/>|no|
 |**request\_timeout**|`string`|Request timeout for the Hive Console CDN requests.<br/>Default: `"1m"`<br/>|no|
 |[**retry\_policy**](#option2retry_policy)|`object`|Interval at which the Hive Console should be polled for changes.<br/>Default: `{"max_retries":10}`<br/>|yes|

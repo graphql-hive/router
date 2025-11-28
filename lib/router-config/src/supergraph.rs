@@ -15,7 +15,7 @@ pub enum SupergraphSource {
         /// The path to the supergraph file.
         ///
         /// Can also be set using the `SUPERGRAPH_FILE_PATH` environment variable.
-        path: FilePath,
+        path: Option<FilePath>,
         /// Optional interval at which the file should be polled for changes.
         /// If not provided, the file will only be loaded once when the router starts.
         #[serde(
@@ -32,11 +32,11 @@ pub enum SupergraphSource {
         /// The CDN endpoint from Hive Console target.
         ///
         /// Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.
-        endpoint: String,
+        endpoint: Option<String>,
         /// The CDN Access Token with from the Hive Console target.
         ///
         /// Can also be set using the `HIVE_CDN_KEY` environment variable.
-        key: String,
+        key: Option<String>,
         /// Interval at which the Hive Console should be polled for changes.
         ///
         /// Can also be set using the `HIVE_CDN_POLL_INTERVAL` environment variable.
@@ -110,8 +110,7 @@ fn default_file_poll_interval() -> Option<Duration> {
 impl Default for SupergraphSource {
     fn default() -> Self {
         SupergraphSource::File {
-            path: FilePath::new_from_relative("supergraph.graphql")
-                .expect("failed to resolve local path for supergraph file source"),
+            path: FilePath::new_from_relative("supergraph.graphql").ok(),
             poll_interval: default_file_poll_interval(),
         }
     }
