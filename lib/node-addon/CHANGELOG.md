@@ -1,4 +1,11 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.5 (2025-11-28)
+
+### Fixes
+
+- support `@include` and `@skip` in initial fetch node (#591)
+- Fixed an issue where `@skip` and `@include` directives were incorrectly removed from the initial Fetch of the Query Plan.
+
 ## 0.0.4 (2025-11-24)
 
 ### Fixes

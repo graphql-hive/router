@@ -116,6 +116,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.21 (2025-11-28)
+
+### Features
+
+- Subgraph Timeout Configuration (#541)
+
+#### Subgraph Request Timeout Feature
+
+Adds support for configurable subgraph request timeouts via the `traffic_shaping` configuration. The `request_timeout` option allows you to specify the maximum time the router will wait for a response from a subgraph before timing out the request. You can set a static timeout (e.g., `30s`) globally or per-subgraph, or use dynamic timeouts with VRL expressions to vary timeout values based on request characteristics. This helps protect your router from hanging requests and enables fine-grained control over how long requests to different subgraphs should be allowed to run.
+
+#### Rename `original_url` variable to `default` in subgraph URL override expressions.
+
+This change aligns the variable naming with other configuration expressions, such as timeout configuration.
+
+When using expressions to override subgraph URLs, use `.default` to refer to the original URL defined in the subgraph definition.
+
+Example:
+
+```yaml
+url:
+  expression: |
+    if .request.headers."x-region" == "us-east" {
+      "https://products-us-east.example.com/graphql"
+    } else {
+      .default
+    }
+```
+
+### Fixes
+
+- support `@include` and `@skip` in initial fetch node (#591)
+- Fixed an issue where `@skip` and `@include` directives were incorrectly removed from the initial Fetch of the Query Plan.
+
 ## 0.0.20 (2025-11-24)
 
 ### Features
