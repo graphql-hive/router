@@ -7,7 +7,6 @@ use hive_router_plan_executor::{
         on_graphql_params::{OnGraphQLParamsEndPayload, OnGraphQLParamsStartPayload},
         on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload},
     },
-    plugin_context::PluginContextMutEntry,
     plugin_trait::{EndPayload, HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
 };
 
@@ -51,9 +50,8 @@ impl RouterPlugin for ContextDataPlugin {
         payload.context.insert(context_data);
 
         payload.on_end(|payload| {
-            let mut ctx_data_entry = payload.context.get_mut_entry();
-            let context_data: Option<&mut ContextData> = ctx_data_entry.get_ref_mut();
-            if let Some(context_data) = context_data {
+            let context_data = payload.context.get_mut::<ContextData>();
+            if let Some(mut context_data) = context_data {
                 context_data.response_count += 1;
                 tracing::info!("subrequest count {}", context_data.response_count);
             }
@@ -64,21 +62,18 @@ impl RouterPlugin for ContextDataPlugin {
         &'exec self,
         mut payload: OnSubgraphExecuteStartPayload<'exec>,
     ) -> HookResult<'exec, OnSubgraphExecuteStartPayload<'exec>, OnSubgraphExecuteEndPayload> {
-        let ctx_data_entry = payload.context.get_ref_entry();
-        let context_data: Option<&ContextData> = ctx_data_entry.get_ref();
-        if let Some(context_data) = context_data {
-            tracing::info!("hello {}", context_data.incoming_data); // Hello world!
-            let new_header_value = format!("Hello {}", context_data.incoming_data);
+        let context_data_entry = payload.context.get_ref::<ContextData>();
+        if let Some(ref context_data_entry) = context_data_entry {
+            tracing::info!("hello {}", context_data_entry.incoming_data); // Hello world!
+            let new_header_value = format!("Hello {}", context_data_entry.incoming_data);
             payload.execution_request.headers.insert(
                 "x-hello",
                 http::HeaderValue::from_str(&new_header_value).unwrap(),
             );
         }
         payload.on_end(|payload: OnSubgraphExecuteEndPayload<'exec>| {
-            let mut ctx_data_entry: PluginContextMutEntry<ContextData> =
-                payload.context.get_mut_entry();
-            let context_data: Option<&mut ContextData> = ctx_data_entry.get_ref_mut();
-            if let Some(context_data) = context_data {
+            let context_data = payload.context.get_mut::<ContextData>();
+            if let Some(mut context_data) = context_data {
                 context_data.response_count += 1;
                 tracing::info!("subrequest count {}", context_data.response_count);
             }

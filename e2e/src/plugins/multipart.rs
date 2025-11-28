@@ -83,10 +83,8 @@ impl RouterPlugin for MultipartPlugin {
                                 });
                             }
                             field_name => {
-                                let mut ctx_entry = payload.context.get_mut_entry();
-                                let multipart_ctx: Option<&mut MultipartContext> =
-                                    ctx_entry.get_ref_mut();
-                                if let Some(multipart_ctx) = multipart_ctx {
+                                let multipart_ctx = payload.context.get_mut::<MultipartContext>();
+                                if let Some(mut multipart_ctx) = multipart_ctx {
                                     let multipart_file = MultipartFile {
                                         filename,
                                         content_type,
@@ -110,8 +108,7 @@ impl RouterPlugin for MultipartPlugin {
         mut payload: OnSubgraphHttpRequestPayload<'exec>,
     ) -> HookResult<'exec, OnSubgraphHttpRequestPayload<'exec>, OnSubgraphHttpResponsePayload> {
         if let Some(variables) = &payload.execution_request.variables {
-            let ctx_ref = payload.context.get_ref_entry();
-            let multipart_ctx: Option<&MultipartContext> = ctx_ref.get_ref();
+            let multipart_ctx = payload.context.get_ref::<MultipartContext>();
             if let Some(multipart_ctx) = multipart_ctx {
                 let mut file_map: HashMap<String, Vec<String>> = HashMap::new();
                 for variable_name in variables.keys() {

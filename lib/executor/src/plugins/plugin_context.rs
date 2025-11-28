@@ -1,5 +1,6 @@
 use std::{
     any::{Any, TypeId},
+    ops::{Deref, DerefMut},
     sync::Arc,
 };
 
@@ -29,35 +30,59 @@ pub struct PluginContext {
 }
 
 pub struct PluginContextRefEntry<'a, T> {
-    pub entry: Option<Ref<'a, TypeId, Box<dyn Any + Send + Sync>>>,
+    pub entry: Ref<'a, TypeId, Box<dyn Any + Send + Sync>>,
     phantom: std::marker::PhantomData<T>,
 }
 
-impl<'a, T: Any + Send + Sync> PluginContextRefEntry<'a, T> {
-    pub fn get_ref(&self) -> Option<&T> {
-        match &self.entry {
-            None => None,
-            Some(entry) => {
-                let boxed_any = entry.value();
-                Some(boxed_any.downcast_ref::<T>()?)
-            }
-        }
+impl<'a, T: Any + Send + Sync> AsRef<T> for PluginContextRefEntry<'a, T> {
+    fn as_ref(&self) -> &T {
+        let boxed_any = self.entry.value();
+        boxed_any
+            .downcast_ref::<T>()
+            .expect("type mismatch in PluginContextRefEntry")
     }
 }
+
+impl<'a, T: Any + Send + Sync> Deref for PluginContextRefEntry<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
 pub struct PluginContextMutEntry<'a, T> {
-    pub entry: Option<RefMut<'a, TypeId, Box<dyn Any + Send + Sync>>>,
+    pub entry: RefMut<'a, TypeId, Box<dyn Any + Send + Sync>>,
     phantom: std::marker::PhantomData<T>,
 }
 
-impl<'a, T: Any + Send + Sync> PluginContextMutEntry<'a, T> {
-    pub fn get_ref_mut(&mut self) -> Option<&mut T> {
-        match &mut self.entry {
-            None => None,
-            Some(entry) => {
-                let boxed_any = entry.value_mut();
-                Some(boxed_any.downcast_mut::<T>()?)
-            }
-        }
+impl<'a, T: Any + Send + Sync> AsRef<T> for PluginContextMutEntry<'a, T> {
+    fn as_ref(&self) -> &T {
+        let boxed_any = self.entry.value();
+        boxed_any
+            .downcast_ref::<T>()
+            .expect("type mismatch in PluginContextMutEntry")
+    }
+}
+
+impl<'a, T: Any + Send + Sync> Deref for PluginContextMutEntry<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+impl<'a, T: Any + Send + Sync> AsMut<T> for PluginContextMutEntry<'a, T> {
+    fn as_mut(&mut self) -> &mut T {
+        let boxed_any = self.entry.value_mut();
+        boxed_any
+            .downcast_mut::<T>()
+            .expect("type mismatch in PluginContextMutEntry")
+    }
+}
+
+impl<'a, T: Any + Send + Sync> DerefMut for PluginContextMutEntry<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.as_mut()
     }
 }
 
@@ -72,22 +97,21 @@ impl PluginContext {
             .insert(type_id, Box::new(value))
             .and_then(|boxed_any| boxed_any.downcast::<T>().ok())
     }
-    pub fn get_ref_entry<T: Any + Send + Sync>(&self) -> PluginContextRefEntry<'_, T> {
+    pub fn get_ref<T: Any + Send + Sync>(&self) -> Option<PluginContextRefEntry<'_, T>> {
         let type_id = TypeId::of::<T>();
-        let entry = self.inner.get(&type_id);
-        PluginContextRefEntry {
+        self.inner.get(&type_id).map(|entry| PluginContextRefEntry {
             entry,
             phantom: std::marker::PhantomData,
-        }
+        })
     }
-    pub fn get_mut_entry<'a, T: Any + Send + Sync>(&'a self) -> PluginContextMutEntry<'a, T> {
+    pub fn get_mut<T: Any + Send + Sync>(&self) -> Option<PluginContextMutEntry<'_, T>> {
         let type_id = TypeId::of::<T>();
-        let entry = self.inner.get_mut(&type_id);
-
-        PluginContextMutEntry {
-            entry,
-            phantom: std::marker::PhantomData,
-        }
+        self.inner
+            .get_mut(&type_id)
+            .map(|entry| PluginContextMutEntry {
+                entry,
+                phantom: std::marker::PhantomData,
+            })
     }
 }
 
@@ -110,8 +134,7 @@ mod tests {
         let ctx = PluginContext::default();
         ctx.insert(TestCtx { value: 42 });
 
-        let entry = ctx.get_ref_entry();
-        let ctx_ref: &TestCtx = entry.get_ref().unwrap();
+        let ctx_ref: &TestCtx = &ctx.get_ref().unwrap();
         assert_eq!(ctx_ref.value, 42);
     }
     #[test]
@@ -126,13 +149,11 @@ mod tests {
         ctx.insert(TestCtx { value: 42 });
 
         {
-            let mut entry = ctx.get_mut_entry();
-            let ctx_mut: &mut TestCtx = entry.get_ref_mut().unwrap();
+            let ctx_mut: &mut TestCtx = &mut ctx.get_mut().unwrap();
             ctx_mut.value = 100;
         }
 
-        let entry = ctx.get_ref_entry();
-        let ctx_ref: &TestCtx = entry.get_ref().unwrap();
+        let ctx_ref: &TestCtx = &ctx.get_ref().unwrap();
         assert_eq!(ctx_ref.value, 100);
     }
 }

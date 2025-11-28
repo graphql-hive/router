@@ -55,9 +55,8 @@ impl RouterPlugin for PropagateStatusCodePlugin {
             // if a response contains a status code we're watching...
             if self.status_codes.contains(&status_code) {
                 // Checking if there is already a context entry
-                let mut ctx_entry = payload.context.get_mut_entry();
-                let ctx: Option<&mut PropagateStatusCodeCtx> = ctx_entry.get_ref_mut();
-                if let Some(ctx) = ctx {
+                let ctx = payload.context.get_mut::<PropagateStatusCodeCtx>();
+                if let Some(mut ctx) = ctx {
                     // Update the status code if the new one is more severe (higher)
                     if status_code.as_u16() > ctx.status_code.as_u16() {
                         ctx.status_code = status_code;
@@ -77,8 +76,7 @@ impl RouterPlugin for PropagateStatusCodePlugin {
     ) -> HookResult<'exec, OnHttpRequestPayload<'exec>, OnHttpResponsePayload<'exec>> {
         payload.on_end(|mut payload| {
             // Checking if there is a context entry
-            let ctx_entry = payload.context.get_ref_entry();
-            let ctx: Option<&PropagateStatusCodeCtx> = ctx_entry.get_ref();
+            let ctx = payload.context.get_ref::<PropagateStatusCodeCtx>();
             if let Some(ctx) = ctx {
                 // Update the HTTP response status code
                 *payload.response.response_mut().status_mut() = ctx.status_code;
