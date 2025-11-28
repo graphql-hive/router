@@ -89,6 +89,10 @@ impl TypeAwareSelection {
 
             Ok(())
         } else {
+            println!(
+                "Failed to find path '{}' in selection set '{}'",
+                add_at_fetch_path, self.selection_set
+            );
             Err(TypeAwareSelectionError::PathNotFound(
                 add_at_fetch_path.to_string(),
                 self.selection_set.to_string(),

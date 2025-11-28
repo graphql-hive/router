@@ -280,6 +280,41 @@ fn try_advance_direct_path<'a>(
     }
 }
 
+pub fn find_self_referencing_direct_path(
+    graph: &Graph,
+    override_context: &PlannerOverrideContext,
+    path: &OperationPath,
+    type_name: &str,
+    condition: &Condition,
+    cancellation_token: &CancellationToken,
+) -> Result<OperationPath, WalkOperationError> {
+    let path_tail_index = path.tail();
+
+    for edge_ref in graph
+        .edges_from(path_tail_index)
+        .filter(move |e| match e.weight() {
+            Edge::Selfie(t) => t == type_name,
+            _ => false,
+        })
+    {
+        if let Some(new_path) = try_advance_direct_path(
+            graph,
+            path,
+            override_context,
+            &edge_ref,
+            &NavigationTarget::ConcreteType(type_name, Some(condition.clone())),
+            cancellation_token,
+        )? {
+            trace!("Finished finding direct path, found one",);
+            return Ok(new_path);
+        }
+    }
+
+    trace!("Finished finding direct path, found none",);
+
+    Err(WalkOperationError::NoPathsFound(type_name.to_string()))
+}
+
 #[instrument(level = "trace", skip_all, fields(
     path = path.pretty_print(graph),
     current_cost = path.cost,
