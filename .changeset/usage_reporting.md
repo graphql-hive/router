@@ -1,5 +1,7 @@
 ---
 router: patch
+executor: patch
+config: patch
 ---
 
 # Usage Reporting to Hive Console
