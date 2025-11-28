@@ -8,7 +8,7 @@ use hive_router_plan_executor::{
         OnSupergraphLoadEndPayload, OnSupergraphLoadStartPayload, SupergraphData,
     },
     introspection::schema::SchemaWithMetadata,
-    plugin_trait::{ControlFlowResult},
+    plugin_trait::ControlFlowResult,
     SubgraphExecutorMap,
 };
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;

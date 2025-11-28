@@ -301,6 +301,7 @@ struct PreparedFlattenData {
 }
 
 impl<'exec, 'req> Executor<'exec, 'req> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
         executors: &'exec SubgraphExecutorMap,
