@@ -19,13 +19,26 @@ use crate::{
     consts::ROUTER_VERSION,
 };
 
+#[derive(Debug, thiserror::Error)]
+pub enum UsageReportingError {
+    #[error("Usage Reporting - Access token is missing. Please provide it via 'HIVE_ACCESS_TOKEN' environment variable or under 'usage_reporting.access_token' in the configuration.")]
+    MissingAccessToken,
+    #[error("Usage Reporting - Failed to initialize usage agent: {0}")]
+    AgentCreationError(#[from] AgentError),
+}
+
 pub fn init_hive_user_agent(
     bg_tasks_manager: &mut BackgroundTasksManager,
     usage_config: &UsageReportingConfig,
-) -> Result<Arc<UsageAgent>, AgentError> {
+) -> Result<Arc<UsageAgent>, UsageReportingError> {
     let user_agent = format!("hive-router/{}", ROUTER_VERSION);
+    let access_token = usage_config
+        .access_token
+        .as_deref()
+        .ok_or(UsageReportingError::MissingAccessToken)?;
+
     let hive_user_agent = UsageAgent::try_new(
-        &usage_config.access_token,
+        access_token,
         usage_config.endpoint.clone(),
         usage_config.target_id.clone(),
         usage_config.buffer_size,
