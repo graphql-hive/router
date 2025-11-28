@@ -287,8 +287,8 @@ mod graph_tests {
             .assert_field_edge("createdBy", "User/products")
             .assert_field_edge("__typename", "String/products")
             .no_field_edge("reviews");
-        assert_eq!(incoming.edges.len(), 2);
-        assert_eq!(outgoing.edges.len(), 11);
+        assert_eq!(incoming.edges.len(), 3);
+        assert_eq!(outgoing.edges.len(), 12);
 
         // requires preserves selection set in the graph
         let outgoing = find_node(&graph, "Product/inventory").1;
@@ -315,8 +315,8 @@ mod graph_tests {
         assert_eq!(graph.root_subscription_node(), None);
 
         let (incoming, outgoing) = find_node(&graph, "Product/products");
-        assert_eq!(incoming.edges.len(), 11);
-        assert_eq!(outgoing.edges.len(), 15);
+        assert_eq!(incoming.edges.len(), 14);
+        assert_eq!(outgoing.edges.len(), 18);
 
         incoming
             .assert_key_edge("id", "Product/inventory")

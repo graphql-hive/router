@@ -55,11 +55,13 @@ fn circular_reference_interface() -> Result<(), Box<dyn Error>> {
               samePriceProduct {
                 __typename
                 ... on Book {
-    ...a            }
+                  ...a
+                }
                 samePriceProduct {
                   __typename
                   ... on Book {
-    ...a              }
+                    ...a
+                  }
                 }
               }
               ... on Book {
@@ -553,13 +555,15 @@ fn nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>> {
                   id
                   name
                   similarAccounts {
-    ...a              }
+                    ...a
+                  }
                 }
                 ... on Admin {
                   _internal_qp_alias_0: id
                   name
                   similarAccounts {
-    ...a              }
+                    ...a
+                  }
                 }
               }
             }
@@ -827,13 +831,15 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
                   id
                   name
                   similarAccounts {
-    ...a              }
+                    ...a
+                  }
                 }
                 ... on Admin {
                   _internal_qp_alias_0: id
                   name
                   similarAccounts {
-    ...a              }
+                    ...a
+                  }
                 }
               }
             }
@@ -843,13 +849,15 @@ fn deeply_nested_internal_mismatch_between_fields() -> Result<(), Box<dyn Error>
                 id
                 name
                 similarAccounts {
-    ...b            }
+                  ...b
+                }
               }
               ... on Admin {
                 _internal_qp_alias_0: id
                 name
                 similarAccounts {
-    ...b            }
+                  ...b
+                }
               }
             }
             fragment b on Account {
@@ -1207,12 +1215,14 @@ fn deeply_nested_no_conflicts() -> Result<(), Box<dyn Error>> {
             ... on User {
               name
               similarAccounts {
-    ...a          }
+                ...a
+              }
             }
             ... on Admin {
               name
               similarAccounts {
-    ...a          }
+                ...a
+              }
             }
           }
         }
@@ -1221,12 +1231,14 @@ fn deeply_nested_no_conflicts() -> Result<(), Box<dyn Error>> {
           ... on User {
             name
             similarAccounts {
-    ...b        }
+              ...b
+            }
           }
           ... on Admin {
             name
             similarAccounts {
-    ...b        }
+              ...b
+            }
           }
         }
         fragment b on Account {

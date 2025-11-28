@@ -20,7 +20,6 @@ use crate::{
 pub struct SelectionAttributes {
     pub alias: Option<String>,
     pub arguments: Option<ArgumentsMap>,
-    // TODO: Add custom directives, @skip/@include conditions
 }
 
 impl PartialEq for SelectionAttributes {

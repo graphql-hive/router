@@ -643,6 +643,18 @@ impl Graph {
                     );
                 }
 
+                trace!(
+                    "[x] Creating self-referencing edge for '{}/{}'",
+                    def_name,
+                    graph_id
+                );
+                let head = self.upsert_node(Node::new_node(
+                    def_name,
+                    state.resolve_graph_id(graph_id)?,
+                    state.is_interface_object_in_subgraph(def_name, graph_id),
+                ));
+                self.upsert_edge(head, head, Edge::Selfie(def_name.clone()));
+
                 for (field_name, field_definition) in definition.fields().iter() {
                     let (is_available, maybe_join_field) =
                         FederationRules::check_field_subgraph_availability(

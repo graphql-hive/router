@@ -329,9 +329,11 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
             {
               viewer {
                 media {
-    ...a            }
+                  ...a
+                }
                 book {
-    ...a            }
+                  ...a
+                }
               }
             }
             fragment a on ViewerMedia {
@@ -345,9 +347,11 @@ fn union_member_entity_call_many() -> Result<(), Box<dyn Error>> {
             {
               viewer {
                 media {
-    ...a            }
+                  ...a
+                }
                 book {
-    ...a            }
+                  ...a
+                }
                 song {
                   __typename
                   ... on Song {
@@ -431,11 +435,13 @@ fn union_overfetching_test() -> Result<(), Box<dyn Error>> {
               __typename
               ... on AnonymousReview {
                 product {
-    ...a            }
+                  ...a
+                }
               }
               ... on UserReview {
                 product {
-    ...a            }
+                  ...a
+                }
               }
             }
           }

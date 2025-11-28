@@ -303,6 +303,8 @@ impl PrettyDisplay for FieldSelection {
             None => String::new(),
         };
 
+        write!(f, "{indent}{}{}{}", alias_str, self.name, args_str)?;
+
         if let Some(skip_if) = &self.skip_if {
             write!(f, " @skip(if: ${})", skip_if)?;
         }
@@ -312,10 +314,10 @@ impl PrettyDisplay for FieldSelection {
         }
 
         if self.is_leaf() {
-            return writeln!(f, "{indent}{}{}{}", alias_str, self.name, args_str);
+            return writeln!(f);
         }
 
-        writeln!(f, "{indent}{}{}{} {{", alias_str, self.name, args_str)?;
+        writeln!(f, " {{")?;
         self.selections.pretty_fmt(f, depth + 1)?;
         writeln!(f, "{indent}}}")
     }

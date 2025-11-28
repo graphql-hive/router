@@ -159,6 +159,10 @@ pub enum Edge {
     EntityMove(EntityMove),
     /// join__implements
     AbstractMove(String),
+    /// A special edge representing a case where an inline fragment is used with a condition,
+    /// and we don't really move anywhere, but we need to ensure that
+    /// the condition is preserved when planning the query.
+    Selfie(String),
     /// Represents a special case where going from @interfaceObject
     /// to an object type due to the `__typename` field usage,
     /// or usage of a type condition (fragment),
@@ -227,6 +231,7 @@ impl Edge {
             Self::FieldMove(fm) => &fm.name,
             Self::EntityMove(EntityMove { key, .. }) => key,
             Self::AbstractMove(id) => id,
+            Self::Selfie(_) => "selfie",
             Self::SubgraphEntrypoint { name, .. } => &name.0,
             Self::InterfaceObjectTypeMove(InterfaceObjectTypeMove {
                 object_type_name, ..
@@ -264,6 +269,7 @@ impl Display for Edge {
             Edge::SubgraphEntrypoint { name, .. } => write!(f, "{}", name.0),
             Edge::EntityMove(EntityMove { .. }) => write!(f, "🔑"),
             Edge::AbstractMove(_) => write!(f, "🔮"),
+            Edge::Selfie(_) => write!(f, "🤳"),
             Edge::FieldMove(field_move) => write!(f, "{}", field_move.name),
             Edge::InterfaceObjectTypeMove(m) => write!(f, "🔎 {}", m.object_type_name),
         }?;
@@ -318,6 +324,7 @@ impl Debug for Edge {
                 write!(f, "🔑 {}", key)
             }
             Edge::AbstractMove(name) => write!(f, "🔮 {}", name),
+            Edge::Selfie(_) => write!(f, "🤳"),
             Edge::InterfaceObjectTypeMove(m) => write!(f, "🔎 {}", m.object_type_name),
         }
     }
