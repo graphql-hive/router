@@ -1,4 +1,10 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.6 (2025-11-28)
+
+### Fixes
+
+- make supergraph.{path,key,endpoint} optional (#593)
+
 ## 0.0.5 (2025-11-28)
 
 ### Fixes

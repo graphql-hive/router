@@ -66,6 +66,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.0.14 (2025-11-28)
+
+### Fixes
+
+- make supergraph.{path,key,endpoint} optional (#593)
+
+#### Improve error messages and fix environment variable support for supergraph configuration
+
+- **Fix:** Previously, `supergraph.path` (for file source), and `supergraph.endpoint`/`supergraph.key` (for Hive CDN source) were mandatory in the configuration file. This prevented users from relying solely on environment variables (`SUPERGRAPH_FILE_PATH`, `HIVE_CDN_ENDPOINT`, `HIVE_CDN_KEY`). This has been fixed, and these fields are now optional in the configuration file if the corresponding environment variables are provided.
+- **Improved Error Reporting:** If the supergraph file path or Hive CDN endpoint/key are missing from both configuration and environment variables, the error message now explicitly guides you to set the required environment variable or the corresponding configuration option.
+
+This change ensures that misconfigurations are easier to diagnose and fix during startup.
+
+#### Usage Reporting to Hive Console
+
+Hive Router now supports sending usage reports to the Hive Console. This feature allows you to monitor and analyze the performance and usage of your GraphQL services directly from the Hive Console.
+To enable usage reporting, you need to configure the `usage_reporting` section in your Hive Router configuration file.
+
+[Learn more about usage reporting in the documentation.](https://the-guild.dev/graphql/hive/docs/router/configuration/usage_reporting)
+```yaml
+usage_reporting:
+  enabled: true
+  access_token: your-hive-console-access-token
+```
+
 ## 0.0.13 (2025-11-28)
 
 ### Features
