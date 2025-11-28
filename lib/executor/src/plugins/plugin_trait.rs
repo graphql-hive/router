@@ -85,19 +85,8 @@ where
     Self: RouterPlugin,
 {
     fn plugin_name() -> &'static str;
-    type Config: Send + Sync + DeserializeOwned;
+    type Config: DeserializeOwned;
     fn from_config(config: Self::Config) -> Option<Self>;
-    fn from_config_value(value: serde_json::Value) -> serde_json::Result<Option<Box<Self>>>
-    where
-        Self: Sized,
-    {
-        let config: Self::Config = serde_json::from_value(value)?;
-        let plugin = Self::from_config(config);
-        match plugin {
-            None => Ok(None),
-            Some(plugin) => Ok(Some(Box::new(plugin))),
-        }
-    }
 }
 
 #[async_trait::async_trait]

@@ -5,7 +5,7 @@ use hive_router_plan_executor::plugin_trait::{RouterPluginBoxed, RouterPluginWit
 use serde_json::Value;
 use tracing::info;
 
-type PluginFactory = Box<dyn Fn(Value) -> Result<Option<RouterPluginBoxed>, serde_json::Error>>;
+type PluginFactory = Box<dyn Fn(Value) -> serde_json::Result<Option<RouterPluginBoxed>>>;
 
 pub struct PluginRegistry {
     map: HashMap<&'static str, PluginFactory>,
