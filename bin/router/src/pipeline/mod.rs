@@ -184,9 +184,10 @@ pub async fn execute_pipeline(
         graphql_params = deserialization_payload.graphql_params;
         body = deserialization_payload.body;
     }
-    let mut graphql_params = graphql_params.unwrap_or_else(|| {
-        deserialize_graphql_params(req, body).expect("Failed to parse execution request")
-    });
+    let mut graphql_params = match graphql_params {
+        Some(params) => params,
+        None => deserialize_graphql_params(req, body)?,
+    };
 
     if let Some(plugin_req_state) = &plugin_req_state {
         let mut payload = OnGraphQLParamsEndPayload {
