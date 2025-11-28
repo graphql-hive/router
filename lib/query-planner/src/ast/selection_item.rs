@@ -52,7 +52,7 @@ impl PrettyDisplay for SelectionItem {
             }
             SelectionItem::FragmentSpread(name) => {
                 let indent = get_indent(depth);
-                write!(f, "{indent}...{}\n", name)?
+                writeln!(f, "{indent}...{}", name)?
             }
         }
 
