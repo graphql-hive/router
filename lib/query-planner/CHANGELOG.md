@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 2.1.2 (2025-11-28)
+
+### Fixes
+
+- make supergraph.{path,key,endpoint} optional (#593)
+
 ## 2.1.1 (2025-11-28)
 
 ### Fixes

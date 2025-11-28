@@ -94,6 +94,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.2.1 (2025-11-28)
+
+### Fixes
+
+- make supergraph.{path,key,endpoint} optional (#593)
+
+#### Usage Reporting to Hive Console
+
+Hive Router now supports sending usage reports to the Hive Console. This feature allows you to monitor and analyze the performance and usage of your GraphQL services directly from the Hive Console.
+To enable usage reporting, you need to configure the `usage_reporting` section in your Hive Router configuration file.
+
+[Learn more about usage reporting in the documentation.](https://the-guild.dev/graphql/hive/docs/router/configuration/usage_reporting)
+```yaml
+usage_reporting:
+  enabled: true
+  access_token: your-hive-console-access-token
+```
+
 ## 6.2.0 (2025-11-28)
 
 ### Features
