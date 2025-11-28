@@ -13,5 +13,5 @@ To enable usage reporting, you need to configure the `usage_reporting` section i
 ```yaml
 usage_reporting:
   enabled: true
-  access_token: "YOUR_HIVE_CONSOLE_ACCESS_TOKEN"
+  access_token: your-hive-console-access-token
 ```
