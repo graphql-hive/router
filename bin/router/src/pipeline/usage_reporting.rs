@@ -57,7 +57,7 @@ pub fn collect_usage_report(
     if client_request_details
         .operation
         .name
-        .is_some_and(|op_name| usage_config.exclude.contains(&op_name.to_string()))
+        .is_some_and(|op_name| usage_config.exclude.iter().any(|s| s == op_name))
     {
         return;
     }
