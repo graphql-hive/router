@@ -87,6 +87,7 @@ pub fn collect_usage_report(
     }
 }
 
+#[inline]
 fn get_header_value<'req>(req: &'req HttpRequest, header_name: &str) -> Option<&'req str> {
     req.headers().get(header_name).and_then(|v| v.to_str().ok())
 }
