@@ -158,3 +158,5 @@ pub trait RouterPlugin {
         start_payload.cont()
     }
 }
+
+pub type RouterPluginBoxed = Box<dyn RouterPlugin + Send + Sync>;

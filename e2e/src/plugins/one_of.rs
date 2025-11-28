@@ -79,7 +79,7 @@ pub struct OneOfPluginConfig {
 impl RouterPluginWithConfig for OneOfPlugin {
     type Config = OneOfPluginConfig;
     fn plugin_name() -> &'static str {
-        "one_of_plugin"
+        "oneof"
     }
     fn from_config(config: OneOfPluginConfig) -> Option<Self> {
         if config.enabled {
@@ -231,5 +231,117 @@ impl<'a> OperationVisitor<'a, ValidationErrorContext> for OneOfValidation {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hive_router::PluginRegistry;
+    use serde_json::{from_slice, Value};
+
+    use crate::testkit::{init_router_from_config_inline, wait_for_readiness};
+
+    #[ntex::test]
+    async fn one_of_validates_in_validation_rule() {
+        let app = init_router_from_config_inline(
+            r#"
+            plugins:
+              oneof:
+                enabled: true
+            "#,
+            Some(PluginRegistry::new().register::<super::OneOfPlugin>()),
+        )
+        .await
+        .expect("Router should initialize successfully");
+        wait_for_readiness(&app.app).await;
+
+        let req = crate::testkit::init_graphql_request(
+            r#"
+            mutation OneOfTest {
+                oneofTest(input: {
+                    string: "test",
+                    int: 42
+            }) {
+                    string
+                    int
+                    float
+                    boolean
+                    id
+                }
+            }
+            "#,
+            None,
+        );
+
+        let resp = ntex::web::test::call_service(&app.app, req.to_request()).await;
+        let body = ntex::web::test::read_body(resp).await;
+        let body_val: Value = from_slice(&body).expect("Response body should be valid JSON");
+        let errors = body_val
+            .get("errors")
+            .expect("Response should contain errors");
+        let first_error = errors
+            .as_array()
+            .expect("Errors should be an array")
+            .first()
+            .expect("There should be at least one error");
+        let message = first_error
+            .get("message")
+            .expect("Error should have a message")
+            .as_str()
+            .expect("Message should be a string");
+        assert!(message.contains("multiple fields set"));
+    }
+
+    #[ntex::test]
+    async fn one_of_validates_during_execution() {
+        let app = init_router_from_config_inline(
+            r#"
+            plugins:
+              oneof:
+                enabled: true
+            "#,
+            Some(PluginRegistry::new().register::<super::OneOfPlugin>()),
+        )
+        .await
+        .expect("Router should initialize successfully");
+        wait_for_readiness(&app.app).await;
+
+        let req = crate::testkit::init_graphql_request(
+            r#"
+            mutation OneOfTest($input: OneOfTestInput!) {
+                oneofTest(input: $input) {
+                    string
+                    int
+                    float
+                    boolean
+                    id
+                }
+            }
+            "#,
+            Some(sonic_rs::json!({
+                "input": {
+                    "string": "test",
+                    "int": 42
+                }
+            })),
+        );
+
+        let resp = ntex::web::test::call_service(&app.app, req.to_request()).await;
+        let body = ntex::web::test::read_body(resp).await;
+        let body_val: Value = from_slice(&body).expect("Response body should be valid JSON");
+        let errors = body_val
+            .get("errors")
+            .expect("Response should contain errors");
+        let first_error = errors
+            .as_array()
+            .expect("Errors should be an array")
+            .first()
+            .expect("There should be at least one error");
+        let message = first_error
+            .get("message")
+            .expect("Error should have a message")
+            .as_str()
+            .expect("Message should be a string");
+        assert!(message.contains("multiple fields set"));
     }
 }

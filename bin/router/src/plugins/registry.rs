@@ -1,17 +1,14 @@
 use std::collections::HashMap;
 
 use hive_router_config::HiveRouterConfig;
-use hive_router_plan_executor::plugin_trait::{RouterPlugin, RouterPluginWithConfig};
+use hive_router_plan_executor::plugin_trait::{RouterPluginBoxed, RouterPluginWithConfig};
 use serde_json::Value;
 use tracing::info;
 
+type PluginFactory = Box<dyn Fn(Value) -> Result<Option<RouterPluginBoxed>, serde_json::Error>>;
+
 pub struct PluginRegistry {
-    map: HashMap<
-        &'static str,
-        Box<
-            dyn Fn(Value) -> Result<Option<Box<dyn RouterPlugin + Send + Sync>>, serde_json::Error>,
-        >,
-    >,
+    map: HashMap<&'static str, PluginFactory>,
 }
 
 impl Default for PluginRegistry {
@@ -52,8 +49,8 @@ impl PluginRegistry {
     pub fn initialize_plugins(
         &self,
         router_config: &HiveRouterConfig,
-    ) -> Result<Option<Vec<Box<dyn RouterPlugin + Send + Sync>>>, PluginRegistryError> {
-        let mut plugins: Vec<Box<dyn RouterPlugin + Send + Sync>> = vec![];
+    ) -> Result<Option<Vec<RouterPluginBoxed>>, PluginRegistryError> {
+        let mut plugins: Vec<RouterPluginBoxed> = vec![];
 
         for (plugin_name, plugin_config_value) in router_config.plugins.iter() {
             if let Some(factory) = self.map.get(plugin_name.as_str()) {

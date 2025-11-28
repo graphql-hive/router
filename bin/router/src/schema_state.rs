@@ -8,7 +8,7 @@ use hive_router_plan_executor::{
         OnSupergraphLoadEndPayload, OnSupergraphLoadStartPayload, SupergraphData,
     },
     introspection::schema::SchemaWithMetadata,
-    plugin_trait::{ControlFlowResult, RouterPlugin},
+    plugin_trait::{ControlFlowResult},
     SubgraphExecutorMap,
 };
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
@@ -112,7 +112,7 @@ impl SchemaState {
                     new_ast = start_payload.new_ast;
                 }
 
-                match Self::build_data(router_config.clone(), &new_ast, app_state.plugins.clone()) {
+                match Self::build_data(router_config.clone(), &new_ast) {
                     Ok(new_supergraph_data) => {
                         let mut end_payload = OnSupergraphLoadEndPayload {
                             new_supergraph_data,
@@ -166,7 +166,6 @@ impl SchemaState {
     fn build_data(
         router_config: Arc<HiveRouterConfig>,
         parsed_supergraph_sdl: &Document,
-        plugins: Option<Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>>,
     ) -> Result<SupergraphData, SupergraphManagerError> {
         let supergraph_state = SupergraphState::new(parsed_supergraph_sdl);
         let planner = Planner::new_from_supergraph(parsed_supergraph_sdl)?;
@@ -174,7 +173,6 @@ impl SchemaState {
         let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(
             supergraph_state.subgraph_endpoint_map,
             router_config,
-            plugins.clone(),
         )?;
 
         Ok(SupergraphData {

@@ -1,16 +1,18 @@
-use bytes::Bytes;
-use http::Request;
-use http_body_util::Full;
-
 use crate::{
-    executors::dedupe::SharedResponse,
+    executors::{common::SubgraphExecutionRequest, dedupe::SharedResponse},
+    plugin_context::PluginContext,
     plugin_trait::{EndPayload, StartPayload},
 };
 
 pub struct OnSubgraphHttpRequestPayload<'exec> {
     pub subgraph_name: &'exec str,
-    // At this point, there is no point of mutating this
-    pub request: Request<Full<Bytes>>,
+
+    pub endpoint: &'exec http::Uri,
+    pub method: http::Method,
+    pub body: Vec<u8>,
+    pub execution_request: SubgraphExecutionRequest<'exec>,
+
+    pub context: &'exec PluginContext,
 
     // Early response
     pub response: Option<SharedResponse>,

@@ -1,9 +1,7 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use bollard::{
-    container::StartContainerOptions,
     exec::{CreateExecOptions, StartExecResults},
-    image,
     query_parameters::CreateImageOptionsBuilder,
     secret::{ContainerCreateBody, ContainerCreateResponse, CreateImageInfo, HostConfig, PortMap},
     Docker,
@@ -228,7 +226,6 @@ pub struct TestDockerContainerOpts {
 
 pub struct TestDockerContainer {
     docker: Docker,
-    image: Vec<CreateImageInfo>,
     container: ContainerCreateResponse,
 }
 
@@ -246,7 +243,7 @@ impl TestDockerContainer {
                 }]),
             );
         }
-        let image: Vec<CreateImageInfo> = docker
+        let _: Vec<CreateImageInfo> = docker
             .create_image(
                 Some(
                     CreateImageOptionsBuilder::default()
@@ -260,7 +257,7 @@ impl TestDockerContainer {
             .await
             .expect("Failed to pull the image");
         let container_exists = docker
-            .list_containers(Some(bollard::container::ListContainersOptions::<String> {
+            .list_containers(Some(bollard::query_parameters::ListContainersOptions {
                 all: true,
                 ..Default::default()
             }))
@@ -304,14 +301,13 @@ impl TestDockerContainer {
             .await
             .expect("Failed to create the container");
         docker
-            .start_container(&container.id, None::<StartContainerOptions<String>>)
+            .start_container(
+                &container.id,
+                None::<bollard::query_parameters::StartContainerOptions>,
+            )
             .await
             .expect("Failed to start the container");
-        Ok(Self {
-            docker,
-            image,
-            container,
-        })
+        Ok(Self { docker, container })
     }
     pub async fn exec(&self, cmd: Vec<&str>) -> Result<(), bollard::errors::Error> {
         let exec = self

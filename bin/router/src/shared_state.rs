@@ -3,7 +3,7 @@ use hive_router_config::HiveRouterConfig;
 use hive_router_plan_executor::headers::{
     compile::compile_headers_plan, errors::HeaderRuleCompileError, plan::HeaderRulesPlan,
 };
-use hive_router_plan_executor::plugin_trait::RouterPlugin;
+use hive_router_plan_executor::plugin_trait::RouterPluginBoxed;
 use moka::future::Cache;
 use std::sync::Arc;
 
@@ -19,14 +19,14 @@ pub struct RouterSharedState {
     pub override_labels_evaluator: OverrideLabelsEvaluator,
     pub cors_runtime: Option<Cors>,
     pub jwt_auth_runtime: Option<JwtAuthRuntime>,
-    pub plugins: Option<Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>>,
+    pub plugins: Option<Arc<Vec<RouterPluginBoxed>>>,
 }
 
 impl RouterSharedState {
     pub fn new(
         router_config: Arc<HiveRouterConfig>,
         jwt_auth_runtime: Option<JwtAuthRuntime>,
-        plugins: Option<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
+        plugins: Option<Vec<RouterPluginBoxed>>,
     ) -> Result<Self, SharedStateError> {
         Ok(Self {
             validation_plan: graphql_tools::validation::rules::default_rules_validation_plan(),

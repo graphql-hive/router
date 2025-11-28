@@ -39,7 +39,7 @@ use crate::{
     },
     hooks::on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload},
     plugin_context::PluginRequestState,
-    plugin_trait::{ControlFlowResult, RouterPlugin},
+    plugin_trait::ControlFlowResult,
     response::graphql_error::GraphQLError,
 };
 
@@ -64,14 +64,10 @@ pub struct SubgraphExecutorMap {
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
     max_connections_per_host: usize,
     in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
-    plugins: Option<Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>>,
 }
 
 impl SubgraphExecutorMap {
-    pub fn new(
-        config: Arc<HiveRouterConfig>,
-        plugins: Option<Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>>,
-    ) -> Self {
+    pub fn new(config: Arc<HiveRouterConfig>) -> Self {
         let https = HttpsConnector::new();
         let client: HttpClient = Client::builder(TokioExecutor::new())
             .pool_timer(TokioTimer::new())
@@ -93,16 +89,14 @@ impl SubgraphExecutorMap {
             semaphores_by_origin: Default::default(),
             max_connections_per_host,
             in_flight_requests: Arc::new(DashMap::with_hasher(ABuildHasher::default())),
-            plugins,
         }
     }
 
     pub fn from_http_endpoint_map(
         subgraph_endpoint_map: HashMap<SubgraphName, SubgraphEndpoint>,
         config: Arc<HiveRouterConfig>,
-        plugins: Option<Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>>,
     ) -> Result<Self, SubgraphExecutorError> {
-        let mut subgraph_executor_map = SubgraphExecutorMap::new(config.clone(), plugins);
+        let mut subgraph_executor_map = SubgraphExecutorMap::new(config.clone());
 
         for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.into_iter() {
             let endpoint_str = config
@@ -171,7 +165,7 @@ impl SubgraphExecutorMap {
         let mut execution_result = match execution_result {
             Some(execution_result) => execution_result,
             None => match self.get_or_create_executor(subgraph_name, client_request) {
-                Ok(Some(executor)) => executor.execute(execution_request).await,
+                Ok(Some(executor)) => executor.execute(execution_request, plugin_req_state).await,
                 Err(err) => {
                     error!(
                         "Subgraph executor error for subgraph '{}': {}",
@@ -410,7 +404,6 @@ impl SubgraphExecutorMap {
             semaphore,
             self.config.clone(),
             self.in_flight_requests.clone(),
-            self.plugins.clone(),
         );
 
         self.executors_by_subgraph

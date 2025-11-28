@@ -5,11 +5,14 @@ use bytes::Bytes;
 use http::HeaderMap;
 use sonic_rs::Value;
 
+use crate::plugin_context::PluginRequestState;
+
 #[async_trait]
 pub trait SubgraphExecutor {
     async fn execute<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
+        plugin_req_state: &'a Option<PluginRequestState<'a>>,
     ) -> HttpExecutionResponse;
 
     fn to_boxed_arc<'a>(self) -> Arc<Box<dyn SubgraphExecutor + Send + Sync + 'a>>

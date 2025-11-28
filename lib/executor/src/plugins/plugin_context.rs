@@ -11,7 +11,7 @@ use http::Uri;
 use ntex::router::Path;
 use ntex_http::HeaderMap;
 
-use crate::plugin_trait::RouterPlugin;
+use crate::plugin_trait::RouterPluginBoxed;
 
 pub struct RouterHttpRequest<'exec> {
     pub uri: &'exec Uri,
@@ -92,7 +92,7 @@ impl PluginContext {
 }
 
 pub struct PluginRequestState<'req> {
-    pub plugins: Arc<Vec<Box<dyn RouterPlugin + Send + Sync>>>,
+    pub plugins: Arc<Vec<RouterPluginBoxed>>,
     pub router_http_request: RouterHttpRequest<'req>,
     pub context: Arc<PluginContext>,
 }

@@ -74,7 +74,7 @@ async fn track_requests(
 
 fn extract_record(request_parts: &Parts, request_body: Bytes) -> RequestLog {
     let header_map = request_parts.headers.clone();
-    let body_value: Value = sonic_rs::from_slice(&request_body).unwrap();
+    let body_value: Value = sonic_rs::from_slice(&request_body).unwrap_or(Value::new());
 
     RequestLog {
         headers: header_map,
