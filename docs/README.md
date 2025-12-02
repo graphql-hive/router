@@ -1938,9 +1938,9 @@ sampling: 1
 |[**batch\_processor**](#option1batch_processor)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"}`<br/>|no|
 |**enabled**|`boolean`|Default: `true`<br/>|no|
 |**endpoint**||Default: `""`<br/>|no|
-|[**headers**](#option1headers)|`object`|Default: `{}`<br/>|no|
+|[**grpc**](#option1grpc)|`object`, `null`||no|
+|[**http**](#option1http)|`object`, `null`||no|
 |**kind**|`string`|Constant Value: `"otlp"`<br/>|yes|
-|[**metadata**](#option1metadata)|`object`|Default: `{}`<br/>|no|
 |**protocol**|`string`|Enum: `"grpc"`, `"http"`<br/>|yes|
 
 **Additional Properties:** not allowed  
@@ -1955,8 +1955,8 @@ batch_processor:
   scheduled_delay: 5s
 enabled: true
 endpoint: ''
-headers: {}
-metadata: {}
+grpc: null
+http: null
 
 ```
 
@@ -1986,8 +1986,25 @@ scheduled_delay: 5s
 
 ```
 
-<a name="option1headers"></a>
-## Option 1: headers: object
+<a name="option1grpc"></a>
+## Option 1: grpc: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**metadata**](#option1grpcmetadata)|`object`|Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="option1grpcmetadata"></a>
+### Option 1: grpc\.metadata: object
 
 **Additional Properties**
 
@@ -1995,8 +2012,25 @@ scheduled_delay: 5s
 |----|----|-----------|--------|
 |**Additional Properties**||||
 
-<a name="option1metadata"></a>
-## Option 1: metadata: object
+<a name="option1http"></a>
+## Option 1: http: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**headers**](#option1httpheaders)|`object`|Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="option1httpheaders"></a>
+### Option 1: http\.headers: object
 
 **Additional Properties**
 

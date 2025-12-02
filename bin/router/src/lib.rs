@@ -28,7 +28,7 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 use hive_router_config::{load_config, HiveRouterConfig};
 use hive_router_telemetry::{
     otel::{opentelemetry, tracing_opentelemetry::OpenTelemetrySpanExt},
-    traces::spans::http_request::HttpRequestSpanBuilder,
+    traces::spans::http_request::HttpServerRequestSpanBuilder,
 };
 use http::header::RETRY_AFTER;
 use ntex::{
@@ -47,7 +47,7 @@ async fn graphql_endpoint_handler(
         propagator.extract(&HeaderExtractor(request.headers()))
     });
     let root_http_request_span =
-        HttpRequestSpanBuilder::from_router_request(&request, &body_bytes).build();
+        HttpServerRequestSpanBuilder::from_request(&request, &body_bytes).build();
     let _ = root_http_request_span.set_parent(parent_ctx);
 
     let maybe_supergraph = schema_state.current_supergraph();
@@ -61,7 +61,7 @@ async fn graphql_endpoint_handler(
                 .as_ref()
                 .and_then(|cors| cors.get_early_response(&request))
             {
-                root_http_request_span.record_ntex_response(&early_response);
+                root_http_request_span.record_response(&early_response);
                 return early_response;
             }
 
@@ -79,7 +79,7 @@ async fn graphql_endpoint_handler(
                 cors.set_headers(&request, res.headers_mut());
             }
 
-            root_http_request_span.record_ntex_response(&res);
+            root_http_request_span.record_response(&res);
 
             res
         } else {
