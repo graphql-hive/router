@@ -83,4 +83,4 @@ docker run \
 - Run `cargo test_e2e` to execute all e2e tests.
 - Run `cargo test_qp` to execute all query planner tests.
 - Run `cargo test_qpe` to execute all plan executor tests.
-- See [query-planner/src/tests/README.md](query-planner/src/tests/README.md) for more information, logging and configuration.
+- See [lib/query-planner/README.md](lib/query-planner/README.md) for more information, logging and configuration.
