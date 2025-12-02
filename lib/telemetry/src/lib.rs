@@ -50,7 +50,7 @@ impl<S> OpenTelemetry<S> {
         let mut resource_attributes: Vec<_> = Vec::new();
 
         // TODO: make `service.name` configurable
-        resource_attributes.push(KeyValue::new("service.name", "Hive Router"));
+        resource_attributes.push(KeyValue::new("service.name", config.service.name.clone()));
         let resource = Resource::builder()
             .with_attributes(resource_attributes)
             .build();
