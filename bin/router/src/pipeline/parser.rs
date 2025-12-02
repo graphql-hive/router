@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use graphql_parser::query::Document;
 use hive_router_query_planner::utils::parsing::safe_parse_operation;
+use hive_router_telemetry::traces::spans::graphql::GraphQLParseSpan;
 use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
 
@@ -23,6 +24,8 @@ pub async fn parse_operation_with_cache(
     app_state: &Arc<RouterSharedState>,
     execution_params: &ExecutionRequest,
 ) -> Result<GraphQLParserPayload, PipelineError> {
+    let parse_span = GraphQLParseSpan::new();
+    let _guard = parse_span.span.enter();
     let cache_key = {
         let mut hasher = Xxh3::new();
         execution_params.query.hash(&mut hasher);
@@ -31,8 +34,10 @@ pub async fn parse_operation_with_cache(
 
     let parsed_operation = if let Some(cached) = app_state.parse_cache.get(&cache_key).await {
         trace!("Found cached parsed operation for query");
+        parse_span.record_cache_hit(true);
         cached
     } else {
+        parse_span.record_cache_hit(false);
         let parsed = safe_parse_operation(&execution_params.query).map_err(|err| {
             error!("Failed to parse GraphQL operation: {}", err);
             req.new_pipeline_error(PipelineErrorVariant::FailedToParseOperation(err))

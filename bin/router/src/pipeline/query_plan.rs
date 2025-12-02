@@ -7,6 +7,7 @@ use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverri
 use crate::schema_state::{SchemaState, SupergraphData};
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
+use hive_router_telemetry::traces::spans::graphql::GraphQLPlanSpan;
 use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
 
@@ -19,6 +20,8 @@ pub async fn plan_operation_with_cache(
     request_override_context: &RequestOverrideContext,
     cancellation_token: &CancellationToken,
 ) -> Result<Arc<QueryPlan>, PipelineError> {
+    let plan_span = GraphQLPlanSpan::new();
+    let _guard = plan_span.span.enter();
     let stable_override_context =
         StableOverrideContext::new(&supergraph.planner.supergraph, request_override_context);
 
@@ -30,43 +33,48 @@ pub async fn plan_operation_with_cache(
     let contains_introspection = normalized_operation.operation_for_introspection.is_some();
     let is_pure_introspection = is_plan_operation_empty && contains_introspection;
 
+    // let cache_hit = Arc::new(AtomicBool::new(true));
+    plan_span.record_cache_hit(true);
     let plan_result = schema_state
         .plan_cache
-        .try_get_with(plan_cache_key, async move {
-            if is_pure_introspection {
-                return Ok(Arc::new(QueryPlan {
-                    kind: "QueryPlan".to_string(),
-                    node: None,
-                }));
-            }
+        .try_get_with(plan_cache_key, {
+            async {
+                plan_span.record_cache_hit(false);
+                if is_pure_introspection {
+                    return Ok(Arc::new(QueryPlan {
+                        kind: "QueryPlan".to_string(),
+                        node: None,
+                    }));
+                }
 
-            // If the operation is empty, but the projection plan is not,,
-            // we don't need to run the planner,
-            // as there is nothing to plan,
-            // but we can't error out either,
-            // as it would unwind into PipelineError,
-            // and the response would be malformed.
-            //
-            // One example here is a scenario when all requested fields
-            // were unauthorized and stripped out from the operation,
-            // but we still need to project nulls for them in the response.
-            // That's why we return an empty plan,
-            // and allow for response projection to happen later.
-            if is_plan_operation_empty && !is_projection_plan_empty {
-                return Ok(Arc::new(QueryPlan {
-                    kind: "QueryPlan".to_string(),
-                    node: None,
-                }));
-            }
+                // If the operation is empty, but the projection plan is not,,
+                // we don't need to run the planner,
+                // as there is nothing to plan,
+                // but we can't error out either,
+                // as it would unwind into PipelineError,
+                // and the response would be malformed.
+                //
+                // One example here is a scenario when all requested fields
+                // were unauthorized and stripped out from the operation,
+                // but we still need to project nulls for them in the response.
+                // That's why we return an empty plan,
+                // and allow for response projection to happen later.
+                if is_plan_operation_empty && !is_projection_plan_empty {
+                    return Ok(Arc::new(QueryPlan {
+                        kind: "QueryPlan".to_string(),
+                        node: None,
+                    }));
+                }
 
-            supergraph
-                .planner
-                .plan_from_normalized_operation(
-                    filtered_operation_for_plan,
-                    (&request_override_context.clone()).into(),
-                    cancellation_token,
-                )
-                .map(Arc::new)
+                supergraph
+                    .planner
+                    .plan_from_normalized_operation(
+                        filtered_operation_for_plan,
+                        (&request_override_context.clone()).into(),
+                        cancellation_token,
+                    )
+                    .map(Arc::new)
+            }
         })
         .await;
 

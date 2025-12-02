@@ -13,8 +13,10 @@ use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionContext};
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
+use hive_router_telemetry::traces::spans::TARGET_NAME;
 use http::HeaderName;
 use ntex::web::HttpRequest;
+use tracing::instrument;
 
 static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
 
