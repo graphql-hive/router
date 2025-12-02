@@ -1,4 +1,4 @@
-pub const TARGET_NAME: &str = "hive_router";
+pub const TARGET_NAME: &str = "hive-router";
 
 pub mod graphql;
 pub mod http_request;

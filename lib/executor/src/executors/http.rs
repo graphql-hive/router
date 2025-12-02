@@ -175,8 +175,7 @@ impl HTTPSubgraphExecutor {
                 res_fut.await
             }?;
 
-            // TODO:
-            // http_request_span.record_response(response);;
+            http_request_span.record_response(&res);
 
             debug!(
                 "http request to {} completed, status: {}",

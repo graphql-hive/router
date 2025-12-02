@@ -16,7 +16,7 @@
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
-|[**telemetry**](#telemetry)|`object`|Default: `{"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"propagation":{"baggage":false,"trace_context":false}}}`<br/>||
+|[**telemetry**](#telemetry)|`object`|Default: `{"service":{"name":"hive-router"},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"propagation":{"baggage":false,"trace_context":false}}}`<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100}`<br/>||
 |[**usage\_reporting**](#usage_reporting)|`object`|Configuration for usage reporting to GraphQL Hive.<br/>Default: `{"accept_invalid_certs":false,"access_token":null,"buffer_size":1000,"client_name_header":"graphql-client-name","client_version_header":"graphql-client-version","connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":[],"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%","target_id":null}`<br/>||
 
@@ -115,6 +115,8 @@ query_planner:
   timeout: 10s
 supergraph: {}
 telemetry:
+  service:
+    name: hive-router
   tracing:
     collect:
       max_attributes_per_event: 16
@@ -1847,12 +1849,15 @@ max_retries: 10
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**service**](#telemetryservice)|`object`|Default: `{"name":"hive-router"}`<br/>||
 |[**tracing**](#telemetrytracing)|`object`|Default: `{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"propagation":{"baggage":false,"trace_context":false}}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
 
 ```yaml
+service:
+  name: hive-router
 tracing:
   collect:
     max_attributes_per_event: 16
@@ -1865,6 +1870,23 @@ tracing:
   propagation:
     baggage: false
     trace_context: false
+
+```
+
+<a name="telemetryservice"></a>
+### telemetry\.service: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**name**|`string`|Default: `"hive-router"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+name: hive-router
 
 ```
 
