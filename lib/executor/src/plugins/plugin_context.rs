@@ -97,14 +97,14 @@ impl PluginContext {
             .insert(type_id, Box::new(value))
             .and_then(|boxed_any| boxed_any.downcast::<T>().ok())
     }
-    pub fn get_ref<T: Any + Send + Sync>(&self) -> Option<PluginContextRefEntry<'_, T>> {
+    pub fn get_ref<'a, T: Any + Send + Sync>(&'a self) -> Option<PluginContextRefEntry<'a, T>> {
         let type_id = TypeId::of::<T>();
         self.inner.get(&type_id).map(|entry| PluginContextRefEntry {
             entry,
             phantom: std::marker::PhantomData,
         })
     }
-    pub fn get_mut<T: Any + Send + Sync>(&self) -> Option<PluginContextMutEntry<'_, T>> {
+    pub fn get_mut<'a, T: Any + Send + Sync>(&'a self) -> Option<PluginContextMutEntry<'a, T>> {
         let type_id = TypeId::of::<T>();
         self.inner
             .get_mut(&type_id)
