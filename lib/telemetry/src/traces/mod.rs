@@ -59,12 +59,16 @@ fn setup_exporters(
     config: &TelemetryConfig,
     mut tracer_provider_builder: TracerProviderBuilder,
 ) -> Result<TracerProviderBuilder, TelemetryError> {
+    println!("Setting up tracing exporters...");
     for exporter_config in &config.tracing.exporters {
         let span_processor = match exporter_config {
             TracingExporterConfig::Otlp(otlp_config) => {
+                println!("Setting up OTLP tracing exporter...");
                 if !otlp_config.enabled {
+                    println!("OTLP tracing exporter is disabled.");
                     None
                 } else {
+                    println!("OTLP tracing exporter is enabled.");
                     let endpoint = match &otlp_config.endpoint {
                         ValueOrExpression::Value(v) => v.clone(),
                         ValueOrExpression::Expression { .. } => {
@@ -74,8 +78,11 @@ fn setup_exporters(
                         }
                     };
 
+                    println!("OTLP tracing endpoint: {}", endpoint);
+
                     let span_exporter = match &otlp_config.protocol {
                         OtlpProtocol::Grpc => {
+                            println!("OTLP tracing protocol: gRPC");
                             if otlp_config.http.is_some() {
                                 return Err(TelemetryError::SpanExporterSetup(
                                     "OTLP http configuration found while protocol is set to gRPC"
@@ -106,6 +113,8 @@ fn setup_exporters(
                                 .transpose()?
                                 .unwrap_or_default();
 
+                            println!("OTLP tracing metadata: {:?}", metadata);
+
                             SpanExporter::builder()
                                 .with_tonic()
                                 .with_endpoint(endpoint)
@@ -115,6 +124,7 @@ fn setup_exporters(
                                 .map_err(|e| TelemetryError::SpanExporterSetup(e.to_string()))?
                         }
                         OtlpProtocol::Http => {
+                            println!("OTLP tracing protocol: HTTP");
                             if otlp_config.grpc.is_some() {
                                 return Err(TelemetryError::SpanExporterSetup(
                                     "OTLP grpc configuration found while protocol is set to HTTP"
@@ -144,6 +154,8 @@ fn setup_exporters(
                                 .transpose()?
                                 .unwrap_or_default();
 
+                            println!("OTLP tracing headers: {:?}", headers);
+
                             SpanExporter::builder()
                                 .with_http()
                                 .with_endpoint(endpoint)
@@ -164,6 +176,7 @@ fn setup_exporters(
         };
 
         if let Some(span_processor) = span_processor {
+            println!("Adding span processor to tracer provider...");
             tracer_provider_builder = tracer_provider_builder.with_span_processor(span_processor);
         }
     }

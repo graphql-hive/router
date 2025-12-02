@@ -85,9 +85,9 @@ pub struct TracingOtlpConfig {
     #[serde(default)]
     pub endpoint: ValueOrExpression<String>,
     pub protocol: OtlpProtocol,
-    #[serde(flatten)]
+    #[serde(default)]
     pub http: Option<OtlpHttpConfig>,
-    #[serde(flatten)]
+    #[serde(default)]
     pub grpc: Option<OtlpGrpcConfig>,
 }
 

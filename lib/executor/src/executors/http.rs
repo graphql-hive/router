@@ -5,7 +5,7 @@ use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
 use dashmap::DashMap;
 use futures::TryFutureExt;
-use hive_router_telemetry::traces::spans::http_request::HttpRequestSpanBuilder;
+use hive_router_telemetry::traces::spans::http_request::HttpClientRequestSpanBuilder;
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
@@ -154,7 +154,7 @@ impl HTTPSubgraphExecutor {
 
         debug!("making http request to {}", self.endpoint.to_string());
 
-        let http_request_span = HttpRequestSpanBuilder::from_subgraph_request(&req).build();
+        let http_request_span = HttpClientRequestSpanBuilder::from_request(&req).build();
 
         let span = http_request_span.span.clone();
         async {
@@ -174,6 +174,9 @@ impl HTTPSubgraphExecutor {
             } else {
                 res_fut.await
             }?;
+
+            // TODO:
+            // http_request_span.record_response(response);;
 
             debug!(
                 "http request to {} completed, status: {}",

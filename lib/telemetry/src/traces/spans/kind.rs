@@ -1,8 +1,10 @@
 #[derive(Debug, strum::Display, strum::AsRefStr, strum::IntoStaticStr)]
 #[non_exhaustive]
 pub(crate) enum HiveSpanKind {
-    #[strum(serialize = "http.request")]
-    HttpRequest,
+    #[strum(serialize = "http.server")]
+    HttpServerRequest,
+    #[strum(serialize = "http.client")]
+    HttpClientRequest,
     #[strum(serialize = "graphql.parse")]
     GraphqlParse,
     #[strum(serialize = "graphql.validate")]
