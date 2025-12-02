@@ -1,13 +1,14 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use http::HeaderMap;
+use http::{HeaderMap, Uri};
 use sonic_rs::Value;
 
 use crate::{executors::http::HttpResponse, plugin_context::PluginRequestState};
 
 #[async_trait]
 pub trait SubgraphExecutor {
+    fn endpoint(&self) -> &Uri;
     async fn execute<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,

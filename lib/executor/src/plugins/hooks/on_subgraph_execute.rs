@@ -1,5 +1,8 @@
 use crate::{
-    executors::{common::SubgraphExecutionRequest, http::HttpResponse},
+    executors::{
+        common::{SubgraphExecutionRequest, SubgraphExecutorBoxedArc},
+        http::HttpResponse,
+    },
     plugin_context::{PluginContext, RouterHttpRequest},
     plugin_trait::{EndHookPayload, EndHookResult, StartHookPayload, StartHookResult},
 };
@@ -9,6 +12,7 @@ pub struct OnSubgraphExecuteStartHookPayload<'exec> {
     pub context: &'exec PluginContext,
 
     pub subgraph_name: &'exec str,
+    pub executor: SubgraphExecutorBoxedArc,
 
     pub execution_request: SubgraphExecutionRequest<'exec>,
     pub execution_result: Option<HttpResponse>,

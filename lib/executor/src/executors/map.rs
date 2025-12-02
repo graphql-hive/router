@@ -125,6 +125,25 @@ impl SubgraphExecutorMap {
         client_request: &ClientRequestDetails<'exec, 'req>,
         plugin_req_state: &Option<PluginRequestState<'req>>,
     ) -> HttpResponse {
+        let mut executor = match self.get_or_create_executor(subgraph_name, client_request) {
+            Ok(Some(executor)) => executor,
+            Err(err) => {
+                error!(
+                    "Subgraph executor error for subgraph '{}': {}",
+                    subgraph_name, err,
+                );
+                return self.internal_server_error_response(err.into(), subgraph_name);
+            }
+            Ok(None) => {
+                error!(
+                    "Subgraph executor not found for subgraph '{}'",
+                    subgraph_name
+                );
+                return self
+                    .internal_server_error_response("Internal server error".into(), subgraph_name);
+            }
+        };
+
         let mut on_end_callbacks = vec![];
 
         let mut execution_request = execution_request;
@@ -134,6 +153,7 @@ impl SubgraphExecutorMap {
                 router_http_request: &plugin_req_state.router_http_request,
                 context: &plugin_req_state.context,
                 subgraph_name,
+                executor,
                 execution_request,
                 execution_result,
             };
@@ -159,30 +179,12 @@ impl SubgraphExecutorMap {
             }
             execution_request = start_payload.execution_request;
             execution_result = start_payload.execution_result;
+            executor = start_payload.executor;
         }
 
         let mut execution_result = match execution_result {
             Some(execution_result) => execution_result,
-            None => match self.get_or_create_executor(subgraph_name, client_request) {
-                Ok(Some(executor)) => executor.execute(execution_request, plugin_req_state).await,
-                Err(err) => {
-                    error!(
-                        "Subgraph executor error for subgraph '{}': {}",
-                        subgraph_name, err,
-                    );
-                    self.internal_server_error_response(err.into(), subgraph_name)
-                }
-                Ok(None) => {
-                    error!(
-                        "Subgraph executor not found for subgraph '{}'",
-                        subgraph_name
-                    );
-                    self.internal_server_error_response(
-                        "Internal server error".into(),
-                        subgraph_name,
-                    )
-                }
-            },
+            None => executor.execute(execution_request, plugin_req_state).await,
         };
 
         if let Some(plugin_req_state) = plugin_req_state.as_ref() {
@@ -200,11 +202,7 @@ impl SubgraphExecutorMap {
                     }
                     EndControlFlow::EndResponse(response) => {
                         // TODO: FFIX
-                        return HttpResponse {
-                            body: response.body,
-                            headers: response.headers,
-                            status: response.status,
-                        };
+                        return response;
                     }
                 }
             }

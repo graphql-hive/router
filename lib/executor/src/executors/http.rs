@@ -187,12 +187,7 @@ async fn send_request(
             match result.control_flow {
                 StartControlFlow::Continue => { /* continue to next plugin */ }
                 StartControlFlow::EndResponse(response) => {
-                    // TODO: Fixx
-                    return Ok(HttpResponse {
-                        status: StatusCode::OK,
-                        body: response.body,
-                        headers: response.headers,
-                    });
+                    return Ok(response);
                 }
                 StartControlFlow::OnEnd(callback) => {
                     on_end_callbacks.push(callback);
@@ -263,11 +258,7 @@ async fn send_request(
         match result.control_flow {
             EndControlFlow::Continue => { /* continue to next callback */ }
             EndControlFlow::EndResponse(response) => {
-                return Ok(HttpResponse {
-                    status: StatusCode::OK,
-                    body: response.body,
-                    headers: response.headers,
-                });
+                return Ok(response);
             }
         }
     }
@@ -277,6 +268,9 @@ async fn send_request(
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
+    fn endpoint(&self) -> &http::Uri {
+        &self.endpoint
+    }
     #[tracing::instrument(skip_all, fields(subgraph_name = self.subgraph_name))]
     async fn execute<'a>(
         &self,
