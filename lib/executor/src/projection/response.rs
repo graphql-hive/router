@@ -9,8 +9,6 @@ use bytes::BufMut;
 use sonic_rs::JsonValueTrait;
 use std::collections::HashMap;
 
-use tracing::{instrument, warn};
-
 use crate::json_writer::{write_and_escape_string, write_f64, write_i64, write_u64};
 use crate::utils::consts::{
     CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, EMPTY_OBJECT, FALSE, NULL, OPEN_BRACE, OPEN_BRACKET,
