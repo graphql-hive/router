@@ -5,6 +5,7 @@ use crate::pipeline::parser::GraphQLParserPayload;
 use crate::schema_state::{SchemaState, SupergraphData};
 use crate::shared_state::RouterSharedState;
 use graphql_tools::validation::validate::validate;
+use hive_router_telemetry::traces::spans::graphql::GraphQLValidateSpan;
 use ntex::web::HttpRequest;
 use tracing::{error, trace};
 
@@ -16,6 +17,8 @@ pub async fn validate_operation_with_cache(
     app_state: &Arc<RouterSharedState>,
     parser_payload: &GraphQLParserPayload,
 ) -> Result<(), PipelineError> {
+    let validate_span = GraphQLValidateSpan::new();
+    let _guard = validate_span.span.enter();
     let consumer_schema_ast = &supergraph.planner.consumer_schema.document;
 
     let validation_result = match schema_state
@@ -28,7 +31,7 @@ pub async fn validate_operation_with_cache(
                 "validation result of hash {} has been loaded from cache",
                 parser_payload.cache_key
             );
-
+            validate_span.record_cache_hit(true);
             cached_validation
         }
         None => {
@@ -36,6 +39,7 @@ pub async fn validate_operation_with_cache(
                 "validation result of hash {} does not exists in cache",
                 parser_payload.cache_key
             );
+            validate_span.record_cache_hit(false);
 
             let res = validate(
                 consumer_schema_ast,

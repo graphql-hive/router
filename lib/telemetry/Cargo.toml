@@ -1,0 +1,59 @@
+[package]
+name = "hive-router-telemetry"
+version = "0.0.1"
+edition = "2021"
+description = "GraphQL Hive Router telemetry utilities"
+license = "MIT"
+publish = true
+repository = "https://github.com/graphql-hive/router"
+homepage = "https://github.com/graphql-hive/router"
+authors = ["The Guild"]
+
+[lib]
+
+[dependencies]
+hive-router-config = { path = "../router-config", version = "0.0.15" }
+http = { workspace=true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+hyper = { workspace = true }
+strum = { workspace = true, features = ["derive"] }
+ntex = { workspace = true }
+opentelemetry = { workspace = true, features = ["trace"] }
+opentelemetry-appender-tracing = { workspace = true }
+opentelemetry-otlp = { workspace = true, features = [
+    "grpc-tonic",
+    "http-proto",
+    "logs",
+    "tls",
+    "tonic",
+    "trace",
+    "metrics",
+] }
+opentelemetry-stdout = { workspace = true, features = [
+    "trace",
+    "metrics",
+    "logs",
+] }
+opentelemetry_sdk = { workspace = true, features = [
+    "rt-tokio",
+    "logs",
+    "spec_unstable_metrics_views",
+    "experimental_trace_batch_span_processor_with_async_runtime",
+] }
+tracing = { workspace = true }
+tracing-opentelemetry.workspace = true
+tracing-subscriber = { workspace = true }
+tonic = { workspace = true }
+
+
+graphql-parser = { workspace = true }
+graphql-tools = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+tokio = { workspace = true }
+insta = { workspace = true }

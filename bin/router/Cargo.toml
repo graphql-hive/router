@@ -20,6 +20,7 @@ hive-router-query-planner = { path = "../../lib/query-planner", version = "2.1.5
 hive-router-plan-executor = { path = "../../lib/executor", version = "6.2.4" }
 hive-router-config = { path = "../../lib/router-config", version = "0.0.15" }
 hive-router-internal = { path = "../../lib/internal", version = "0.0.3" }
+hive-router-telemetry = { path = "../../lib/telemetry", version = "0.0.1" }
 
 tokio = { workspace = true }
 futures = { workspace = true }

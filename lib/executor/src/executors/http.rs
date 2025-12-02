@@ -5,6 +5,7 @@ use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
 use dashmap::DashMap;
 use futures::TryFutureExt;
+use hive_router_telemetry::traces::spans::http_request::HttpRequestSpanBuilder;
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
@@ -18,7 +19,7 @@ use hyper::Version;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
-use tracing::debug;
+use tracing::{debug, Instrument};
 
 use crate::executors::common::SubgraphExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
@@ -153,50 +154,57 @@ impl HTTPSubgraphExecutor {
 
         debug!("making http request to {}", self.endpoint.to_string());
 
-        let res_fut = self.http_client.request(req).map_err(|e| {
-            SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-        });
+        let http_request_span = HttpRequestSpanBuilder::from_subgraph_request(&req).build();
 
-        let res = if let Some(timeout_duration) = timeout {
-            tokio::time::timeout(timeout_duration, res_fut)
-                .await
-                .map_err(|_| {
-                    SubgraphExecutorError::RequestTimeout(
-                        self.endpoint.to_string(),
-                        timeout_duration.as_millis(),
-                    )
-                })?
-        } else {
-            res_fut.await
-        }?;
-
-        debug!(
-            "http request to {} completed, status: {}",
-            self.endpoint.to_string(),
-            res.status()
-        );
-
-        let (parts, body) = res.into_parts();
-        let body = body
-            .collect()
-            .await
-            .map_err(|e| {
+        let span = http_request_span.span.clone();
+        async {
+            let res_fut = self.http_client.request(req).map_err(|e| {
                 SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-            })?
-            .to_bytes();
+            });
 
-        if body.is_empty() {
-            return Err(SubgraphExecutorError::RequestFailure(
+            let res = if let Some(timeout_duration) = timeout {
+                tokio::time::timeout(timeout_duration, res_fut)
+                    .await
+                    .map_err(|_| {
+                        SubgraphExecutorError::RequestTimeout(
+                            self.endpoint.to_string(),
+                            timeout_duration.as_millis(),
+                        )
+                    })?
+            } else {
+                res_fut.await
+            }?;
+
+            debug!(
+                "http request to {} completed, status: {}",
                 self.endpoint.to_string(),
-                "Empty response body".to_string(),
-            ));
-        }
+                res.status()
+            );
 
-        Ok(SharedResponse {
-            status: parts.status,
-            body,
-            headers: parts.headers,
-        })
+            let (parts, body) = res.into_parts();
+            let body = body
+                .collect()
+                .await
+                .map_err(|e| {
+                    SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
+                })?
+                .to_bytes();
+
+            if body.is_empty() {
+                return Err(SubgraphExecutorError::RequestFailure(
+                    self.endpoint.to_string(),
+                    "Empty response body".to_string(),
+                ));
+            }
+
+            Ok(SharedResponse {
+                status: parts.status,
+                body,
+                headers: parts.headers,
+            })
+        }
+        .instrument(span)
+        .await
     }
 
     fn error_to_graphql_bytes(&self, error: SubgraphExecutorError) -> Bytes {

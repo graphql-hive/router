@@ -16,7 +16,7 @@ use ntex::{
 use crate::{
     jwt::context::JwtRequestContext,
     pipeline::{
-        authorization::{enforce_operation_authorization, AuthorizationDecision},
+        authorization::enforce_operation_authorization,
         coerce_variables::coerce_request_variables,
         csrf_prevention::perform_csrf_prevention,
         error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant},
@@ -26,7 +26,7 @@ use crate::{
             RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON,
             APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, TEXT_HTML_CONTENT_TYPE,
         },
-        normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
+        normalize::normalize_request_with_cache,
         parser::parse_operation_with_cache,
         progressive_override::request_override_context,
         query_plan::plan_operation_with_cache,
@@ -176,43 +176,15 @@ pub async fn execute_pipeline(
     )
     .map_err(|error| req.new_pipeline_error(PipelineErrorVariant::LabelEvaluationError(error)))?;
 
-    let decision = enforce_operation_authorization(
+    let (normalize_payload, authorization_errors) = enforce_operation_authorization(
+        req,
         &shared_state.router_config,
         &normalize_payload,
         &supergraph.authorization,
         &supergraph.metadata,
         &variable_payload,
         &jwt_request_details,
-    );
-
-    let (normalize_payload, authorization_errors) = match decision {
-        AuthorizationDecision::NoChange => (normalize_payload.clone(), vec![]),
-        AuthorizationDecision::Modified {
-            new_operation_definition,
-            new_projection_plan,
-            errors,
-        } => {
-            (
-                Arc::new(GraphQLNormalizationPayload {
-                    operation_for_plan: Arc::new(new_operation_definition),
-                    // These are cheap Arc clones
-                    operation_for_introspection: normalize_payload
-                        .operation_for_introspection
-                        .clone(),
-                    root_type_name: normalize_payload.root_type_name,
-                    projection_plan: Arc::new(new_projection_plan),
-                }),
-                errors,
-            )
-        }
-        AuthorizationDecision::Reject { errors } => {
-            return Err(
-                req.new_pipeline_error(PipelineErrorVariant::AuthorizationFailed(
-                    errors.iter().map(|e| e.into()).collect(),
-                )),
-            )
-        }
-    };
+    )?;
 
     let query_plan_payload = plan_operation_with_cache(
         req,

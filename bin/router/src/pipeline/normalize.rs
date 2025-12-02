@@ -5,6 +5,7 @@ use hive_router_plan_executor::introspection::partition::partition_operation;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::ast::operation::OperationDefinition;
+use hive_router_telemetry::traces::spans::graphql::GraphQLNormalizeSpan;
 use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
 
@@ -31,6 +32,8 @@ pub async fn normalize_request_with_cache(
     execution_params: &ExecutionRequest,
     parser_payload: &GraphQLParserPayload,
 ) -> Result<Arc<GraphQLNormalizationPayload>, PipelineError> {
+    let normalize_span = GraphQLNormalizeSpan::new();
+    let _guard = normalize_span.span.enter();
     let cache_key = match &execution_params.operation_name {
         Some(operation_name) => {
             let mut hasher = Xxh3::new();
@@ -48,48 +51,52 @@ pub async fn normalize_request_with_cache(
                 payload.operation_for_plan.name,
                 payload.operation_for_plan
             );
+            normalize_span.record_cache_hit(true);
 
             Ok(payload)
         }
-        None => match normalize_operation(
-            &supergraph.planner.supergraph,
-            &parser_payload.parsed_operation,
-            execution_params.operation_name.as_deref(),
-        ) {
-            Ok(doc) => {
-                trace!(
-                    "Successfully normalized GraphQL operation (operation name={:?}): {}",
-                    doc.operation_name,
-                    doc.operation
-                );
+        None => {
+            normalize_span.record_cache_hit(false);
+            match normalize_operation(
+                &supergraph.planner.supergraph,
+                &parser_payload.parsed_operation,
+                execution_params.operation_name.as_deref(),
+            ) {
+                Ok(doc) => {
+                    trace!(
+                        "Successfully normalized GraphQL operation (operation name={:?}): {}",
+                        doc.operation_name,
+                        doc.operation
+                    );
 
-                let operation = doc.operation;
-                let (root_type_name, projection_plan) =
-                    FieldProjectionPlan::from_operation(&operation, &supergraph.metadata);
-                let partitioned_operation = partition_operation(operation);
+                    let operation = doc.operation;
+                    let (root_type_name, projection_plan) =
+                        FieldProjectionPlan::from_operation(&operation, &supergraph.metadata);
+                    let partitioned_operation = partition_operation(operation);
 
-                let payload = GraphQLNormalizationPayload {
-                    root_type_name,
-                    projection_plan: Arc::new(projection_plan),
-                    operation_for_plan: Arc::new(partitioned_operation.downstream_operation),
-                    operation_for_introspection: partitioned_operation
-                        .introspection_operation
-                        .map(Arc::new),
-                };
-                let payload_arc = Arc::new(payload);
-                schema_state
-                    .normalize_cache
-                    .insert(cache_key, payload_arc.clone())
-                    .await;
+                    let payload = GraphQLNormalizationPayload {
+                        root_type_name,
+                        projection_plan: Arc::new(projection_plan),
+                        operation_for_plan: Arc::new(partitioned_operation.downstream_operation),
+                        operation_for_introspection: partitioned_operation
+                            .introspection_operation
+                            .map(Arc::new),
+                    };
+                    let payload_arc = Arc::new(payload);
+                    schema_state
+                        .normalize_cache
+                        .insert(cache_key, payload_arc.clone())
+                        .await;
 
-                Ok(payload_arc)
+                    Ok(payload_arc)
+                }
+                Err(err) => {
+                    error!("Failed to normalize GraphQL operation: {}", err);
+                    trace!("{:?}", err);
+
+                    Err(req.new_pipeline_error(PipelineErrorVariant::NormalizationError(err)))
+                }
             }
-            Err(err) => {
-                error!("Failed to normalize GraphQL operation: {}", err);
-                trace!("{:?}", err);
-
-                Err(req.new_pipeline_error(PipelineErrorVariant::NormalizationError(err)))
-            }
-        },
+        }
     }
 }

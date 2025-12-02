@@ -155,6 +155,9 @@ impl SubgraphExecutorMap {
                     Ok(timeout) => executor.execute(execution_request, timeout).await,
                     Err(err) => {
                         error!(
+                            {
+                              subgraph_name = subgraph_name,
+                            },
                             "Failed to resolve timeout for subgraph '{}': {}",
                             subgraph_name, err,
                         );
@@ -164,8 +167,12 @@ impl SubgraphExecutorMap {
             }
             Err(err) => {
                 error!(
-                    "Subgraph executor error for subgraph '{}': {}",
-                    subgraph_name, err,
+                    {
+                      subgraph_name = subgraph_name,
+                    },
+                    "Subgraph executor error for '{}': {}",
+                    subgraph_name,
+                    err,
                 );
                 self.internal_server_error_response(err.into(), subgraph_name)
             }

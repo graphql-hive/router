@@ -17,7 +17,7 @@ use crate::utils::consts::{
     QUOTE, TRUE, TYPENAME_FIELD_NAME,
 };
 
-#[instrument(level = "trace", skip_all)]
+#[instrument(target = "hive", name = "router.response.serialize", skip_all)]
 pub fn project_by_operation(
     data: &Value,
     errors: Vec<GraphQLError>,
