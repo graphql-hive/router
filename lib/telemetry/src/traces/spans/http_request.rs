@@ -25,8 +25,9 @@ pub struct HttpRequestSpanBuilder<'a> {
     request_body_size: Option<usize>,
     request_method: Cow<'a, http::Method>,
     header_user_agent: Option<Cow<'a, http::HeaderValue>>,
-    server_address: Option<Cow<'a, http::HeaderValue>>,
+    server_address: Option<&'a str>,
     server_port: Option<u16>,
+    protocol_version: Option<&'a str>,
     url: Cow<'a, http::Uri>,
 }
 
@@ -50,14 +51,27 @@ impl Borrow<Span> for HttpRequestSpan {
 
 impl<'a> HttpRequestSpanBuilder<'a> {
     pub fn from_subgraph_request(request: &'a http::Request<Full<Bytes>>) -> Self {
+        let (server_address, server_port) =
+            match request.headers().get(HOST).and_then(|h| h.to_str().ok()) {
+                Some(host) => {
+                    if let Some((host, port_str)) = host.rsplit_once(':') {
+                        (Some(host), port_str.parse::<u16>().ok())
+                    } else {
+                        (Some(host), None)
+                    }
+                }
+                None => (None, None),
+            };
+
         HttpRequestSpanBuilder {
             kind: HttpRequestSpanType::Subgraph,
             request_body_size: request.size_hint().upper().map(|v| v as usize),
             request_method: Cow::Borrowed(request.method()),
             header_user_agent: request.headers().get(USER_AGENT).map(Cow::Borrowed),
             url: Cow::Borrowed(request.uri()),
-            server_address: request.headers().get(HOST).map(Cow::Borrowed),
-            server_port: None,
+            protocol_version: version_to_protocol_version_attr(request.version()),
+            server_address,
+            server_port,
         }
     }
 
@@ -65,6 +79,17 @@ impl<'a> HttpRequestSpanBuilder<'a> {
         request: &'a ntex::web::HttpRequest,
         body: &ntex::util::Bytes,
     ) -> Self {
+        let (server_address, server_port) =
+            match request.headers().get(HOST).and_then(|h| h.to_str().ok()) {
+                Some(host) => {
+                    if let Some((host, port_str)) = host.rsplit_once(':') {
+                        (Some(host), port_str.parse::<u16>().ok())
+                    } else {
+                        (Some(host), None)
+                    }
+                }
+                None => (None, None),
+            };
         HttpRequestSpanBuilder {
             kind: HttpRequestSpanType::Router,
             request_body_size: Some(body.len()),
@@ -74,8 +99,9 @@ impl<'a> HttpRequestSpanBuilder<'a> {
                 .get(USER_AGENT)
                 .map(|h| Cow::Owned(h.into())),
             url: Cow::Borrowed(request.uri()),
-            server_address: request.headers().get(HOST).map(|h| Cow::Owned(h.into())),
-            server_port: None,
+            protocol_version: version_to_protocol_version_attr(request.version()),
+            server_address,
+            server_port,
         }
     }
 
@@ -89,20 +115,22 @@ impl<'a> HttpRequestSpanBuilder<'a> {
         // Rust complains about span's name not being constant,
         // so assinging span's name dynamically is not possible without macro.
         macro_rules! build_http_request_span {
-          ($span_name:expr) => {
+          ($span_name:expr, $otel_kind:expr) => {
             info_span!(
                 target: TARGET_NAME,
                 $span_name,
                 "hive.kind" = kind,
                 "otel.status_code" = Empty,
-                "otel.kind" = "Server",
+                "otel.kind" = $otel_kind,
                 "error.type" = Empty,
-                "server.address" = self.server_address.as_ref().and_then(|v| v.to_str().ok()),
+                "server.address" = self.server_address,
                 "server.port" = self.server_port,
+                "url.full" = self.url.to_string(),
                 "url.path" = self.url.path(),
                 "url.scheme" = self.url.scheme().map(|v| v.as_str()),
                 "http.request.body.size" = self.request_body_size,
                 "http.request.method" = self.request_method.as_str(),
+                "network.protocol.version" = self.protocol_version,
                 "user_agent.original" = self.header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
                 "http.response.status_code" = Empty,
                 "http.response.body.size" = Empty,
@@ -111,9 +139,11 @@ impl<'a> HttpRequestSpanBuilder<'a> {
         }
 
         let span = match self.kind {
-            HttpRequestSpanType::Router => build_http_request_span!(ROUTER_HTTP_REQUEST_SPAN_NAME),
+            HttpRequestSpanType::Router => {
+                build_http_request_span!(ROUTER_HTTP_REQUEST_SPAN_NAME, "Server")
+            }
             HttpRequestSpanType::Subgraph => {
-                build_http_request_span!(SUBGRAPH_HTTP_REQUEST_SPAN_NAME)
+                build_http_request_span!(SUBGRAPH_HTTP_REQUEST_SPAN_NAME, "Client")
             }
         };
 
@@ -161,5 +191,15 @@ impl HttpRequestSpan {
         self.record("otel.status_code", "Error");
         self.record("error.type", "500");
         self.record("http.response.status_code", "500");
+    }
+}
+
+fn version_to_protocol_version_attr(version: http::Version) -> Option<&'static str> {
+    match version {
+        http::Version::HTTP_10 => Some("1.0"),
+        http::Version::HTTP_11 => Some("1.1"),
+        http::Version::HTTP_2 => Some("2"),
+        http::Version::HTTP_3 => Some("3"),
+        _ => None,
     }
 }

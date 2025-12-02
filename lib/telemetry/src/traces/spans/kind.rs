@@ -1,13 +1,22 @@
 #[derive(Debug, strum::Display, strum::AsRefStr, strum::IntoStaticStr)]
-#[strum(serialize_all = "kebab-case")]
 #[non_exhaustive]
 pub(crate) enum HiveSpanKind {
+    #[strum(serialize = "http.request")]
     HttpRequest,
+    #[strum(serialize = "graphql.parse")]
     GraphqlParse,
+    #[strum(serialize = "graphql.validate")]
     GraphqlValidate,
+    #[strum(serialize = "graphql.authorize")]
     GraphqlAuthorize,
+    #[strum(serialize = "graphql.normalize")]
     GraphqlNormalize,
+    #[strum(serialize = "graphql.plan")]
     GraphqlPlan,
+    #[strum(serialize = "graphql.execute")]
+    GraphqlExecute,
+    #[strum(serialize = "graphql.operation")]
     GraphqlOperation,
-    SubgraphGraphqlOperation,
+    #[strum(serialize = "graphql.subgraph.operation")]
+    GraphQLSubgraphOperation,
 }

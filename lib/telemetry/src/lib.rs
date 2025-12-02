@@ -16,7 +16,7 @@ pub mod otel;
 pub mod traces;
 mod utils;
 
-// docker run -p 8080:4316 -p 4317:4317 -p 4318:4318 docker.hyperdx.io/hyperdx/hyperdx-all-in-one
+// docker run -p 4316:8080 -p 4317:4317 -p 4318:4318 docker.hyperdx.io/hyperdx/hyperdx-all-in-one
 // Send OpenTelemetry data via:
 //   http/protobuf: OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 //   gRPC: OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
