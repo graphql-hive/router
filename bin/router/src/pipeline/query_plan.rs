@@ -33,7 +33,6 @@ pub async fn plan_operation_with_cache(
     let contains_introspection = normalized_operation.operation_for_introspection.is_some();
     let is_pure_introspection = is_plan_operation_empty && contains_introspection;
 
-    // let cache_hit = Arc::new(AtomicBool::new(true));
     plan_span.record_cache_hit(true);
     let plan_result = schema_state
         .plan_cache
