@@ -79,6 +79,8 @@ docker run \
 
 ## Local Development
 
-* Run `cargo test --all` to execute all tests.
-* Run `cargo test_qp` to execute all tests in the query planner.
-* See [query-planner/src/tests/README.md](query-planner/src/tests/README.md) for more information, logging and configuration.
+- Run `cargo test_all` to execute all unit tests.
+- Run `cargo test_e2e` to execute all e2e tests.
+- Run `cargo test_qp` to execute all query planner tests.
+- Run `cargo test_qpe` to execute all plan executor tests.
+- See [query-planner/src/tests/README.md](query-planner/src/tests/README.md) for more information, logging and configuration.
