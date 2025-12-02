@@ -2010,7 +2010,7 @@ dependencies = [
  "moka",
  "reqwest",
  "reqwest-middleware",
- "reqwest-retry",
+ "reqwest-retry 0.7.0",
  "serde",
  "serde_json",
  "sha2",
@@ -2050,8 +2050,8 @@ dependencies = [
  "regex-automata",
  "reqwest",
  "reqwest-middleware",
- "reqwest-retry",
- "retry-policies",
+ "reqwest-retry 0.8.0",
+ "retry-policies 0.4.0",
  "serde",
  "serde_json",
  "sonic-rs",
@@ -2076,7 +2076,7 @@ dependencies = [
  "humantime-serde",
  "jsonwebtoken",
  "regex-automata",
- "retry-policies",
+ "retry-policies 0.4.0",
  "schemars 1.0.5",
  "serde",
  "serde_json",
@@ -4466,11 +4466,32 @@ dependencies = [
  "parking_lot 0.11.2",
  "reqwest",
  "reqwest-middleware",
- "retry-policies",
+ "retry-policies 0.4.0",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
  "wasm-timer",
+]
+
+[[package]]
+name = "reqwest-retry"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "105747e3a037fe5bf17458d794de91149e575b6183fc72c85623a44abb9683f5"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "getrandom 0.2.16",
+ "http",
+ "hyper",
+ "reqwest",
+ "reqwest-middleware",
+ "retry-policies 0.5.1",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "wasmtimer",
 ]
 
 [[package]]
@@ -4480,6 +4501,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5875471e6cab2871bc150ecb8c727db5113c9338cc3354dc5ee3425b6aa40a1c"
 dependencies = [
  "rand 0.8.5",
+]
+
+[[package]]
+name = "retry-policies"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46a4bd6027df676bcb752d3724db0ea3c0c5fc1dd0376fec51ac7dcaf9cc69be"
+dependencies = [
+ "rand 0.9.2",
 ]
 
 [[package]]
@@ -6076,7 +6106,7 @@ dependencies = [
  "regex",
  "reqwest",
  "reqwest-middleware",
- "reqwest-retry",
+ "reqwest-retry 0.7.0",
  "roxmltree",
  "rust_decimal",
  "seahash",
@@ -6225,6 +6255,20 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "wasmtimer"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c598d6b99ea013e35844697fc4670d08339d5cda15588f193c6beedd12f644b"
+dependencies = [
+ "futures",
+ "js-sys",
+ "parking_lot 0.12.5",
+ "pin-utils",
+ "slab",
+ "wasm-bindgen",
 ]
 
 [[package]]
