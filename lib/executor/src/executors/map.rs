@@ -166,11 +166,7 @@ impl SubgraphExecutorMap {
                     }
                     StartControlFlow::EndResponse(response) => {
                         // TODO: FFIX
-                        return HttpResponse {
-                            body: response.body,
-                            headers: response.headers,
-                            status: response.status,
-                        };
+                        return response;
                     }
                     StartControlFlow::OnEnd(callback) => {
                         on_end_callbacks.push(callback);
