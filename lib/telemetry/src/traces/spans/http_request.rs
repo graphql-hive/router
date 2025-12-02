@@ -81,21 +81,34 @@ impl<'a> HttpServerRequestSpanBuilder<'a> {
             "otel.status_code" = Empty,
             "otel.kind" = "Server",
             "error.type" = Empty,
+
+            // Stable Attributes
             "server.address" = self.server_address,
             "server.port" = self.server_port,
-            "http.route" = "/graphql",
-            "url.full" = url_full,
+            "url.full" = url_full.as_str(),
             "url.path" = self.url.path(),
-            "url.scheme" = self.url.scheme().map(|v| v.as_str()),
+            "url.scheme" = self.url.scheme_str(),
             "http.request.body.size" = self.request_body_size,
             "http.request.method" = self.request_method.as_str(),
             "network.protocol.version" = self.protocol_version,
             "user_agent.original" = self.header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
             "http.response.status_code" = Empty,
             "http.response.body.size" = Empty,
-        );
+            "http.route" = "/graphql",
 
-        record_deprecated_http_server_request_attributes(&span, &self, &url_full);
+            // Deprecated Attributes for Compatibility
+            // TODO: ideally those deprecated attributes should be opt-in or opt-out
+            "http.method" = self.request_method.as_str(),
+            "http.url" = url_full.as_str(),
+            "http.host" = self.server_address,
+            "http.scheme" = self.url.scheme_str(),
+            "http.flavor" = self.protocol_version,
+            "http.request_content_length" = self.request_body_size.map(|s| s as i64),
+            "http.user_agent" = self.header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
+            "http.target" = self.url.path_and_query().map(|p| p.as_str()),
+            "http.status_code" = Empty,
+            "http.response_content_length" = Empty,
+        );
 
         HttpServerRequestSpan { span }
     }
@@ -103,42 +116,40 @@ impl<'a> HttpServerRequestSpanBuilder<'a> {
 
 impl HttpServerRequestSpan {
     pub fn record_response(&self, response: &ntex::web::HttpResponse) {
-        let mut body_size: Option<u64> = None;
+        let body_size: Option<u64> = response.body().as_ref().and_then(|b| match b.size() {
+            ntex::http::body::BodySize::Sized(size) => Some(size),
+            _ => None,
+        });
 
         self.record("http.response.status_code", response.status().as_str());
-        if let Some(body) = response.body().as_ref() {
-            match body.size() {
-                ntex::http::body::BodySize::None
-                | ntex::http::body::BodySize::Empty
-                | ntex::http::body::BodySize::Stream => {
-                    body_size = Some(0);
-                    self.record("http.response.body.size", 0);
-                }
-                ntex::http::body::BodySize::Sized(size) => {
-                    body_size = Some(size);
-                    self.record("http.response.body.size", size);
-                }
-            }
+
+        // Record stable attributes
+        self.record("http.response.status_code", response.status().as_str());
+        if let Some(size) = body_size {
+            self.record("http.response.body.size", size as i64);
         }
+
+        // Record deprecated attributes
+        self.record("http.status_code", response.status().as_str());
+        if let Some(size) = body_size {
+            self.record("http.response_content_length", size as i64);
+        }
+
         if response.status().is_server_error() {
             self.record("otel.status_code", "Error");
             self.record("error.type", response.status().as_str());
         } else {
             self.record("otel.status_code", "Ok");
         }
-
-        record_deprecated_http_response_attributes(
-            &self.span,
-            response.status().as_str(),
-            body_size,
-        );
     }
 
     pub fn record_internal_server_error(&self) {
         self.record("otel.status_code", "Error");
         self.record("error.type", "500");
         self.record("http.response.status_code", "500");
-        record_deprecated_http_response_attributes(&self.span, "500", None);
+
+        // Deprecated attribute
+        self.record("http.status_code", "500");
     }
 }
 
@@ -209,20 +220,30 @@ impl<'a> HttpClientRequestSpanBuilder<'a> {
             "otel.status_code" = Empty,
             "otel.kind" = "Client",
             "error.type" = Empty,
+
+            // Stable Attributes
             "server.address" = self.server_address,
             "server.port" = self.server_port,
-            "url.full" = url_full,
+            "url.full" = url_full.as_str(),
             "url.path" = self.url.path(),
-            "url.scheme" = self.url.scheme().map(|v| v.as_str()),
+            "url.scheme" = self.url.scheme_str(),
             "http.request.body.size" = self.request_body_size,
             "http.request.method" = self.request_method.as_str(),
             "network.protocol.version" = self.protocol_version,
             "user_agent.original" = self.header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
             "http.response.status_code" = Empty,
             "http.response.body.size" = Empty,
-        );
 
-        record_deprecated_http_client_request_attributes(&span, &self, &url_full);
+            // Deprecated Attributes for Compatibility
+            "http.method" = self.request_method.as_str(),
+            "http.url" = url_full.as_str(),
+            "net.peer.name" = self.server_address,
+            "net.peer.port" = self.server_port,
+            "http.flavor" = self.protocol_version,
+            "http.request_content_length" = self.request_body_size.map(|s| s as i64),
+            "http.status_code" = Empty,
+            "http.response_content_length" = Empty,
+        );
 
         HttpClientRequestSpan { span }
     }
@@ -231,25 +252,26 @@ impl<'a> HttpClientRequestSpanBuilder<'a> {
 impl HttpClientRequestSpan {
     pub fn record_response(&self, response: &Response<Incoming>) {
         self.record("http.response.status_code", response.status().as_str());
+        let body_size = response.body().size_hint().exact().map(|s| s as usize);
 
-        let mut body_size: Option<u64> = None;
-
-        if let Some(size) = response.body().size_hint().exact() {
-            body_size = Some(size);
-            self.record("http.response.body.size", size);
+        // Record stable attributes
+        self.record("http.response.status_code", response.status().as_str());
+        if let Some(size) = body_size {
+            self.record("http.response.body.size", size as i64);
         }
+
+        // Record deprecated attributes
+        self.record("http.status_code", response.status().as_str());
+        if let Some(size) = body_size {
+            self.record("http.response_content_length", size as i64);
+        }
+
         if response.status().is_server_error() {
             self.record("otel.status_code", "Error");
             self.record("error.type", response.status().as_str());
         } else {
             self.record("otel.status_code", "Ok");
         }
-
-        record_deprecated_http_response_attributes(
-            &self.span,
-            response.status().as_str(),
-            body_size,
-        );
     }
 
     pub fn record_internal_server_error(&self) {
@@ -257,7 +279,8 @@ impl HttpClientRequestSpan {
         self.record("error.type", "500");
         self.record("http.response.status_code", "500");
 
-        record_deprecated_http_response_attributes(&self.span, "500", None);
+        // Deprecated attribute
+        self.record("http.status_code", "500");
     }
 }
 
@@ -268,62 +291,5 @@ fn version_to_protocol_version_attr(version: http::Version) -> Option<&'static s
         http::Version::HTTP_2 => Some("2"),
         http::Version::HTTP_3 => Some("3"),
         _ => None,
-    }
-}
-
-/// Records deprecated HTTP server attributes onto a span for backwards compatibility.
-/// TODO: make it opt-in or opt-out
-fn record_deprecated_http_server_request_attributes(
-    span: &Span,
-    builder: &HttpServerRequestSpanBuilder<'_>,
-    full_url: &str,
-) {
-    span.record("http.method", builder.request_method.as_str());
-    span.record("http.url", full_url);
-    span.record("http.host", builder.server_address);
-    span.record("http.scheme", builder.url.scheme_str());
-    span.record("http.flavor", builder.protocol_version);
-    if let Some(size) = builder.request_body_size {
-        span.record("http.request_content_length", size as i64);
-    }
-    if let Some(ua) = builder
-        .header_user_agent
-        .as_ref()
-        .and_then(|v| v.to_str().ok())
-    {
-        span.record("http.user_agent", ua);
-    }
-    if let Some(path_and_query) = builder.url.path_and_query() {
-        span.record("http.target", path_and_query.as_str());
-    }
-}
-
-/// Records deprecated HTTP client attributes onto a span for backwards compatibility.
-/// TODO: make it opt-in or opt-out
-fn record_deprecated_http_client_request_attributes(
-    span: &Span,
-    builder: &HttpClientRequestSpanBuilder<'_>,
-    full_url: &str,
-) {
-    span.record("http.method", builder.request_method.as_str());
-    span.record("http.url", full_url);
-    span.record("net.peer.name", builder.server_address);
-    span.record("net.peer.port", builder.server_port);
-    span.record("http.flavor", builder.protocol_version);
-    if let Some(size) = builder.request_body_size {
-        span.record("http.request_content_length", size as i64);
-    }
-}
-
-/// Records deprecated HTTP response attributes onto a span for backwards compatibility.
-/// TODO: make it opt-in or opt-out
-fn record_deprecated_http_response_attributes(
-    span: &Span,
-    status_code: &str,
-    body_size: Option<u64>,
-) {
-    span.record("http.status_code", status_code);
-    if let Some(size) = body_size {
-        span.record("http.response_content_length", size as i64);
     }
 }
