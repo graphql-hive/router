@@ -72,6 +72,7 @@ impl<'a> HttpServerRequestSpanBuilder<'a> {
         // We follow the HTTP server span conventions:
         // https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-server
         let kind: &'static str = HiveSpanKind::HttpServerRequest.into();
+        let url_full = self.url.to_string();
 
         let span = info_span!(
             target: TARGET_NAME,
@@ -83,10 +84,7 @@ impl<'a> HttpServerRequestSpanBuilder<'a> {
             "server.address" = self.server_address,
             "server.port" = self.server_port,
             "http.route" = "/graphql",
-            // We set both http.url (deprecated) and url.full (stable) for compatibility with different backends
-            // OTel tools use those to display next to http client spans
-            "http.url" = self.url.to_string(),
-            "url.full" = self.url.to_string(),
+            "url.full" = url_full,
             "url.path" = self.url.path(),
             "url.scheme" = self.url.scheme().map(|v| v.as_str()),
             "http.request.body.size" = self.request_body_size,
@@ -97,21 +95,27 @@ impl<'a> HttpServerRequestSpanBuilder<'a> {
             "http.response.body.size" = Empty,
         );
 
+        record_deprecated_http_server_request_attributes(&span, &self, &url_full);
+
         HttpServerRequestSpan { span }
     }
 }
 
 impl HttpServerRequestSpan {
     pub fn record_response(&self, response: &ntex::web::HttpResponse) {
+        let mut body_size: Option<u64> = None;
+
         self.record("http.response.status_code", response.status().as_str());
         if let Some(body) = response.body().as_ref() {
             match body.size() {
                 ntex::http::body::BodySize::None
                 | ntex::http::body::BodySize::Empty
                 | ntex::http::body::BodySize::Stream => {
+                    body_size = Some(0);
                     self.record("http.response.body.size", 0);
                 }
                 ntex::http::body::BodySize::Sized(size) => {
+                    body_size = Some(size);
                     self.record("http.response.body.size", size);
                 }
             }
@@ -122,12 +126,19 @@ impl HttpServerRequestSpan {
         } else {
             self.record("otel.status_code", "Ok");
         }
+
+        record_deprecated_http_response_attributes(
+            &self.span,
+            response.status().as_str(),
+            body_size,
+        );
     }
 
     pub fn record_internal_server_error(&self) {
         self.record("otel.status_code", "Error");
         self.record("error.type", "500");
         self.record("http.response.status_code", "500");
+        record_deprecated_http_response_attributes(&self.span, "500", None);
     }
 }
 
@@ -189,6 +200,7 @@ impl<'a> HttpClientRequestSpanBuilder<'a> {
         // We follow the HTTP client span conventions:
         // https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-client
         let kind: &'static str = HiveSpanKind::HttpClientRequest.into();
+        let url_full = self.url.to_string();
 
         let span = info_span!(
             target: TARGET_NAME,
@@ -199,10 +211,7 @@ impl<'a> HttpClientRequestSpanBuilder<'a> {
             "error.type" = Empty,
             "server.address" = self.server_address,
             "server.port" = self.server_port,
-            // We set both http.url (deprecated) and url.full (stable) for compatibility with different backends
-            // OTel tools use those to display next to http client spans
-            "http.url" = self.url.to_string(),
-            "url.full" = self.url.to_string(),
+            "url.full" = url_full,
             "url.path" = self.url.path(),
             "url.scheme" = self.url.scheme().map(|v| v.as_str()),
             "http.request.body.size" = self.request_body_size,
@@ -213,6 +222,8 @@ impl<'a> HttpClientRequestSpanBuilder<'a> {
             "http.response.body.size" = Empty,
         );
 
+        record_deprecated_http_client_request_attributes(&span, &self, &url_full);
+
         HttpClientRequestSpan { span }
     }
 }
@@ -220,7 +231,11 @@ impl<'a> HttpClientRequestSpanBuilder<'a> {
 impl HttpClientRequestSpan {
     pub fn record_response(&self, response: &Response<Incoming>) {
         self.record("http.response.status_code", response.status().as_str());
+
+        let mut body_size: Option<u64> = None;
+
         if let Some(size) = response.body().size_hint().exact() {
+            body_size = Some(size);
             self.record("http.response.body.size", size);
         }
         if response.status().is_server_error() {
@@ -229,12 +244,20 @@ impl HttpClientRequestSpan {
         } else {
             self.record("otel.status_code", "Ok");
         }
+
+        record_deprecated_http_response_attributes(
+            &self.span,
+            response.status().as_str(),
+            body_size,
+        );
     }
 
     pub fn record_internal_server_error(&self) {
         self.record("otel.status_code", "Error");
         self.record("error.type", "500");
         self.record("http.response.status_code", "500");
+
+        record_deprecated_http_response_attributes(&self.span, "500", None);
     }
 }
 
@@ -248,46 +271,59 @@ fn version_to_protocol_version_attr(version: http::Version) -> Option<&'static s
     }
 }
 
-// Hive subgraph http
-// SpanName: router.subgraph.request
-// {
-//   "busy_ns": "93875",
-//   "code.file.path": "lib/telemetry/src/traces/spans/http_request.rs",
-//   "code.line.number": "146",
-//   "code.module.name": "hive_router_telemetry::traces::spans::http_request",
-//   "hive.kind": "http.request",
-//   "http.request.body.size": "404",
-//   "http.request.method": "POST",
-//   "idle_ns": "2458500",
-//   "network.protocol.version": "1.1",
-//   "target": "hive_router",
-//   "thread.id": "8",
-//   "thread.name": "worker:2",
-//   "url.full": "http://0.0.0.0:4200/reviews",
-//   "url.path": "/reviews",
-//   "url.scheme": "http"
-// }
+/// Records deprecated HTTP server attributes onto a span for backwards compatibility.
+/// TODO: make it opt-in or opt-out
+fn record_deprecated_http_server_request_attributes(
+    span: &Span,
+    builder: &HttpServerRequestSpanBuilder<'_>,
+    full_url: &str,
+) {
+    span.record("http.method", builder.request_method.as_str());
+    span.record("http.url", full_url);
+    span.record("http.host", builder.server_address);
+    span.record("http.scheme", builder.url.scheme_str());
+    span.record("http.flavor", builder.protocol_version);
+    if let Some(size) = builder.request_body_size {
+        span.record("http.request_content_length", size as i64);
+    }
+    if let Some(ua) = builder
+        .header_user_agent
+        .as_ref()
+        .and_then(|v| v.to_str().ok())
+    {
+        span.record("http.user_agent", ua);
+    }
+    if let Some(path_and_query) = builder.url.path_and_query() {
+        span.record("http.target", path_and_query.as_str());
+    }
+}
 
-// Cosmo
-// {
-//   "http.flavor": "1.1",
-//   "http.method": "POST",
-//   "http.request_content_length": "60",
-//   "http.response_content_length": "400",
-//   "http.status_code": "200",
-//   "http.url": "http://localhost:4200/products",
-//   "net.peer.name": "localhost",
-//   "net.peer.port": "4200",
-//   "wg.client.name": "unknown",
-//   "wg.client.version": "missing",
-//   "wg.component.name": "engine-transport",
-//   "wg.operation.hash": "6710505681143383834",
-//   "wg.operation.name": "TestQuery",
-//   "wg.operation.protocol": "http",
-//   "wg.operation.type": "query",
-//   "wg.router.cluster.name": "",
-//   "wg.router.config.version": "6e9dbed6-ec25-44f1-8693-4d44274fe9a6",
-//   "wg.router.version": "0.247.0",
-//   "wg.subgraph.id": "2",
-//   "wg.subgraph.name": "products"
-// }
+/// Records deprecated HTTP client attributes onto a span for backwards compatibility.
+/// TODO: make it opt-in or opt-out
+fn record_deprecated_http_client_request_attributes(
+    span: &Span,
+    builder: &HttpClientRequestSpanBuilder<'_>,
+    full_url: &str,
+) {
+    span.record("http.method", builder.request_method.as_str());
+    span.record("http.url", full_url);
+    span.record("net.peer.name", builder.server_address);
+    span.record("net.peer.port", builder.server_port);
+    span.record("http.flavor", builder.protocol_version);
+    if let Some(size) = builder.request_body_size {
+        span.record("http.request_content_length", size as i64);
+    }
+}
+
+/// Records deprecated HTTP response attributes onto a span for backwards compatibility.
+/// TODO: make it opt-in or opt-out
+fn record_deprecated_http_response_attributes(
+    span: &Span,
+    status_code: &str,
+    body_size: Option<u64>,
+) {
+    span.record("http.status_code", status_code);
+    if let Some(size) = body_size {
+        span.record("http.response_content_length", size as i64);
+    }
+}
