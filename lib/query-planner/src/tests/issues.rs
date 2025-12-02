@@ -44,12 +44,14 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
                 ... on AnonymousReview {
                   __typename
                   product {
-    ...a              }
+                    ...a
+                  }
                 }
                 ... on UserReview {
                   __typename
                   product {
-    ...a              }
+                    ...a
+                  }
                 }
               }
             }

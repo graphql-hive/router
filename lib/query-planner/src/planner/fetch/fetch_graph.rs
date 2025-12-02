@@ -186,6 +186,26 @@ impl FetchGraph {
 
         Ok(())
     }
+
+    /// Checks whether the given step is an ancestor of a step that has the given condition
+    pub fn is_ancestor_of_condition(&self, step_index: NodeIndex, condition: &Condition) -> bool {
+        let mut bfs = Bfs::new(&self.graph, step_index);
+
+        while let Some(current_index) = bfs.next(&self.graph) {
+            let current_step = match self.get_step_data(current_index) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            if let Some(step_condition) = &current_step.condition {
+                if step_condition == condition {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
 }
 
 impl Display for FetchGraph {
@@ -1013,6 +1033,92 @@ fn process_subgraph_entrypoint_edge(
   response_path = response_path.to_string(),
   fetch_path = fetch_path.to_string()
 ))]
+fn process_selfie_edge(
+    graph: &Graph,
+    fetch_graph: &mut FetchGraph,
+    override_context: &PlannerOverrideContext,
+    query_node: &QueryTreeNode,
+    parent_fetch_step_index: NodeIndex,
+    requiring_fetch_step_index: Option<NodeIndex>,
+    response_path: &MergePath,
+    fetch_path: &MergePath,
+    target_type_name: &String,
+    condition: Option<&Condition>,
+) -> Result<Vec<NodeIndex>, FetchGraphError> {
+    let is_ancestor_of_condition = match condition {
+        Some(c) => fetch_graph.is_ancestor_of_condition(parent_fetch_step_index, c),
+        None => false,
+    };
+
+    let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
+    trace!(
+        "starting an inline fragment for type '{}' to fetch step [{}]",
+        parent_fetch_step_index.index(),
+        target_type_name,
+    );
+    parent_fetch_step.output.add_at_path(
+        &TypeAwareSelection {
+            selection_set: SelectionSet {
+                items: vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                    type_condition: target_type_name.clone(),
+                    selections: SelectionSet::default(),
+                    skip_if: condition.and_then(|c| {
+                        if is_ancestor_of_condition {
+                            None
+                        } else {
+                            c.to_skip_if()
+                        }
+                    }),
+                    include_if: condition.and_then(|c| {
+                        if is_ancestor_of_condition {
+                            None
+                        } else {
+                            c.to_include_if()
+                        }
+                    }),
+                })],
+            },
+            type_name: target_type_name.clone(),
+        },
+        fetch_path.clone(),
+        false,
+    )?;
+
+    let segment_condition = if is_ancestor_of_condition {
+        None
+    } else {
+        condition.cloned()
+    };
+    let child_response_path = response_path.push(Segment::Cast(
+        target_type_name.clone(),
+        segment_condition.clone(),
+    ));
+    let child_fetch_path =
+        fetch_path.push(Segment::Cast(target_type_name.clone(), segment_condition));
+
+    process_children_for_fetch_steps(
+        graph,
+        fetch_graph,
+        override_context,
+        query_node,
+        parent_fetch_step_index,
+        &child_response_path,
+        &child_fetch_path,
+        requiring_fetch_step_index,
+        condition,
+        false,
+    )
+}
+
+// TODO: simplfy args
+#[allow(clippy::too_many_arguments)]
+#[instrument(level = "trace",skip_all, fields(
+  parent_fetch_step_index = parent_fetch_step_index.index(),
+  requiring_fetch_step_index = requiring_fetch_step_index.map(|f| f.index()),
+  type_name = target_type_name,
+  response_path = response_path.to_string(),
+  fetch_path = fetch_path.to_string()
+))]
 fn process_abstract_edge(
     graph: &Graph,
     fetch_graph: &mut FetchGraph,
@@ -1111,6 +1217,25 @@ fn process_plain_field_edge(
         fetch_graph.connect(parent_fetch_step_index, requiring_fetch_step_index);
     }
 
+    // If we are inserting into "... | [Product] @include(if: $bool)", we don't need the condition on the field.
+    let condition_in_path = if let Some(condition) = condition {
+        fetch_path.inner.iter().any(|segment| {
+            matches!(
+                segment,
+                Segment::Cast(_, Some(c)) | Segment::Field(_, _, Some(c)) if c == condition
+            )
+        })
+    } else {
+        false
+    };
+
+    let ancestor_of_condition = match condition {
+        Some(c) => fetch_graph.is_ancestor_of_condition(parent_fetch_step_index, c),
+        None => false,
+    };
+
+    let should_strip_condition = condition_in_path || ancestor_of_condition;
+
     let parent_fetch_step = fetch_graph.get_step_data_mut(parent_fetch_step_index)?;
     trace!(
         "adding output field '{}' to fetch step [{}]",
@@ -1126,8 +1251,20 @@ fn process_plain_field_edge(
                     alias: query_node.selection_alias().map(|a| a.to_string()),
                     selections: SelectionSet::default(),
                     arguments: query_node.selection_arguments().cloned(),
-                    skip_if: None,
-                    include_if: None,
+                    skip_if: condition.and_then(|c| {
+                        if should_strip_condition {
+                            None
+                        } else {
+                            c.to_skip_if()
+                        }
+                    }),
+                    include_if: condition.and_then(|c| {
+                        if should_strip_condition {
+                            None
+                        } else {
+                            c.to_include_if()
+                        }
+                    }),
                 })],
             },
             type_name: field_move.type_name.to_string(),
@@ -1137,6 +1274,11 @@ fn process_plain_field_edge(
     )?;
 
     let child_segment = query_node.selection_alias().unwrap_or(&field_move.name);
+    let segment_condition = if ancestor_of_condition {
+        None
+    } else {
+        condition.cloned()
+    };
     let segment_args_hash = query_node
         .selection_arguments()
         .map(|a| a.hash_u64())
@@ -1144,12 +1286,12 @@ fn process_plain_field_edge(
     let mut child_response_path = response_path.push(Segment::Field(
         child_segment.to_string(),
         segment_args_hash,
-        None,
+        segment_condition.clone(),
     ));
     let mut child_fetch_path = fetch_path.push(Segment::Field(
         child_segment.to_string(),
         segment_args_hash,
-        None,
+        segment_condition,
     ));
 
     if field_move.is_list {
@@ -1595,6 +1737,18 @@ fn process_query_node(
                     created_from_requires,
                 ),
             },
+            Edge::Selfie(type_name) => process_selfie_edge(
+                graph,
+                fetch_graph,
+                override_context,
+                query_node,
+                parent_fetch_step_index,
+                requiring_fetch_step_index,
+                response_path,
+                fetch_path,
+                type_name,
+                condition,
+            ),
             Edge::AbstractMove(type_name) => process_abstract_edge(
                 graph,
                 fetch_graph,

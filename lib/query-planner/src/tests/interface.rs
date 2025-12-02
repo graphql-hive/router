@@ -31,9 +31,11 @@ fn node_query_with_aliases_on_interface_field() -> Result<(), Box<dyn Error>> {
       Fetch(service: "a") {
         {
           account: node(id: "a1") {
-    ...a      }
+            ...a
+          }
           chat: node(id: "c1") {
-    ...a      }
+            ...a
+          }
         }
         fragment a on Node {
           __typename
@@ -612,9 +614,11 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
         Fetch(service: "products") {
           {
             book: similar(id: "p1") {
-    ...a        }
+              ...a
+            }
             magazine: similar(id: "p2") {
-    ...a        }
+              ...a
+            }
           }
           fragment a on Product {
             id
@@ -624,14 +628,16 @@ fn requires_on_field_with_args_test() -> Result<(), Box<dyn Error>> {
               sku
               id
               dimensions {
-    ...b          }
+                ...b
+              }
             }
             ... on Magazine {
               __typename
               sku
               id
               dimensions {
-    ...b          }
+                ...b
+              }
             }
           }
           fragment b on ProductDimension {

@@ -13,6 +13,21 @@ pub enum Condition {
     Include(String),
 }
 
+impl Condition {
+    pub fn to_skip_if(&self) -> Option<String> {
+        match self {
+            Condition::Skip(var) => Some(var.clone()),
+            _ => None,
+        }
+    }
+    pub fn to_include_if(&self) -> Option<String> {
+        match self {
+            Condition::Include(var) => Some(var.clone()),
+            _ => None,
+        }
+    }
+}
+
 impl Display for Condition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

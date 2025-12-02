@@ -15,6 +15,12 @@ pub enum LoadSupergraphError {
     InitializationError(String),
     #[error("Invalid configuration: {0}")]
     InvalidConfiguration(String),
+    #[error("Supergraph file path is missing. Please provide it via 'SUPERGRAPH_FILE_PATH' environment variable or under 'supergraph.path' in the configuration.")]
+    MissingSupergraphFilePath,
+    #[error("Hive CDN endpoint is missing. Please provide it via 'HIVE_CDN_ENDPOINT' environment variable or under 'supergraph.endpoint' in the configuration.")]
+    MissingHiveCDNEndpoint,
+    #[error("Hive CDN key is missing. Please provide it via 'HIVE_CDN_KEY' environment variable or under 'supergraph.key' in the configuration.")]
+    MissingHiveCDNKey,
 }
 
 #[derive(Debug)]

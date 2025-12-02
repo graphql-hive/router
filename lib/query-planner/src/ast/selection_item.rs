@@ -1,5 +1,6 @@
 use crate::{
-    ast::normalization::utils::extract_type_condition, utils::pretty_display::PrettyDisplay,
+    ast::normalization::utils::extract_type_condition,
+    utils::pretty_display::{get_indent, PrettyDisplay},
 };
 use graphql_parser::query as query_ast;
 
@@ -49,7 +50,10 @@ impl PrettyDisplay for SelectionItem {
             SelectionItem::InlineFragment(fragment_selection) => {
                 fragment_selection.pretty_fmt(f, depth)?
             }
-            SelectionItem::FragmentSpread(name) => write!(f, "...{}", name)?,
+            SelectionItem::FragmentSpread(name) => {
+                let indent = get_indent(depth);
+                writeln!(f, "{indent}...{}", name)?
+            }
         }
 
         Ok(())

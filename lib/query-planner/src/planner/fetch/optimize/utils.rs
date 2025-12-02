@@ -8,7 +8,8 @@ use tracing::{instrument, trace};
 
 use crate::{
     ast::{
-        merge_path::Condition, selection_item::SelectionItem,
+        merge_path::{Condition, Segment},
+        selection_item::SelectionItem,
         selection_set::InlineFragmentSelection,
     },
     planner::fetch::{
@@ -46,25 +47,33 @@ pub(crate) fn perform_fetch_step_merge(
         // We can't do it when both are entity calls fetch steps.
         other.output.add(&other.input);
 
-        let old_selection_set = other.output.selection_set.clone();
-        match condition {
-            Condition::Include(var_name) => {
-                other.output.selection_set.items =
-                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: other.output.type_name.clone(),
-                        selections: old_selection_set,
-                        skip_if: None,
-                        include_if: Some(var_name),
-                    })];
-            }
-            Condition::Skip(var_name) => {
-                other.output.selection_set.items =
-                    vec![SelectionItem::InlineFragment(InlineFragmentSelection {
-                        type_condition: other.output.type_name.clone(),
-                        selections: old_selection_set,
-                        skip_if: Some(var_name),
-                        include_if: None,
-                    })];
+        // Check if the condition is already enforced by the path
+        let condition_redundant = matches!(
+            other.response_path.last(),
+            Some(Segment::Cast(_, Some(c)) | Segment::Field(_, _, Some(c))) if c == &condition
+        );
+
+        if !condition_redundant {
+            let old_selection_set = other.output.selection_set.clone();
+            match condition {
+                Condition::Include(var_name) => {
+                    other.output.selection_set.items =
+                        vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                            type_condition: other.output.type_name.clone(),
+                            selections: old_selection_set,
+                            skip_if: None,
+                            include_if: Some(var_name),
+                        })];
+                }
+                Condition::Skip(var_name) => {
+                    other.output.selection_set.items =
+                        vec![SelectionItem::InlineFragment(InlineFragmentSelection {
+                            type_condition: other.output.type_name.clone(),
+                            selections: old_selection_set,
+                            skip_if: Some(var_name),
+                            include_if: None,
+                        })];
+                }
             }
         }
     } else if me.is_entity_call() && other.condition.is_some() {

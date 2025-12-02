@@ -17,6 +17,7 @@
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100}`<br/>||
+|[**usage\_reporting**](#usage_reporting)|`object`|Configuration for usage reporting to GraphQL Hive.<br/>Default: `{"accept_invalid_certs":false,"access_token":null,"buffer_size":1000,"client_name_header":"graphql-client-name","client_version_header":"graphql-client-version","connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":[],"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%","target_id":null}`<br/>||
 
 **Additional Properties:** not allowed  
 **Example**
@@ -118,6 +119,20 @@ traffic_shaping:
     pool_idle_timeout: 50s
     request_timeout: 30s
   max_connections_per_host: 100
+usage_reporting:
+  accept_invalid_certs: false
+  access_token: null
+  buffer_size: 1000
+  client_name_header: graphql-client-name
+  client_version_header: graphql-client-version
+  connect_timeout: 5s
+  enabled: false
+  endpoint: https://app.graphql-hive.com/usage
+  exclude: []
+  flush_interval: 5s
+  request_timeout: 15s
+  sample_rate: 100%
+  target_id: null
 
 ```
 
@@ -1745,7 +1760,7 @@ The path can be either absolute or relative to the router's working directory.
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
-|**path**|`string`|The path to the supergraph file.<br/><br/>Can also be set using the `SUPERGRAPH_FILE_PATH` environment variable.<br/>Format: `"path"`<br/>|yes|
+|**path**|`string`, `null`|The path to the supergraph file.<br/><br/>Can also be set using the `SUPERGRAPH_FILE_PATH` environment variable.<br/>Format: `"path"`<br/>|no|
 |**poll\_interval**|`string`|Optional interval at which the file should be polled for changes.<br/>If not provided, the file will only be loaded once when the router starts.<br/>|no|
 |**source**|`string`|Constant Value: `"file"`<br/>|yes|
 
@@ -1769,8 +1784,8 @@ Loads a supergraph from Hive Console CDN.
 |----|----|-----------|--------|
 |**accept\_invalid\_certs**|`boolean`|Whether to accept invalid TLS certificates when connecting to the Hive Console CDN.<br/>Default: `false`<br/>|no|
 |**connect\_timeout**|`string`|Connect timeout for the Hive Console CDN requests.<br/>Default: `"10s"`<br/>|no|
-|**endpoint**|`string`|The CDN endpoint from Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.<br/>|yes|
-|**key**|`string`|The CDN Access Token with from the Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_KEY` environment variable.<br/>|yes|
+|**endpoint**|`string`, `null`|The CDN endpoint from Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_ENDPOINT` environment variable.<br/>|no|
+|**key**|`string`, `null`|The CDN Access Token with from the Hive Console target.<br/><br/>Can also be set using the `HIVE_CDN_KEY` environment variable.<br/>|no|
 |**poll\_interval**|`string`|Interval at which the Hive Console should be polled for changes.<br/><br/>Can also be set using the `HIVE_CDN_POLL_INTERVAL` environment variable.<br/>Default: `"10s"`<br/>|no|
 |**request\_timeout**|`string`|Request timeout for the Hive Console CDN requests.<br/>Default: `"1m"`<br/>|no|
 |[**retry\_policy**](#option2retry_policy)|`object`|Interval at which the Hive Console should be polled for changes.<br/>Default: `{"max_retries":10}`<br/>|yes|
@@ -1885,4 +1900,58 @@ Optional per-subgraph configurations that will override the default configuratio
 |**request\_timeout**||Optional timeout configuration for requests to subgraphs.<br/><br/>Example with a fixed duration:<br/>```yaml<br/>  timeout:<br/>    duration: 5s<br/>```<br/><br/>Or with a VRL expression that can return a duration based on the operation kind:<br/>```yaml<br/>  timeout:<br/>    expression: \|<br/>     if (.request.operation.type == "mutation") {<br/>       "10s"<br/>     } else {<br/>       "15s"<br/>     }<br/>```<br/>||
 
 **Additional Properties:** not allowed  
+<a name="usage_reporting"></a>
+## usage\_reporting: object
+
+Configuration for usage reporting to GraphQL Hive.
+
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**accept\_invalid\_certs**|`boolean`|Accepts invalid SSL certificates<br/>Default: false<br/>Default: `false`<br/>||
+|**access\_token**|`string`, `null`|Your [Registry Access Token](https://the-guild.dev/graphql/hive/docs/management/targets#registry-access-tokens) with write permission.<br/>||
+|**buffer\_size**|`integer`|A maximum number of operations to hold in a buffer before sending to Hive Console<br/>Default: 1000<br/>Default: `1000`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
+|**client\_name\_header**|`string`|Default: `"graphql-client-name"`<br/>||
+|**client\_version\_header**|`string`|Default: `"graphql-client-version"`<br/>||
+|**connect\_timeout**|`string`|A timeout for only the connect phase of a request to Hive Console<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>||
+|**enabled**|`boolean`|Default: `false`<br/>||
+|**endpoint**|`string`|For self-hosting, you can override `/usage` endpoint (defaults to `https://app.graphql-hive.com/usage`).<br/>Default: `"https://app.graphql-hive.com/usage"`<br/>||
+|[**exclude**](#usage_reportingexclude)|`string[]`|A list of operations (by name) to be ignored by Hive.<br/>Default: <br/>||
+|**flush\_interval**|`string`|Frequency of flushing the buffer to the server<br/>Default: 5 seconds<br/>Default: `"5s"`<br/>||
+|**request\_timeout**|`string`|A timeout for the entire request to Hive Console<br/>Default: 15 seconds<br/>Default: `"15s"`<br/>||
+|**sample\_rate**|`string`|Sample rate to determine sampling.<br/>0% = never being sent<br/>50% = half of the requests being sent<br/>100% = always being sent<br/>Default: 100%<br/>Default: `"100%"`<br/>||
+|**target\_id**|`string`, `null`|A target ID, this can either be a slug following the format “$organizationSlug/$projectSlug/$targetSlug” (e.g “the-guild/graphql-hive/staging”) or an UUID (e.g. “a0f4c605-6541-4350-8cfe-b31f21a4bf80”). To be used when the token is configured with an organization access token.<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+accept_invalid_certs: false
+access_token: null
+buffer_size: 1000
+client_name_header: graphql-client-name
+client_version_header: graphql-client-version
+connect_timeout: 5s
+enabled: false
+endpoint: https://app.graphql-hive.com/usage
+exclude: []
+flush_interval: 5s
+request_timeout: 15s
+sample_rate: 100%
+target_id: null
+
+```
+
+<a name="usage_reportingexclude"></a>
+### usage\_reporting\.exclude\[\]: array
+
+A list of operations (by name) to be ignored by Hive.
+Example: ["IntrospectionQuery", "MeQuery"]
+
+
+**Items**
+
+**Item Type:** `string`  
 

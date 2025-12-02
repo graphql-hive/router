@@ -1855,9 +1855,11 @@ fn arguments_with_aliases() -> Result<(), Box<dyn Error>> {
         Fetch(service: "d") {
           {
             firstProduct: productFromD(id: "1") {
-    ...a        }
+              ...a
+            }
             secondProduct: productFromD(id: "2") {
-    ...a        }
+              ...a
+            }
           }
           fragment a on Product {
             __typename
@@ -2012,9 +2014,11 @@ fn arguments_variables_mixed() -> Result<(), Box<dyn Error>> {
         Fetch(service: "d") {
           query ($secondProductId:ID!) {
             firstProduct: productFromD(id: "1") {
-    ...a        }
+              ...a
+            }
             secondProduct: productFromD(id: $secondProductId) {
-    ...a        }
+              ...a
+            }
           }
           fragment a on Product {
             __typename

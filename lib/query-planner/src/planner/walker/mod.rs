@@ -9,6 +9,7 @@ use std::collections::VecDeque;
 
 use crate::{
     ast::{
+        merge_path::Condition,
         operation::OperationDefinition,
         selection_item::SelectionItem,
         selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
@@ -18,7 +19,7 @@ use crate::{
         node::Node,
         Graph,
     },
-    planner::walker::pathfinder::NavigationTarget,
+    planner::walker::pathfinder::{find_self_referencing_direct_path, NavigationTarget},
     state::supergraph_state::{OperationKind, SupergraphState},
     utils::cancellation::CancellationToken,
 };
@@ -229,12 +230,56 @@ fn process_inline_fragment<'a>(
     };
 
     if tail_type_name == &fragment.type_condition {
+        // It's the same type and no conditions are applied, we can skip the fragment processing
+        // and go directly to its selections.
+        if fragment.include_if.is_none() && fragment.skip_if.is_none() {
+            return process_selection_set(
+                graph,
+                supergraph,
+                override_context,
+                &fragment.selections,
+                paths,
+                fields_to_resolve_locally,
+                cancellation_token,
+            );
+        }
+
+        // Looks like the fragment has conditions, we need to process them differently.
+        // We aim to preserve the inline fragment due to conditions, instead of eliminating it,
+        // and jumping straight to its selections.
+        let condition: Option<Condition> = fragment.into();
+
+        let mut next_paths: Vec<OperationPath> = Vec::with_capacity(paths.len());
+        for path in paths {
+            let path_span = span!(
+                Level::TRACE,
+                "explore_path",
+                path = path.pretty_print(graph)
+            );
+            let _enter = path_span.enter();
+
+            // Find a direct path that references the same type as the current tail,
+            let direct_path = find_self_referencing_direct_path(
+                graph,
+                override_context,
+                path,
+                &fragment.type_condition,
+                condition.as_ref().expect("Condition should be present"),
+                cancellation_token,
+            )?;
+
+            trace!("advanced: {}", path.pretty_print(graph));
+
+            next_paths.push(direct_path);
+        }
+
+        // Now process the selections under the fragment using the advanced paths
         return process_selection_set(
             graph,
             supergraph,
             override_context,
             &fragment.selections,
-            paths,
+            &next_paths,
             fields_to_resolve_locally,
             cancellation_token,
         );

@@ -23,7 +23,12 @@ pub fn resolve_from_config(
         SupergraphSource::File {
             path,
             poll_interval,
-        } => Ok(SupergraphFileLoader::new(path, *poll_interval)?),
+        } => {
+            let path = path
+                .as_ref()
+                .ok_or(LoadSupergraphError::MissingSupergraphFilePath)?;
+            Ok(SupergraphFileLoader::new(path, *poll_interval)?)
+        }
         SupergraphSource::HiveConsole {
             endpoint,
             key,
@@ -32,14 +37,21 @@ pub fn resolve_from_config(
             accept_invalid_certs,
             retry_policy,
             poll_interval,
-        } => Ok(SupergraphHiveConsoleLoader::try_new(
-            endpoint.clone(),
-            key,
-            *poll_interval,
-            *connect_timeout,
-            *request_timeout,
-            *accept_invalid_certs,
-            retry_policy.max_retries,
-        )?),
+        } => {
+            let endpoint = endpoint
+                .as_ref()
+                .ok_or(LoadSupergraphError::MissingHiveCDNEndpoint)?;
+            let key = key.as_ref().ok_or(LoadSupergraphError::MissingHiveCDNKey)?;
+
+            Ok(SupergraphHiveConsoleLoader::try_new(
+                endpoint.clone(),
+                key,
+                *poll_interval,
+                *connect_timeout,
+                *request_timeout,
+                *accept_invalid_certs,
+                retry_policy.max_retries,
+            )?)
+        }
     }
 }

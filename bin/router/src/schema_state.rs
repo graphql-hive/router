@@ -1,5 +1,6 @@
 use arc_swap::{ArcSwap, Guard};
 use async_trait::async_trait;
+use graphql_parser::schema::Document;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
 use hive_router_plan_executor::{
@@ -43,6 +44,7 @@ pub struct SupergraphData {
     pub planner: Planner,
     pub authorization: AuthorizationMetadata,
     pub subgraph_executor_map: SubgraphExecutorMap,
+    pub supergraph_schema: Arc<Document<'static, String>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -132,6 +134,7 @@ impl SchemaState {
         )?;
 
         Ok(SupergraphData {
+            supergraph_schema: Arc::new(parsed_supergraph_sdl),
             metadata,
             planner,
             authorization,

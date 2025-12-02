@@ -1,6 +1,6 @@
 [package]
 name = "hive-router-plan-executor"
-version = "6.1.0"
+version = "6.2.1"
 edition = "2021"
 description = "GraphQL query planner executor for Federation specification"
 license = "MIT"
@@ -12,8 +12,8 @@ authors = ["The Guild"]
 [lib]
 
 [dependencies]
-hive-router-query-planner = { path = "../query-planner", version = "2.1.0" }
-hive-router-config = { path = "../router-config", version = "0.0.12" }
+hive-router-query-planner = { path = "../query-planner", version = "2.1.2" }
+hive-router-config = { path = "../router-config", version = "0.0.14" }
 
 graphql-parser = { workspace = true }
 graphql-tools = { workspace = true }
@@ -30,9 +30,9 @@ xxhash-rust = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 dashmap = { workspace = true }
 vrl = { workspace = true }
+regex-automata = { workspace = true }
 
 ahash = "0.8.12"
-regex-automata = "0.4.10"
 strum = { version = "0.27.2", features = ["derive"] }
 ntex-http = "0.1.15"
 ordered-float = "4.2.0"
