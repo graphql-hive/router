@@ -1,11 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use bytes::Bytes;
 use http::HeaderMap;
 use sonic_rs::Value;
 
-use crate::plugin_context::PluginRequestState;
+use crate::{executors::http::HttpResponse, plugin_context::PluginRequestState};
 
 #[async_trait]
 pub trait SubgraphExecutor {
@@ -13,7 +12,7 @@ pub trait SubgraphExecutor {
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
         plugin_req_state: &'a Option<PluginRequestState<'a>>,
-    ) -> HttpExecutionResponse;
+    ) -> HttpResponse;
 
     fn to_boxed_arc<'a>(self) -> Arc<Box<dyn SubgraphExecutor + Send + Sync + 'a>>
     where
@@ -46,11 +45,4 @@ impl SubgraphExecutionRequest<'_> {
             .get_or_insert_with(HashMap::new)
             .insert(key, value);
     }
-}
-
-#[derive(Clone)]
-pub struct HttpExecutionResponse {
-    pub body: Bytes,
-    pub headers: HeaderMap,
-    pub status: http::StatusCode,
 }

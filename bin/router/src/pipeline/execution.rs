@@ -6,7 +6,8 @@ use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
-use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionContext};
+use hive_router_plan_executor::execution::plan::QueryPlanExecutionContext;
+use hive_router_plan_executor::executors::http::HttpResponse;
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
@@ -34,7 +35,7 @@ pub async fn execute_plan(
     variable_payload: &CoerceVariablesPayload,
     client_request_details: &ClientRequestDetails<'_, '_>,
     plugin_req_state: &Option<PluginRequestState<'_>>,
-) -> Result<PlanExecutionOutput, PipelineErrorVariant> {
+) -> Result<HttpResponse, PipelineErrorVariant> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
     if app_state.router_config.query_planner.allow_expose {

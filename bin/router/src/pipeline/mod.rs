@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
 use hive_router_plan_executor::{
-    execution::{
-        client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
-        plan::PlanExecutionOutput,
+    execution::client_request_details::{
+        ClientRequestDetails, JwtRequestDetails, OperationDetails,
     },
+    executors::http::HttpResponse,
     hooks::{
-        on_graphql_params::{OnGraphQLParamsEndPayload, OnGraphQLParamsStartPayload},
+        on_graphql_params::{OnGraphQLParamsEndHookPayload, OnGraphQLParamsStartHookPayload},
         on_supergraph_load::SupergraphData,
     },
     plugin_context::{PluginContext, PluginRequestState, RouterHttpRequest},
-    plugin_trait::ControlFlowResult,
+    plugin_trait::{EndControlFlow, StartControlFlow},
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
@@ -126,7 +126,7 @@ pub async fn graphql_request_handler(
     )
     .await?;
     let response_status = response.status;
-    let response_bytes = Bytes::from(response.body);
+    let response_bytes = response.body;
     let response_headers = response.headers;
 
     let mut response_builder = web::HttpResponse::Ok();
@@ -139,7 +139,7 @@ pub async fn graphql_request_handler(
     Ok(response_builder
         .header(http::header::CONTENT_TYPE, response_content_type)
         .status(response_status)
-        .body(response_bytes))
+        .body(response_bytes.to_vec()))
 }
 
 #[inline]
@@ -152,7 +152,7 @@ pub async fn execute_pipeline(
     schema_state: &SchemaState,
     jwt_context: Option<JwtRequestContext>,
     plugin_req_state: Option<PluginRequestState<'_>>,
-) -> Result<PlanExecutionOutput, PipelineErrorVariant> {
+) -> Result<HttpResponse, PipelineErrorVariant> {
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
     /* Handle on_deserialize hook in the plugins - START */
@@ -161,8 +161,8 @@ pub async fn execute_pipeline(
     let mut graphql_params = None;
     let mut body = body;
     if let Some(plugin_req_state) = plugin_req_state.as_ref() {
-        let mut deserialization_payload: OnGraphQLParamsStartPayload =
-            OnGraphQLParamsStartPayload {
+        let mut deserialization_payload: OnGraphQLParamsStartHookPayload =
+            OnGraphQLParamsStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
                 context: &plugin_req_state.context,
                 body,
@@ -172,11 +172,11 @@ pub async fn execute_pipeline(
             let result = plugin.on_graphql_params(deserialization_payload).await;
             deserialization_payload = result.payload;
             match result.control_flow {
-                ControlFlowResult::Continue => { /* continue to next plugin */ }
-                ControlFlowResult::EndResponse(response) => {
+                StartControlFlow::Continue => { /* continue to next plugin */ }
+                StartControlFlow::EndResponse(response) => {
                     return Ok(response);
                 }
-                ControlFlowResult::OnEnd(callback) => {
+                StartControlFlow::OnEnd(callback) => {
                     deserialization_end_callbacks.push(callback);
                 }
             }
@@ -190,7 +190,7 @@ pub async fn execute_pipeline(
     };
 
     if let Some(plugin_req_state) = &plugin_req_state {
-        let mut payload = OnGraphQLParamsEndPayload {
+        let mut payload = OnGraphQLParamsEndHookPayload {
             graphql_params,
             context: &plugin_req_state.context,
         };
@@ -198,13 +198,9 @@ pub async fn execute_pipeline(
             let result = deserialization_end_callback(payload);
             payload = result.payload;
             match result.control_flow {
-                ControlFlowResult::Continue => { /* continue to next plugin */ }
-                ControlFlowResult::EndResponse(response) => {
+                EndControlFlow::Continue => { /* continue to next plugin */ }
+                EndControlFlow::EndResponse(response) => {
                     return Ok(response);
-                }
-                ControlFlowResult::OnEnd(_) => {
-                    // on_end callbacks should not return OnEnd again
-                    unreachable!("on_end callback returned OnEnd again");
                 }
             }
         }

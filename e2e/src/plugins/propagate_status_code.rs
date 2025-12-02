@@ -5,10 +5,12 @@ use serde::Deserialize;
 
 use hive_router_plan_executor::{
     hooks::{
-        on_http_request::{OnHttpRequestPayload, OnHttpResponsePayload},
-        on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload},
+        on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
+        on_subgraph_execute::{
+            OnSubgraphExecuteStartHookPayload, OnSubgraphExecuteStartHookResult,
+        },
     },
-    plugin_trait::{EndPayload, HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
+    plugin_trait::{EndHookPayload, RouterPlugin, RouterPluginWithConfig, StartHookPayload},
 };
 
 #[derive(Deserialize)]
@@ -47,9 +49,8 @@ pub struct PropagateStatusCodeCtx {
 impl RouterPlugin for PropagateStatusCodePlugin {
     async fn on_subgraph_execute<'exec>(
         &'exec self,
-        payload: OnSubgraphExecuteStartPayload<'exec>,
-    ) -> HookResult<'exec, OnSubgraphExecuteStartPayload<'exec>, OnSubgraphExecuteEndPayload<'exec>>
-    {
+        payload: OnSubgraphExecuteStartHookPayload<'exec>,
+    ) -> OnSubgraphExecuteStartHookResult<'exec> {
         payload.on_end(|payload| {
             let status_code = payload.execution_result.status;
             // if a response contains a status code we're watching...
@@ -72,8 +73,8 @@ impl RouterPlugin for PropagateStatusCodePlugin {
     }
     fn on_http_request<'exec>(
         &'exec self,
-        payload: OnHttpRequestPayload<'exec>,
-    ) -> HookResult<'exec, OnHttpRequestPayload<'exec>, OnHttpResponsePayload<'exec>> {
+        payload: OnHttpRequestHookPayload<'exec>,
+    ) -> OnHttpRequestHookResult<'exec> {
         payload.on_end(|mut payload| {
             // Checking if there is a context entry
             let ctx = payload.context.get_ref::<PropagateStatusCodeCtx>();

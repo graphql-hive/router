@@ -21,22 +21,19 @@ use crate::{
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
     },
-    executors::{
-        common::{HttpExecutionResponse, SubgraphExecutionRequest},
-        map::SubgraphExecutorMap,
-    },
+    executors::{common::SubgraphExecutionRequest, http::HttpResponse, map::SubgraphExecutorMap},
     headers::{
         plan::HeaderRulesPlan,
         request::modify_subgraph_request_headers,
         response::{apply_subgraph_response_headers, modify_client_response_headers},
     },
-    hooks::on_execute::{OnExecuteEndPayload, OnExecuteStartPayload},
+    hooks::on_execute::{OnExecuteEndHookPayload, OnExecuteStartHookPayload},
     introspection::{
         resolve::{resolve_introspection, IntrospectionContext},
         schema::SchemaMetadata,
     },
     plugin_context::PluginRequestState,
-    plugin_trait::ControlFlowResult,
+    plugin_trait::{EndControlFlow, StartControlFlow},
     projection::{
         plan::FieldProjectionPlan,
         request::{project_requires, RequestProjectionContext},
@@ -69,15 +66,8 @@ pub struct QueryPlanExecutionContext<'exec, 'req> {
     pub jwt_auth_forwarding: Option<JwtAuthForwardingPlan>,
 }
 
-#[derive(Clone)]
-pub struct PlanExecutionOutput {
-    pub body: Vec<u8>,
-    pub headers: HeaderMap,
-    pub status: http::StatusCode,
-}
-
 impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
-    pub async fn execute_query_plan(self) -> Result<PlanExecutionOutput, PlanExecutionError> {
+    pub async fn execute_query_plan(self) -> Result<HttpResponse, PlanExecutionError> {
         let mut init_value = if let Some(introspection_query) = self.introspection_context.query {
             resolve_introspection(introspection_query, self.introspection_context)
         } else {
@@ -92,7 +82,7 @@ impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
         let mut on_end_callbacks = vec![];
 
         if let Some(plugin_req_state) = self.plugin_req_state.as_ref() {
-            let mut start_payload = OnExecuteStartPayload {
+            let mut start_payload = OnExecuteStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
                 context: &plugin_req_state.context,
                 query_plan,
@@ -108,11 +98,11 @@ impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
                 let result = plugin.on_execute(start_payload).await;
                 start_payload = result.payload;
                 match result.control_flow {
-                    ControlFlowResult::Continue => { /* continue to next plugin */ }
-                    ControlFlowResult::EndResponse(response) => {
+                    StartControlFlow::Continue => { /* continue to next plugin */ }
+                    StartControlFlow::EndResponse(response) => {
                         return Ok(response);
                     }
-                    ControlFlowResult::OnEnd(callback) => {
+                    StartControlFlow::OnEnd(callback) => {
                         on_end_callbacks.push(callback);
                     }
                 }
@@ -155,7 +145,7 @@ impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
         let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
         if !on_end_callbacks.is_empty() {
-            let mut end_payload = OnExecuteEndPayload {
+            let mut end_payload = OnExecuteEndHookPayload {
                 data,
                 errors,
                 extensions,
@@ -166,13 +156,9 @@ impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
                 let result = callback(end_payload);
                 end_payload = result.payload;
                 match result.control_flow {
-                    ControlFlowResult::Continue => { /* continue to next callback */ }
-                    ControlFlowResult::EndResponse(output) => {
+                    EndControlFlow::Continue => { /* continue to next callback */ }
+                    EndControlFlow::EndResponse(output) => {
                         return Ok(output);
-                    }
-                    ControlFlowResult::OnEnd(_) => {
-                        // on_end callbacks should not return OnEnd again
-                        unreachable!("on_end callback returned OnEnd again");
                     }
                 }
             }
@@ -197,8 +183,8 @@ impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
             affected_path: || None,
         })?;
 
-        Ok(PlanExecutionOutput {
-            body,
+        Ok(HttpResponse {
+            body: body.into(),
             headers: response_headers,
             status: http::StatusCode::OK,
         })
@@ -240,20 +226,15 @@ impl<'exec, T> ConcurrencyScope<'exec, T> {
     }
 }
 
-struct SubgraphOutput {
-    body: Bytes,
-    headers: HeaderMap,
-}
-
 struct FetchJob {
     fetch_node_id: i64,
     subgraph_name: String,
-    response: SubgraphOutput,
+    response: HttpResponse,
 }
 
 struct FlattenFetchJob {
     flatten_node_path: FlattenNodePath,
-    response: SubgraphOutput,
+    response: HttpResponse,
     fetch_node_id: i64,
     subgraph_name: String,
     representation_hashes: Vec<u64>,
@@ -266,30 +247,16 @@ enum ExecutionJob {
     None,
 }
 
-impl From<ExecutionJob> for SubgraphOutput {
+impl From<ExecutionJob> for HttpResponse {
     fn from(value: ExecutionJob) -> Self {
         match value {
-            ExecutionJob::Fetch(j) => Self {
-                body: j.response.body,
-                headers: j.response.headers,
-            },
-            ExecutionJob::FlattenFetch(j) => Self {
-                body: j.response.body,
-                headers: j.response.headers,
-            },
+            ExecutionJob::Fetch(j) => j.response,
+            ExecutionJob::FlattenFetch(j) => j.response,
             ExecutionJob::None => Self {
+                status: http::StatusCode::OK,
                 body: Bytes::new(),
                 headers: HeaderMap::new(),
             },
-        }
-    }
-}
-
-impl From<HttpExecutionResponse> for SubgraphOutput {
-    fn from(res: HttpExecutionResponse) -> Self {
-        Self {
-            body: res.body,
-            headers: res.headers,
         }
     }
 }
@@ -816,8 +783,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                     self.client_request,
                     self.plugin_req_state,
                 )
-                .await
-                .into(),
+                .await,
         }))
     }
 

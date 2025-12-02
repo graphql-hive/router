@@ -11,12 +11,14 @@ use serde::Deserialize;
 use sonic_rs::json;
 
 use hive_router_plan_executor::{
-    execution::plan::PlanExecutionOutput,
+    executors::http::HttpResponse,
     hooks::{
-        on_graphql_validation::{OnGraphQLValidationEndPayload, OnGraphQLValidationStartPayload},
-        on_query_plan::{OnQueryPlanEndPayload, OnQueryPlanStartPayload},
+        on_graphql_validation::{
+            OnGraphQLValidationStartHookPayload, OnGraphQLValidationStartHookResult,
+        },
+        on_query_plan::{OnQueryPlanStartHookPayload, OnQueryPlanStartHookResult},
     },
-    plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
+    plugin_trait::{RouterPlugin, RouterPluginWithConfig, StartHookPayload},
 };
 
 // This example shows two ways of limiting the number of root fields in a query:
@@ -28,9 +30,8 @@ impl RouterPlugin for RootFieldLimitPlugin {
     // Using validation step
     async fn on_graphql_validation<'exec>(
         &'exec self,
-        mut payload: OnGraphQLValidationStartPayload<'exec>,
-    ) -> HookResult<'exec, OnGraphQLValidationStartPayload<'exec>, OnGraphQLValidationEndPayload>
-    {
+        mut payload: OnGraphQLValidationStartHookPayload<'exec>,
+    ) -> OnGraphQLValidationStartHookResult<'exec> {
         let rule = RootFieldLimitRule {
             max_root_fields: self.max_root_fields,
         };
@@ -40,8 +41,8 @@ impl RouterPlugin for RootFieldLimitPlugin {
     // Or during query planning
     async fn on_query_plan<'exec>(
         &'exec self,
-        payload: OnQueryPlanStartPayload<'exec>,
-    ) -> HookResult<'exec, OnQueryPlanStartPayload<'exec>, OnQueryPlanEndPayload> {
+        payload: OnQueryPlanStartHookPayload<'exec>,
+    ) -> OnQueryPlanStartHookResult<'exec> {
         let mut cnt = 0;
         for selection in payload
             .filtered_operation_for_plan
@@ -67,8 +68,8 @@ impl RouterPlugin for RootFieldLimitPlugin {
                             }]
                         });
                         // Return error
-                        return payload.end_response(PlanExecutionOutput {
-                            body: sonic_rs::to_vec(&body).unwrap_or_default(),
+                        return payload.end_response(HttpResponse {
+                            body: sonic_rs::to_vec(&body).unwrap_or_default().into(),
                             headers: http::HeaderMap::new(),
                             status: http::StatusCode::PAYLOAD_TOO_LARGE,
                         });

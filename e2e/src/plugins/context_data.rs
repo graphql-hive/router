@@ -4,10 +4,13 @@ use serde::Deserialize;
 
 use hive_router_plan_executor::{
     hooks::{
-        on_graphql_params::{OnGraphQLParamsEndPayload, OnGraphQLParamsStartPayload},
-        on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload},
+        on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
+        on_subgraph_execute::{
+            OnSubgraphExecuteEndHookPayload, OnSubgraphExecuteStartHookPayload,
+            OnSubgraphExecuteStartHookResult,
+        },
     },
-    plugin_trait::{EndPayload, HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
+    plugin_trait::{EndHookPayload, RouterPlugin, RouterPluginWithConfig, StartHookPayload},
 };
 
 #[derive(Deserialize)]
@@ -40,8 +43,8 @@ impl RouterPluginWithConfig for ContextDataPlugin {
 impl RouterPlugin for ContextDataPlugin {
     async fn on_graphql_params<'exec>(
         &'exec self,
-        payload: OnGraphQLParamsStartPayload<'exec>,
-    ) -> HookResult<'exec, OnGraphQLParamsStartPayload<'exec>, OnGraphQLParamsEndPayload> {
+        payload: OnGraphQLParamsStartHookPayload<'exec>,
+    ) -> OnGraphQLParamsStartHookResult<'exec> {
         let context_data = ContextData {
             incoming_data: "world".to_string(),
             response_count: 0,
@@ -60,8 +63,8 @@ impl RouterPlugin for ContextDataPlugin {
     }
     async fn on_subgraph_execute<'exec>(
         &'exec self,
-        mut payload: OnSubgraphExecuteStartPayload<'exec>,
-    ) -> HookResult<'exec, OnSubgraphExecuteStartPayload<'exec>, OnSubgraphExecuteEndPayload> {
+        mut payload: OnSubgraphExecuteStartHookPayload<'exec>,
+    ) -> OnSubgraphExecuteStartHookResult<'exec> {
         let context_data_entry = payload.context.get_ref::<ContextData>();
         if let Some(ref context_data_entry) = context_data_entry {
             tracing::info!("hello {}", context_data_entry.incoming_data); // Hello world!
@@ -71,7 +74,7 @@ impl RouterPlugin for ContextDataPlugin {
                 http::HeaderValue::from_str(&new_header_value).unwrap(),
             );
         }
-        payload.on_end(|payload: OnSubgraphExecuteEndPayload<'exec>| {
+        payload.on_end(|payload: OnSubgraphExecuteEndHookPayload<'exec>| {
             let context_data = payload.context.get_mut::<ContextData>();
             if let Some(mut context_data) = context_data {
                 context_data.response_count += 1;

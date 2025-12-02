@@ -60,13 +60,15 @@ use graphql_tools::{
     },
 };
 use hive_router_plan_executor::{
-    execution::plan::PlanExecutionOutput,
+    executors::http::HttpResponse,
     hooks::{
-        on_execute::{OnExecuteEndPayload, OnExecuteStartPayload},
-        on_graphql_validation::{OnGraphQLValidationEndPayload, OnGraphQLValidationStartPayload},
-        on_supergraph_load::{OnSupergraphLoadEndPayload, OnSupergraphLoadStartPayload},
+        on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
+        on_graphql_validation::{
+            OnGraphQLValidationStartHookPayload, OnGraphQLValidationStartHookResult,
+        },
+        on_supergraph_load::{OnSupergraphLoadEndHookPayload, OnSupergraphLoadStartHookPayload},
     },
-    plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
+    plugin_trait::{RouterPlugin, RouterPluginWithConfig, StartHookPayload, StartHookResult},
 };
 use serde::Deserialize;
 use sonic_rs::{json, JsonContainerTrait};
@@ -101,9 +103,8 @@ impl RouterPlugin for OneOfPlugin {
     // 1. During validation step
     async fn on_graphql_validation<'exec>(
         &'exec self,
-        mut payload: OnGraphQLValidationStartPayload<'exec>,
-    ) -> HookResult<'exec, OnGraphQLValidationStartPayload<'exec>, OnGraphQLValidationEndPayload>
-    {
+        mut payload: OnGraphQLValidationStartHookPayload<'exec>,
+    ) -> OnGraphQLValidationStartHookResult<'exec> {
         let rule = OneOfValidationRule {
             one_of_types: self.one_of_types.read().unwrap().clone(),
         };
@@ -113,8 +114,8 @@ impl RouterPlugin for OneOfPlugin {
     // 2. During execution step
     async fn on_execute<'exec>(
         &'exec self,
-        payload: OnExecuteStartPayload<'exec>,
-    ) -> HookResult<'exec, OnExecuteStartPayload<'exec>, OnExecuteEndPayload> {
+        payload: OnExecuteStartHookPayload<'exec>,
+    ) -> OnExecuteStartHookResult<'exec> {
         if let (Some(variable_values), Some(variable_defs)) = (
             &payload.variable_values,
             &payload.operation_for_plan.variable_definitions,
@@ -133,7 +134,7 @@ impl RouterPlugin for OneOfPlugin {
                                 variable_named_type,
                                 keys_num
                             );
-                            return payload.end_response(PlanExecutionOutput {
+                            return payload.end_response(HttpResponse {
                                 body: sonic_rs::to_vec(&json!({
                                     "errors": [{
                                         "message": err_msg,
@@ -142,7 +143,8 @@ impl RouterPlugin for OneOfPlugin {
                                         }
                                     }]
                                 }))
-                                .unwrap(),
+                                .unwrap()
+                                .into(),
                                 headers: Default::default(),
                                 status: http::StatusCode::BAD_REQUEST,
                             });
@@ -155,8 +157,9 @@ impl RouterPlugin for OneOfPlugin {
     }
     fn on_supergraph_reload<'exec>(
         &'exec self,
-        start_payload: OnSupergraphLoadStartPayload,
-    ) -> HookResult<'exec, OnSupergraphLoadStartPayload, OnSupergraphLoadEndPayload> {
+        start_payload: OnSupergraphLoadStartHookPayload,
+    ) -> StartHookResult<'exec, OnSupergraphLoadStartHookPayload, OnSupergraphLoadEndHookPayload>
+    {
         for def in start_payload.new_ast.definitions.iter() {
             if let Definition::TypeDefinition(TypeDefinition::InputObject(input_obj)) = def {
                 for directive in input_obj.directives.iter() {

@@ -5,9 +5,9 @@ use serde::Deserialize;
 use sonic_rs::json;
 
 use hive_router_plan_executor::{
-    execution::plan::PlanExecutionOutput,
-    hooks::on_graphql_params::{OnGraphQLParamsEndPayload, OnGraphQLParamsStartPayload},
-    plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
+    executors::http::HttpResponse,
+    hooks::on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
+    plugin_trait::{RouterPlugin, RouterPluginWithConfig, StartHookPayload},
 };
 
 #[derive(Deserialize)]
@@ -34,8 +34,8 @@ impl RouterPluginWithConfig for ForbidAnonymousOperationsPlugin {
 impl RouterPlugin for ForbidAnonymousOperationsPlugin {
     async fn on_graphql_params<'exec>(
         &'exec self,
-        payload: OnGraphQLParamsStartPayload<'exec>,
-    ) -> HookResult<'exec, OnGraphQLParamsStartPayload<'exec>, OnGraphQLParamsEndPayload> {
+        payload: OnGraphQLParamsStartHookPayload<'exec>,
+    ) -> OnGraphQLParamsStartHookResult<'exec> {
         let maybe_operation_name = &payload
             .graphql_params
             .as_ref()
@@ -50,7 +50,7 @@ impl RouterPlugin for ForbidAnonymousOperationsPlugin {
             tracing::error!("Operation is not allowed!");
 
             // Prepare an HTTP 400 response with a GraphQL error message
-            let response_body = json!({
+            let body = json!({
                 "errors": [
                     {
                         "message": "Anonymous operations are not allowed",
@@ -60,8 +60,8 @@ impl RouterPlugin for ForbidAnonymousOperationsPlugin {
                     }
                 ]
             });
-            return payload.end_response(PlanExecutionOutput {
-                body: sonic_rs::to_vec(&response_body).unwrap_or_default(),
+            return payload.end_response(HttpResponse {
+                body: sonic_rs::to_vec(&body).unwrap_or_default().into(),
                 headers: http::HeaderMap::new(),
                 status: StatusCode::BAD_REQUEST,
             });

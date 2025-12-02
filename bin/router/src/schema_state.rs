@@ -5,10 +5,10 @@ use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
 use hive_router_plan_executor::{
     executors::error::SubgraphExecutorError,
     hooks::on_supergraph_load::{
-        OnSupergraphLoadEndPayload, OnSupergraphLoadStartPayload, SupergraphData,
+        OnSupergraphLoadEndHookPayload, OnSupergraphLoadStartHookPayload, SupergraphData,
     },
     introspection::schema::SchemaWithMetadata,
-    plugin_trait::ControlFlowResult,
+    plugin_trait::{EndControlFlow, StartControlFlow},
     SubgraphExecutorMap,
 };
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
@@ -90,7 +90,7 @@ impl SchemaState {
                 let mut on_end_callbacks = vec![];
 
                 if let Some(plugins) = app_state.plugins.as_ref() {
-                    let mut start_payload = OnSupergraphLoadStartPayload {
+                    let mut start_payload = OnSupergraphLoadStartHookPayload {
                         current_supergraph_data: swappable_data_spawn_clone.clone(),
                         new_ast,
                     };
@@ -98,13 +98,13 @@ impl SchemaState {
                         let result = plugin.on_supergraph_reload(start_payload);
                         start_payload = result.payload;
                         match result.control_flow {
-                            ControlFlowResult::Continue => {
+                            StartControlFlow::Continue => {
                                 // continue to next plugin
                             }
-                            ControlFlowResult::EndResponse(_) => {
+                            StartControlFlow::EndResponse(_) => {
                                 unreachable!("Plugins should not end supergraph reload processing");
                             }
-                            ControlFlowResult::OnEnd(callback) => {
+                            StartControlFlow::OnEnd(callback) => {
                                 on_end_callbacks.push(callback);
                             }
                         }
@@ -114,7 +114,7 @@ impl SchemaState {
 
                 match Self::build_data(router_config.clone(), &new_ast) {
                     Ok(new_supergraph_data) => {
-                        let mut end_payload = OnSupergraphLoadEndPayload {
+                        let mut end_payload = OnSupergraphLoadEndHookPayload {
                             new_supergraph_data,
                         };
 
@@ -122,17 +122,12 @@ impl SchemaState {
                             let result = callback(end_payload);
                             end_payload = result.payload;
                             match result.control_flow {
-                                ControlFlowResult::Continue => {
+                                EndControlFlow::Continue => {
                                     // continue to next callback
                                 }
-                                ControlFlowResult::EndResponse(_) => {
+                                EndControlFlow::EndResponse(_) => {
                                     unreachable!(
                                         "Plugins should not end supergraph reload processing"
-                                    );
-                                }
-                                ControlFlowResult::OnEnd(_) => {
-                                    unreachable!(
-                                        "End callbacks should not register further end callbacks"
                                     );
                                 }
                             }

@@ -1,15 +1,7 @@
 use ahash::AHasher;
-use bytes::Bytes;
-use http::{HeaderMap, Method, StatusCode, Uri};
+use http::{HeaderMap, Method, Uri};
 use std::collections::BTreeMap;
 use std::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher};
-
-#[derive(Debug, Clone)]
-pub struct SharedResponse {
-    pub status: StatusCode,
-    pub headers: HeaderMap,
-    pub body: Bytes,
-}
 
 pub fn request_fingerprint(
     method: &Method,

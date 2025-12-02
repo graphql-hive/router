@@ -2,9 +2,12 @@ use dashmap::DashMap;
 use serde::Deserialize;
 
 use hive_router_plan_executor::{
-    executors::common::HttpExecutionResponse,
-    hooks::on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload},
-    plugin_trait::{EndPayload, HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
+    executors::http::HttpResponse,
+    hooks::on_subgraph_execute::{
+        OnSubgraphExecuteEndHookPayload, OnSubgraphExecuteStartHookPayload,
+        OnSubgraphExecuteStartHookResult,
+    },
+    plugin_trait::{EndHookPayload, RouterPlugin, RouterPluginWithConfig, StartHookPayload},
 };
 
 #[derive(Deserialize)]
@@ -29,15 +32,15 @@ impl RouterPluginWithConfig for SubgraphResponseCachePlugin {
 }
 
 pub struct SubgraphResponseCachePlugin {
-    cache: DashMap<String, HttpExecutionResponse>,
+    cache: DashMap<String, HttpResponse>,
 }
 
 #[async_trait::async_trait]
 impl RouterPlugin for SubgraphResponseCachePlugin {
     async fn on_subgraph_execute<'exec>(
         &'exec self,
-        mut payload: OnSubgraphExecuteStartPayload<'exec>,
-    ) -> HookResult<'exec, OnSubgraphExecuteStartPayload<'exec>, OnSubgraphExecuteEndPayload> {
+        mut payload: OnSubgraphExecuteStartHookPayload<'exec>,
+    ) -> OnSubgraphExecuteStartHookResult<'exec> {
         let key = format!(
             "subgraph_response_cache:{}:{:?}",
             payload.execution_request.query, payload.execution_request.variables
@@ -48,7 +51,7 @@ impl RouterPlugin for SubgraphResponseCachePlugin {
             payload.execution_result = Some(cached_response.clone());
             return payload.cont();
         }
-        payload.on_end(move |payload: OnSubgraphExecuteEndPayload| {
+        payload.on_end(move |payload: OnSubgraphExecuteEndHookPayload| {
             // Here payload.response is not Option
             self.cache.insert(key, payload.execution_result.clone());
             payload.cont()

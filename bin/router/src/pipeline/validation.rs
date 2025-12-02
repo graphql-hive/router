@@ -5,13 +5,13 @@ use crate::pipeline::parser::GraphQLParserPayload;
 use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
 use graphql_tools::validation::validate::validate;
-use hive_router_plan_executor::execution::plan::PlanExecutionOutput;
+use hive_router_plan_executor::executors::http::HttpResponse;
 use hive_router_plan_executor::hooks::on_graphql_validation::{
-    OnGraphQLValidationEndPayload, OnGraphQLValidationStartPayload,
+    OnGraphQLValidationEndHookPayload, OnGraphQLValidationStartHookPayload,
 };
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
-use hive_router_plan_executor::plugin_trait::ControlFlowResult;
+use hive_router_plan_executor::plugin_trait::{EndControlFlow, StartControlFlow};
 use tracing::{error, trace};
 
 #[inline]
@@ -21,7 +21,7 @@ pub async fn validate_operation_with_cache(
     app_state: &RouterSharedState,
     parser_payload: &GraphQLParserPayload,
     plugin_req_state: &Option<PluginRequestState<'_>>,
-) -> Result<Option<PlanExecutionOutput>, PipelineErrorVariant> {
+) -> Result<Option<HttpResponse>, PipelineErrorVariant> {
     let consumer_schema_ast = &supergraph.planner.consumer_schema.document;
 
     let validation_result = match schema_state
@@ -47,7 +47,7 @@ pub async fn validate_operation_with_cache(
             let document = &parser_payload.parsed_operation;
             let errors = if let Some(plugin_req_state) = plugin_req_state.as_ref() {
                 /* Handle on_graphql_validate hook in the plugins - START */
-                let mut start_payload = OnGraphQLValidationStartPayload::new(
+                let mut start_payload = OnGraphQLValidationStartHookPayload::new(
                     plugin_req_state,
                     consumer_schema_ast,
                     document,
@@ -57,13 +57,13 @@ pub async fn validate_operation_with_cache(
                     let result = plugin.on_graphql_validation(start_payload).await;
                     start_payload = result.payload;
                     match result.control_flow {
-                        ControlFlowResult::Continue => {
+                        StartControlFlow::Continue => {
                             // continue to next plugin
                         }
-                        ControlFlowResult::EndResponse(response) => {
+                        StartControlFlow::EndResponse(response) => {
                             return Ok(Some(response));
                         }
-                        ControlFlowResult::OnEnd(callback) => {
+                        StartControlFlow::OnEnd(callback) => {
                             on_end_callbacks.push(callback);
                         }
                     }
@@ -80,20 +80,17 @@ pub async fn validate_operation_with_cache(
                 validate(consumer_schema_ast, document, &app_state.validation_plan)
             };
 
-            let mut end_payload = OnGraphQLValidationEndPayload { errors };
+            let mut end_payload = OnGraphQLValidationEndHookPayload { errors };
 
             for callback in on_end_callbacks {
                 let result = callback(end_payload);
                 end_payload = result.payload;
                 match result.control_flow {
-                    ControlFlowResult::Continue => {
+                    EndControlFlow::Continue => {
                         // continue to next callback
                     }
-                    ControlFlowResult::EndResponse(response) => {
+                    EndControlFlow::EndResponse(response) => {
                         return Ok(Some(response));
-                    }
-                    ControlFlowResult::OnEnd(_) => {
-                        // on_end callbacks should not return OnEnd again
                     }
                 }
             }

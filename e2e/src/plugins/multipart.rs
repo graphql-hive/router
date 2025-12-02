@@ -2,15 +2,16 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use hive_router_plan_executor::{
-    execution::plan::PlanExecutionOutput,
-    executors::dedupe::SharedResponse,
+    executors::http::HttpResponse,
     hooks::{
         on_graphql_params::{
-            GraphQLParams, OnGraphQLParamsEndPayload, OnGraphQLParamsStartPayload,
+            GraphQLParams, OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult,
         },
-        on_subgraph_http_request::{OnSubgraphHttpRequestPayload, OnSubgraphHttpResponsePayload},
+        on_subgraph_http_request::{
+            OnSubgraphHttpRequestHookPayload, OnSubgraphHttpRequestHookResult,
+        },
     },
-    plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
+    plugin_trait::{RouterPlugin, RouterPluginWithConfig, StartHookPayload},
 };
 use multer::Multipart;
 use serde::Deserialize;
@@ -52,8 +53,8 @@ impl RouterPluginWithConfig for MultipartPlugin {
 impl RouterPlugin for MultipartPlugin {
     async fn on_graphql_params<'exec>(
         &'exec self,
-        mut payload: OnGraphQLParamsStartPayload<'exec>,
-    ) -> HookResult<'exec, OnGraphQLParamsStartPayload<'exec>, OnGraphQLParamsEndPayload> {
+        mut payload: OnGraphQLParamsStartHookPayload<'exec>,
+    ) -> OnGraphQLParamsStartHookResult<'exec> {
         if let Some(content_type) = payload.router_http_request.headers.get("content-type") {
             if let Ok(content_type_str) = content_type.to_str() {
                 if content_type_str.starts_with("multipart/form-data") {
@@ -105,8 +106,8 @@ impl RouterPlugin for MultipartPlugin {
 
     async fn on_subgraph_http_request<'exec>(
         &'exec self,
-        mut payload: OnSubgraphHttpRequestPayload<'exec>,
-    ) -> HookResult<'exec, OnSubgraphHttpRequestPayload<'exec>, OnSubgraphHttpResponsePayload> {
+        mut payload: OnSubgraphHttpRequestHookPayload<'exec>,
+    ) -> OnSubgraphHttpRequestHookResult<'exec> {
         if let Some(variables) = &payload.execution_request.variables {
             let multipart_ctx = payload.context.get_ref::<MultipartContext>();
             if let Some(multipart_ctx) = multipart_ctx {
@@ -152,7 +153,7 @@ impl RouterPlugin for MultipartPlugin {
                         .await;
                     match resp {
                         Ok(resp) => {
-                            payload.response = Some(SharedResponse {
+                            payload.response = Some(HttpResponse {
                                 status: resp.status(),
                                 headers: resp.headers().clone(),
                                 body: resp.bytes().await.unwrap(),
@@ -165,10 +166,10 @@ impl RouterPlugin for MultipartPlugin {
                                     "message": format!("Failed to send multipart request to subgraph: {}", err)
                                 }]
                             });
-                            return payload.end_response(PlanExecutionOutput {
+                            return payload.end_response(HttpResponse {
                                 status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
                                 headers: reqwest::header::HeaderMap::new(),
-                                body: serde_json::to_vec(&body).unwrap(),
+                                body: serde_json::to_vec(&body).unwrap().into(),
                             });
                         }
                     }

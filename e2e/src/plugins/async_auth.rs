@@ -4,9 +4,9 @@ use sonic_rs::json;
 use std::path::PathBuf;
 
 use hive_router_plan_executor::{
-    execution::plan::PlanExecutionOutput,
-    hooks::on_graphql_params::{OnGraphQLParamsEndPayload, OnGraphQLParamsStartPayload},
-    plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
+    executors::http::HttpResponse,
+    hooks::on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
+    plugin_trait::{RouterPlugin, RouterPluginWithConfig, StartHookPayload},
 };
 
 #[derive(Deserialize)]
@@ -44,8 +44,8 @@ impl RouterPlugin for AllowClientIdFromFilePlugin {
     // We don't use on_http_request here because we want to run this only when it is a GraphQL request
     async fn on_graphql_params<'exec>(
         &'exec self,
-        payload: OnGraphQLParamsStartPayload<'exec>,
-    ) -> HookResult<'exec, OnGraphQLParamsStartPayload<'exec>, OnGraphQLParamsEndPayload> {
+        payload: OnGraphQLParamsStartHookPayload<'exec>,
+    ) -> OnGraphQLParamsStartHookResult<'exec> {
         let header = payload.router_http_request.headers.get(&self.header_key);
         match header {
             Some(client_id) => {
@@ -73,8 +73,8 @@ impl RouterPlugin for AllowClientIdFromFilePlugin {
                                     ]
                                 }
                             );
-                            return payload.end_response(PlanExecutionOutput {
-                                body: sonic_rs::to_vec(&body).unwrap_or_default(),
+                            return payload.end_response(HttpResponse {
+                                body: sonic_rs::to_vec(&body).unwrap_or_default().into(),
                                 headers: http::HeaderMap::new(),
                                 status: http::StatusCode::FORBIDDEN,
                             });
@@ -95,8 +95,8 @@ impl RouterPlugin for AllowClientIdFromFilePlugin {
                                 ]
                             }
                         );
-                        return payload.end_response(PlanExecutionOutput {
-                            body: sonic_rs::to_vec(&body).unwrap_or_default(),
+                        return payload.end_response(HttpResponse {
+                            body: sonic_rs::to_vec(&body).unwrap_or_default().into(),
                             headers: http::HeaderMap::new(),
                             status: http::StatusCode::BAD_REQUEST,
                         });
@@ -118,8 +118,8 @@ impl RouterPlugin for AllowClientIdFromFilePlugin {
                         ]
                     }
                 );
-                return payload.end_response(PlanExecutionOutput {
-                    body: sonic_rs::to_vec(&body).unwrap_or_default(),
+                return payload.end_response(HttpResponse {
+                    body: sonic_rs::to_vec(&body).unwrap_or_default().into(),
                     headers: http::HeaderMap::new(),
                     status: http::StatusCode::UNAUTHORIZED,
                 });

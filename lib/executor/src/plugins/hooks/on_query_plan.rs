@@ -7,10 +7,10 @@ use hive_router_query_planner::{
 
 use crate::{
     plugin_context::{PluginContext, RouterHttpRequest},
-    plugin_trait::{EndPayload, StartPayload},
+    plugin_trait::{EndHookPayload, EndHookResult, StartHookPayload, StartHookResult},
 };
 
-pub struct OnQueryPlanStartPayload<'exec> {
+pub struct OnQueryPlanStartHookPayload<'exec> {
     pub router_http_request: &'exec RouterHttpRequest<'exec>,
     pub context: &'exec PluginContext,
     pub filtered_operation_for_plan: &'exec OperationDefinition,
@@ -20,10 +20,15 @@ pub struct OnQueryPlanStartPayload<'exec> {
     pub planner: &'exec Planner,
 }
 
-impl<'exec> StartPayload<OnQueryPlanEndPayload> for OnQueryPlanStartPayload<'exec> {}
+impl<'exec> StartHookPayload<OnQueryPlanEndHookPayload> for OnQueryPlanStartHookPayload<'exec> {}
 
-pub struct OnQueryPlanEndPayload {
+pub type OnQueryPlanStartHookResult<'exec> =
+    StartHookResult<'exec, OnQueryPlanStartHookPayload<'exec>, OnQueryPlanEndHookPayload>;
+
+pub struct OnQueryPlanEndHookPayload {
     pub query_plan: QueryPlan,
 }
 
-impl EndPayload for OnQueryPlanEndPayload {}
+impl EndHookPayload for OnQueryPlanEndHookPayload {}
+
+pub type OnQueryPlanEndHookResult = EndHookResult<OnQueryPlanEndHookPayload>;

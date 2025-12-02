@@ -8,8 +8,10 @@ use sonic_rs::Value;
 
 use crate::plugin_context::PluginContext;
 use crate::plugin_context::RouterHttpRequest;
-use crate::plugin_trait::EndPayload;
-use crate::plugin_trait::StartPayload;
+use crate::plugin_trait::EndHookPayload;
+use crate::plugin_trait::EndHookResult;
+use crate::plugin_trait::StartHookPayload;
+use crate::plugin_trait::StartHookResult;
 
 #[derive(Debug, Clone, Default)]
 pub struct GraphQLParams {
@@ -93,18 +95,29 @@ impl<'de> Deserialize<'de> for GraphQLParams {
     }
 }
 
-pub struct OnGraphQLParamsStartPayload<'exec> {
+pub struct OnGraphQLParamsStartHookPayload<'exec> {
     pub router_http_request: &'exec RouterHttpRequest<'exec>,
     pub context: &'exec PluginContext,
     pub body: Bytes,
     pub graphql_params: Option<GraphQLParams>,
 }
 
-impl<'exec> StartPayload<OnGraphQLParamsEndPayload<'exec>> for OnGraphQLParamsStartPayload<'exec> {}
+impl<'exec> StartHookPayload<OnGraphQLParamsEndHookPayload<'exec>>
+    for OnGraphQLParamsStartHookPayload<'exec>
+{
+}
 
-pub struct OnGraphQLParamsEndPayload<'exec> {
+pub type OnGraphQLParamsStartHookResult<'exec> = StartHookResult<
+    'exec,
+    OnGraphQLParamsStartHookPayload<'exec>,
+    OnGraphQLParamsEndHookPayload<'exec>,
+>;
+
+pub struct OnGraphQLParamsEndHookPayload<'exec> {
     pub graphql_params: GraphQLParams,
     pub context: &'exec PluginContext,
 }
 
-impl<'exec> EndPayload for OnGraphQLParamsEndPayload<'exec> {}
+impl<'exec> EndHookPayload for OnGraphQLParamsEndHookPayload<'exec> {}
+
+pub type OnGraphQLParamsEndHookResult<'exec> = EndHookResult<OnGraphQLParamsEndHookPayload<'exec>>;

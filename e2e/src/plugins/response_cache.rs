@@ -4,12 +4,14 @@ use redis::Commands;
 use serde::Deserialize;
 
 use hive_router_plan_executor::{
-    execution::plan::PlanExecutionOutput,
+    executors::http::HttpResponse,
     hooks::{
-        on_execute::{OnExecuteEndPayload, OnExecuteStartPayload},
-        on_supergraph_load::{OnSupergraphLoadEndPayload, OnSupergraphLoadStartPayload},
+        on_execute::{
+            OnExecuteEndHookPayload, OnExecuteStartHookPayload, OnExecuteStartHookResult,
+        },
+        on_supergraph_load::{OnSupergraphLoadStartHookPayload, OnSupergraphLoadStartHookResult},
     },
-    plugin_trait::{EndPayload, HookResult, RouterPluginWithConfig, StartPayload},
+    plugin_trait::{EndHookPayload, RouterPluginWithConfig, StartHookPayload},
     plugins::plugin_trait::RouterPlugin,
     utils::consts::TYPENAME_FIELD_NAME,
 };
@@ -59,8 +61,8 @@ pub struct ResponseCachePlugin {
 impl RouterPlugin for ResponseCachePlugin {
     async fn on_execute<'exec>(
         &'exec self,
-        payload: OnExecuteStartPayload<'exec>,
-    ) -> HookResult<'exec, OnExecuteStartPayload<'exec>, OnExecuteEndPayload<'exec>> {
+        payload: OnExecuteStartHookPayload<'exec>,
+    ) -> OnExecuteStartHookResult<'exec> {
         let key = format!(
             "response_cache:{}:{:?}",
             payload.query_plan, payload.variable_values
@@ -78,8 +80,8 @@ impl RouterPlugin for ResponseCachePlugin {
                             key,
                             String::from_utf8_lossy(&body)
                         );
-                        return payload.end_response(PlanExecutionOutput {
-                            body: body,
+                        return payload.end_response(HttpResponse {
+                            body: body.into(),
                             headers: HeaderMap::new(),
                             status: StatusCode::OK,
                         });
@@ -89,7 +91,7 @@ impl RouterPlugin for ResponseCachePlugin {
                     trace!("Error accessing cache for key {}: {}", key, err);
                 }
             }
-            return payload.on_end(move |mut payload: OnExecuteEndPayload<'exec>| {
+            return payload.on_end(move |mut payload: OnExecuteEndHookPayload<'exec>| {
                 // Do not cache if there are errors
                 if !payload.errors.is_empty() {
                     trace!("Not caching response due to errors");
@@ -143,8 +145,8 @@ impl RouterPlugin for ResponseCachePlugin {
     }
     fn on_supergraph_reload<'a>(
         &'a self,
-        payload: OnSupergraphLoadStartPayload,
-    ) -> HookResult<'a, OnSupergraphLoadStartPayload, OnSupergraphLoadEndPayload> {
+        payload: OnSupergraphLoadStartHookPayload,
+    ) -> OnSupergraphLoadStartHookResult<'a> {
         // Visit the schema and update ttl_per_type based on some directive
         payload.new_ast.definitions.iter().for_each(|def| {
             if let graphql_parser::schema::Definition::TypeDefinition(type_def) = def {

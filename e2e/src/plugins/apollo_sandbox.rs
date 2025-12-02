@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use hive_router_plan_executor::{
-    execution::plan::PlanExecutionOutput,
-    hooks::on_http_request::{OnHttpRequestPayload, OnHttpResponsePayload},
-    plugin_trait::{HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
+    executors::http::HttpResponse,
+    hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
+    plugin_trait::{RouterPlugin, RouterPluginWithConfig, StartHookPayload},
 };
 use http::HeaderMap;
 use reqwest::StatusCode;
@@ -140,8 +140,8 @@ pub struct ApolloSandboxPlugin {
 impl RouterPlugin for ApolloSandboxPlugin {
     fn on_http_request<'req>(
         &'req self,
-        payload: OnHttpRequestPayload<'req>,
-    ) -> HookResult<'req, OnHttpRequestPayload<'req>, OnHttpResponsePayload<'req>> {
+        payload: OnHttpRequestHookPayload<'req>,
+    ) -> OnHttpRequestHookResult<'req> {
         if payload.router_http_request.path() == "/apollo-sandbox" {
             let config =
                 sonic_rs::to_string(&self.serialized_options).unwrap_or_else(|_| "{}".to_string());
@@ -159,8 +159,8 @@ impl RouterPlugin for ApolloSandboxPlugin {
             );
             let mut headers = HeaderMap::new();
             headers.insert("Content-Type", "text/html".parse().unwrap());
-            return payload.end_response(PlanExecutionOutput {
-                body: html.into_bytes(),
+            return payload.end_response(HttpResponse {
+                body: html.into_bytes().into(),
                 headers,
                 status: StatusCode::OK,
             });

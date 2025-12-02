@@ -1,10 +1,10 @@
 use crate::{
-    executors::{common::SubgraphExecutionRequest, dedupe::SharedResponse},
+    executors::{common::SubgraphExecutionRequest, http::HttpResponse},
     plugin_context::PluginContext,
-    plugin_trait::{EndPayload, StartPayload},
+    plugin_trait::{EndHookPayload, StartHookPayload},
 };
 
-pub struct OnSubgraphHttpRequestPayload<'exec> {
+pub struct OnSubgraphHttpRequestHookPayload<'exec> {
     pub subgraph_name: &'exec str,
 
     pub endpoint: &'exec http::Uri,
@@ -15,13 +15,25 @@ pub struct OnSubgraphHttpRequestPayload<'exec> {
     pub context: &'exec PluginContext,
 
     // Early response
-    pub response: Option<SharedResponse>,
+    pub response: Option<HttpResponse>,
 }
 
-impl<'exec> StartPayload<OnSubgraphHttpResponsePayload> for OnSubgraphHttpRequestPayload<'exec> {}
-
-pub struct OnSubgraphHttpResponsePayload {
-    pub response: SharedResponse,
+impl<'exec> StartHookPayload<OnSubgraphHttpResponseHookPayload>
+    for OnSubgraphHttpRequestHookPayload<'exec>
+{
 }
 
-impl EndPayload for OnSubgraphHttpResponsePayload {}
+pub type OnSubgraphHttpRequestHookResult<'exec> = crate::plugin_trait::StartHookResult<
+    'exec,
+    OnSubgraphHttpRequestHookPayload<'exec>,
+    OnSubgraphHttpResponseHookPayload,
+>;
+
+pub struct OnSubgraphHttpResponseHookPayload {
+    pub response: HttpResponse,
+}
+
+impl EndHookPayload for OnSubgraphHttpResponseHookPayload {}
+
+pub type OnSubgraphHttpResponseHookResult =
+    crate::plugin_trait::EndHookResult<OnSubgraphHttpResponseHookPayload>;

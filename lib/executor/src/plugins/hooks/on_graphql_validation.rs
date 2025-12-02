@@ -10,10 +10,10 @@ use hive_router_query_planner::state::supergraph_state::SchemaDocument;
 
 use crate::{
     plugin_context::{PluginContext, PluginRequestState, RouterHttpRequest},
-    plugin_trait::{EndPayload, StartPayload},
+    plugin_trait::{EndHookPayload, EndHookResult, StartHookPayload, StartHookResult},
 };
 
-pub struct OnGraphQLValidationStartPayload<'exec> {
+pub struct OnGraphQLValidationStartHookPayload<'exec> {
     pub router_http_request: &'exec RouterHttpRequest<'exec>,
     pub context: &'exec PluginContext,
     pub schema: &'exec SchemaDocument,
@@ -23,16 +23,25 @@ pub struct OnGraphQLValidationStartPayload<'exec> {
     pub errors: Option<Vec<ValidationError>>,
 }
 
-impl<'exec> StartPayload<OnGraphQLValidationEndPayload> for OnGraphQLValidationStartPayload<'exec> {}
+impl<'exec> StartHookPayload<OnGraphQLValidationEndHookPayload>
+    for OnGraphQLValidationStartHookPayload<'exec>
+{
+}
 
-impl<'exec> OnGraphQLValidationStartPayload<'exec> {
+pub type OnGraphQLValidationStartHookResult<'exec> = StartHookResult<
+    'exec,
+    OnGraphQLValidationStartHookPayload<'exec>,
+    OnGraphQLValidationEndHookPayload,
+>;
+
+impl<'exec> OnGraphQLValidationStartHookPayload<'exec> {
     pub fn new(
         plugin_req_state: &'exec PluginRequestState<'exec>,
         schema: &'exec SchemaDocument,
         document: &'exec Document,
         default_validation_plan: &'exec ValidationPlan,
     ) -> Self {
-        OnGraphQLValidationStartPayload {
+        OnGraphQLValidationStartHookPayload {
             router_http_request: &plugin_req_state.router_http_request,
             context: &plugin_req_state.context,
             schema,
@@ -67,8 +76,10 @@ impl<'exec> OnGraphQLValidationStartPayload<'exec> {
     }
 }
 
-pub struct OnGraphQLValidationEndPayload {
+pub struct OnGraphQLValidationEndHookPayload {
     pub errors: Vec<ValidationError>,
 }
 
-impl EndPayload for OnGraphQLValidationEndPayload {}
+impl EndHookPayload for OnGraphQLValidationEndHookPayload {}
+
+pub type OnGraphQLValidationHookEndResult = EndHookResult<OnGraphQLValidationEndHookPayload>;

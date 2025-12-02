@@ -5,9 +5,9 @@ use serde_json::json;
 use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 
 use hive_router_plan_executor::{
-    execution::plan::PlanExecutionOutput,
-    hooks::on_graphql_params::{OnGraphQLParamsEndPayload, OnGraphQLParamsStartPayload},
-    plugin_trait::{EndPayload, HookResult, RouterPlugin, RouterPluginWithConfig, StartPayload},
+    executors::http::HttpResponse,
+    hooks::on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
+    plugin_trait::{EndHookPayload, RouterPlugin, RouterPluginWithConfig, StartHookPayload},
 };
 
 #[derive(Deserialize)]
@@ -39,8 +39,8 @@ impl RouterPluginWithConfig for APQPlugin {
 impl RouterPlugin for APQPlugin {
     async fn on_graphql_params<'exec>(
         &'exec self,
-        payload: OnGraphQLParamsStartPayload<'exec>,
-    ) -> HookResult<'exec, OnGraphQLParamsStartPayload<'exec>, OnGraphQLParamsEndPayload> {
+        payload: OnGraphQLParamsStartHookPayload<'exec>,
+    ) -> OnGraphQLParamsStartHookResult<'exec> {
         payload.on_end(|mut payload| {
             let persisted_query_ext = payload
                 .graphql_params
@@ -62,8 +62,8 @@ impl RouterPlugin for APQPlugin {
                                 }
                             ]
                         });
-                        return payload.end_response(PlanExecutionOutput {
-                            body: body.to_string().into_bytes(),
+                        return payload.end_response(HttpResponse {
+                            body: body.to_string().into_bytes().into(),
                             status: StatusCode::BAD_REQUEST,
                             headers: http::HeaderMap::new(),
                         });
@@ -85,8 +85,8 @@ impl RouterPlugin for APQPlugin {
                                 }
                             ]
                         });
-                        return payload.end_response(PlanExecutionOutput {
-                            body: body.to_string().into_bytes(),
+                        return payload.end_response(HttpResponse {
+                            body: body.to_string().into_bytes().into(),
                             status: StatusCode::BAD_REQUEST,
                             headers: http::HeaderMap::new(),
                         });
@@ -112,8 +112,8 @@ impl RouterPlugin for APQPlugin {
                                 }
                             ]
                         });
-                        return payload.end_response(PlanExecutionOutput {
-                            body: body.to_string().into_bytes(),
+                        return payload.end_response(HttpResponse {
+                            body: body.to_string().into_bytes().into(),
                             status: StatusCode::NOT_FOUND,
                             headers: http::HeaderMap::new(),
                         });

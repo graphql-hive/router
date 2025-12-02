@@ -1,12 +1,10 @@
 use std::sync::Arc;
 
 use hive_router_plan_executor::{
-    execution::plan::PlanExecutionOutput,
-    hooks::on_http_request::{OnHttpRequestPayload, OnHttpResponsePayload},
+    hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpResponseHookPayload},
     plugin_context::PluginContext,
-    plugin_trait::ControlFlowResult,
+    plugin_trait::{EndControlFlow, StartControlFlow},
 };
-use http::StatusCode;
 use ntex::{
     http::ResponseBuilder,
     service::{Service, ServiceCtx},
@@ -53,45 +51,43 @@ where
             let plugin_context = Arc::new(PluginContext::default());
             req.extensions_mut().insert(plugin_context.clone());
 
-            let mut start_payload = OnHttpRequestPayload {
+            let mut start_payload = OnHttpRequestHookPayload {
                 router_http_request: req,
                 context: &plugin_context,
             };
 
             let mut on_end_callbacks = vec![];
 
-            let mut early_response: Option<PlanExecutionOutput> = None;
             for plugin in plugins.iter() {
                 let result = plugin.on_http_request(start_payload);
                 start_payload = result.payload;
                 match result.control_flow {
-                    ControlFlowResult::Continue => {
+                    StartControlFlow::Continue => {
                         // continue to next plugin
                     }
-                    ControlFlowResult::OnEnd(callback) => {
+                    StartControlFlow::OnEnd(callback) => {
                         on_end_callbacks.push(callback);
                     }
-                    ControlFlowResult::EndResponse(response) => {
-                        early_response = Some(response);
-                        break;
+                    StartControlFlow::EndResponse(response) => {
+                        let mut resp_builder = ResponseBuilder::new(response.status);
+                        for (key, value) in response.headers {
+                            if let Some(key) = key {
+                                resp_builder.header(key, value);
+                            }
+                        }
+                        let response = start_payload
+                            .router_http_request
+                            .into_response(resp_builder.body(response.body.to_vec()));
+                        return Ok(response);
                     }
                 }
             }
 
             let req = start_payload.router_http_request;
 
-            let response = if let Some(early_response) = early_response {
-                let mut builder = ResponseBuilder::new(StatusCode::OK);
-                for (key, value) in early_response.headers.iter() {
-                    builder.header(key, value);
-                }
-                let res = builder.body(early_response.body);
-                req.into_response(res)
-            } else {
-                ctx.call(&self.service, req).await?
-            };
+            let response = ctx.call(&self.service, req).await?;
 
-            let mut end_payload = OnHttpResponsePayload {
+            let mut end_payload = OnHttpResponseHookPayload {
                 response,
                 context: &plugin_context,
             };
@@ -100,16 +96,19 @@ where
                 let result = callback(end_payload);
                 end_payload = result.payload;
                 match result.control_flow {
-                    ControlFlowResult::Continue => {
+                    EndControlFlow::Continue => {
                         // continue to next callback
                     }
-                    ControlFlowResult::EndResponse(_response) => {
-                        // Short-circuit the request with the provided response
-                        unimplemented!()
-                    }
-                    ControlFlowResult::OnEnd(_) => {
-                        // This should not happen
-                        unreachable!();
+                    EndControlFlow::EndResponse(response) => {
+                        let mut resp_builder = ResponseBuilder::new(response.status);
+                        for (key, value) in response.headers {
+                            if let Some(key) = key {
+                                resp_builder.header(key, value);
+                            }
+                        }
+                        let response = resp_builder.body(response.body.to_vec());
+                        end_payload.response = end_payload.response.into_response(response);
+                        return Ok(end_payload.response);
                     }
                 }
             }

@@ -29,17 +29,16 @@ use vrl::{
 use crate::{
     execution::client_request_details::ClientRequestDetails,
     executors::{
-        common::{
-            HttpExecutionResponse, SubgraphExecutionRequest, SubgraphExecutor,
-            SubgraphExecutorBoxedArc,
-        },
-        dedupe::{ABuildHasher, SharedResponse},
+        common::{SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
+        dedupe::ABuildHasher,
         error::SubgraphExecutorError,
-        http::{HTTPSubgraphExecutor, HttpClient},
+        http::{HTTPSubgraphExecutor, HttpClient, HttpResponse},
     },
-    hooks::on_subgraph_execute::{OnSubgraphExecuteEndPayload, OnSubgraphExecuteStartPayload},
+    hooks::on_subgraph_execute::{
+        OnSubgraphExecuteEndHookPayload, OnSubgraphExecuteStartHookPayload,
+    },
     plugin_context::PluginRequestState,
-    plugin_trait::ControlFlowResult,
+    plugin_trait::{EndControlFlow, StartControlFlow},
     response::graphql_error::GraphQLError,
 };
 
@@ -63,7 +62,7 @@ pub struct SubgraphExecutorMap {
     client: Arc<HttpClient>,
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
     max_connections_per_host: usize,
-    in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<HttpResponse>>, ABuildHasher>>,
 }
 
 impl SubgraphExecutorMap {
@@ -125,13 +124,13 @@ impl SubgraphExecutorMap {
         execution_request: SubgraphExecutionRequest<'exec>,
         client_request: &ClientRequestDetails<'exec, 'req>,
         plugin_req_state: &Option<PluginRequestState<'req>>,
-    ) -> HttpExecutionResponse {
+    ) -> HttpResponse {
         let mut on_end_callbacks = vec![];
 
         let mut execution_request = execution_request;
         let mut execution_result = None;
         if let Some(plugin_req_state) = plugin_req_state.as_ref() {
-            let mut start_payload = OnSubgraphExecuteStartPayload {
+            let mut start_payload = OnSubgraphExecuteStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
                 context: &plugin_req_state.context,
                 subgraph_name,
@@ -142,18 +141,18 @@ impl SubgraphExecutorMap {
                 let result = plugin.on_subgraph_execute(start_payload).await;
                 start_payload = result.payload;
                 match result.control_flow {
-                    ControlFlowResult::Continue => {
+                    StartControlFlow::Continue => {
                         // continue to next plugin
                     }
-                    ControlFlowResult::EndResponse(response) => {
+                    StartControlFlow::EndResponse(response) => {
                         // TODO: FFIX
-                        return HttpExecutionResponse {
-                            body: response.body.into(),
+                        return HttpResponse {
+                            body: response.body,
                             headers: response.headers,
                             status: response.status,
                         };
                     }
-                    ControlFlowResult::OnEnd(callback) => {
+                    StartControlFlow::OnEnd(callback) => {
                         on_end_callbacks.push(callback);
                     }
                 }
@@ -187,7 +186,7 @@ impl SubgraphExecutorMap {
         };
 
         if let Some(plugin_req_state) = plugin_req_state.as_ref() {
-            let mut end_payload = OnSubgraphExecuteEndPayload {
+            let mut end_payload = OnSubgraphExecuteEndHookPayload {
                 context: &plugin_req_state.context,
                 execution_result,
             };
@@ -196,19 +195,16 @@ impl SubgraphExecutorMap {
                 let result = callback(end_payload);
                 end_payload = result.payload;
                 match result.control_flow {
-                    ControlFlowResult::Continue => {
+                    EndControlFlow::Continue => {
                         // continue to next callback
                     }
-                    ControlFlowResult::EndResponse(response) => {
+                    EndControlFlow::EndResponse(response) => {
                         // TODO: FFIX
-                        return HttpExecutionResponse {
-                            body: response.body.into(),
+                        return HttpResponse {
+                            body: response.body,
                             headers: response.headers,
                             status: response.status,
                         };
-                    }
-                    ControlFlowResult::OnEnd(_) => {
-                        unreachable!("End callbacks should not register further end callbacks");
                     }
                 }
             }
@@ -223,7 +219,7 @@ impl SubgraphExecutorMap {
         &self,
         graphql_error: GraphQLError,
         subgraph_name: &str,
-    ) -> HttpExecutionResponse {
+    ) -> HttpResponse {
         let errors = vec![graphql_error.add_subgraph_name(subgraph_name)];
         let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
         let mut buffer = BytesMut::new();
@@ -231,7 +227,7 @@ impl SubgraphExecutorMap {
         buffer.put_slice(&errors_bytes);
         buffer.put_slice(b"}");
 
-        HttpExecutionResponse {
+        HttpResponse {
             body: buffer.freeze(),
             headers: Default::default(),
             status: http::StatusCode::INTERNAL_SERVER_ERROR,

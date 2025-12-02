@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
-use crate::executors::common::HttpExecutionResponse;
-use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
+use crate::executors::dedupe::{request_fingerprint, ABuildHasher};
 use crate::hooks::on_subgraph_http_request::{
-    OnSubgraphHttpRequestPayload, OnSubgraphHttpResponsePayload,
+    OnSubgraphHttpRequestHookPayload, OnSubgraphHttpResponseHookPayload,
 };
 use crate::plugin_context::PluginRequestState;
-use crate::plugin_trait::ControlFlowResult;
+use crate::plugin_trait::{EndControlFlow, StartControlFlow};
 use dashmap::DashMap;
 use hive_router_config::HiveRouterConfig;
 use tokio::sync::OnceCell;
@@ -40,7 +39,7 @@ pub struct HTTPSubgraphExecutor {
     pub header_map: HeaderMap,
     pub semaphore: Arc<Semaphore>,
     pub config: Arc<HiveRouterConfig>,
-    pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<HttpResponse>>, ABuildHasher>>,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -55,7 +54,7 @@ impl HTTPSubgraphExecutor {
         http_client: Arc<HttpClient>,
         semaphore: Arc<Semaphore>,
         config: Arc<HiveRouterConfig>,
-        in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+        in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<HttpResponse>>, ABuildHasher>>,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -168,12 +167,12 @@ async fn send_request(
     mut body: Vec<u8>,
     mut execution_request: SubgraphExecutionRequest<'_>,
     plugin_req_state: &Option<PluginRequestState<'_>>,
-) -> Result<SharedResponse, SubgraphExecutorError> {
+) -> Result<HttpResponse, SubgraphExecutorError> {
     let mut on_end_callbacks = vec![];
     let mut response = None;
 
     if let Some(plugin_req_state) = plugin_req_state.as_ref() {
-        let mut start_payload = OnSubgraphHttpRequestPayload {
+        let mut start_payload = OnSubgraphHttpRequestHookPayload {
             subgraph_name,
             endpoint,
             method,
@@ -186,16 +185,16 @@ async fn send_request(
             let result = plugin.on_subgraph_http_request(start_payload).await;
             start_payload = result.payload;
             match result.control_flow {
-                ControlFlowResult::Continue => { /* continue to next plugin */ }
-                ControlFlowResult::EndResponse(response) => {
+                StartControlFlow::Continue => { /* continue to next plugin */ }
+                StartControlFlow::EndResponse(response) => {
                     // TODO: Fixx
-                    return Ok(SharedResponse {
+                    return Ok(HttpResponse {
                         status: StatusCode::OK,
-                        body: response.body.into(),
+                        body: response.body,
                         headers: response.headers,
                     });
                 }
-                ControlFlowResult::OnEnd(callback) => {
+                StartControlFlow::OnEnd(callback) => {
                     on_end_callbacks.push(callback);
                 }
             }
@@ -248,7 +247,7 @@ async fn send_request(
                 ));
             }
 
-            SharedResponse {
+            HttpResponse {
                 status: parts.status,
                 body,
                 headers: parts.headers,
@@ -256,23 +255,19 @@ async fn send_request(
         }
     };
 
-    let mut end_payload = OnSubgraphHttpResponsePayload { response };
+    let mut end_payload = OnSubgraphHttpResponseHookPayload { response };
 
     for callback in on_end_callbacks {
         let result = callback(end_payload);
         end_payload = result.payload;
         match result.control_flow {
-            ControlFlowResult::Continue => { /* continue to next callback */ }
-            ControlFlowResult::EndResponse(response) => {
-                return Ok(SharedResponse {
+            EndControlFlow::Continue => { /* continue to next callback */ }
+            EndControlFlow::EndResponse(response) => {
+                return Ok(HttpResponse {
                     status: StatusCode::OK,
-                    body: response.body.into(),
+                    body: response.body,
                     headers: response.headers,
                 });
-            }
-            ControlFlowResult::OnEnd(_) => {
-                // on_end callbacks should not return OnEnd again
-                unreachable!("on_end callback returned OnEnd again");
             }
         }
     }
@@ -287,12 +282,12 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         &self,
         mut execution_request: SubgraphExecutionRequest<'a>,
         plugin_req_state: &'a Option<PluginRequestState<'a>>,
-    ) -> HttpExecutionResponse {
+    ) -> HttpResponse {
         let body = match self.build_request_body(&execution_request) {
             Ok(body) => body,
             Err(e) => {
                 self.log_error(&e);
-                return HttpExecutionResponse {
+                return HttpResponse {
                     body: self.error_to_graphql_bytes(e),
                     headers: Default::default(),
                     status: StatusCode::OK,
@@ -321,14 +316,10 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             )
             .await
             {
-                Ok(shared_response) => HttpExecutionResponse {
-                    body: shared_response.body,
-                    headers: shared_response.headers,
-                    status: shared_response.status,
-                },
+                Ok(shared_response) => shared_response,
                 Err(e) => {
                     self.log_error(&e);
-                    HttpExecutionResponse {
+                    HttpResponse {
                         body: self.error_to_graphql_bytes(e),
                         headers: Default::default(),
                         status: StatusCode::OK,
@@ -375,14 +366,10 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             .await;
 
         match response_result {
-            Ok(shared_response) => HttpExecutionResponse {
-                body: shared_response.body.clone(),
-                headers: shared_response.headers.clone(),
-                status: shared_response.status,
-            },
+            Ok(shared_response) => shared_response.clone(),
             Err(e) => {
                 self.log_error(&e);
-                HttpExecutionResponse {
+                HttpResponse {
                     body: self.error_to_graphql_bytes(e.clone()),
                     headers: Default::default(),
                     status: StatusCode::OK,
@@ -390,4 +377,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             }
         }
     }
+}
+
+#[derive(Clone)]
+pub struct HttpResponse {
+    pub status: StatusCode,
+    pub headers: HeaderMap,
+    pub body: Bytes,
 }
