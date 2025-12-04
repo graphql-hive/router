@@ -1997,9 +1997,9 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hive-console-sdk"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03dcc280dc9e7137d129ed5bb5486c4f56e5f3a60c48a3f54b626cbcdd9abace"
+checksum = "23cb0e5efe2a528e4a588284eb8e2a3d7410229b0ff4437b62dcffc8c0895ffe"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2010,7 +2010,7 @@ dependencies = [
  "moka",
  "reqwest",
  "reqwest-middleware",
- "reqwest-retry 0.7.0",
+ "reqwest-retry 0.8.0",
  "serde",
  "serde_json",
  "sha2",
@@ -4469,7 +4469,6 @@ dependencies = [
  "retry-policies 0.4.0",
  "thiserror 1.0.69",
  "tokio",
- "tracing",
  "wasm-timer",
 ]
 
