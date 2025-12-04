@@ -14,6 +14,7 @@ authors = ["The Guild"]
 [dependencies]
 hive-router-query-planner = { path = "../query-planner", version = "2.1.2" }
 hive-router-config = { path = "../router-config", version = "0.0.14" }
+hive-router-telemetry = { path = "../telemetry", version = "0.0.1" }
 
 graphql-parser = { workspace = true }
 graphql-tools = { workspace = true }
@@ -31,9 +32,10 @@ tokio = { workspace = true, features = ["sync"] }
 dashmap = { workspace = true }
 vrl = { workspace = true }
 regex-automata = { workspace = true }
+bytes = { workspace = true }
+strum = { workspace = true, features = ["derive"] }
 
 ahash = "0.8.12"
-strum = { version = "0.27.2", features = ["derive"] }
 ntex-http = "0.1.15"
 ordered-float = "4.2.0"
 hyper-tls = { version = "0.6.0", features = ["vendored"] }
@@ -45,7 +47,6 @@ hyper-util = { version = "0.1.16", features = [
   "tokio",
 ] }
 humantime = "2.3.0"
-bytes = "1.10.1"
 itoa = "1.0.15"
 ryu = "1.0.20"
 indexmap = "2.10.0"

@@ -13,8 +13,10 @@ use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionContext};
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
+use hive_router_telemetry::traces::spans::graphql::GraphQLExecuteSpan;
 use http::HeaderName;
 use ntex::web::HttpRequest;
+use tracing::Instrument;
 
 static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
 
@@ -111,6 +113,7 @@ pub async fn execute_plan(
             .map(|e| e.into())
             .collect(),
     })
+    .instrument(GraphQLExecuteSpan::new().span)
     .await
     .map_err(|err| {
         tracing::error!("Failed to execute query plan: {}", err);
