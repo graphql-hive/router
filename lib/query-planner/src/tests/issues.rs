@@ -130,3 +130,36 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[test]
+fn issue_190_test() -> Result<(), Box<dyn Error>> {
+    init_logger();
+    let document = parse_operation(
+        r#"
+        query productRecommenderQuery(
+          $included: Boolean!
+        ) {
+          productRecommender @include(if: $included) {
+            id
+            recommendations {
+              ...Recommender_Product
+              __typename
+            }
+            __typename
+          }
+        }
+
+        fragment Recommender_Product on Product {
+          id
+        }
+      "#,
+    );
+    let query_plan = build_query_plan(
+        "fixture/issues/190.supergraph.graphql",
+        document,
+    )?;
+
+    insta::assert_snapshot!(format!("{}", query_plan), @r#""#);
+
+    Ok(())
+}
