@@ -2,6 +2,7 @@ schema
   @link(url: "https://specs.apollo.dev/link/v1.0")
   @link(url: "https://specs.apollo.dev/join/v0.3", for: EXECUTION) {
   query: Query
+  subscription: Subscription
 }
 
 directive @join__enumValue(graph: join__Graph!) repeatable on ENUM_VALUE
@@ -82,6 +83,8 @@ type Product
   shippingEstimate: Int @join__field(graph: INVENTORY, requires: "price weight")
   name: String @join__field(graph: PRODUCTS)
   reviews: [Review] @join__field(graph: REVIEWS)
+  notes: String @join__field(graph: PRODUCTS)
+  internal: String @join__field(graph: PRODUCTS)
 }
 
 type Query
@@ -93,6 +96,11 @@ type Query
   user(id: ID!): User @join__field(graph: ACCOUNTS)
   users: [User] @join__field(graph: ACCOUNTS)
   topProducts(first: Int = 5): [Product] @join__field(graph: PRODUCTS)
+}
+
+type Subscription @join__type(graph: REVIEWS) {
+  reviewAdded(step: Int = 1, intervalInMs: Int = 1000): Review
+    @join__field(graph: REVIEWS)
 }
 
 type Review @join__type(graph: REVIEWS, key: "id") {

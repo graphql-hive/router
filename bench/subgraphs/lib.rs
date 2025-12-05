@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod graphql_with_sse;
 pub mod inventory;
 pub mod products;
 pub mod reviews;
@@ -127,7 +128,7 @@ pub fn start_subgraphs_server(
         )
         .route(
             "/reviews",
-            post_service(GraphQL::new(reviews::get_subgraph())),
+            post_service(graphql_with_sse::GraphQL::new(reviews::get_subgraph())),
         )
         .layer(middleware::from_fn_with_state(
             shared_state.clone(),
