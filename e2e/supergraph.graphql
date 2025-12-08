@@ -101,6 +101,8 @@ type Query
 type Subscription @join__type(graph: REVIEWS) {
   reviewAdded(step: Int = 1, intervalInMs: Int = 1000): Review
     @join__field(graph: REVIEWS)
+  reviewAddedForProduct(productUpc: String!, intervalInMs: Int = 1000): Review
+    @join__field(graph: REVIEWS)
 }
 
 type Review @join__type(graph: REVIEWS, key: "id") {
