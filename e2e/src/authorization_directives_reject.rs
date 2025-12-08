@@ -290,7 +290,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
             "topProducts": [
               {
                 "name": "Table",
-                "shippingEstimate": null,
+                "shippingEstimate": 50,
                 "reviews": [
                   {
                     "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."
@@ -308,7 +308,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
               },
               {
                 "name": "Couch",
-                "shippingEstimate": null,
+                "shippingEstimate": 0,
                 "reviews": [
                   {
                     "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."
@@ -326,7 +326,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
               },
               {
                 "name": "Glass",
-                "shippingEstimate": null,
+                "shippingEstimate": 10,
                 "reviews": [
                   {
                     "body": "Ut enim ad minima veniam, quis nostrum exercitationem ullam corporis suscipit laboriosam, nisi ut aliquid ex ea commodi consequatur? Quis autem"
@@ -335,7 +335,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
               },
               {
                 "name": "Chair",
-                "shippingEstimate": null,
+                "shippingEstimate": 50,
                 "reviews": [
                   {
                     "body": "Ut enim ad minima veniam, quis nostrum exercitationem ullam corporis suscipit laboriosam, nisi ut aliquid ex ea commodi consequatur? Quis autem"
@@ -347,7 +347,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
               },
               {
                 "name": "TV",
-                "shippingEstimate": null,
+                "shippingEstimate": 0,
                 "reviews": []
               }
             ],

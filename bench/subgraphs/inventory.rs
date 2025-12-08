@@ -97,12 +97,21 @@ pub struct Query;
 #[Object(extends = true)]
 impl Query {
     #[graphql(entity)]
-    async fn find_product_by_id(&self, upc: ID) -> Product {
-        INVENTORY
+    async fn find_product_by_id(
+        &self,
+        upc: ID,
+        price: Option<i64>,
+        weight: Option<i64>,
+    ) -> Product {
+        let product = INVENTORY
             .iter()
             .find(|product| product.upc == upc.to_string())
-            .unwrap()
-            .clone()
+            .unwrap();
+        Product {
+            price,
+            weight,
+            ..product.clone()
+        }
     }
 }
 

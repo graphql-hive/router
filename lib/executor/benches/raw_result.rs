@@ -24,7 +24,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -37,7 +37,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -62,7 +62,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -75,7 +75,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -100,7 +100,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -113,7 +113,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -138,7 +138,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -151,7 +151,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -170,7 +170,7 @@ pub fn get_result_as_string() -> String {
                 "weight": 100,
                 "name": "Table",
                 "inStock": true,
-                "shippingEstimate": null
+                "shippingEstimate": 50
               },
               "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
               "id": "1"
@@ -191,7 +191,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -204,7 +204,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -229,7 +229,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -242,7 +242,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -267,7 +267,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -280,7 +280,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -305,7 +305,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -318,7 +318,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -337,7 +337,7 @@ pub fn get_result_as_string() -> String {
                 "weight": 100,
                 "name": "Table",
                 "inStock": true,
-                "shippingEstimate": null
+                "shippingEstimate": 50
               },
               "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
               "id": "2"
@@ -366,7 +366,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -379,7 +379,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -404,7 +404,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -417,7 +417,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -442,7 +442,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -455,7 +455,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -480,7 +480,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -493,7 +493,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -512,7 +512,7 @@ pub fn get_result_as_string() -> String {
                 "weight": 100,
                 "name": "Table",
                 "inStock": true,
-                "shippingEstimate": null
+                "shippingEstimate": 50
               },
               "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
               "id": "1"
@@ -533,7 +533,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -546,7 +546,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -571,7 +571,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -584,7 +584,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -609,7 +609,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -622,7 +622,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -647,7 +647,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -660,7 +660,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -679,7 +679,7 @@ pub fn get_result_as_string() -> String {
                 "weight": 100,
                 "name": "Table",
                 "inStock": true,
-                "shippingEstimate": null
+                "shippingEstimate": 50
               },
               "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
               "id": "2"
@@ -708,7 +708,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -721,7 +721,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -746,7 +746,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -759,7 +759,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -784,7 +784,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -797,7 +797,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -822,7 +822,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -835,7 +835,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -854,7 +854,7 @@ pub fn get_result_as_string() -> String {
                 "weight": 100,
                 "name": "Table",
                 "inStock": true,
-                "shippingEstimate": null
+                "shippingEstimate": 50
               },
               "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
               "id": "1"
@@ -875,7 +875,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -888,7 +888,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -913,7 +913,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -926,7 +926,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -951,7 +951,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -964,7 +964,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -989,7 +989,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1002,7 +1002,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1021,7 +1021,7 @@ pub fn get_result_as_string() -> String {
                 "weight": 100,
                 "name": "Table",
                 "inStock": true,
-                "shippingEstimate": null
+                "shippingEstimate": 50
               },
               "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
               "id": "2"
@@ -1050,7 +1050,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1063,7 +1063,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1088,7 +1088,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1101,7 +1101,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1126,7 +1126,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1139,7 +1139,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1164,7 +1164,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1177,7 +1177,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1196,7 +1196,7 @@ pub fn get_result_as_string() -> String {
                 "weight": 100,
                 "name": "Table",
                 "inStock": true,
-                "shippingEstimate": null
+                "shippingEstimate": 50
               },
               "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
               "id": "1"
@@ -1217,7 +1217,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1230,7 +1230,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1255,7 +1255,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1268,7 +1268,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1293,7 +1293,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1306,7 +1306,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1331,7 +1331,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1344,7 +1344,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1363,7 +1363,7 @@ pub fn get_result_as_string() -> String {
                 "weight": 100,
                 "name": "Table",
                 "inStock": true,
-                "shippingEstimate": null
+                "shippingEstimate": 50
               },
               "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
               "id": "2"
@@ -1392,7 +1392,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1405,7 +1405,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1430,7 +1430,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1443,7 +1443,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1468,7 +1468,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1481,7 +1481,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1506,7 +1506,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1519,7 +1519,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1538,7 +1538,7 @@ pub fn get_result_as_string() -> String {
                 "weight": 100,
                 "name": "Table",
                 "inStock": true,
-                "shippingEstimate": null
+                "shippingEstimate": 50
               },
               "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
               "id": "1"
@@ -1559,7 +1559,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1572,7 +1572,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1597,7 +1597,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1610,7 +1610,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1635,7 +1635,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1648,7 +1648,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1673,7 +1673,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1686,7 +1686,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1705,7 +1705,7 @@ pub fn get_result_as_string() -> String {
                 "weight": 100,
                 "name": "Table",
                 "inStock": true,
-                "shippingEstimate": null
+                "shippingEstimate": 50
               },
               "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
               "id": "2"
@@ -1734,7 +1734,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1747,7 +1747,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1772,7 +1772,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1785,7 +1785,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1810,7 +1810,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1823,7 +1823,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1848,7 +1848,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1861,7 +1861,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1880,7 +1880,7 @@ pub fn get_result_as_string() -> String {
                 "weight": 100,
                 "name": "Table",
                 "inStock": true,
-                "shippingEstimate": null
+                "shippingEstimate": 50
               },
               "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
               "id": "1"
@@ -1901,7 +1901,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1914,7 +1914,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1939,7 +1939,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1952,7 +1952,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -1977,7 +1977,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -1990,7 +1990,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -2015,7 +2015,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                           "id": "1"
@@ -2028,7 +2028,7 @@ pub fn get_result_as_string() -> String {
                             "weight": 100,
                             "name": "Table",
                             "inStock": true,
-                            "shippingEstimate": null
+                            "shippingEstimate": 50
                           },
                           "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                           "id": "2"
@@ -2047,7 +2047,7 @@ pub fn get_result_as_string() -> String {
                 "weight": 100,
                 "name": "Table",
                 "inStock": true,
-                "shippingEstimate": null
+                "shippingEstimate": 50
               },
               "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
               "id": "2"
@@ -2062,7 +2062,7 @@ pub fn get_result_as_string() -> String {
           "weight": 100,
           "price": 899,
           "name": "Table",
-          "shippingEstimate": null,
+          "shippingEstimate": 50,
           "inStock": true,
           "reviews": [
             {
@@ -2077,7 +2077,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                     "id": "1"
@@ -2090,7 +2090,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                     "id": "2"
@@ -2115,7 +2115,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                     "id": "1"
@@ -2128,7 +2128,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                     "id": "2"
@@ -2153,7 +2153,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                     "id": "1"
@@ -2166,7 +2166,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                     "id": "2"
@@ -2191,7 +2191,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                     "id": "1"
@@ -2204,7 +2204,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                     "id": "2"
@@ -2225,7 +2225,7 @@ pub fn get_result_as_string() -> String {
           "weight": 1000,
           "price": 1299,
           "name": "Couch",
-          "shippingEstimate": null,
+          "shippingEstimate": 0,
           "inStock": false,
           "reviews": [
             {
@@ -2240,7 +2240,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                     "id": "1"
@@ -2253,7 +2253,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                     "id": "2"
@@ -2278,7 +2278,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                     "id": "1"
@@ -2291,7 +2291,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                     "id": "2"
@@ -2316,7 +2316,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                     "id": "1"
@@ -2329,7 +2329,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                     "id": "2"
@@ -2354,7 +2354,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                     "id": "1"
@@ -2367,7 +2367,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                     "id": "2"
@@ -2388,7 +2388,7 @@ pub fn get_result_as_string() -> String {
           "weight": 20,
           "price": 15,
           "name": "Glass",
-          "shippingEstimate": null,
+          "shippingEstimate": 10,
           "inStock": false,
           "reviews": [
             {
@@ -2403,7 +2403,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                     "id": "1"
@@ -2416,7 +2416,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                     "id": "2"
@@ -2437,7 +2437,7 @@ pub fn get_result_as_string() -> String {
           "weight": 100,
           "price": 499,
           "name": "Chair",
-          "shippingEstimate": null,
+          "shippingEstimate": 50,
           "inStock": false,
           "reviews": [
             {
@@ -2452,7 +2452,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                     "id": "1"
@@ -2465,7 +2465,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                     "id": "2"
@@ -2490,7 +2490,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
                     "id": "1"
@@ -2503,7 +2503,7 @@ pub fn get_result_as_string() -> String {
                       "weight": 100,
                       "name": "Table",
                       "inStock": true,
-                      "shippingEstimate": null
+                      "shippingEstimate": 50
                     },
                     "body": "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo. Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugi",
                     "id": "2"
@@ -2524,7 +2524,7 @@ pub fn get_result_as_string() -> String {
           "weight": 1000,
           "price": 1299,
           "name": "TV",
-          "shippingEstimate": null,
+          "shippingEstimate": 0,
           "inStock": true,
           "reviews": []
         }
