@@ -2,12 +2,12 @@
 
 use http::StatusCode;
 use serde::Deserialize;
-use sonic_rs::json;
+use serde_json::json;
 
 use hive_router_plan_executor::{
     executors::http::HttpResponse,
     hooks::on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
-    plugin_trait::{RouterPlugin, RouterPluginWithConfig, StartHookPayload},
+    plugin_trait::{EndHookPayload, RouterPlugin, RouterPluginWithConfig, StartHookPayload},
 };
 
 #[derive(Deserialize)]
@@ -36,39 +36,41 @@ impl RouterPlugin for ForbidAnonymousOperationsPlugin {
         &'exec self,
         payload: OnGraphQLParamsStartHookPayload<'exec>,
     ) -> OnGraphQLParamsStartHookResult<'exec> {
-        let maybe_operation_name = &payload
-            .graphql_params
-            .as_ref()
-            .and_then(|params| params.operation_name.as_ref());
+        // After the GraphQL parameters have been parsed, we can check if the operation is anonymous
+        // So we use `on_end`
+        payload.on_end(|payload| {
+            let maybe_operation_name = &payload
+                .graphql_params
+                .operation_name
+                .as_ref();
 
-        if maybe_operation_name.is_none()
-            || maybe_operation_name
-                .expect("is_none() has been checked before; qed")
-                .is_empty()
-        {
-            // let's log the error
-            tracing::error!("Operation is not allowed!");
+            if maybe_operation_name
+                .is_none_or(|operation_name| operation_name.is_empty())
+            {
+                // let's log the error
+                tracing::error!("Operation is not allowed!");
 
-            // Prepare an HTTP 400 response with a GraphQL error message
-            let body = json!({
-                "errors": [
-                    {
-                        "message": "Anonymous operations are not allowed",
-                        "extensions": {
-                            "code": "ANONYMOUS_OPERATION"
+                // Prepare an HTTP 400 response with a GraphQL error message
+                let body = json!({
+                    "errors": [
+                        {
+                            "message": "Anonymous operations are not allowed",
+                            "extensions": {
+                                "code": "ANONYMOUS_OPERATION"
+                            }
                         }
-                    }
-                ]
-            });
-            return payload.end_response(HttpResponse {
-                body: sonic_rs::to_vec(&body).unwrap_or_default().into(),
-                headers: http::HeaderMap::new(),
-                status: StatusCode::BAD_REQUEST,
-            });
-        }
-        // we're good to go!
-        tracing::info!("operation is allowed!");
-        payload.cont()
+                    ]
+                });
+                return payload.end_response(HttpResponse {
+                    body: body.to_string().into(),
+                    headers: http::HeaderMap::new(),
+                    status: StatusCode::BAD_REQUEST,
+                });
+            }
+            // we're good to go!
+            tracing::info!("operation is allowed!");
+            payload.cont()
+        })
     }
 }
 
