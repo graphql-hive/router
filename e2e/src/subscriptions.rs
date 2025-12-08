@@ -4,10 +4,20 @@
 mod subscription_e2e_tests {
     use insta::assert_snapshot;
     use ntex::{http, web::test};
+    use sonic_rs::json;
 
     use crate::testkit::{
         init_graphql_request, init_router_from_config_inline, wait_for_readiness, SubgraphsServer,
     };
+
+    fn get_content_type_header(res: &ntex::web::WebResponse) -> String {
+        res.headers()
+            .get(ntex::http::header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string()
+    }
 
     #[ntex::test]
     async fn subscription_no_entity_resolution() {
@@ -44,15 +54,7 @@ mod subscription_e2e_tests {
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        assert_eq!(
-            res.headers()
-                .get(http::header::CONTENT_TYPE)
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            "text/event-stream",
-            "Expected Content-Type to be text/event-stream"
-        );
+        let content_type_header = get_content_type_header(&res);
 
         let body = test::read_body(res).await;
         let body_str = std::str::from_utf8(&body).unwrap();
@@ -92,7 +94,13 @@ mod subscription_e2e_tests {
         data: {"data":{"reviewAdded":{"product":{"upc":"4"}}}}
 
         event: complete
-        "#)
+        "#);
+
+        // we check this at the end because the body will hold clues to why the test fails
+        assert_eq!(
+            content_type_header, "text/event-stream",
+            "Expected Content-Type to be text/event-stream"
+        );
     }
 
     #[ntex::test]
@@ -131,15 +139,7 @@ mod subscription_e2e_tests {
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        assert_eq!(
-            res.headers()
-                .get(http::header::CONTENT_TYPE)
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            "text/event-stream",
-            "Expected Content-Type to be text/event-stream"
-        );
+        let content_type_header = get_content_type_header(&res);
 
         let body = test::read_body(res).await;
         let body_str = std::str::from_utf8(&body).unwrap();
@@ -179,7 +179,13 @@ mod subscription_e2e_tests {
         data: {"data":{"reviewAdded":{"id":"11","product":{"name":"Chair"}}}}
 
         event: complete
-        "#)
+        "#);
+
+        // we check this at the end because the body will hold clues to why the test fails
+        assert_eq!(
+            content_type_header, "text/event-stream",
+            "Expected Content-Type to be text/event-stream"
+        );
     }
 
     #[ntex::test]
@@ -218,15 +224,7 @@ mod subscription_e2e_tests {
 
         assert!(res.status().is_success(), "Expected 200 OK");
 
-        assert_eq!(
-            res.headers()
-                .get(http::header::CONTENT_TYPE)
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            "text/event-stream",
-            "Expected Content-Type to be text/event-stream"
-        );
+        let content_type_header = get_content_type_header(&res);
 
         let body = test::read_body(res).await;
         let body_str = std::str::from_utf8(&body).unwrap();
@@ -266,6 +264,78 @@ mod subscription_e2e_tests {
         data: {"data":{"reviewAdded":{"product":{"name":"Chair","shippingEstimate":50}}}}
 
         event: complete
-        "#)
+        "#);
+
+        // we check this at the end because the body will hold clues to why the test fails
+        assert_eq!(
+            content_type_header, "text/event-stream",
+            "Expected Content-Type to be text/event-stream"
+        );
+    }
+
+    #[ntex::test]
+    async fn subscription_with_variable_forwarding() {
+        let _subgraphs_server = SubgraphsServer::start().await;
+
+        let router = init_router_from_config_inline(&format!(
+            r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            "#
+        ))
+        .await
+        .unwrap();
+
+        wait_for_readiness(&router.app).await;
+
+        let req = init_graphql_request(
+            r#"
+            subscription ($upc: String!) {
+                reviewAddedForProduct(productUpc: $upc, intervalInMs: 0) {
+                    product {
+                        upc
+                        name
+                    }
+                }
+            }
+            "#,
+            Some(json!({
+                "upc": "2"
+            })),
+        )
+        .header(http::header::ACCEPT, "text/event-stream")
+        .to_request();
+
+        let res = test::call_service(&router.app, req).await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let content_type_header = get_content_type_header(&res);
+
+        let body = test::read_body(res).await;
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"upc":"2","name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"upc":"2","name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"upc":"2","name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"upc":"2","name":"Couch"}}}}
+
+        event: complete
+        "#);
+
+        // we check this at the end because the body will hold clues to why the test fails
+        assert_eq!(
+            content_type_header, "text/event-stream",
+            "Expected Content-Type to be text/event-stream"
+        );
     }
 }

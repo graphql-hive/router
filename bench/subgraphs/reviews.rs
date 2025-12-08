@@ -199,6 +199,41 @@ impl Subscription {
             },
         )
     }
+
+    async fn review_added_for_product(
+        &self,
+        product_upc: String,
+        #[graphql(default = 1_000)] interval_in_ms: u64,
+    ) -> impl Stream<Item = Review> {
+        let reviews_for_product: Vec<Review> = REVIEWS
+            .iter()
+            .filter(move |r| r.product.as_ref().unwrap().upc == product_upc)
+            .cloned()
+            .collect();
+
+        stream::unfold(
+            (
+                reviews_for_product,
+                0,
+                if interval_in_ms > 0 {
+                    Some(tokio::time::interval(Duration::from_millis(interval_in_ms)))
+                } else {
+                    None
+                },
+            ),
+            move |(reviews_for_product, i, mut interval)| async move {
+                match reviews_for_product.get(i) {
+                    Some(review) => {
+                        if let Some(int) = &mut interval {
+                            int.tick().await;
+                        }
+                        Some((review.clone(), (reviews_for_product, i + 1, interval)))
+                    }
+                    None => None,
+                }
+            },
+        )
+    }
 }
 
 pub fn get_subgraph() -> Schema<Query, EmptyMutation, Subscription> {
