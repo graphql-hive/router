@@ -1,0 +1,271 @@
+// TODO: when query fails for whatever reason and the client is requesting an SSE, it MUST be in the stream
+
+#[cfg(test)]
+mod subscription_e2e_tests {
+    use insta::assert_snapshot;
+    use ntex::{http, web::test};
+
+    use crate::testkit::{
+        init_graphql_request, init_router_from_config_inline, wait_for_readiness, SubgraphsServer,
+    };
+
+    #[ntex::test]
+    async fn subscription_no_entity_resolution() {
+        let _subgraphs_server = SubgraphsServer::start().await;
+
+        let router = init_router_from_config_inline(&format!(
+            r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            "#
+        ))
+        .await
+        .unwrap();
+
+        wait_for_readiness(&router.app).await;
+
+        let req = init_graphql_request(
+            r#"
+            subscription {
+                reviewAdded(intervalInMs: 0) {
+                    product {
+                        upc
+                    }
+                }
+            }
+            "#,
+            None,
+        )
+        .header(http::header::ACCEPT, "text/event-stream")
+        .to_request();
+
+        let res = test::call_service(&router.app, req).await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        assert_eq!(
+            res.headers()
+                .get(http::header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "text/event-stream",
+            "Expected Content-Type to be text/event-stream"
+        );
+
+        let body = test::read_body(res).await;
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"1"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"1"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"1"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"1"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"2"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"2"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"2"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"2"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"3"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"4"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"4"}}}}
+
+        event: complete
+        "#)
+    }
+
+    #[ntex::test]
+    async fn subscription_yes_entity_resolution() {
+        let _subgraphs_server = SubgraphsServer::start().await;
+
+        let router = init_router_from_config_inline(&format!(
+            r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            "#
+        ))
+        .await
+        .unwrap();
+
+        wait_for_readiness(&router.app).await;
+
+        let req = init_graphql_request(
+            r#"
+            subscription {
+                reviewAdded(intervalInMs: 0) {
+                    id
+                    product {
+                        name
+                    }
+                }
+            }
+            "#,
+            None,
+        )
+        .header(http::header::ACCEPT, "text/event-stream")
+        .to_request();
+
+        let res = test::call_service(&router.app, req).await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        assert_eq!(
+            res.headers()
+                .get(http::header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "text/event-stream",
+            "Expected Content-Type to be text/event-stream"
+        );
+
+        let body = test::read_body(res).await;
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"2","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"3","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"4","product":{"name":"Table"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"5","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"6","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"7","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"8","product":{"name":"Couch"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"9","product":{"name":"Glass"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"10","product":{"name":"Chair"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"11","product":{"name":"Chair"}}}}
+
+        event: complete
+        "#)
+    }
+
+    #[ntex::test]
+    async fn subscription_entity_resolution_with_requires() {
+        let _subgraphs_server = SubgraphsServer::start().await;
+
+        let router = init_router_from_config_inline(&format!(
+            r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            "#
+        ))
+        .await
+        .unwrap();
+
+        wait_for_readiness(&router.app).await;
+
+        let req = init_graphql_request(
+            r#"
+            subscription {
+                reviewAdded(intervalInMs: 0) {
+                    product {
+                        name
+                        shippingEstimate
+                    }
+                }
+            }
+            "#,
+            None,
+        )
+        .header(http::header::ACCEPT, "text/event-stream")
+        .to_request();
+
+        let res = test::call_service(&router.app, req).await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        assert_eq!(
+            res.headers()
+                .get(http::header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "text/event-stream",
+            "Expected Content-Type to be text/event-stream"
+        );
+
+        let body = test::read_body(res).await;
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Table","shippingEstimate":50}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Table","shippingEstimate":50}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Table","shippingEstimate":50}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Table","shippingEstimate":50}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Couch","shippingEstimate":0}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Couch","shippingEstimate":0}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Couch","shippingEstimate":0}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Couch","shippingEstimate":0}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Glass","shippingEstimate":10}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Chair","shippingEstimate":50}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"name":"Chair","shippingEstimate":50}}}}
+
+        event: complete
+        "#)
+    }
+}
