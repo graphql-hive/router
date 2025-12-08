@@ -6,8 +6,8 @@ use serde::Deserialize;
 use hive_router_plan_executor::{
     hooks::{
         on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
-        on_subgraph_execute::{
-            OnSubgraphExecuteStartHookPayload, OnSubgraphExecuteStartHookResult,
+        on_subgraph_http_request::{
+            OnSubgraphHttpRequestHookPayload, OnSubgraphHttpRequestHookResult,
         },
     },
     plugin_trait::{EndHookPayload, RouterPlugin, RouterPluginWithConfig, StartHookPayload},
@@ -47,12 +47,12 @@ pub struct PropagateStatusCodeCtx {
 
 #[async_trait::async_trait]
 impl RouterPlugin for PropagateStatusCodePlugin {
-    async fn on_subgraph_execute<'exec>(
+    async fn on_subgraph_http_request<'exec>(
         &'exec self,
-        payload: OnSubgraphExecuteStartHookPayload<'exec>,
-    ) -> OnSubgraphExecuteStartHookResult<'exec> {
+        payload: OnSubgraphHttpRequestHookPayload<'exec>,
+    ) -> OnSubgraphHttpRequestHookResult<'exec> {
         payload.on_end(|payload| {
-            let status_code = payload.execution_result.status;
+            let status_code = payload.response.status;
             // if a response contains a status code we're watching...
             if self.status_codes.contains(&status_code) {
                 // Checking if there is already a context entry

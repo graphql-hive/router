@@ -200,7 +200,7 @@ async fn send_request(
         response = start_payload.response;
     }
 
-    let response = match response {
+    let mut response = match response {
         Some(response) => response,
         None => {
             let mut req = hyper::Request::builder()
@@ -250,20 +250,27 @@ async fn send_request(
         }
     };
 
-    let mut end_payload = OnSubgraphHttpResponseHookPayload { response };
+    if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+        let mut end_payload = OnSubgraphHttpResponseHookPayload {
+            response,
+            context: &plugin_req_state.context,
+        };
 
-    for callback in on_end_callbacks {
-        let result = callback(end_payload);
-        end_payload = result.payload;
-        match result.control_flow {
-            EndControlFlow::Continue => { /* continue to next callback */ }
-            EndControlFlow::EndResponse(response) => {
-                return Ok(response);
+        for callback in on_end_callbacks {
+            let result = callback(end_payload);
+            end_payload = result.payload;
+            match result.control_flow {
+                EndControlFlow::Continue => { /* continue to next callback */ }
+                EndControlFlow::EndResponse(response) => {
+                    return Ok(response);
+                }
             }
         }
+
+        response = end_payload.response;
     }
 
-    Ok(end_payload.response)
+    Ok(response)
 }
 
 #[async_trait]

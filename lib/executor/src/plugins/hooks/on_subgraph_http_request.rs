@@ -18,7 +18,7 @@ pub struct OnSubgraphHttpRequestHookPayload<'exec> {
     pub response: Option<HttpResponse>,
 }
 
-impl<'exec> StartHookPayload<OnSubgraphHttpResponseHookPayload>
+impl<'exec> StartHookPayload<OnSubgraphHttpResponseHookPayload<'exec>>
     for OnSubgraphHttpRequestHookPayload<'exec>
 {
 }
@@ -26,14 +26,15 @@ impl<'exec> StartHookPayload<OnSubgraphHttpResponseHookPayload>
 pub type OnSubgraphHttpRequestHookResult<'exec> = crate::plugin_trait::StartHookResult<
     'exec,
     OnSubgraphHttpRequestHookPayload<'exec>,
-    OnSubgraphHttpResponseHookPayload,
+    OnSubgraphHttpResponseHookPayload<'exec>,
 >;
 
-pub struct OnSubgraphHttpResponseHookPayload {
+pub struct OnSubgraphHttpResponseHookPayload<'exec> {
+    pub context: &'exec PluginContext,
     pub response: HttpResponse,
 }
 
-impl EndHookPayload for OnSubgraphHttpResponseHookPayload {}
+impl<'exec> EndHookPayload for OnSubgraphHttpResponseHookPayload<'exec> {}
 
-pub type OnSubgraphHttpResponseHookResult =
-    crate::plugin_trait::EndHookResult<OnSubgraphHttpResponseHookPayload>;
+pub type OnSubgraphHttpResponseHookResult<'exec> =
+    crate::plugin_trait::EndHookResult<OnSubgraphHttpResponseHookPayload<'exec>>;
