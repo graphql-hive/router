@@ -66,6 +66,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - *(hive-router)* fix docker image issues  ([#394](https://github.com/graphql-hive/router/pull/394))
+## 0.0.15 (2025-12-08)
+
+### Fixes
+
+- Bump dependencies
+
 ## 0.0.14 (2025-11-28)
 
 ### Fixes
