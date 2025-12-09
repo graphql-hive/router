@@ -1,4 +1,10 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.7 (2025-12-08)
+
+### Fixes
+
+- Bump dependencies
+
 ## 0.0.6 (2025-11-28)
 
 ### Fixes
