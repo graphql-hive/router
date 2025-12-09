@@ -408,7 +408,10 @@ fn resolve_type<'exec, 'schema: 'exec>(
                     "Type '{}' not found in the schema unexpectedly during introspection",
                     name
                 );
-                Value::Null
+                Value::Object(vec![
+                    ("name", Value::String(name.as_str().into())),
+                    ("__typename", Value::String("__Type".into())),
+                ])
             }
         }
         Type::ListType(inner_t) => resolve_wrapper_type("LIST", inner_t, selections, ctx),
