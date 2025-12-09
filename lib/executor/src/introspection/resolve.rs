@@ -14,6 +14,7 @@ use hive_router_query_planner::ast::{
     value::Value as AstValue,
 };
 use hive_router_query_planner::state::supergraph_state::OperationKind;
+use tracing::trace;
 
 use crate::introspection::schema::SchemaMetadata;
 use crate::response::value::Value;
@@ -399,8 +400,16 @@ fn resolve_type<'exec, 'schema: 'exec>(
 ) -> Value<'exec> {
     match t {
         Type::NamedType(name) => {
-            let type_def = ctx.schema.type_by_name(name).unwrap();
-            resolve_type_definition(type_def, selections, ctx)
+            let type_def = ctx.schema.type_by_name(name);
+            if let Some(type_def) = type_def {
+                resolve_type_definition(type_def, selections, ctx)
+            } else {
+                trace!(
+                    "Type '{}' not found in the schema unexpectedly during introspection",
+                    name
+                );
+                Value::Null
+            }
         }
         Type::ListType(inner_t) => resolve_wrapper_type("LIST", inner_t, selections, ctx),
         Type::NonNullType(inner_t) => resolve_wrapper_type("NON_NULL", inner_t, selections, ctx),
