@@ -172,7 +172,6 @@ mod tests {
         let memory_exporter = InMemorySpanExporterBuilder::new().build();
         let compatibility_exporter = HttpCompatibilityExporter::new(memory_exporter.clone());
         let processor = SimpleSpanProcessor::new(compatibility_exporter);
-
         let provider = SdkTracerProvider::builder()
             .with_span_processor(processor)
             .build();
@@ -187,25 +186,18 @@ mod tests {
         tracing::subscriber::set_default(subscriber)
     }
 
-    /// Asserts that a deprecated attribute matches the stable attribute.
     fn assert_attribute_mapping(
         span: &SpanData,
         deprecated_key: &'static str,
         stable_key: &'static str,
-        message: &str,
     ) {
+        let stable = find_attribute(span, stable_key);
+        let deprecated = find_attribute(span, deprecated_key);
+
         assert_eq!(
-            find_attribute(span, deprecated_key).unwrap_or_else(|| {
-                panic!(
-                    "Deprecated attribute '{}' not found in span",
-                    deprecated_key
-                )
-            }),
-            find_attribute(span, stable_key).unwrap_or_else(|| {
-                panic!("Stable attribute '{}' not found in span", stable_key)
-            }),
-            "{}",
-            message
+            deprecated, stable,
+            "Deprecated attribute '{}' and stable attribute '{}' mismatch",
+            deprecated_key, stable_key
         );
     }
 
@@ -224,9 +216,12 @@ mod tests {
             .header(USER_AGENT, "test-agent");
         let body = Bytes::from_static(b"test body");
         let http_req = req.to_http_request();
+        let http_res =
+            ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
 
         tracer.in_span("root", |_cx| {
-            let _ = HttpServerRequestSpanBuilder::from_request(&http_req, &body).build();
+            let span = HttpServerRequestSpanBuilder::from_request(&http_req, &body).build();
+            span.record_response(&http_res);
         });
 
         drop(_guard);
@@ -235,35 +230,25 @@ mod tests {
         assert_eq!(spans.len(), 2);
         let span = &spans[0];
 
-        assert_attribute_mapping(
-            span,
-            "http.host",
-            "server.address",
-            "http.host should match server.address",
-        );
-        assert_attribute_mapping(
-            span,
-            "http.method",
-            "http.request.method",
-            "http.method should match http.request.method",
-        );
-        assert_attribute_mapping(
-            span,
-            "http.flavor",
-            "network.protocol.version",
-            "http.flavor should match network.protocol.version",
-        );
-        assert_attribute_mapping(
-            span,
-            "http.user_agent",
-            "user_agent.original",
-            "http.user_agent should match user_agent.original",
-        );
+        assert_attribute_mapping(span, "http.host", "server.address");
+        assert_attribute_mapping(span, "http.method", "http.request.method");
+        assert_attribute_mapping(span, "http.flavor", "network.protocol.version");
+        assert_attribute_mapping(span, "http.user_agent", "user_agent.original");
         assert_attribute_mapping(
             span,
             "http.request_content_length",
             "http.request.body.size",
-            "http.request_content_length should match http.request.body.size",
+        );
+        assert_attribute_mapping(span, "http.url", "url.full");
+        assert_attribute_mapping(span, "http.scheme", "url.scheme");
+        assert_attribute_mapping(span, "http.target", "url.path");
+
+        // Response attributes are optional since they're only set when record_response() is called
+        assert_attribute_mapping(span, "http.status_code", "http.response.status_code");
+        assert_attribute_mapping(
+            span,
+            "http.response_content_length",
+            "http.response.body.size",
         );
     }
 
@@ -280,9 +265,14 @@ mod tests {
             .version(http::Version::HTTP_2)
             .body(Full::from("dummy body"))
             .unwrap();
+        let response = http::Response::builder()
+            .status(200)
+            .body(Full::from("response body"))
+            .unwrap();
 
         tracer.in_span("root", |_cx| {
-            let _ = HttpClientRequestSpanBuilder::from_request(&request).build();
+            let span = HttpClientRequestSpanBuilder::from_request(&request).build();
+            span.record_response(&response);
         });
 
         drop(_guard);
@@ -291,23 +281,23 @@ mod tests {
         assert_eq!(spans.len(), 2);
         let span = &spans[0];
 
+        assert_attribute_mapping(span, "net.peer.name", "server.address");
+        assert_attribute_mapping(span, "net.peer.port", "server.port");
+        assert_attribute_mapping(span, "http.flavor", "network.protocol.version");
+        assert_attribute_mapping(span, "http.method", "http.request.method");
+        assert_attribute_mapping(span, "http.url", "url.full");
         assert_attribute_mapping(
             span,
-            "net.peer.name",
-            "server.address",
-            "net.peer.name should match server.address for client spans",
+            "http.request_content_length",
+            "http.request.body.size",
         );
+
+        // Response attributes are optional since they're only set when record_response() is called
+        assert_attribute_mapping(span, "http.status_code", "http.response.status_code");
         assert_attribute_mapping(
             span,
-            "net.peer.port",
-            "server.port",
-            "net.peer.port should match server.port for client spans",
-        );
-        assert_attribute_mapping(
-            span,
-            "http.flavor",
-            "network.protocol.version",
-            "http.flavor should match network.protocol.version",
+            "http.response_content_length",
+            "http.response.body.size",
         );
     }
 }
