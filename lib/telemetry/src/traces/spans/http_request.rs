@@ -94,7 +94,7 @@ impl<'a> HttpServerRequestSpanBuilder<'a> {
             "user_agent.original" = self.header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
             "http.response.status_code" = Empty,
             "http.response.body.size" = Empty,
-            "http.route" = "/graphql",
+            "http.route" = self.url.path(),
 
             // Deprecated Attributes for Compatibility
             // TODO: ideally those deprecated attributes should be opt-in or opt-out
@@ -103,9 +103,9 @@ impl<'a> HttpServerRequestSpanBuilder<'a> {
             "http.host" = self.server_address,
             "http.scheme" = self.url.scheme_str(),
             "http.flavor" = self.protocol_version,
-            "http.request_content_length" = self.request_body_size.map(|s| s as i64),
+            "http.request_content_length" = self.request_body_size,
             "http.user_agent" = self.header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
-            "http.target" = self.url.path_and_query().map(|p| p.as_str()),
+            "http.target" = self.url.path(),
             "http.status_code" = Empty,
             "http.response_content_length" = Empty,
         );
