@@ -4,7 +4,7 @@ use http::{
     Response,
 };
 use http_body_util::Full;
-use hyper::body::{Body, Incoming};
+use hyper::body::Body;
 use ntex::http::body::MessageBody;
 use std::borrow::{Borrow, Cow};
 use tracing::{field::Empty, info_span, Span};
@@ -215,7 +215,10 @@ impl<'a> HttpClientRequestSpanBuilder<'a> {
 }
 
 impl HttpClientRequestSpan {
-    pub fn record_response(&self, response: &Response<Incoming>) {
+    pub fn record_response<B>(&self, response: &Response<B>)
+    where
+        B: Body<Data = Bytes>,
+    {
         let body_size = response.body().size_hint().exact().map(|s| s as usize);
 
         // Record stable attributes
