@@ -39,7 +39,7 @@ opentelemetry_sdk = { workspace = true, features = [
     "rt-tokio",
     "logs",
     "spec_unstable_metrics_views",
-    "experimental_trace_batch_span_processor_with_async_runtime",
+    "experimental_trace_batch_span_processor_with_async_runtime"
 ] }
 tracing = { workspace = true }
 tracing-opentelemetry.workspace = true
@@ -54,6 +54,7 @@ futures = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
 criterion = { workspace = true }
 tokio = { workspace = true }
 insta = { workspace = true }

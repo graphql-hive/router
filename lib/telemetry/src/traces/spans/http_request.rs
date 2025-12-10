@@ -7,7 +7,6 @@ use http_body_util::Full;
 use hyper::body::{Body, Incoming};
 use ntex::http::body::MessageBody;
 use std::borrow::{Borrow, Cow};
-
 use tracing::{field::Empty, info_span, Span};
 
 use crate::traces::spans::{kind::HiveSpanKind, TARGET_NAME};
@@ -95,19 +94,6 @@ impl<'a> HttpServerRequestSpanBuilder<'a> {
             "http.response.status_code" = Empty,
             "http.response.body.size" = Empty,
             "http.route" = self.url.path(),
-
-            // Deprecated Attributes for Compatibility
-            // TODO: ideally those deprecated attributes should be opt-in or opt-out
-            "http.method" = self.request_method.as_str(),
-            "http.url" = url_full.as_str(),
-            "http.host" = self.server_address,
-            "http.scheme" = self.url.scheme_str(),
-            "http.flavor" = self.protocol_version,
-            "http.request_content_length" = self.request_body_size,
-            "http.user_agent" = self.header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
-            "http.target" = self.url.path(),
-            "http.status_code" = Empty,
-            "http.response_content_length" = Empty,
         );
 
         HttpServerRequestSpan { span }
@@ -121,18 +107,10 @@ impl HttpServerRequestSpan {
             _ => None,
         });
 
-        self.record("http.response.status_code", response.status().as_str());
-
         // Record stable attributes
         self.record("http.response.status_code", response.status().as_str());
         if let Some(size) = body_size {
             self.record("http.response.body.size", size as i64);
-        }
-
-        // Record deprecated attributes
-        self.record("http.status_code", response.status().as_str());
-        if let Some(size) = body_size {
-            self.record("http.response_content_length", size as i64);
         }
 
         if response.status().is_server_error() {
@@ -147,9 +125,6 @@ impl HttpServerRequestSpan {
         self.record("otel.status_code", "Error");
         self.record("error.type", "500");
         self.record("http.response.status_code", "500");
-
-        // Deprecated attribute
-        self.record("http.status_code", "500");
     }
 }
 
@@ -233,16 +208,6 @@ impl<'a> HttpClientRequestSpanBuilder<'a> {
             "user_agent.original" = self.header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
             "http.response.status_code" = Empty,
             "http.response.body.size" = Empty,
-
-            // Deprecated Attributes for Compatibility
-            "http.method" = self.request_method.as_str(),
-            "http.url" = url_full.as_str(),
-            "net.peer.name" = self.server_address,
-            "net.peer.port" = self.server_port,
-            "http.flavor" = self.protocol_version,
-            "http.request_content_length" = self.request_body_size.map(|s| s as i64),
-            "http.status_code" = Empty,
-            "http.response_content_length" = Empty,
         );
 
         HttpClientRequestSpan { span }
@@ -251,19 +216,12 @@ impl<'a> HttpClientRequestSpanBuilder<'a> {
 
 impl HttpClientRequestSpan {
     pub fn record_response(&self, response: &Response<Incoming>) {
-        self.record("http.response.status_code", response.status().as_str());
         let body_size = response.body().size_hint().exact().map(|s| s as usize);
 
         // Record stable attributes
         self.record("http.response.status_code", response.status().as_str());
         if let Some(size) = body_size {
             self.record("http.response.body.size", size as i64);
-        }
-
-        // Record deprecated attributes
-        self.record("http.status_code", response.status().as_str());
-        if let Some(size) = body_size {
-            self.record("http.response_content_length", size as i64);
         }
 
         if response.status().is_server_error() {
@@ -278,9 +236,6 @@ impl HttpClientRequestSpan {
         self.record("otel.status_code", "Error");
         self.record("error.type", "500");
         self.record("http.response.status_code", "500");
-
-        // Deprecated attribute
-        self.record("http.status_code", "500");
     }
 }
 

@@ -1,6 +1,6 @@
-#[derive(Debug, strum::Display, strum::AsRefStr, strum::IntoStaticStr)]
+#[derive(Debug, strum::Display, strum::AsRefStr, strum::IntoStaticStr, strum::EnumString)]
 #[non_exhaustive]
-pub(crate) enum HiveSpanKind {
+pub enum HiveSpanKind {
     #[strum(serialize = "http.server")]
     HttpServerRequest,
     #[strum(serialize = "http.client")]

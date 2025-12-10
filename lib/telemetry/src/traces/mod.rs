@@ -19,8 +19,10 @@ use opentelemetry_sdk::{
 };
 use tracing_opentelemetry::OpenTelemetryLayer;
 
+use self::compatibility::HttpCompatibilityExporter;
 use crate::{error::TelemetryError, utils::build_metadata};
 
+pub mod compatibility;
 pub mod spans;
 
 pub struct Tracer<Subscriber> {
@@ -115,13 +117,14 @@ fn setup_exporters(
 
                             println!("OTLP tracing metadata: {:?}", metadata);
 
-                            SpanExporter::builder()
+                            let exporter = SpanExporter::builder()
                                 .with_tonic()
                                 .with_endpoint(endpoint)
                                 .with_timeout(otlp_config.batch_processor.max_export_timeout)
                                 .with_metadata(build_metadata(metadata))
                                 .build()
-                                .map_err(|e| TelemetryError::SpanExporterSetup(e.to_string()))?
+                                .map_err(|e| TelemetryError::SpanExporterSetup(e.to_string()))?;
+                            HttpCompatibilityExporter::new(exporter)
                         }
                         OtlpProtocol::Http => {
                             println!("OTLP tracing protocol: HTTP");
@@ -156,14 +159,16 @@ fn setup_exporters(
 
                             println!("OTLP tracing headers: {:?}", headers);
 
-                            SpanExporter::builder()
+                            let exporter = SpanExporter::builder()
                                 .with_http()
                                 .with_endpoint(endpoint)
                                 .with_timeout(otlp_config.batch_processor.max_export_timeout)
                                 .with_headers(headers)
                                 .with_protocol(Protocol::HttpBinary)
                                 .build()
-                                .map_err(|e| TelemetryError::SpanExporterSetup(e.to_string()))?
+                                .map_err(|e| TelemetryError::SpanExporterSetup(e.to_string()))?;
+
+                            HttpCompatibilityExporter::new(exporter)
                         }
                     };
 
