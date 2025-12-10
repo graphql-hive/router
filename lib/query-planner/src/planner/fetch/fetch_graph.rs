@@ -1274,7 +1274,7 @@ fn process_plain_field_edge(
     )?;
 
     let child_segment = query_node.selection_alias().unwrap_or(&field_move.name);
-    let segment_condition = if ancestor_of_condition {
+    let segment_condition = if should_strip_condition {
         None
     } else {
         condition.cloned()
