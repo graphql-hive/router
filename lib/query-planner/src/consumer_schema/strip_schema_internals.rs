@@ -4,12 +4,16 @@ use graphql_parser::schema::*;
 use crate::{
     federation_spec::{
         definitions::{
-            CorePurposesEnum, JoinDirectiveArgumentsScalar, JoinFieldSetScalar, JoinGraphEnum, LinkImportScalar, LinkPurposeEnum, RequiresScopesScopeScalar
-        }, directives::{
+            CorePurposesEnum, JoinDirectiveArgumentsScalar, JoinFieldSetScalar, JoinGraphEnum,
+            LinkImportScalar, LinkPurposeEnum, RequiresScopesScopeScalar,
+        },
+        directives::{
             AuthenticatedDirective, CoreDirective, InaccessibleDirective, JoinEnumValueDirective,
             JoinFieldDirective, JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective,
             JoinUnionMemberDirective, LinkDirective, RequiresScopesDirective, TagDirective,
-        }, join_directive::JoinDirectiveDirective, join_owner::JoinOwnerDirective
+        },
+        join_directive::JoinDirectiveDirective,
+        join_owner::JoinOwnerDirective,
     },
     utils::schema_transformer::{SchemaTransformer, TransformedValue},
 };

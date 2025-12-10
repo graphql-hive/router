@@ -14,7 +14,7 @@ use hive_router_query_planner::ast::{
     value::Value as AstValue,
 };
 use hive_router_query_planner::state::supergraph_state::OperationKind;
-use tracing::{warn};
+use tracing::warn;
 
 use crate::introspection::schema::SchemaMetadata;
 use crate::response::value::Value;
@@ -411,12 +411,12 @@ fn resolve_type<'exec, 'schema: 'exec>(
                 let mut type_data = vec![];
                 for selection in selections.items.iter() {
                     if let SelectionItem::Field(field) = selection {
-                            let val = match field.name.as_str() {
-                                "name" => Value::String(name.as_str().into()),
-                                "__typename" => Value::String("__Type".into()),
-                                _ => Value::Null,
-                            };
-                            type_data.push((field.selection_identifier(), val));
+                        let val = match field.name.as_str() {
+                            "name" => Value::String(name.as_str().into()),
+                            "__typename" => Value::String("__Type".into()),
+                            _ => Value::Null,
+                        };
+                        type_data.push((field.selection_identifier(), val));
                     } else if let SelectionItem::InlineFragment(fragment) = selection {
                         let new_data = resolve_type(t, &fragment.selections, ctx);
                         if let Value::Object(new_data) = new_data {

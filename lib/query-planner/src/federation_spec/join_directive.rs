@@ -45,7 +45,8 @@ impl FederationDirective for JoinDirectiveDirective {
 
 impl Ord for JoinDirectiveDirective {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.graphs.cmp(&other.graphs)
+        self.graphs
+            .cmp(&other.graphs)
             .then(self.name.cmp(&other.name))
     }
 }
