@@ -4,15 +4,12 @@ use graphql_parser::schema::*;
 use crate::{
     federation_spec::{
         definitions::{
-            CorePurposesEnum, JoinFieldSetScalar, JoinGraphEnum, LinkImportScalar, LinkPurposeEnum,
-            RequiresScopesScopeScalar,
-        },
-        directives::{
+            CorePurposesEnum, JoinDirectiveArgumentsScalar, JoinFieldSetScalar, JoinGraphEnum, LinkImportScalar, LinkPurposeEnum, RequiresScopesScopeScalar
+        }, directives::{
             AuthenticatedDirective, CoreDirective, InaccessibleDirective, JoinEnumValueDirective,
             JoinFieldDirective, JoinGraphDirective, JoinImplementsDirective, JoinTypeDirective,
             JoinUnionMemberDirective, LinkDirective, RequiresScopesDirective, TagDirective,
-        },
-        join_owner::JoinOwnerDirective,
+        }, join_directive::JoinDirectiveDirective, join_owner::JoinOwnerDirective
     },
     utils::schema_transformer::{SchemaTransformer, TransformedValue},
 };
@@ -20,7 +17,7 @@ use crate::{
 // directive @inaccessible on FIELD_DEFINITION | OBJECT | INTERFACE | UNION | ENUM | ENUM_VALUE | SCALAR | INPUT_OBJECT | INPUT_FIELD_DEFINITION | ARGUMENT_DEFINITION
 pub(crate) struct StripSchemaInternals;
 
-static DIRECTIVES_TO_STRIP: [&str; 13] = [
+static DIRECTIVES_TO_STRIP: [&str; 14] = [
     JoinTypeDirective::NAME,
     JoinEnumValueDirective::NAME,
     JoinFieldDirective::NAME,
@@ -28,6 +25,7 @@ static DIRECTIVES_TO_STRIP: [&str; 13] = [
     JoinUnionMemberDirective::NAME,
     JoinGraphDirective::NAME,
     JoinOwnerDirective::NAME,
+    JoinDirectiveDirective::NAME,
     LinkDirective::NAME,
     TagDirective::NAME,
     InaccessibleDirective::NAME,
@@ -36,11 +34,12 @@ static DIRECTIVES_TO_STRIP: [&str; 13] = [
     RequiresScopesDirective::NAME,
 ];
 
-static DEFINITIONS_TO_STRIP: [&str; 6] = [
+static DEFINITIONS_TO_STRIP: [&str; 7] = [
     LinkPurposeEnum::NAME,
     LinkImportScalar::NAME,
     JoinGraphEnum::NAME,
     JoinFieldSetScalar::NAME,
+    JoinDirectiveArgumentsScalar::NAME,
     CorePurposesEnum::NAME,
     RequiresScopesScopeScalar::NAME,
 ];
@@ -171,6 +170,10 @@ directive @join__unionMember(
   graph: join__Graph!
   member: String!
 ) repeatable on UNION
+
+directive @join__directive(graphs: [join__Graph!], name: String!, args: join__DirectiveArguments) repeatable on SCHEMA | OBJECT | INTERFACE | FIELD_DEFINITION
+
+scalar join__DirectiveArguments
 
 scalar join__FieldSet
 

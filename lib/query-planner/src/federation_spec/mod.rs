@@ -25,6 +25,7 @@ pub(crate) mod join_implements;
 pub(crate) mod join_owner;
 pub(crate) mod join_type;
 pub(crate) mod join_union;
+pub(crate) mod join_directive;
 
 fn normalize_fields_argument_value_mut(
     supergraph: &SupergraphState,
