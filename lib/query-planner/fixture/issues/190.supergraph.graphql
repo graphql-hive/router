@@ -48,36 +48,30 @@ directive @link(
 scalar link__Import
 
 enum link__Purpose {
-  """
-  `SECURITY` features provide metadata necessary to securely resolve fields.
-  """
   SECURITY
-
-  """
-  `EXECUTION` features provide metadata necessary for operation execution.
-  """
   EXECUTION
 }
 
 enum join__Graph {
-  PRODUCTS_SERVICE @join__graph(name: "products_service", url: "http://localhost:4001/graphql")
+  RECOMMENDER
+    @join__graph(name: "recommender", url: "http://localhost:4001/graphql")
 }
 
-type Query @join__type(graph: PRODUCTS_SERVICE) {
-  productRecommender: ProductRecommender
+type Query @join__type(graph: RECOMMENDER) {
+  recommender: Recommender
 }
 
-type ProductRecommender @join__type(graph: PRODUCTS_SERVICE) {
+type Recommender @join__type(graph: RECOMMENDER) {
   id: ID!
-  recommendations: [Recommendation!]!
+  results: [Recommendable!]!
 }
 
-type Product implements Recommendation
-  @join__type(graph: PRODUCTS_SERVICE)
-  @join__implements(graph: PRODUCTS_SERVICE, interface: "Recommendation") {
+type Product implements Recommendable
+  @join__type(graph: RECOMMENDER)
+  @join__implements(graph: RECOMMENDER, interface: "Recommendable") {
   id: ID!
 }
 
-interface Recommendation @join__type(graph: PRODUCTS_SERVICE) {
+interface Recommendable @join__type(graph: RECOMMENDER) {
   id: ID!
 }

@@ -134,32 +134,121 @@ fn issue_281_test() -> Result<(), Box<dyn Error>> {
 #[test]
 fn issue_190_test() -> Result<(), Box<dyn Error>> {
     init_logger();
+
+    // Original version
     let document = parse_operation(
         r#"
-        query productRecommenderQuery(
+        query(
           $included: Boolean!
         ) {
-          productRecommender @include(if: $included) {
+          recommender @include(if: $included) {
             id
-            recommendations {
-              ...Recommender_Product
+            results {
+              ...Recommendable_Product
               __typename
             }
             __typename
           }
         }
 
-        fragment Recommender_Product on Product {
+        fragment Recommendable_Product on Product {
           id
         }
       "#,
     );
-    let query_plan = build_query_plan(
-        "fixture/issues/190.supergraph.graphql",
-        document,
-    )?;
+    let query_plan = build_query_plan("fixture/issues/190.supergraph.graphql", document)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "recommender") {
+        query ($included:Boolean!) {
+          recommender @include(if: $included) {
+            id
+            results {
+              __typename
+              ... on Product {
+                id
+              }
+            }
+            __typename
+          }
+        }
+      },
+    },
+    "#);
 
-    insta::assert_snapshot!(format!("{}", query_plan), @r#""#);
+    // Without __typename version
+    let document = parse_operation(
+        r#"
+        query(
+          $included: Boolean!
+        ) {
+          recommender @include(if: $included) {
+            id
+            results {
+              ...Recommendable_Product
+            }
+          }
+        }
+
+        fragment Recommendable_Product on Product {
+          id
+        }
+      "#,
+    );
+    let query_plan = build_query_plan("fixture/issues/190.supergraph.graphql", document)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "recommender") {
+        query ($included:Boolean!) {
+          recommender @include(if: $included) {
+            id
+            results {
+              __typename
+              ... on Product {
+                id
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
+
+    // Inline fragment version
+    let document = parse_operation(
+        r#"
+        query(
+          $included: Boolean!
+        ) {
+          recommender @include(if: $included) {
+            id
+            results {
+              ... on Product {
+                id
+              }
+            }
+          }
+        }
+      "#,
+    );
+    let query_plan = build_query_plan("fixture/issues/190.supergraph.graphql", document)?;
+    insta::assert_snapshot!(format!("{}", query_plan), @r#"
+    QueryPlan {
+      Fetch(service: "recommender") {
+        query ($included:Boolean!) {
+          recommender @include(if: $included) {
+            id
+            results {
+              __typename
+              ... on Product {
+                id
+              }
+            }
+          }
+        }
+      },
+    },
+    "#);
 
     Ok(())
 }
