@@ -14,10 +14,16 @@ use vrl::{
 
 use crate::expressions::{
     error::{ExpressionCompileError, ExpressionExecutionError},
+    functions::env::Env,
     ProgramResolutionError,
 };
 
-static VRL_FUNCTIONS: Lazy<Vec<Box<dyn Function>>> = Lazy::new(vrl::stdlib::all);
+static VRL_FUNCTIONS: Lazy<Vec<Box<dyn Function>>> = Lazy::new(|| {
+    let mut funcs = vrl::stdlib::all();
+    // Our custom functions:
+    funcs.push(Box::new(Env));
+    funcs
+});
 static VRL_TIMEZONE: Lazy<VrlTimeZone> = Lazy::new(VrlTimeZone::default);
 
 /// This trait provides a unified way to convert VRL values to specific Rust types.
