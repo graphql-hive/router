@@ -223,7 +223,6 @@ impl From<&MergePath> for Vec<String> {
         path.inner
             .iter()
             // .filter(|segment| !matches!(segment, Segment::Cast(_, _)))
-            .cloned()
             .map(|segment| format!("{}", segment))
             .collect()
     }
