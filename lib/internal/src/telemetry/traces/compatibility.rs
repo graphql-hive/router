@@ -1,122 +1,197 @@
 use super::spans::kind::HiveSpanKind;
+use hive_router_config::telemetry::tracing::SpansSemanticConventionsMode;
 use opentelemetry::KeyValue;
 use opentelemetry_sdk::error::OTelSdkResult;
 use opentelemetry_sdk::trace::{SpanData, SpanExporter};
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::str::FromStr;
 
-/// An `SpanExporter` that adds deprecated HTTP attributes to spans for backward compatibility.
+/// Mapping of spec-compliant to deprecated attribute names for HTTP server spans.
+const SERVER_SPEC_TO_DEPRECATED: &[(&str, &str)] = &[
+    ("http.request.method", "http.method"),
+    ("url.full", "http.url"),
+    ("server.address", "http.host"),
+    ("url.scheme", "http.scheme"),
+    ("network.protocol.version", "http.flavor"),
+    ("http.request.body.size", "http.request_content_length"),
+    ("user_agent.original", "http.user_agent"),
+    ("url.path", "http.target"),
+    ("http.response.status_code", "http.status_code"),
+    ("http.response.body.size", "http.response_content_length"),
+];
+
+/// Mapping of spec-compliant to deprecated attribute names for HTTP client spans.
+const CLIENT_SPEC_TO_DEPRECATED: &[(&str, &str)] = &[
+    ("http.request.method", "http.method"),
+    ("url.full", "http.url"),
+    ("server.address", "net.peer.name"),
+    ("server.port", "net.peer.port"),
+    ("network.protocol.version", "http.flavor"),
+    ("http.request.body.size", "http.request_content_length"),
+    ("http.response.status_code", "http.status_code"),
+    ("http.response.body.size", "http.response_content_length"),
+];
+
+/// Helper function to find the deprecated key for a given spec-compliant key (server spans).
+fn get_server_deprecated_key(spec_key: &str) -> Option<&'static str> {
+    SERVER_SPEC_TO_DEPRECATED
+        .iter()
+        .find(|(k, _)| *k == spec_key)
+        .map(|(_, v)| *v)
+}
+
+/// Helper function to find the deprecated key for a given spec-compliant key (client spans).
+fn get_client_deprecated_key(spec_key: &str) -> Option<&'static str> {
+    CLIENT_SPEC_TO_DEPRECATED
+        .iter()
+        .find(|(k, _)| *k == spec_key)
+        .map(|(_, v)| *v)
+}
+
+/// An `SpanExporter` that handles HTTP semantic conventions attributes based on the configured mode.
 ///
-/// This exporter wrapper inspects spans for stable HTTP semantic conventions attributes and adds the
-/// corresponding deprecated attributes before forwarding them to the inner exporter.
+/// Depending on the `SpansSemanticConventionsMode`:
+/// - `SpecCompliant`- emits only spec-compliant attributes
+/// - `Deprecated` - emits only deprecated attributes and removes spec-compliant ones
+/// - `SpecAndDeprecated` - emits both spec-compliant and deprecated attributes
 ///
-/// It correctly handles the differences in attributes between HTTP client and server spans.
+/// This exporter wrapper inspects spans for HTTP semantic conventions attributes and transforms
+/// them based on the configured mode before forwarding to the inner exporter.
 ///
 /// By performing this action in an exporter, the attribute manipulation is moved from the
 /// application's hot path to a background thread, improving performance.
 #[derive(Debug)]
 pub struct HttpCompatibilityExporter<E: SpanExporter> {
     inner: E,
+    mode: SpansSemanticConventionsMode,
+    server_deprecated_keys: HashSet<&'static str>,
+    client_deprecated_keys: HashSet<&'static str>,
 }
 
 impl<E: SpanExporter> HttpCompatibilityExporter<E> {
-    /// Creates a new `HttpCompatibilityExporter` that wraps the given exporter.
-    pub fn new(inner: E) -> Self {
-        Self { inner }
-    }
-}
+    pub fn new(inner: E, mode: &SpansSemanticConventionsMode) -> Self {
+        let mut server_deprecated = HashSet::with_capacity(SERVER_SPEC_TO_DEPRECATED.len());
+        for (_spec_key, deprecated_key) in SERVER_SPEC_TO_DEPRECATED {
+            server_deprecated.insert(*deprecated_key);
+        }
 
-/// Adds deprecated attributes for an HTTP Server span.
-fn add_server_compat_attributes(span: &mut SpanData) {
-    let mut deprecated_attrs = Vec::new();
+        let mut client_deprecated = HashSet::with_capacity(CLIENT_SPEC_TO_DEPRECATED.len());
+        for (_spec_key, deprecated_key) in CLIENT_SPEC_TO_DEPRECATED {
+            client_deprecated.insert(*deprecated_key);
+        }
 
-    for attr in &span.attributes {
-        let new_attr = match attr.key.as_str() {
-            "http.request.method" => Some(KeyValue::new("http.method", attr.value.clone())),
-            "url.full" => Some(KeyValue::new("http.url", attr.value.clone())),
-            "server.address" => Some(KeyValue::new("http.host", attr.value.clone())),
-            "url.scheme" => Some(KeyValue::new("http.scheme", attr.value.clone())),
-            "network.protocol.version" => Some(KeyValue::new("http.flavor", attr.value.clone())),
-            "http.request.body.size" => Some(KeyValue::new(
-                "http.request_content_length",
-                attr.value.clone(),
-            )),
-            "user_agent.original" => Some(KeyValue::new("http.user_agent", attr.value.clone())),
-            "url.path" => Some(KeyValue::new("http.target", attr.value.clone())),
-            "http.response.status_code" => {
-                Some(KeyValue::new("http.status_code", attr.value.clone()))
-            }
-            "http.response.body.size" => Some(KeyValue::new(
-                "http.response_content_length",
-                attr.value.clone(),
-            )),
-            _ => None,
-        };
-
-        if let Some(attr) = new_attr {
-            deprecated_attrs.push(attr);
+        Self {
+            inner,
+            mode: *mode,
+            server_deprecated_keys: server_deprecated,
+            client_deprecated_keys: client_deprecated,
         }
     }
 
-    if !deprecated_attrs.is_empty() {
+    fn process_span_spec_compliant(
+        &self,
+        span: &mut SpanData,
+        deprecated_keys: &HashSet<&'static str>,
+    ) {
+        span.attributes
+            .retain(|attr| !deprecated_keys.contains(attr.key.as_str()));
+    }
+
+    fn process_span_deprecated_only(
+        &self,
+        span: &mut SpanData,
+        deprecated_keys: &HashSet<&'static str>,
+        get_deprecated_key: fn(&str) -> Option<&'static str>,
+    ) {
+        let mut deprecated_attrs = Vec::with_capacity(SERVER_SPEC_TO_DEPRECATED.len());
+        span.attributes.retain(|attr| {
+            if let Some(deprecated_key) = get_deprecated_key(attr.key.as_str()) {
+                // This is a spec-compliant attr, so convert it and remove from span
+                deprecated_attrs.push(KeyValue::new(deprecated_key, attr.value.clone()));
+                false
+            } else if deprecated_keys.contains(attr.key.as_str()) {
+                // This is already a deprecated attr, so remove it
+                false
+            } else {
+                // Keep everything else
+                true
+            }
+        });
+
         span.attributes.extend(deprecated_attrs);
     }
-}
 
-/// Adds deprecated attributes for an HTTP Client span.
-fn add_client_compat_attributes(span: &mut SpanData) {
-    let mut deprecated_attrs = Vec::new();
+    fn process_span_spec_and_deprecated(
+        &self,
+        span: &mut SpanData,
+        get_deprecated_key: fn(&str) -> Option<&'static str>,
+    ) {
+        let mut deprecated_attrs = Vec::with_capacity(SERVER_SPEC_TO_DEPRECATED.len());
 
-    for attr in &span.attributes {
-        let new_attr = match attr.key.as_str() {
-            "http.request.method" => Some(KeyValue::new("http.method", attr.value.clone())),
-            "url.full" => Some(KeyValue::new("http.url", attr.value.clone())),
-            "server.address" => Some(KeyValue::new("net.peer.name", attr.value.clone())),
-            "server.port" => Some(KeyValue::new("net.peer.port", attr.value.clone())),
-            "network.protocol.version" => Some(KeyValue::new("http.flavor", attr.value.clone())),
-            "http.request.body.size" => Some(KeyValue::new(
-                "http.request_content_length",
-                attr.value.clone(),
-            )),
-            "http.response.status_code" => {
-                Some(KeyValue::new("http.status_code", attr.value.clone()))
+        for attr in span.attributes.iter() {
+            if let Some(deprecated_key) = get_deprecated_key(attr.key.as_str()) {
+                deprecated_attrs.push(KeyValue::new(deprecated_key, attr.value.clone()));
             }
-            "http.response.body.size" => Some(KeyValue::new(
-                "http.response_content_length",
-                attr.value.clone(),
-            )),
-            _ => None,
-        };
+        }
 
-        if let Some(attr) = new_attr {
-            deprecated_attrs.push(attr);
+        if !deprecated_attrs.is_empty() {
+            span.attributes.extend(deprecated_attrs);
         }
     }
 
-    if !deprecated_attrs.is_empty() {
-        span.attributes.extend(deprecated_attrs);
-    }
-}
+    fn process_span(&self, span: &mut SpanData) {
+        let kind_attr = span
+            .attributes
+            .iter()
+            .find(|kv| kv.key.as_str() == "hive.kind");
 
-/// Inspects a span and, if it is a known Hive span type, dispatches it to the
-/// correct compatibility function.
-fn process_span(span: &mut SpanData) {
-    let kind_attr = span
-        .attributes
-        .iter()
-        .find(|kv| kv.key.as_str() == "hive.kind");
+        let Some(kv) = kind_attr else {
+            return;
+        };
 
-    if let Some(kv) = kind_attr {
-        if let opentelemetry::Value::String(s) = &kv.value {
-            if let Ok(kind) = HiveSpanKind::from_str(s.as_str()) {
-                match kind {
-                    HiveSpanKind::HttpServerRequest => add_server_compat_attributes(span),
-                    HiveSpanKind::HttpClientRequest => add_client_compat_attributes(span),
-                    // Other span kinds do not need compatibility attributes.
-                    _ => {}
+        let opentelemetry::Value::String(kind_attribute_value) = &kv.value else {
+            return;
+        };
+
+        let Ok(kind) = HiveSpanKind::from_str(kind_attribute_value.as_str()) else {
+            return;
+        };
+
+        match kind {
+            HiveSpanKind::HttpServerRequest => match self.mode {
+                SpansSemanticConventionsMode::SpecCompliant => {
+                    self.process_span_spec_compliant(span, &self.server_deprecated_keys);
                 }
-            }
-        }
+                SpansSemanticConventionsMode::Deprecated => {
+                    self.process_span_deprecated_only(
+                        span,
+                        &self.server_deprecated_keys,
+                        get_server_deprecated_key,
+                    );
+                }
+                SpansSemanticConventionsMode::SpecAndDeprecated => {
+                    self.process_span_spec_and_deprecated(span, get_server_deprecated_key);
+                }
+            },
+            HiveSpanKind::HttpClientRequest => match self.mode {
+                SpansSemanticConventionsMode::SpecCompliant => {
+                    self.process_span_spec_compliant(span, &self.client_deprecated_keys);
+                }
+                SpansSemanticConventionsMode::Deprecated => {
+                    self.process_span_deprecated_only(
+                        span,
+                        &self.client_deprecated_keys,
+                        get_client_deprecated_key,
+                    );
+                }
+                SpansSemanticConventionsMode::SpecAndDeprecated => {
+                    self.process_span_spec_and_deprecated(span, get_client_deprecated_key);
+                }
+            },
+            // Other span kinds do not need semantic convention processing.
+            _ => {}
+        };
     }
 }
 
@@ -125,7 +200,7 @@ impl<E: SpanExporter> SpanExporter for HttpCompatibilityExporter<E> {
         let processed_batch = batch
             .into_iter()
             .map(|mut span| {
-                process_span(&mut span);
+                self.process_span(&mut span);
                 span
             })
             .collect();
@@ -168,9 +243,11 @@ mod tests {
             .map(|kv| &kv.value)
     }
 
-    fn setup_test_pipeline() -> (SdkTracerProvider, InMemorySpanExporter) {
+    fn setup_test_pipeline(
+        mode: SpansSemanticConventionsMode,
+    ) -> (SdkTracerProvider, InMemorySpanExporter) {
         let memory_exporter = InMemorySpanExporterBuilder::new().build();
-        let compatibility_exporter = HttpCompatibilityExporter::new(memory_exporter.clone());
+        let compatibility_exporter = HttpCompatibilityExporter::new(memory_exporter.clone(), &mode);
         let processor = SimpleSpanProcessor::new(compatibility_exporter);
         let provider = SdkTracerProvider::builder()
             .with_span_processor(processor)
@@ -202,8 +279,9 @@ mod tests {
     }
 
     #[test]
-    fn test_http_server_span_compatibility() {
-        let (provider, memory_exporter) = setup_test_pipeline();
+    fn test_http_server_span_spec_compliant() {
+        let (provider, memory_exporter) =
+            setup_test_pipeline(SpansSemanticConventionsMode::SpecCompliant);
         let tracer = provider.tracer("test-tracer");
         let _guard = setup_tracing_subscriber(&provider);
 
@@ -230,6 +308,110 @@ mod tests {
         assert_eq!(spans.len(), 2);
         let span = &spans[0];
 
+        // In SpecCompliant mode, only spec-compliant attributes should exist
+        assert!(find_attribute(span, "server.address").is_some());
+        assert!(find_attribute(span, "http.request.method").is_some());
+        assert!(find_attribute(span, "network.protocol.version").is_some());
+        assert!(find_attribute(span, "user_agent.original").is_some());
+        assert!(find_attribute(span, "http.request.body.size").is_some());
+        assert!(find_attribute(span, "url.full").is_some());
+        assert!(find_attribute(span, "url.path").is_some());
+        assert!(find_attribute(span, "http.response.status_code").is_some());
+
+        // Deprecated attributes should not exist in SpecCompliant mode
+        assert!(find_attribute(span, "http.host").is_none());
+        assert!(find_attribute(span, "http.method").is_none());
+        assert!(find_attribute(span, "http.flavor").is_none());
+        assert!(find_attribute(span, "http.user_agent").is_none());
+        assert!(find_attribute(span, "http.request_content_length").is_none());
+        assert!(find_attribute(span, "http.url").is_none());
+        assert!(find_attribute(span, "http.scheme").is_none());
+        assert!(find_attribute(span, "http.target").is_none());
+        assert!(find_attribute(span, "http.status_code").is_none());
+    }
+
+    #[test]
+    fn test_http_server_span_deprecated_only() {
+        let (provider, memory_exporter) =
+            setup_test_pipeline(SpansSemanticConventionsMode::Deprecated);
+        let tracer = provider.tracer("test-tracer");
+        let _guard = setup_tracing_subscriber(&provider);
+
+        let req = ntex::web::test::TestRequest::default();
+        let req = req
+            .uri("/test?q=1")
+            .version(ntex::http::Version::HTTP_11)
+            .method(ntex::http::Method::GET)
+            .header(HOST, "example.com:8080")
+            .header(USER_AGENT, "test-agent");
+        let body = Bytes::from_static(b"test body");
+        let http_req = req.to_http_request();
+        let http_res =
+            ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
+
+        tracer.in_span("root", |_cx| {
+            let span = HttpServerRequestSpanBuilder::from_request(&http_req, &body).build();
+            span.record_response(&http_res);
+        });
+
+        drop(_guard);
+        provider.force_flush().unwrap();
+        let spans = memory_exporter.get_finished_spans().unwrap();
+        assert_eq!(spans.len(), 2);
+        let span = &spans[0];
+
+        // In Deprecated mode, only deprecated attributes should exist
+        assert!(find_attribute(span, "http.host").is_some());
+        assert!(find_attribute(span, "http.method").is_some());
+        assert!(find_attribute(span, "http.flavor").is_some());
+        assert!(find_attribute(span, "http.user_agent").is_some());
+        assert!(find_attribute(span, "http.request_content_length").is_some());
+        assert!(find_attribute(span, "http.url").is_some());
+        assert!(find_attribute(span, "http.target").is_some());
+        assert!(find_attribute(span, "http.status_code").is_some());
+
+        // Spec-compliant attributes should not exist in Deprecated mode
+        assert!(find_attribute(span, "server.address").is_none());
+        assert!(find_attribute(span, "http.request.method").is_none());
+        assert!(find_attribute(span, "network.protocol.version").is_none());
+        assert!(find_attribute(span, "user_agent.original").is_none());
+        assert!(find_attribute(span, "http.request.body.size").is_none());
+        assert!(find_attribute(span, "url.full").is_none());
+        assert!(find_attribute(span, "url.path").is_none());
+        assert!(find_attribute(span, "http.response.status_code").is_none());
+    }
+
+    #[test]
+    fn test_http_server_span_spec_and_deprecated() {
+        let (provider, memory_exporter) =
+            setup_test_pipeline(SpansSemanticConventionsMode::SpecAndDeprecated);
+        let tracer = provider.tracer("test-tracer");
+        let _guard = setup_tracing_subscriber(&provider);
+
+        let req = ntex::web::test::TestRequest::default();
+        let req = req
+            .uri("/test?q=1")
+            .version(ntex::http::Version::HTTP_11)
+            .method(ntex::http::Method::GET)
+            .header(HOST, "example.com:8080")
+            .header(USER_AGENT, "test-agent");
+        let body = Bytes::from_static(b"test body");
+        let http_req = req.to_http_request();
+        let http_res =
+            ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
+
+        tracer.in_span("root", |_cx| {
+            let span = HttpServerRequestSpanBuilder::from_request(&http_req, &body).build();
+            span.record_response(&http_res);
+        });
+
+        drop(_guard);
+        provider.force_flush().unwrap();
+        let spans = memory_exporter.get_finished_spans().unwrap();
+        assert_eq!(spans.len(), 2);
+        let span = &spans[0];
+
+        // In SpecAndDeprecated mode, both spec-compliant and deprecated attributes should exist
         assert_attribute_mapping(span, "http.host", "server.address");
         assert_attribute_mapping(span, "http.method", "http.request.method");
         assert_attribute_mapping(span, "http.flavor", "network.protocol.version");
@@ -253,8 +435,9 @@ mod tests {
     }
 
     #[test]
-    fn test_http_client_span_compatibility() {
-        let (provider, memory_exporter) = setup_test_pipeline();
+    fn test_http_client_span_spec_compliant_mode() {
+        let (provider, memory_exporter) =
+            setup_test_pipeline(SpansSemanticConventionsMode::SpecCompliant);
         let tracer = provider.tracer("test-tracer");
         let _guard = setup_tracing_subscriber(&provider);
 
@@ -278,21 +461,128 @@ mod tests {
         drop(_guard);
         provider.force_flush().unwrap();
         let spans = memory_exporter.get_finished_spans().unwrap();
-        assert_eq!(spans.len(), 2);
         let span = &spans[0];
 
+        // SpecCompliant mode
+        // Should have spec-compliant attributes
+        assert!(find_attribute(span, "http.request.method").is_some());
+        assert!(find_attribute(span, "url.full").is_some());
+        assert!(find_attribute(span, "server.address").is_some());
+        assert!(find_attribute(span, "server.port").is_some());
+        assert!(find_attribute(span, "network.protocol.version").is_some());
+        assert!(find_attribute(span, "http.response.status_code").is_some());
+        assert!(find_attribute(span, "http.response.body.size").is_some());
+
+        // Should not have deprecated attributes
+        assert!(find_attribute(span, "http.method").is_none());
+        assert!(find_attribute(span, "http.url").is_none());
+        assert!(find_attribute(span, "net.peer.name").is_none());
+        assert!(find_attribute(span, "net.peer.port").is_none());
+        assert!(find_attribute(span, "http.flavor").is_none());
+        assert!(find_attribute(span, "http.status_code").is_none());
+        assert!(find_attribute(span, "http.response_content_length").is_none());
+    }
+
+    #[test]
+    fn test_http_client_span_deprecated_mode() {
+        let (provider, memory_exporter) =
+            setup_test_pipeline(SpansSemanticConventionsMode::Deprecated);
+        let tracer = provider.tracer("test-tracer");
+        let _guard = setup_tracing_subscriber(&provider);
+
+        let request = http::Request::builder()
+            .method("POST")
+            .uri("https://api.example.com:443/v1/users")
+            .header(HOST, "api.example.com:443")
+            .version(http::Version::HTTP_2)
+            .body(Full::from("dummy body"))
+            .unwrap();
+        let response = http::Response::builder()
+            .status(200)
+            .body(Full::from("response body"))
+            .unwrap();
+
+        tracer.in_span("root", |_cx| {
+            let span = HttpClientRequestSpanBuilder::from_request(&request).build();
+            span.record_response(&response);
+        });
+
+        drop(_guard);
+        provider.force_flush().unwrap();
+        let spans = memory_exporter.get_finished_spans().unwrap();
+        let span = &spans[0];
+
+        // Deprecated mode
+        // Should have deprecated attributes
+        assert!(find_attribute(span, "http.method").is_some());
+        assert!(find_attribute(span, "http.url").is_some());
+        assert!(find_attribute(span, "net.peer.name").is_some());
+        assert!(find_attribute(span, "net.peer.port").is_some());
+        assert!(find_attribute(span, "http.flavor").is_some());
+        assert!(find_attribute(span, "http.status_code").is_some());
+        assert!(find_attribute(span, "http.response_content_length").is_some());
+
+        // Should not have spec-compliant attributes
+        assert!(find_attribute(span, "http.request.method").is_none());
+        assert!(find_attribute(span, "url.full").is_none());
+        assert!(find_attribute(span, "server.address").is_none());
+        assert!(find_attribute(span, "server.port").is_none());
+        assert!(find_attribute(span, "network.protocol.version").is_none());
+        assert!(find_attribute(span, "http.response.status_code").is_none());
+        assert!(find_attribute(span, "http.response.body.size").is_none());
+    }
+
+    #[test]
+    fn test_http_client_span_spec_and_deprecated_mode() {
+        let (provider, memory_exporter) =
+            setup_test_pipeline(SpansSemanticConventionsMode::SpecAndDeprecated);
+        let tracer = provider.tracer("test-tracer");
+        let _guard = setup_tracing_subscriber(&provider);
+
+        let request = http::Request::builder()
+            .method("POST")
+            .uri("https://api.example.com:443/v1/users")
+            .header(HOST, "api.example.com:443")
+            .version(http::Version::HTTP_2)
+            .body(Full::from("dummy body"))
+            .unwrap();
+        let response = http::Response::builder()
+            .status(200)
+            .body(Full::from("response body"))
+            .unwrap();
+
+        tracer.in_span("root", |_cx| {
+            let span = HttpClientRequestSpanBuilder::from_request(&request).build();
+            span.record_response(&response);
+        });
+
+        drop(_guard);
+        provider.force_flush().unwrap();
+        let spans = memory_exporter.get_finished_spans().unwrap();
+        let span = &spans[0];
+
+        // SpecAndDeprecated mode
+        // Should have both spec-compliant and deprecated attributes
+        assert!(find_attribute(span, "http.request.method").is_some());
+        assert!(find_attribute(span, "http.method").is_some());
+        assert!(find_attribute(span, "url.full").is_some());
+        assert!(find_attribute(span, "http.url").is_some());
+        assert!(find_attribute(span, "server.address").is_some());
+        assert!(find_attribute(span, "net.peer.name").is_some());
+        assert!(find_attribute(span, "server.port").is_some());
+        assert!(find_attribute(span, "net.peer.port").is_some());
+        assert!(find_attribute(span, "network.protocol.version").is_some());
+        assert!(find_attribute(span, "http.flavor").is_some());
+        assert!(find_attribute(span, "http.response.status_code").is_some());
+        assert!(find_attribute(span, "http.status_code").is_some());
+        assert!(find_attribute(span, "http.response.body.size").is_some());
+        assert!(find_attribute(span, "http.response_content_length").is_some());
+        // Verify mappings
         assert_attribute_mapping(span, "net.peer.name", "server.address");
         assert_attribute_mapping(span, "net.peer.port", "server.port");
         assert_attribute_mapping(span, "http.flavor", "network.protocol.version");
         assert_attribute_mapping(span, "http.method", "http.request.method");
         assert_attribute_mapping(span, "http.url", "url.full");
-        assert_attribute_mapping(
-            span,
-            "http.request_content_length",
-            "http.request.body.size",
-        );
-
-        // Response attributes are optional since they're only set when record_response() is called
         assert_attribute_mapping(span, "http.status_code", "http.response.status_code");
         assert_attribute_mapping(
             span,

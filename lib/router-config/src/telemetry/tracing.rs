@@ -15,6 +15,47 @@ pub struct TracingConfig {
     pub exporters: Vec<TracingExporterConfig>,
     #[serde(default)]
     pub propagation: TracingPropagationConfig,
+    #[serde(default)]
+    pub instrumentation: TracingInstrumentationConfig,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct TracingInstrumentationConfig {
+    #[serde(default)]
+    pub spans: TracingSpansInstrumentationConfig,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TracingSpansInstrumentationConfig {
+    /// Controls which semantic conventions are emitted on spans.
+    /// Default: SpecCompliant (only stable attributes).
+    #[serde(default = "default_spans_mode")]
+    pub mode: SpansSemanticConventionsMode,
+}
+
+impl Default for TracingSpansInstrumentationConfig {
+    fn default() -> Self {
+        Self {
+            mode: default_spans_mode(),
+        }
+    }
+}
+
+fn default_spans_mode() -> SpansSemanticConventionsMode {
+    SpansSemanticConventionsMode::SpecCompliant
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum SpansSemanticConventionsMode {
+    /// Only spec-compliant attributes (http.request.*, http.response.*, url.*, etc).
+    SpecCompliant,
+    /// Only deprecated attributes (http.*, etc). Mainly for legacy setups.
+    Deprecated,
+    /// Emit both spec-compliant and deprecated attributes.
+    SpecAndDeprecated,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

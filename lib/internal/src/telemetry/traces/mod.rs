@@ -65,6 +65,7 @@ fn setup_exporters(
     config: &TelemetryConfig,
     mut tracer_provider_builder: TracerProviderBuilder,
 ) -> Result<TracerProviderBuilder, TelemetryError> {
+    let sem_conv_mode = &config.tracing.instrumentation.spans.mode;
     for exporter_config in &config.tracing.exporters {
         let span_processor = match exporter_config {
             TracingExporterConfig::Otlp(otlp_config) => {
@@ -118,7 +119,7 @@ fn setup_exporters(
                                 .with_metadata(build_metadata(metadata))
                                 .build()
                                 .map_err(|e| TelemetryError::TracesExporterSetup(e.to_string()))?;
-                            HttpCompatibilityExporter::new(exporter)
+                            HttpCompatibilityExporter::new(exporter, sem_conv_mode)
                         }
                         OtlpProtocol::Http => {
                             if otlp_config.grpc.is_some() {
@@ -160,7 +161,7 @@ fn setup_exporters(
                                 .build()
                                 .map_err(|e| TelemetryError::TracesExporterSetup(e.to_string()))?;
 
-                            HttpCompatibilityExporter::new(exporter)
+                            HttpCompatibilityExporter::new(exporter, sem_conv_mode)
                         }
                     };
 
