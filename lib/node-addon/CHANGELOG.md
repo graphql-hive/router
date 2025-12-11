@@ -1,4 +1,10 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.9 (2025-12-11)
+
+### Fixes
+
+- chore: Enable publishing of internal crate
+
 ## 0.0.8 (2025-12-11)
 
 ### Fixes

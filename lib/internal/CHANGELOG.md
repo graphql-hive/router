@@ -1,3 +1,9 @@
+## 0.0.3 (2025-12-11)
+
+### Fixes
+
+- chore: Enable publishing of internal crate
+
 ## 0.0.2 (2025-12-11)
 
 ### Fixes
