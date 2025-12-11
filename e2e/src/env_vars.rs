@@ -16,7 +16,7 @@ mod env_vars_e2e_tests {
     /// This way we can verify that the override is applied correctly.
     /// Without the env var, the request goes to 4200 (thanks to `.default`).
     async fn should_override_subgraph_url_based_on_env_var() {
-        let subgraphs_server = SubgraphsServer::start_with_port(4100).await;
+        let subgraphs_server = SubgraphsServer::start_with_port(4200).await;
 
         // Makes the expression to evaluate to port 4200 (value of .default)
         {
