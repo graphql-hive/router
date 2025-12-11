@@ -3,6 +3,7 @@ executor: patch
 router: patch
 internal: patch
 query-planner: patch
+node-addon: patch
 ---
 
-# Bump
+# chore: Enable publishing of internal crate
