@@ -34,6 +34,7 @@ jobs:
     env:
       CRATES_PUBLISH_JSON: ${{ needs.check.outputs.crates_to_publish }}
       PUBLISH_CONFIG_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router-config"') }}
+      PUBLISH_INTERNAL_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router-internal"') }}
       PUBLISH_QUERY_PLANNER_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router-query-planner"') }}
       PUBLISH_EXECUTOR_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router-plan-executor"') }}
       PUBLISH_ROUTER_CRATE: ${{ contains(needs.check.outputs.crates_to_publish, '"hive-router"') }}
@@ -54,6 +55,13 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           cargo publish --manifest-path ${{ fromJson(needs.check.outputs.crates_to_publish).hive-router-config }}
+
+      - name: publish internal lib
+        if: env.PUBLISH_INTERNAL_CRATE == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          cargo publish --manifest-path ${{ fromJson(needs.check.outputs.crates_to_publish).hive-router-internal }}
 
       - name: publish query-planner lib
         if: env.PUBLISH_QUERY_PLANNER_CRATE == 'true'
