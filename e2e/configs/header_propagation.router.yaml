@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../supergraph.graphql
+headers:
+  all:
+    request:
+      - propagate:
+          named: x-context

@@ -7,6 +7,8 @@ mod env_vars;
 #[cfg(test)]
 mod file_supergraph;
 #[cfg(test)]
+mod header_propagation;
+#[cfg(test)]
 mod hive_cdn_supergraph;
 #[cfg(test)]
 mod jwt;
