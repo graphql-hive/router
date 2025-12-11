@@ -1,6 +1,5 @@
 use std::iter::once;
 
-use crate::expressions::ExecutableProgram;
 use crate::{
     execution::client_request_details::ClientRequestDetails,
     headers::{
@@ -15,6 +14,7 @@ use crate::{
         sanitizer::is_denied_header,
     },
 };
+use hive_router_internal::expressions::ExecutableProgram;
 
 use super::sanitizer::is_never_join_header;
 use http::{header::InvalidHeaderValue, HeaderMap, HeaderName, HeaderValue};

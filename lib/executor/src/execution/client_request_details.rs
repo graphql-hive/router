@@ -1,11 +1,9 @@
 use std::collections::BTreeMap;
 
 use bytes::Bytes;
+use hive_router_internal::expressions::{lib::ToVrlValue, vrl::core::Value};
 use http::Method;
 use ntex_http::HeaderMap as NtexHeaderMap;
-use vrl::core::Value;
-
-use crate::utils::vrl::sonic_value_to_vrl_value;
 
 pub struct OperationDetails<'exec> {
     pub name: Option<&'exec str>,
@@ -80,7 +78,7 @@ impl From<&ClientRequestDetails<'_, '_>> for Value {
                     "prefix".into(),
                     prefix.unwrap_or_default().to_string().into(),
                 ),
-                ("claims".into(), sonic_value_to_vrl_value(claims)),
+                ("claims".into(), claims.to_vrl_value()),
                 (
                     "scopes".into(),
                     match scopes {

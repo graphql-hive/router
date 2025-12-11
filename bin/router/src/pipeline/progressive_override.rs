@@ -1,9 +1,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use hive_router_config::override_labels::{LabelOverrideValue, OverrideLabelsConfig};
-use hive_router_plan_executor::{
-    execution::client_request_details::ClientRequestDetails, expressions::CompileExpression,
-};
+use hive_router_internal::expressions::CompileExpression;
+use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_query_planner::{
     graph::{PlannerOverrideContext, PERCENTAGE_SCALE_FACTOR},
     state::supergraph_state::SupergraphState,

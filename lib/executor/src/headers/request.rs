@@ -1,8 +1,8 @@
+use hive_router_internal::expressions::ExecutableProgram;
 use http::HeaderMap;
 
 use crate::{
     execution::client_request_details::ClientRequestDetails,
-    expressions::ExecutableProgram,
     headers::{
         errors::HeaderRuleRuntimeError,
         expression::vrl_value_to_header_value,

@@ -1,6 +1,8 @@
 pub mod error;
 pub mod lib;
 pub mod values;
+// Re-export VRL under our internal namespace
+pub use vrl;
 
 pub use error::{ExpressionCompileError, ExpressionExecutionError, ProgramResolutionError};
 pub use lib::{CompileExpression, ExecutableProgram, FromVrlValue, ValueOrProgram};
