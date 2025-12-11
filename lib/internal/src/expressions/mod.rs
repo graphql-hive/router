@@ -1,4 +1,5 @@
 pub mod error;
+mod functions;
 pub mod lib;
 pub mod values;
 // Re-export VRL under our internal namespace

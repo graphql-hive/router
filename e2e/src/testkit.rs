@@ -199,6 +199,41 @@ pub async fn init_router_from_config(
     })
 }
 
+/// A guard that sets an environment variable to a specified value upon creation
+/// and restores its original value (or removes it) when dropped.
+pub struct EnvVarGuard {
+    key: String,
+    original_value: Option<String>,
+}
+
+impl EnvVarGuard {
+    pub fn new(key: &str, value: &str) -> Self {
+        let original_value = std::env::var(key).ok();
+        // Because environment variables are global state, and modifying them can cause data races if multiple threads accesses them simultaneously,
+        // we use unsafe block to indicate that we are aware of the potential risks.
+        // In the e2e tests here, it's acceptable as tests are run one after another and we control the environment.
+        unsafe {
+            std::env::set_var(key, value);
+        }
+
+        EnvVarGuard {
+            key: key.to_string(),
+            original_value,
+        }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match &self.original_value {
+                Some(value) => std::env::set_var(&self.key, value),
+                None => std::env::remove_var(&self.key),
+            }
+        }
+    }
+}
+
 impl<T> Drop for TestRouterApp<T> {
     fn drop(&mut self) {
         self.bg_tasks_manager.shutdown();
