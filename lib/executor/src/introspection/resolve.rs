@@ -14,7 +14,6 @@ use hive_router_query_planner::ast::{
     value::Value as AstValue,
 };
 use hive_router_query_planner::state::supergraph_state::OperationKind;
-use tracing::warn;
 
 use crate::introspection::schema::SchemaMetadata;
 use crate::response::value::Value;
@@ -400,32 +399,15 @@ fn resolve_type<'exec, 'schema: 'exec>(
 ) -> Value<'exec> {
     match t {
         Type::NamedType(name) => {
-            let type_def = ctx.schema.type_by_name(name);
-            if let Some(type_def) = type_def {
-                resolve_type_definition(type_def, selections, ctx)
-            } else {
-                warn!(
-                    "Type '{}' not found in the schema unexpectedly during introspection",
-                    name
-                );
-                let mut type_data = vec![];
-                for selection in selections.items.iter() {
-                    if let SelectionItem::Field(field) = selection {
-                        let val = match field.name.as_str() {
-                            "name" => Value::String(name.as_str().into()),
-                            "__typename" => Value::String("__Type".into()),
-                            _ => Value::Null,
-                        };
-                        type_data.push((field.selection_identifier(), val));
-                    } else if let SelectionItem::InlineFragment(fragment) = selection {
-                        let new_data = resolve_type(t, &fragment.selections, ctx);
-                        if let Value::Object(new_data) = new_data {
-                            type_data.extend(new_data);
-                        }
-                    }
-                }
-                Value::Object(type_data)
-            }
+            let type_def = ctx.schema.type_by_name(name)
+                .unwrap_or_else(|| {
+                    unreachable!(
+                         "Type '{}' not found in the schema unexpectedly during introspection",
+                        name
+                    );
+                });
+            resolve_type_definition(type_def, selections, ctx)
+                
         }
         Type::ListType(inner_t) => resolve_wrapper_type("LIST", inner_t, selections, ctx),
         Type::NonNullType(inner_t) => resolve_wrapper_type("NON_NULL", inner_t, selections, ctx),
