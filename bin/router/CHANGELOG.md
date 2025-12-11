@@ -116,6 +116,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.24 (2025-12-11)
+
+### Fixes
+
+- strip `@join__directive` and `join__DirectiveArguments` for the public consumer schema (#606)
+- Strip `@join__directive` and `join__DirectiveArguments` internal types while creating the consumer/public schema
+
+#### Extract expressions to hive-router-internal crate
+
+The `expressions` module has been extracted from `hive-router-executor` into the `hive-router-internal` crate. This refactoring centralizes expressions handling, making it available to other parts of the project without depending on the executor.
+
+It re-exports the `vrl` crate, ensuring that all consumer crates use the same version and types of VRL.
+
+#### Prevent planner failure when combining conditional directives and interfaces
+
+Fixed a bug where the query planner failed to handle the combination of conditional directives (`@include`/`@skip`) and the automatic `__typename` injection required for abstract types.
+
 ## 0.0.23 (2025-12-08)
 
 ### Fixes

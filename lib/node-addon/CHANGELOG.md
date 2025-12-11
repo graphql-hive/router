@@ -1,4 +1,12 @@
 # @graphql-hive/router-query-planner changelog
+## 0.0.8 (2025-12-11)
+
+### Fixes
+
+#### Prevent planner failure when combining conditional directives and interfaces
+
+Fixed a bug where the query planner failed to handle the combination of conditional directives (`@include`/`@skip`) and the automatic `__typename` injection required for abstract types.
+
 ## 0.0.7 (2025-12-08)
 
 ### Fixes

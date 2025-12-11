@@ -30,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 2.1.4 (2025-12-11)
+
+### Fixes
+
+- prevent planner failure when combining conditional directives and interfaces (#602)
+- Strip `@join__directive` and `join__DirectiveArguments` internal types while creating the consumer/public schema
+
+#### Prevent planner failure when combining conditional directives and interfaces
+
+Fixed a bug where the query planner failed to handle the combination of conditional directives (`@include`/`@skip`) and the automatic `__typename` injection required for abstract types.
+
 ## 2.1.3 (2025-12-08)
 
 ### Fixes
