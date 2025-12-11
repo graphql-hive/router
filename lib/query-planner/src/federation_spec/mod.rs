@@ -18,6 +18,7 @@ pub(crate) mod directives;
 pub mod authorization;
 pub(crate) mod directive_trait;
 pub(crate) mod inacessible;
+pub(crate) mod join_directive;
 pub(crate) mod join_enum_value;
 pub(crate) mod join_field;
 pub(crate) mod join_graph;

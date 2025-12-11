@@ -33,3 +33,9 @@ pub struct RequiresScopesScopeScalar {}
 impl RequiresScopesScopeScalar {
     pub const NAME: &str = "requiresScopes__Scope";
 }
+
+pub struct JoinDirectiveArgumentsScalar {}
+
+impl JoinDirectiveArgumentsScalar {
+    pub const NAME: &str = "join__DirectiveArguments";
+}

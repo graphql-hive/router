@@ -399,7 +399,12 @@ fn resolve_type<'exec, 'schema: 'exec>(
 ) -> Value<'exec> {
     match t {
         Type::NamedType(name) => {
-            let type_def = ctx.schema.type_by_name(name).unwrap();
+            let type_def = ctx.schema.type_by_name(name).unwrap_or_else(|| {
+                panic!(
+                    "Type '{}' not found in the schema unexpectedly during introspection",
+                    name
+                );
+            });
             resolve_type_definition(type_def, selections, ctx)
         }
         Type::ListType(inner_t) => resolve_wrapper_type("LIST", inner_t, selections, ctx),
