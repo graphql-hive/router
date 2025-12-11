@@ -18,9 +18,13 @@ use opentelemetry_sdk::{
     Resource,
 };
 use tracing_opentelemetry::OpenTelemetryLayer;
+use vrl::core::Value;
 
 use self::compatibility::HttpCompatibilityExporter;
-use crate::telemetry::{error::TelemetryError, utils::build_metadata};
+use crate::{
+    expressions::{CompileExpression, ExecutableProgram},
+    telemetry::{error::TelemetryError, utils::build_metadata},
+};
 
 pub mod compatibility;
 pub mod spans;
@@ -61,32 +65,23 @@ fn setup_exporters(
     config: &TelemetryConfig,
     mut tracer_provider_builder: TracerProviderBuilder,
 ) -> Result<TracerProviderBuilder, TelemetryError> {
-    println!("Setting up tracing exporters...");
     for exporter_config in &config.tracing.exporters {
         let span_processor = match exporter_config {
             TracingExporterConfig::Otlp(otlp_config) => {
-                println!("Setting up OTLP tracing exporter...");
                 if !otlp_config.enabled {
-                    println!("OTLP tracing exporter is disabled.");
                     None
                 } else {
-                    println!("OTLP tracing exporter is enabled.");
                     let endpoint = match &otlp_config.endpoint {
                         ValueOrExpression::Value(v) => v.clone(),
-                        ValueOrExpression::Expression { .. } => {
-                            return Err(TelemetryError::MetricsExporterSetup(
-                                "OTLP endpoint expressions are not supported yet".to_string(),
-                            ));
+                        ValueOrExpression::Expression { expression } => {
+                            evaluate_expression_as_string(expression, "OTLP endpoint")?
                         }
                     };
 
-                    println!("OTLP tracing endpoint: {}", endpoint);
-
                     let span_exporter = match &otlp_config.protocol {
                         OtlpProtocol::Grpc => {
-                            println!("OTLP tracing protocol: gRPC");
                             if otlp_config.http.is_some() {
-                                return Err(TelemetryError::SpanExporterSetup(
+                                return Err(TelemetryError::TracesExporterSetup(
                                     "OTLP http configuration found while protocol is set to gRPC"
                                         .to_string(),
                                 ));
@@ -101,21 +96,20 @@ fn setup_exporters(
                                         .iter()
                                         .map(|(k, v)| match v {
                                             ValueOrExpression::Value(v) => {
-                                                Ok((k.clone(), v.clone()))
+                                                Ok::<_, TelemetryError>((k.clone(), v.clone()))
                                             }
-                                            ValueOrExpression::Expression { .. } => {
-                                                Err(TelemetryError::MetricsExporterSetup(
-                                                    "OTLP header expressions are not supported yet"
-                                                        .to_string(),
-                                                ))
+                                            ValueOrExpression::Expression { expression } => {
+                                                let value = evaluate_expression_as_string(
+                                                    expression,
+                                                    &format!("OTLP grpc metadata key '{}'", k),
+                                                )?;
+                                                Ok::<_, TelemetryError>((k.clone(), value))
                                             }
                                         })
-                                        .collect::<Result<HashMap<_, _>, _>>()
+                                        .collect::<Result<HashMap<_, _>, TelemetryError>>()
                                 })
                                 .transpose()?
                                 .unwrap_or_default();
-
-                            println!("OTLP tracing metadata: {:?}", metadata);
 
                             let exporter = SpanExporter::builder()
                                 .with_tonic()
@@ -123,13 +117,12 @@ fn setup_exporters(
                                 .with_timeout(otlp_config.batch_processor.max_export_timeout)
                                 .with_metadata(build_metadata(metadata))
                                 .build()
-                                .map_err(|e| TelemetryError::SpanExporterSetup(e.to_string()))?;
+                                .map_err(|e| TelemetryError::TracesExporterSetup(e.to_string()))?;
                             HttpCompatibilityExporter::new(exporter)
                         }
                         OtlpProtocol::Http => {
-                            println!("OTLP tracing protocol: HTTP");
                             if otlp_config.grpc.is_some() {
-                                return Err(TelemetryError::SpanExporterSetup(
+                                return Err(TelemetryError::TracesExporterSetup(
                                     "OTLP grpc configuration found while protocol is set to HTTP"
                                         .to_string(),
                                 ));
@@ -143,21 +136,20 @@ fn setup_exporters(
                                         .iter()
                                         .map(|(k, v)| match v {
                                             ValueOrExpression::Value(v) => {
-                                                Ok((k.clone(), v.clone()))
+                                                Ok::<_, TelemetryError>((k.clone(), v.clone()))
                                             }
-                                            ValueOrExpression::Expression { .. } => {
-                                                Err(TelemetryError::MetricsExporterSetup(
-                                                    "OTLP header expressions are not supported yet"
-                                                        .to_string(),
-                                                ))
+                                            ValueOrExpression::Expression { expression } => {
+                                                let value = evaluate_expression_as_string(
+                                                    expression,
+                                                    &format!("OTLP http header '{}'", k),
+                                                )?;
+                                                Ok::<_, TelemetryError>((k.clone(), value))
                                             }
                                         })
-                                        .collect::<Result<HashMap<_, _>, _>>()
+                                        .collect::<Result<HashMap<_, _>, TelemetryError>>()
                                 })
                                 .transpose()?
                                 .unwrap_or_default();
-
-                            println!("OTLP tracing headers: {:?}", headers);
 
                             let exporter = SpanExporter::builder()
                                 .with_http()
@@ -166,7 +158,7 @@ fn setup_exporters(
                                 .with_headers(headers)
                                 .with_protocol(Protocol::HttpBinary)
                                 .build()
-                                .map_err(|e| TelemetryError::SpanExporterSetup(e.to_string()))?;
+                                .map_err(|e| TelemetryError::TracesExporterSetup(e.to_string()))?;
 
                             HttpCompatibilityExporter::new(exporter)
                         }
@@ -181,7 +173,6 @@ fn setup_exporters(
         };
 
         if let Some(span_processor) = span_processor {
-            println!("Adding span processor to tracer provider...");
             tracer_provider_builder = tracer_provider_builder.with_span_processor(span_processor);
         }
     }
@@ -204,4 +195,36 @@ fn build_batched_span_processor(
                 .build(),
         )
         .build()
+}
+
+fn evaluate_expression_as_string(
+    expression: &str,
+    context: &str,
+) -> Result<String, TelemetryError> {
+    Ok(expression
+        // compile
+        .compile_expression(None)
+        .map_err(|e| {
+            TelemetryError::TracesExporterSetup(format!(
+                "Failed to compile {} expression: {}",
+                context, e
+            ))
+        })?
+        // execute
+        .execute(Value::Null) // no input context as we are in setup phase
+        .map_err(|e| {
+            TelemetryError::TracesExporterSetup(format!(
+                "Failed to execute {} expression: {}",
+                context, e
+            ))
+        })?
+        // coerce
+        .as_str()
+        .ok_or_else(|| {
+            TelemetryError::TracesExporterSetup(format!(
+                "{} expression must return a string",
+                context
+            ))
+        })?
+        .to_string())
 }
