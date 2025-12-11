@@ -5,7 +5,7 @@ use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
 use dashmap::DashMap;
 use futures::TryFutureExt;
-use hive_router_telemetry::traces::spans::http_request::HttpClientRequestSpanBuilder;
+use hive_router_internal::telemetry::traces::spans::http_request::HttpClientRequestSpanBuilder;
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;

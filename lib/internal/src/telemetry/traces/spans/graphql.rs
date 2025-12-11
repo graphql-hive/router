@@ -1,6 +1,6 @@
 use tracing::{field::Empty, info_span, Span};
 
-use crate::traces::spans::{kind::HiveSpanKind, TARGET_NAME};
+use crate::telemetry::traces::spans::{kind::HiveSpanKind, TARGET_NAME};
 
 #[derive(Clone)]
 pub struct GraphQLOperationSpan {

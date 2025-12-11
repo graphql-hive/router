@@ -34,7 +34,7 @@ use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use hive_router_query_planner::ast::operation::OperationDefinition;
 
-use hive_router_telemetry::traces::spans::graphql::GraphQLAuthorizeSpan;
+use hive_router_internal::telemetry::traces::spans::graphql::GraphQLAuthorizeSpan;
 pub use metadata::{
     AuthorizationMetadata, AuthorizationMetadataError, ScopeId, ScopeInterner, UserAuthContext,
 };

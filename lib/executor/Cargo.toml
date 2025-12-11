@@ -14,7 +14,6 @@ authors = ["The Guild"]
 [dependencies]
 hive-router-query-planner = { path = "../query-planner", version = "2.1.5" }
 hive-router-config = { path = "../router-config", version = "0.0.15" }
-hive-router-telemetry = { path = "../telemetry", version = "0.0.1" }
 hive-router-internal = { path = "../internal", version = "0.0.3" }
 
 graphql-parser = { workspace = true }

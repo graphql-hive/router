@@ -2,8 +2,8 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use graphql_parser::query::Document;
+use hive_router_internal::telemetry::traces::spans::graphql::GraphQLParseSpan;
 use hive_router_query_planner::utils::parsing::safe_parse_operation;
-use hive_router_telemetry::traces::spans::graphql::GraphQLParseSpan;
 use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
 

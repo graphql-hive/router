@@ -9,7 +9,7 @@ use ntex::http::body::MessageBody;
 use std::borrow::{Borrow, Cow};
 use tracing::{field::Empty, info_span, Span};
 
-use crate::traces::spans::{kind::HiveSpanKind, TARGET_NAME};
+use crate::telemetry::traces::spans::{kind::HiveSpanKind, TARGET_NAME};
 
 pub struct HttpServerRequestSpanBuilder<'a> {
     request_body_size: Option<usize>,

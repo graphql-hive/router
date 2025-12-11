@@ -5,9 +5,9 @@ use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, Pipel
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
 use crate::schema_state::{SchemaState, SupergraphData};
+use hive_router_internal::telemetry::traces::spans::graphql::GraphQLPlanSpan;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
-use hive_router_telemetry::traces::spans::graphql::GraphQLPlanSpan;
 use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
 

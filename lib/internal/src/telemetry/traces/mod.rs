@@ -20,7 +20,7 @@ use opentelemetry_sdk::{
 use tracing_opentelemetry::OpenTelemetryLayer;
 
 use self::compatibility::HttpCompatibilityExporter;
-use crate::{error::TelemetryError, utils::build_metadata};
+use crate::telemetry::{error::TelemetryError, utils::build_metadata};
 
 pub mod compatibility;
 pub mod spans;

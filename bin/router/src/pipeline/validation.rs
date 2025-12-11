@@ -5,7 +5,7 @@ use crate::pipeline::parser::GraphQLParserPayload;
 use crate::schema_state::{SchemaState, SupergraphData};
 use crate::shared_state::RouterSharedState;
 use graphql_tools::validation::validate::validate;
-use hive_router_telemetry::traces::spans::graphql::GraphQLValidateSpan;
+use hive_router_internal::telemetry::traces::spans::graphql::GraphQLValidateSpan;
 use ntex::web::HttpRequest;
 use tracing::{error, trace};
 

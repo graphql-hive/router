@@ -8,8 +8,8 @@ use opentelemetry_sdk::logs::{BatchConfigBuilder, BatchLogProcessor};
 use opentelemetry_sdk::logs::{SdkLogger, SdkLoggerProvider};
 use opentelemetry_sdk::Resource;
 
-use crate::error::TelemetryError;
-use crate::utils::build_metadata;
+use crate::telemetry::error::TelemetryError;
+use crate::telemetry::utils::build_metadata;
 
 pub struct Logger {
     pub layer: OpenTelemetryTracingBridge<SdkLoggerProvider, SdkLogger>,

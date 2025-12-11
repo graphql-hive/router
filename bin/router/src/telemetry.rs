@@ -3,7 +3,7 @@ use std::{io::IsTerminal, str::FromStr};
 use hive_router_config::{
     log::LogFormat, telemetry::tracing::TracingPropagationConfig, HiveRouterConfig,
 };
-use hive_router_telemetry::{
+use hive_router_internal::telemetry::{
     otel::{
         opentelemetry::{
             global::{set_text_map_propagator, set_tracer_provider},

@@ -6,8 +6,8 @@ use opentelemetry_sdk::{trace::IdGenerator, Resource};
 use tracing::Subscriber;
 use tracing_subscriber::registry::LookupSpan;
 
-use crate::logs::build_logs_provider;
-use crate::traces::build_trace_provider;
+use crate::telemetry::logs::build_logs_provider;
+use crate::telemetry::traces::build_trace_provider;
 
 mod error;
 pub mod logs;

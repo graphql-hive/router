@@ -5,7 +5,6 @@ members = [
   "lib/router-config",
   "lib/executor",
   "lib/node-addon",
-  "lib/telemetry",
   "bin/dev-cli",
   "bin/router",
   "e2e",

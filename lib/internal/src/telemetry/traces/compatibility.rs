@@ -145,7 +145,7 @@ impl<E: SpanExporter> SpanExporter for HttpCompatibilityExporter<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traces::spans::http_request::{
+    use crate::telemetry::traces::spans::http_request::{
         HttpClientRequestSpanBuilder, HttpServerRequestSpanBuilder,
     };
     use http_body_util::Full;

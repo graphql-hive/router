@@ -26,7 +26,7 @@ use crate::{
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
 use hive_router_config::{load_config, HiveRouterConfig};
-use hive_router_telemetry::{
+use hive_router_internal::telemetry::{
     otel::{opentelemetry, tracing_opentelemetry::OpenTelemetrySpanExt},
     traces::spans::http_request::HttpServerRequestSpanBuilder,
 };

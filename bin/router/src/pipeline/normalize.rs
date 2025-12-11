@@ -1,11 +1,11 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use hive_router_internal::telemetry::traces::spans::graphql::GraphQLNormalizeSpan;
 use hive_router_plan_executor::introspection::partition::partition_operation;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::ast::operation::OperationDefinition;
-use hive_router_telemetry::traces::spans::graphql::GraphQLNormalizeSpan;
 use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
 
