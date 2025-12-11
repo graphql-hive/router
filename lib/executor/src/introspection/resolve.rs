@@ -400,7 +400,7 @@ fn resolve_type<'exec, 'schema: 'exec>(
     match t {
         Type::NamedType(name) => {
             let type_def = ctx.schema.type_by_name(name).unwrap_or_else(|| {
-                unreachable!(
+                panic!(
                     "Type '{}' not found in the schema unexpectedly during introspection",
                     name
                 );
