@@ -12,7 +12,7 @@ mod header_propagation_e2e_tests {
         let subgraphs_server = SubgraphsServer::start().await;
         let app = init_router_from_config_file("configs/header_propagation.router.yaml")
             .await
-            .unwrap();
+            .expect("Failed to initialize router from config file");
         wait_for_readiness(&app.app).await;
         let req =
             init_graphql_request("{ users { id } }", None).header("x-context", "my-context-value");
