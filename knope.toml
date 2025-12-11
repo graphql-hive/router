@@ -21,6 +21,11 @@ versioned_files = ["lib/router-config/Cargo.toml", { path = "lib/executor/Cargo.
 scopes = ["config"]
 changelog = "lib/router-config/CHANGELOG.md"
 
+[packages.internal]
+versioned_files = ["lib/internal/Cargo.toml", { path = "lib/executor/Cargo.toml", dependency = "hive-router-internal" }, { path = "bin/router/Cargo.toml", dependency = "hive-router-internal" }, "Cargo.lock"]
+scopes = ["internal"]
+changelog = "lib/internal/CHANGELOG.md"
+
 [packages.router]
 versioned_files = ["bin/router/Cargo.toml", "Cargo.lock"]
 scopes = ["hive-router", "router", "config", "qp", "executor"]

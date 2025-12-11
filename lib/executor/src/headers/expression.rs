@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
 use bytes::Bytes;
+use hive_router_internal::expressions::vrl::core::Value;
 use http::{HeaderMap, HeaderValue};
-use vrl::core::Value;
 
-use crate::expressions::FromVrlValue;
 use crate::headers::{request::RequestExpressionContext, response::ResponseExpressionContext};
+use hive_router_internal::expressions::FromVrlValue;
 
 /// Convert a VRL value to a HeaderValue, returning an Option
 ///

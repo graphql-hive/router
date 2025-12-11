@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "lib/internal",
   "lib/query-planner",
   "lib/router-config",
   "lib/executor",

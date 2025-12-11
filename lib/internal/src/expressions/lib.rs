@@ -30,6 +30,12 @@ pub trait FromVrlValue: Sized {
     fn from_vrl_value(value: VrlValue) -> Result<Self, Self::Error>;
 }
 
+/// This trait provides a convenient method to convert sonic_rs Values to VRL Values.
+pub trait ToVrlValue {
+    /// Convert a sonic_rs Value to a VRL Value
+    fn to_vrl_value(&self) -> VrlValue;
+}
+
 /// This trait provides a convenient method to compile expressions directly on string types.
 pub trait CompileExpression {
     /// Compile a VRL expression string into an executable program

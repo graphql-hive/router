@@ -1,17 +1,14 @@
-use crate::{
-    expressions::CompileExpression,
-    headers::{
-        errors::HeaderRuleCompileError,
-        plan::{
-            HeaderAggregationStrategy, HeaderRulesPlan, RequestHeaderRule, RequestHeaderRules,
-            RequestInsertExpression, RequestInsertStatic, RequestPropagateNamed,
-            RequestPropagateRegex, RequestRemoveNamed, RequestRemoveRegex, ResponseHeaderRule,
-            ResponseHeaderRules, ResponseInsertExpression, ResponseInsertStatic,
-            ResponsePropagateNamed, ResponsePropagateRegex, ResponseRemoveNamed,
-            ResponseRemoveRegex,
-        },
+use crate::headers::{
+    errors::HeaderRuleCompileError,
+    plan::{
+        HeaderAggregationStrategy, HeaderRulesPlan, RequestHeaderRule, RequestHeaderRules,
+        RequestInsertExpression, RequestInsertStatic, RequestPropagateNamed, RequestPropagateRegex,
+        RequestRemoveNamed, RequestRemoveRegex, ResponseHeaderRule, ResponseHeaderRules,
+        ResponseInsertExpression, ResponseInsertStatic, ResponsePropagateNamed,
+        ResponsePropagateRegex, ResponseRemoveNamed, ResponseRemoveRegex,
     },
 };
+use hive_router_internal::expressions::CompileExpression;
 
 use hive_router_config::headers as config;
 use http::HeaderName;

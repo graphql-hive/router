@@ -1,0 +1,32 @@
+[package]
+name = "hive-router-internal"
+version = "0.0.1"
+edition = "2021"
+description = "GraphQL Hive Router internal crate"
+license = "MIT"
+publish = true
+repository = "https://github.com/graphql-hive/router"
+homepage = "https://github.com/graphql-hive/router"
+authors = ["The Guild"]
+
+[lib]
+
+[dependencies]
+hive-router-config = { path = "../router-config", version = "0.0.15" }
+tracing = { workspace = true }
+
+sonic-rs = { workspace = true }
+ordered-float = "4.2.0"
+vrl = { workspace = true }
+humantime = "2.3.0"
+once_cell = "1.21.3"
+bytes = "1.10.1"
+http = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+tokio = { workspace = true }
+insta = { workspace = true }

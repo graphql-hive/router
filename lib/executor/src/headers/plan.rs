@@ -1,7 +1,7 @@
 use ahash::HashMap;
+use hive_router_internal::expressions::vrl::compiler::Program as VrlProgram;
 use http::{HeaderName, HeaderValue};
 use regex_automata::meta::Regex;
-use vrl::compiler::Program as VrlProgram;
 
 #[derive(Clone)]
 pub struct HeaderRulesPlan {

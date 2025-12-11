@@ -1,6 +1,6 @@
+use hive_router_internal::expressions::vrl::prelude::ExpressionError;
 use http::header::{InvalidHeaderName, InvalidHeaderValue};
 use regex_automata::meta::BuildError;
-use vrl::prelude::ExpressionError;
 
 #[derive(thiserror::Error, Debug)]
 pub enum HeaderRuleCompileError {

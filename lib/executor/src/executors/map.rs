@@ -10,6 +10,9 @@ use hive_router_config::{
     override_subgraph_urls::UrlOrExpression, traffic_shaping::DurationOrExpression,
     HiveRouterConfig,
 };
+use hive_router_internal::expressions::vrl::compiler::Program as VrlProgram;
+use hive_router_internal::expressions::vrl::core::Value as VrlValue;
+use hive_router_internal::expressions::{CompileExpression, DurationOrProgram, ExecutableProgram};
 use http::Uri;
 use hyper_tls::HttpsConnector;
 use hyper_util::{
@@ -18,8 +21,6 @@ use hyper_util::{
 };
 use tokio::sync::{OnceCell, Semaphore};
 use tracing::error;
-use vrl::compiler::Program as VrlProgram;
-use vrl::core::Value as VrlValue;
 
 use crate::{
     execution::client_request_details::ClientRequestDetails,
@@ -32,7 +33,6 @@ use crate::{
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClient},
     },
-    expressions::{CompileExpression, DurationOrProgram, ExecutableProgram},
     response::graphql_error::GraphQLError,
 };
 

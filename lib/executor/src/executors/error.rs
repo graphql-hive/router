@@ -1,4 +1,4 @@
-use vrl::prelude::ExpressionError;
+use hive_router_internal::expressions::vrl::prelude::ExpressionError;
 
 use crate::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 

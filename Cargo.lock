@@ -2034,6 +2034,7 @@ dependencies = [
  "graphql-tools",
  "hive-console-sdk",
  "hive-router-config",
+ "hive-router-internal",
  "hive-router-plan-executor",
  "hive-router-query-planner",
  "http",
@@ -2085,6 +2086,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "hive-router-internal"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "criterion",
+ "futures",
+ "hive-router-config",
+ "http",
+ "humantime",
+ "insta",
+ "once_cell",
+ "ordered-float",
+ "sonic-rs",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "vrl",
+]
+
+[[package]]
 name = "hive-router-plan-executor"
 version = "6.2.2"
 dependencies = [
@@ -2098,10 +2120,10 @@ dependencies = [
  "graphql-parser",
  "graphql-tools",
  "hive-router-config",
+ "hive-router-internal",
  "hive-router-query-planner",
  "http",
  "http-body-util",
- "humantime",
  "hyper",
  "hyper-tls",
  "hyper-util",
@@ -2109,8 +2131,6 @@ dependencies = [
  "insta",
  "itoa",
  "ntex-http",
- "once_cell",
- "ordered-float",
  "regex-automata",
  "ryu",
  "serde",
@@ -2120,7 +2140,6 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
- "vrl",
  "xxhash-rust",
 ]
 
