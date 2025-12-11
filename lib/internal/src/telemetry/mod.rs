@@ -47,10 +47,10 @@ impl<S> OpenTelemetry<S> {
         I: IdGenerator + 'static,
     {
         // TODO: allow to configure resource attributes through config
-        let mut resource_attributes: Vec<_> = Vec::new();
-
         // TODO: make `service.name` configurable
-        resource_attributes.push(KeyValue::new("service.name", config.service.name.clone()));
+        let resource_attributes: Vec<_> =
+            vec![KeyValue::new("service.name", config.service.name.clone())];
+
         let resource = Resource::builder()
             .with_attributes(resource_attributes)
             .build();

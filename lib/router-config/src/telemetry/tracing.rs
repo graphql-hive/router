@@ -7,6 +7,7 @@ use crate::primitives::value_or_expression::ValueOrExpression;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub struct TracingConfig {
     #[serde(default)]
     pub collect: TracingCollectConfig,
@@ -14,16 +15,6 @@ pub struct TracingConfig {
     pub exporters: Vec<TracingExporterConfig>,
     #[serde(default)]
     pub propagation: TracingPropagationConfig,
-}
-
-impl Default for TracingConfig {
-    fn default() -> Self {
-        Self {
-            collect: TracingCollectConfig::default(),
-            exporters: Default::default(),
-            propagation: TracingPropagationConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

@@ -17,7 +17,7 @@ pub struct Logger {
 }
 
 pub(super) fn build_logs_provider(
-    config: &TelemetryConfig,
+    _config: &TelemetryConfig,
     resource: Resource,
 ) -> Result<SdkLoggerProvider, TelemetryError> {
     let mut builder = SdkLoggerProvider::builder().with_resource(resource);

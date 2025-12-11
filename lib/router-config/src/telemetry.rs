@@ -7,20 +7,12 @@ pub mod tracing;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub struct TelemetryConfig {
     #[serde(default)]
     pub tracing: TracingConfig,
     #[serde(default)]
     pub service: ServiceConfig,
-}
-
-impl Default for TelemetryConfig {
-    fn default() -> Self {
-        Self {
-            tracing: TracingConfig::default(),
-            service: ServiceConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

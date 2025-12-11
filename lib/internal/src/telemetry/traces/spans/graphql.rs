@@ -14,6 +14,12 @@ impl std::ops::Deref for GraphQLOperationSpan {
     }
 }
 
+impl Default for GraphQLOperationSpan {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GraphQLOperationSpan {
     pub fn new() -> Self {
         let kind: &'static str = HiveSpanKind::GraphqlOperation.into();
@@ -56,6 +62,12 @@ impl std::ops::Deref for GraphQLParseSpan {
     }
 }
 
+impl Default for GraphQLParseSpan {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GraphQLParseSpan {
     pub fn new() -> Self {
         let kind: &'static str = HiveSpanKind::GraphqlParse.into();
@@ -72,7 +84,7 @@ impl GraphQLParseSpan {
     }
 
     pub fn record_cache_hit(&self, hit: bool) {
-        self.span.record("cache.hit", &hit);
+        self.span.record("cache.hit", hit);
     }
 }
 
@@ -85,6 +97,12 @@ impl std::ops::Deref for GraphQLValidateSpan {
     type Target = Span;
     fn deref(&self) -> &Self::Target {
         &self.span
+    }
+}
+
+impl Default for GraphQLValidateSpan {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -104,7 +122,7 @@ impl GraphQLValidateSpan {
     }
 
     pub fn record_cache_hit(&self, hit: bool) {
-        self.span.record("cache.hit", &hit);
+        self.span.record("cache.hit", hit);
     }
 }
 
@@ -117,6 +135,12 @@ impl std::ops::Deref for GraphQLNormalizeSpan {
     type Target = Span;
     fn deref(&self) -> &Self::Target {
         &self.span
+    }
+}
+
+impl Default for GraphQLNormalizeSpan {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -136,7 +160,7 @@ impl GraphQLNormalizeSpan {
     }
 
     pub fn record_cache_hit(&self, hit: bool) {
-        self.span.record("cache.hit", &hit);
+        self.span.record("cache.hit", hit);
     }
 }
 
@@ -149,6 +173,12 @@ impl std::ops::Deref for GraphQLPlanSpan {
     type Target = Span;
     fn deref(&self) -> &Self::Target {
         &self.span
+    }
+}
+
+impl Default for GraphQLPlanSpan {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -168,7 +198,7 @@ impl GraphQLPlanSpan {
     }
 
     pub fn record_cache_hit(&self, hit: bool) {
-        self.span.record("cache.hit", &hit);
+        self.span.record("cache.hit", hit);
     }
 }
 
@@ -181,6 +211,12 @@ impl std::ops::Deref for GraphQLAuthorizeSpan {
     type Target = Span;
     fn deref(&self) -> &Self::Target {
         &self.span
+    }
+}
+
+impl Default for GraphQLAuthorizeSpan {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -208,6 +244,12 @@ impl std::ops::Deref for GraphQLExecuteSpan {
     type Target = Span;
     fn deref(&self) -> &Self::Target {
         &self.span
+    }
+}
+
+impl Default for GraphQLExecuteSpan {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
