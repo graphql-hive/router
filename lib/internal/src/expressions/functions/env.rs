@@ -86,31 +86,19 @@ fn resolve_env(
     default_val: Option<Value>,
     treat_empty_as_unset: bool,
 ) -> Value {
-    match env_opt {
-        Some(v) => {
-            // VAR is set
-            if treat_empty_as_unset && v.is_empty() {
-                match default_val {
-                    Some(def) => def,
-                    None => Value::Null,
-                }
-            } else {
-                Value::from(v)
-            }
-        }
-        None => {
-            // VAR is unset
-            match default_val {
-                Some(def) => def,
-                None => Value::Null,
-            }
+    if let Some(v) = env_opt {
+        // The variable is set. Return its value unless it's empty and we should treat it as unset.
+        if !v.is_empty() || !treat_empty_as_unset {
+            return Value::from(v);
         }
     }
+
+    // The environment variable is not set, or it is empty and `treat_empty_as_unset` is true.
+    default_val.unwrap_or(Value::Null)
 }
 
 impl FunctionExpression for EnvFn {
     fn resolve(&self, ctx: &mut Context) -> Resolved {
-        // Resolve name
         let name_val = self.name.resolve(ctx)?;
         let name_str = name_val.as_str().ok_or_else(|| ExpressionError::Error {
             message: "env(:name) parameter must be a string".to_string(),
@@ -118,25 +106,27 @@ impl FunctionExpression for EnvFn {
             notes: vec![],
         })?;
 
-        let default_val = if let Some(expr) = &self.default {
-            Some(expr.resolve(ctx)?)
-        } else {
-            None
-        };
+        let default_val = self
+            .default
+            .as_ref()
+            .map(|expr| expr.resolve(ctx))
+            .transpose()?;
 
-        let treat_empty_as_unset = if let Some(expr) = &self.treat_empty_as_unset {
-            let flag_val = expr.resolve(ctx)?;
-            flag_val
-                .as_boolean()
-                .ok_or_else(|| ExpressionError::Error {
-                    message: "env(?, ?, :treat_empty_as_unset) parameter must be a boolean"
-                        .to_string(),
-                    labels: vec![],
-                    notes: vec![],
-                })?
-        } else {
-            false
-        };
+        let treat_empty_as_unset = self
+            .treat_empty_as_unset
+            .as_ref()
+            .map(|expr| {
+                expr.resolve(ctx)?
+                    .as_boolean()
+                    .ok_or_else(|| ExpressionError::Error {
+                        message: "env(?, ?, :treat_empty_as_unset) parameter must be a boolean"
+                            .to_string(),
+                        labels: vec![],
+                        notes: vec![],
+                    })
+            })
+            .transpose()?
+            .unwrap_or(false);
 
         // Read env var
         let env_opt = std_env::var(name_str.as_ref()).ok();

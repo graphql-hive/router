@@ -15,5 +15,5 @@ headers:
     response:
       - insert:
           name: "x-powered-by"
-          expression: env("SERVICE_NAME", "defaul-value")
+          expression: env("SERVICE_NAME", "default-value")
 ```
