@@ -1,6 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use graphql_parser::minify_query;
 use graphql_parser::query::{Definition, Document, OperationDefinition};
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLParseSpan, GraphQLSpanOperationIdentity, RecordOperationIdentity,
@@ -14,9 +15,16 @@ use crate::pipeline::execution_request::ExecutionRequest;
 use crate::shared_state::RouterSharedState;
 use tracing::{error, trace};
 
+#[derive(Clone)]
+pub struct ParseCacheEntry {
+    document: Arc<graphql_parser::query::Document<'static, String>>,
+    document_minified_string: Arc<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct GraphQLParserPayload {
     pub parsed_operation: Arc<Document<'static, String>>,
+    pub minified_document: Arc<String>,
     pub operation_name: Option<String>,
     pub operation_type: String,
     pub cache_key: u64,
@@ -47,7 +55,7 @@ pub async fn parse_operation_with_cache(
         hasher.finish()
     };
 
-    let parsed_operation = if let Some(cached) = app_state.parse_cache.get(&cache_key).await {
+    let parse_cache_item = if let Some(cached) = app_state.parse_cache.get(&cache_key).await {
         trace!("Found cached parsed operation for query");
         parse_span.record_cache_hit(true);
         cached
@@ -59,12 +67,25 @@ pub async fn parse_operation_with_cache(
         })?;
         trace!("sucessfully parsed GraphQL operation");
         let parsed_arc = Arc::new(parsed);
-        app_state
-            .parse_cache
-            .insert(cache_key, parsed_arc.clone())
-            .await;
-        parsed_arc
+        let minified_arc = {
+            Arc::new(minify_query(execution_params.query.clone()).map_err(|err| {
+                error!("Failed to minify parsed GraphQL operation: {}", err);
+                req.new_pipeline_error(PipelineErrorVariant::FailedToMinifyParsedOperation(
+                    err.to_string(),
+                ))
+            })?)
+        };
+
+        let entry = ParseCacheEntry {
+            document: parsed_arc,
+            document_minified_string: minified_arc,
+        };
+
+        app_state.parse_cache.insert(cache_key, entry.clone()).await;
+        entry
     };
+
+    let parsed_operation = parse_cache_item.document;
 
     let cache_key_string = cache_key.to_string();
 
@@ -96,6 +117,7 @@ pub async fn parse_operation_with_cache(
 
     let payload = GraphQLParserPayload {
         parsed_operation,
+        minified_document: parse_cache_item.document_minified_string,
         operation_name,
         operation_type: operation_type.to_string(),
         cache_key,

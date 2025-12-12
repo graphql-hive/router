@@ -1,5 +1,8 @@
 use std::{sync::Arc, time::Instant};
 
+use hive_router_internal::telemetry::traces::spans::graphql::{
+    GraphQLOperationSpan, RecordOperationIdentity,
+};
 use hive_router_plan_executor::execution::{
     client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
     plan::PlanExecutionOutput,
@@ -118,10 +121,16 @@ pub async fn execute_pipeline(
     schema_state: &Arc<SchemaState>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
     let start = Instant::now();
+    let operation_span = GraphQLOperationSpan::new();
+    let _span_guard = operation_span.span.enter();
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
     let mut execution_request = get_execution_request(req, body_bytes).await?;
     let parser_payload = parse_operation_with_cache(req, shared_state, &execution_request).await?;
+
+    operation_span.record_document(&parser_payload.minified_document);
+    operation_span.record_operation_identity((&parser_payload).into());
+
     validate_operation_with_cache(req, supergraph, schema_state, shared_state, &parser_payload)
         .await?;
 

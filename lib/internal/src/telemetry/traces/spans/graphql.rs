@@ -3,48 +3,6 @@ use tracing::{field::Empty, info_span, Span};
 use crate::telemetry::traces::spans::{kind::HiveSpanKind, TARGET_NAME};
 
 #[derive(Clone)]
-pub struct GraphQLOperationSpan {
-    pub span: Span,
-}
-
-impl std::ops::Deref for GraphQLOperationSpan {
-    type Target = Span;
-    fn deref(&self) -> &Self::Target {
-        &self.span
-    }
-}
-
-impl Default for GraphQLOperationSpan {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl GraphQLOperationSpan {
-    pub fn new() -> Self {
-        let kind: &'static str = HiveSpanKind::GraphqlOperation.into();
-        let span = info_span!(
-            target: TARGET_NAME,
-            "GraphQL Operation",
-            "hive.kind" = kind,
-            "otel.status_code" = Empty,
-            "otel.kind" = "Server",
-            "error.type" = Empty,
-            "graphql.operation.name" = Empty,
-            "graphql.operation.type" = Empty,
-            "graphql.operation.id" = Empty,
-            "graphql.document.hash" = Empty,
-            "graphql.document.text" = Empty,
-        );
-        GraphQLOperationSpan { span }
-    }
-
-    pub fn record_document(&self, document: &str) {
-        self.span.record("graphql.document.text", document);
-    }
-}
-
-#[derive(Clone)]
 pub struct GraphQLParseSpan {
     pub span: Span,
 }
@@ -189,7 +147,7 @@ impl GraphQLNormalizeSpan {
         let kind: &'static str = HiveSpanKind::GraphqlNormalize.into();
         let span = info_span!(
             target: TARGET_NAME,
-            "GraphQL - Normalize",
+            "GraphQL Document Normalization",
             "hive.kind" = kind,
             "otel.status_code" = Empty,
             "otel.kind" = "Internal",
@@ -231,7 +189,7 @@ impl GraphQLAuthorizeSpan {
         let kind: &'static str = HiveSpanKind::GraphqlAuthorize.into();
         let span = info_span!(
             target: TARGET_NAME,
-            "GraphQL - Authorize",
+            "GraphQL Document Authorization",
             "hive.kind" = kind,
             "otel.status_code" = Empty,
             "otel.kind" = "Internal",
@@ -329,6 +287,48 @@ impl GraphQLExecuteSpan {
 }
 
 #[derive(Clone)]
+pub struct GraphQLOperationSpan {
+    pub span: Span,
+}
+
+impl std::ops::Deref for GraphQLOperationSpan {
+    type Target = Span;
+    fn deref(&self) -> &Self::Target {
+        &self.span
+    }
+}
+
+impl Default for GraphQLOperationSpan {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GraphQLOperationSpan {
+    pub fn new() -> Self {
+        let kind: &'static str = HiveSpanKind::GraphqlOperation.into();
+        let span = info_span!(
+            target: TARGET_NAME,
+            "GraphQL Operation",
+            "hive.kind" = kind,
+            "otel.status_code" = Empty,
+            "otel.kind" = "Server",
+            "error.type" = Empty,
+            "graphql.operation.name" = Empty,
+            "graphql.operation.type" = Empty,
+            "graphql.operation.id" = Empty,
+            "graphql.document.hash" = Empty,
+            "graphql.document.text" = Empty,
+        );
+        GraphQLOperationSpan { span }
+    }
+
+    pub fn record_document(&self, document: &str) {
+        self.span.record("graphql.document.text", document);
+    }
+}
+
+#[derive(Clone)]
 pub struct GraphQLSubgraphOperationSpan {
     pub span: Span,
 }
@@ -348,7 +348,7 @@ impl GraphQLSubgraphOperationSpan {
             "GraphQL Subgraph Operation",
             "hive.kind" = kind,
             "otel.status_code" = Empty,
-            "otel.kind" = "Internal",
+            "otel.kind" = "Client",
             "error.type" = Empty,
             "hive.subgraph.name" = subgraph_name,
             "graphql.operation.name" = Empty,
@@ -398,6 +398,7 @@ macro_rules! impl_record_operation_identity {
 }
 
 impl_record_operation_identity!(
+    GraphQLOperationSpan,
     GraphQLParseSpan,
     GraphQLValidateSpan,
     GraphQLVariableCoercionSpan,
