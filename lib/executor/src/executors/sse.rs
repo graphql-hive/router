@@ -1,7 +1,7 @@
 use bytes::{Buf, Bytes};
 use futures::stream::BoxStream;
 use http_body_util::BodyExt;
-use hyper::body::Incoming;
+use hyper::body::Body;
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum ParseError {
@@ -11,7 +11,12 @@ pub enum ParseError {
     StreamReadError(String),
 }
 
-pub fn parse_to_stream(body_stream: Incoming) -> BoxStream<'static, Result<Bytes, ParseError>> {
+pub fn parse_to_stream<B>(body_stream: B) -> BoxStream<'static, Result<Bytes, ParseError>>
+where
+    B: Body + Send + Unpin + 'static,
+    B::Data: Buf + Send,
+    B::Error: std::fmt::Display + Send,
+{
     let stream = async_stream::stream! {
         let mut body = body_stream;
         let mut buffer = Vec::<u8>::new();
@@ -245,5 +250,31 @@ event: complete
         let events = parse(sse_data).expect("Should handle empty input");
 
         assert_eq!(events.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_parse_to_stream_chunked_events() {
+        use futures::StreamExt;
+        use http_body_util::StreamBody;
+        use hyper::body::Frame;
+
+        // chunked delivery where events are split across multiple chunks
+        let chunks: Vec<Result<Frame<Bytes>, std::convert::Infallible>> = vec![
+            Ok(Frame::data(Bytes::from("event: next\ndata: hel"))),
+            Ok(Frame::data(Bytes::from("lo world\n\neve"))),
+            Ok(Frame::data(Bytes::from("nt: complete\n\n"))),
+        ];
+
+        let body = StreamBody::new(futures::stream::iter(chunks));
+        let mut stream = parse_to_stream(body);
+
+        let first = stream.next().await;
+        assert!(first.is_some());
+        let first_result = first.unwrap();
+        assert!(first_result.is_ok());
+        assert_eq!(first_result.unwrap(), Bytes::from("hello world"));
+
+        let second = stream.next().await;
+        assert!(second.is_none());
     }
 }
