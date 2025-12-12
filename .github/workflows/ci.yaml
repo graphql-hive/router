@@ -232,7 +232,7 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action@34d7c956a59aed1bfebf31df77b8de55db9bbaaf # v2
         if: (!cancelled())
         with:
-          check_name: graphql-over-http
+          check_name: test / graphql-over-http
           comment_title: GraphQL over HTTP Audit Results
           comment_mode: off
           files: |
@@ -243,8 +243,8 @@ jobs:
         with:
           report_paths: "audits/reports/*.xml"
           group_reports: false
-          job_name: test / federation-audit
-          check_name: test / federation-audit
+          job_name: test / graphql-over-http
+          check_name: test / graphql-over-http
           annotate_only: true
           fail_on_failure: true
           fail_on_parse_error: true
@@ -288,7 +288,7 @@ jobs:
         if: (!cancelled())
         with:
           fail_on: "nothing"
-          check_name: federation-audit
+          check_name: test / federation-audit
           comment_title: Federation Audit Results
           comment_mode: off
           files: |
