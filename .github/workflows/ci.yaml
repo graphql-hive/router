@@ -220,8 +220,6 @@ jobs:
         uses: the-guild-org/shared-config/setup@v1
         with:
           node-version-file: .node-version
-      - run: npm install
-        working-directory: audits
       - run: npm run ci:test:graphql-over-http
         working-directory: audits
       - name: Publish Test Results for comparison
@@ -263,13 +261,11 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
+      - run: cargo build --package hive-router
       - name: setup node
         uses: the-guild-org/shared-config/setup@v1
         with:
           node-version-file: .node-version
-      - run: cargo build --package hive-router
-      - run: npm install
-        working-directory: audits
       - run: npm run test:federation-all
         working-directory: audits
         continue-on-error: true # continue even if the test fails

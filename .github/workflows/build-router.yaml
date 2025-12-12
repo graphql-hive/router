@@ -42,11 +42,13 @@ jobs:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: generate config schema
         run: cargo router-config
+      - name: setup node
+        uses: the-guild-org/shared-config/setup@v1
+        with:
+          node-version-file: .node-version
       - name: generate documentation
         working-directory: docs/generator
-        run: |
-          npm install
-          npm run generate
+        run: npm run generate
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         name: upload config artifact
         with:
