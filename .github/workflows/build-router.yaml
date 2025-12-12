@@ -30,6 +30,7 @@ env:
 
 jobs:
   config:
+    name: check / config
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'router/v'))
     steps:
