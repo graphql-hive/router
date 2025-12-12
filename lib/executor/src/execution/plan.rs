@@ -2,9 +2,15 @@ use std::collections::{BTreeSet, HashMap};
 
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
-use hive_router_query_planner::planner::plan_nodes::{
-    ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
-    QueryPlan, SequenceNode,
+use hive_router_internal::telemetry::traces::spans::graphql::{
+    GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan, RecordOperationIdentity,
+};
+use hive_router_query_planner::{
+    planner::plan_nodes::{
+        ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode,
+        PlanNode, QueryPlan, SequenceNode,
+    },
+    state::supergraph_state::OperationKind,
 };
 use http::HeaderMap;
 use serde::Deserialize;
@@ -691,6 +697,9 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         node: &FetchNode,
         representations: Option<Vec<u8>>,
     ) -> Result<ExecutionJob, PlanExecutionError> {
+        let span = GraphQLSubgraphOperationSpan::new(&node.service_name);
+        let _guard = span.span.enter();
+
         // TODO: We could optimize header map creation by caching them per service name
         let mut headers_map = HeaderMap::new();
         modify_subgraph_request_headers(
@@ -716,6 +725,16 @@ impl<'exec, 'req> Executor<'exec, 'req> {
             extensions: None,
         };
 
+        span.record_operation_identity(GraphQLSpanOperationIdentity {
+            name: subgraph_request.operation_name,
+            operation_type: match node.operation_kind {
+                Some(OperationKind::Query) | None => "query",
+                Some(OperationKind::Mutation) => "mutation",
+                Some(OperationKind::Subscription) => "subscription",
+            },
+            client_document_hash: &node.operation.hash.to_string(),
+        });
+
         if let Some(jwt_forwarding_plan) = &self.jwt_forwarding_plan {
             subgraph_request.add_request_extensions_field(
                 jwt_forwarding_plan.extension_field_name.clone(),
@@ -723,14 +742,16 @@ impl<'exec, 'req> Executor<'exec, 'req> {
             );
         }
 
+        let response = self
+            .executors
+            .execute(&node.service_name, subgraph_request, self.client_request)
+            .await
+            .into();
+
         Ok(ExecutionJob::Fetch(FetchJob {
             fetch_node_id: node.id,
             subgraph_name: node.service_name.clone(),
-            response: self
-                .executors
-                .execute(&node.service_name, subgraph_request, self.client_request)
-                .await
-                .into(),
+            response,
         }))
     }
 

@@ -405,5 +405,6 @@ impl_record_operation_identity!(
     GraphQLNormalizeSpan,
     GraphQLAuthorizeSpan,
     GraphQLPlanSpan,
-    GraphQLExecuteSpan
+    GraphQLExecuteSpan,
+    GraphQLSubgraphOperationSpan
 );
