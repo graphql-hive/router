@@ -5,7 +5,9 @@ use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, Pipel
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
 use crate::schema_state::{SchemaState, SupergraphData};
-use hive_router_internal::telemetry::traces::spans::graphql::GraphQLPlanSpan;
+use hive_router_internal::telemetry::traces::spans::graphql::{
+    GraphQLPlanSpan, RecordOperationIdentity,
+};
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
 use ntex::web::HttpRequest;
@@ -22,6 +24,8 @@ pub async fn plan_operation_with_cache(
 ) -> Result<Arc<QueryPlan>, PipelineError> {
     let plan_span = GraphQLPlanSpan::new();
     let _guard = plan_span.span.enter();
+    plan_span.record_operation_identity((&normalized_operation.operation_indentity).into());
+
     let stable_override_context =
         StableOverrideContext::new(&supergraph.planner.supergraph, request_override_context);
 

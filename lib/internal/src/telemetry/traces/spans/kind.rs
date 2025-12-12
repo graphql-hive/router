@@ -9,6 +9,8 @@ pub enum HiveSpanKind {
     GraphqlParse,
     #[strum(serialize = "graphql.validate")]
     GraphqlValidate,
+    #[strum(serialize = "graphql.variable_coercion")]
+    GraphqlVariableCoercion,
     #[strum(serialize = "graphql.authorize")]
     GraphqlAuthorize,
     #[strum(serialize = "graphql.normalize")]

@@ -5,7 +5,9 @@ use crate::pipeline::parser::GraphQLParserPayload;
 use crate::schema_state::{SchemaState, SupergraphData};
 use crate::shared_state::RouterSharedState;
 use graphql_tools::validation::validate::validate;
-use hive_router_internal::telemetry::traces::spans::graphql::GraphQLValidateSpan;
+use hive_router_internal::telemetry::traces::spans::graphql::{
+    GraphQLValidateSpan, RecordOperationIdentity,
+};
 use ntex::web::HttpRequest;
 use tracing::{error, trace};
 
@@ -20,6 +22,7 @@ pub async fn validate_operation_with_cache(
     let validate_span = GraphQLValidateSpan::new();
     let _guard = validate_span.span.enter();
     let consumer_schema_ast = &supergraph.planner.consumer_schema.document;
+    validate_span.record_operation_identity(parser_payload.into());
 
     let validation_result = match schema_state
         .validate_cache

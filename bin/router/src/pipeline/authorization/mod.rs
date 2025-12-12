@@ -34,7 +34,9 @@ use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use hive_router_query_planner::ast::operation::OperationDefinition;
 
-use hive_router_internal::telemetry::traces::spans::graphql::GraphQLAuthorizeSpan;
+use hive_router_internal::telemetry::traces::spans::graphql::{
+    GraphQLAuthorizeSpan, RecordOperationIdentity,
+};
 pub use metadata::{
     AuthorizationMetadata, AuthorizationMetadataError, ScopeId, ScopeInterner, UserAuthContext,
 };
@@ -104,6 +106,7 @@ pub fn enforce_operation_authorization(
 
     let span = GraphQLAuthorizeSpan::new();
     let _guard = span.span.enter();
+    span.record_operation_identity((&normalized_payload.operation_indentity).into());
 
     let reject_mode =
         router_config.authorization.directives.unauthorized.mode == UnauthorizedMode::Reject;
@@ -133,6 +136,7 @@ pub fn enforce_operation_authorization(
                         .clone(),
                     root_type_name: normalized_payload.root_type_name,
                     projection_plan: Arc::new(new_projection_plan),
+                    operation_indentity: normalized_payload.operation_indentity.clone(),
                 }),
                 errors,
             )

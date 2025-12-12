@@ -1,8 +1,10 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use graphql_parser::query::Document;
-use hive_router_internal::telemetry::traces::spans::graphql::GraphQLParseSpan;
+use graphql_parser::query::{Definition, Document, OperationDefinition};
+use hive_router_internal::telemetry::traces::spans::graphql::{
+    GraphQLParseSpan, GraphQLSpanOperationIdentity, RecordOperationIdentity,
+};
 use hive_router_query_planner::utils::parsing::safe_parse_operation;
 use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
@@ -15,7 +17,20 @@ use tracing::{error, trace};
 #[derive(Debug, Clone)]
 pub struct GraphQLParserPayload {
     pub parsed_operation: Arc<Document<'static, String>>,
+    pub operation_name: Option<String>,
+    pub operation_type: String,
     pub cache_key: u64,
+    pub cache_key_string: String,
+}
+
+impl<'a> From<&'a GraphQLParserPayload> for GraphQLSpanOperationIdentity<'a> {
+    fn from(op_id: &'a GraphQLParserPayload) -> Self {
+        GraphQLSpanOperationIdentity {
+            name: op_id.operation_name.as_deref(),
+            operation_type: &op_id.operation_type,
+            client_document_hash: &op_id.cache_key_string,
+        }
+    }
 }
 
 #[inline]
@@ -51,8 +66,43 @@ pub async fn parse_operation_with_cache(
         parsed_arc
     };
 
-    Ok(GraphQLParserPayload {
+    let cache_key_string = cache_key.to_string();
+
+    let (operation_type, operation_name) =
+        match parsed_operation
+            .definitions
+            .iter()
+            .find_map(|def| match def {
+                Definition::Operation(op) => Some(op),
+                _ => None,
+            }) {
+            Some(OperationDefinition::Query(def)) => {
+                ("query", def.name.as_ref().map(|s| s.to_string()))
+            }
+            Some(OperationDefinition::Mutation(def)) => {
+                ("mutation", def.name.as_ref().map(|s| s.to_string()))
+            }
+            Some(OperationDefinition::Subscription(def)) => {
+                ("subscription", def.name.as_ref().map(|s| s.to_string()))
+            }
+            Some(OperationDefinition::SelectionSet(_)) => ("query", None),
+            None => {
+                // This should not happen as we must have at least one operation definition
+                // but just in case, we handle it gracefully,
+                // the error will be caught later in the pipeline, specifically in the validation stage
+                ("query", None)
+            }
+        };
+
+    let payload = GraphQLParserPayload {
         parsed_operation,
+        operation_name,
+        operation_type: operation_type.to_string(),
         cache_key,
-    })
+        cache_key_string,
+    };
+
+    parse_span.record_operation_identity((&payload).into());
+
+    Ok(payload)
 }

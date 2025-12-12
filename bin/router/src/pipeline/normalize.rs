@@ -1,7 +1,9 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use hive_router_internal::telemetry::traces::spans::graphql::GraphQLNormalizeSpan;
+use hive_router_internal::telemetry::traces::spans::graphql::{
+    GraphQLNormalizeSpan, GraphQLSpanOperationIdentity, RecordOperationIdentity,
+};
 use hive_router_plan_executor::introspection::partition::partition_operation;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_query_planner::ast::normalization::normalize_operation;
@@ -22,6 +24,25 @@ pub struct GraphQLNormalizationPayload {
     pub operation_for_introspection: Option<Arc<OperationDefinition>>,
     pub root_type_name: &'static str,
     pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
+    pub operation_indentity: OperationIdentity,
+}
+
+#[derive(Debug, Clone)]
+pub struct OperationIdentity {
+    pub name: Option<String>,
+    pub operation_type: String,
+    /// Hash of the original document sent to the router, by the client.
+    pub client_document_hash: String,
+}
+
+impl<'a> From<&'a OperationIdentity> for GraphQLSpanOperationIdentity<'a> {
+    fn from(op_id: &'a OperationIdentity) -> Self {
+        GraphQLSpanOperationIdentity {
+            name: op_id.name.as_deref(),
+            operation_type: &op_id.operation_type,
+            client_document_hash: &op_id.client_document_hash,
+        }
+    }
 }
 
 #[inline]
@@ -34,6 +55,8 @@ pub async fn normalize_request_with_cache(
 ) -> Result<Arc<GraphQLNormalizationPayload>, PipelineError> {
     let normalize_span = GraphQLNormalizeSpan::new();
     let _guard = normalize_span.span.enter();
+    normalize_span.record_operation_identity(parser_payload.into());
+
     let cache_key = match &execution_params.operation_name {
         Some(operation_name) => {
             let mut hasher = Xxh3::new();
@@ -81,6 +104,11 @@ pub async fn normalize_request_with_cache(
                         operation_for_introspection: partitioned_operation
                             .introspection_operation
                             .map(Arc::new),
+                        operation_indentity: OperationIdentity {
+                            name: doc.operation_name.clone(),
+                            operation_type: parser_payload.operation_type.clone(),
+                            client_document_hash: parser_payload.cache_key_string.clone(),
+                        },
                     };
                     let payload_arc = Arc::new(payload);
                     schema_state

@@ -7,7 +7,9 @@ use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, Pipel
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
-use hive_router_internal::telemetry::traces::spans::graphql::GraphQLExecuteSpan;
+use hive_router_internal::telemetry::traces::spans::graphql::{
+    GraphQLExecuteSpan, RecordOperationIdentity,
+};
 use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
@@ -96,6 +98,11 @@ pub async fn execute_plan(
         None
     };
 
+    let execute_span = GraphQLExecuteSpan::new();
+    execute_span.record_operation_identity(
+        (&planned_request.normalized_payload.operation_indentity).into(),
+    );
+
     execute_query_plan(QueryPlanExecutionContext {
         query_plan: planned_request.query_plan_payload,
         projection_plan: &planned_request.normalized_payload.projection_plan,
@@ -113,7 +120,7 @@ pub async fn execute_plan(
             .map(|e| e.into())
             .collect(),
     })
-    .instrument(GraphQLExecuteSpan::new().span)
+    .instrument(execute_span.span)
     .await
     .map_err(|err| {
         tracing::error!("Failed to execute query plan: {}", err);
