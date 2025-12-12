@@ -1,5 +1,8 @@
 use std::{sync::Arc, time::Instant};
 
+use hive_router_internal::telemetry::traces::spans::graphql::{
+    GraphQLOperationSpan, RecordOperationIdentity,
+};
 use hive_router_plan_executor::execution::{
     client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
     plan::PlanExecutionOutput,
@@ -12,11 +15,12 @@ use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
 };
+use tracing::Instrument;
 
 use crate::{
     jwt::context::JwtRequestContext,
     pipeline::{
-        authorization::{enforce_operation_authorization, AuthorizationDecision},
+        authorization::enforce_operation_authorization,
         coerce_variables::coerce_request_variables,
         csrf_prevention::perform_csrf_prevention,
         error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant},
@@ -26,7 +30,7 @@ use crate::{
             RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON,
             APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, TEXT_HTML_CONTENT_TYPE,
         },
-        normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
+        normalize::normalize_request_with_cache,
         parser::parse_operation_with_cache,
         progressive_override::request_override_context,
         query_plan::plan_operation_with_cache,
@@ -118,134 +122,120 @@ pub async fn execute_pipeline(
     schema_state: &Arc<SchemaState>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
     let start = Instant::now();
-    perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
+    let operation_span = GraphQLOperationSpan::new();
 
-    let mut execution_request = get_execution_request(req, body_bytes).await?;
-    let parser_payload = parse_operation_with_cache(req, shared_state, &execution_request).await?;
-    validate_operation_with_cache(req, supergraph, schema_state, shared_state, &parser_payload)
+    async {
+        perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
+
+        let mut execution_request = get_execution_request(req, body_bytes).await?;
+        let parser_payload =
+            parse_operation_with_cache(req, shared_state, &execution_request).await?;
+
+        operation_span.record_document(&parser_payload.minified_document);
+        operation_span.record_operation_identity((&parser_payload).into());
+
+        validate_operation_with_cache(req, supergraph, schema_state, shared_state, &parser_payload)
+            .await?;
+
+        let normalize_payload = normalize_request_with_cache(
+            req,
+            supergraph,
+            schema_state,
+            &execution_request,
+            &parser_payload,
+        )
+        .await?;
+        let variable_payload =
+            coerce_request_variables(req, supergraph, &mut execution_request, &normalize_payload)?;
+
+        let query_plan_cancellation_token =
+            CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
+
+        let req_extensions = req.extensions();
+        let jwt_context = req_extensions.get::<JwtRequestContext>();
+        let jwt_request_details = match jwt_context {
+            Some(jwt_context) => JwtRequestDetails::Authenticated {
+                token: jwt_context.token_raw.as_str(),
+                prefix: jwt_context.token_prefix.as_deref(),
+                scopes: jwt_context.extract_scopes(),
+                claims: &jwt_context.get_claims_value().map_err(|e| {
+                    req.new_pipeline_error(PipelineErrorVariant::JwtForwardingError(e))
+                })?,
+            },
+            None => JwtRequestDetails::Unauthenticated,
+        };
+
+        let client_request_details = ClientRequestDetails {
+            method: req.method(),
+            url: req.uri(),
+            headers: req.headers(),
+            operation: OperationDetails {
+                name: normalize_payload.operation_for_plan.name.as_deref(),
+                kind: match normalize_payload.operation_for_plan.operation_kind {
+                    Some(OperationKind::Query) => "query",
+                    Some(OperationKind::Mutation) => "mutation",
+                    Some(OperationKind::Subscription) => "subscription",
+                    None => "query",
+                },
+                query: &execution_request.query,
+            },
+            jwt: &jwt_request_details,
+        };
+
+        let progressive_override_ctx = request_override_context(
+            &shared_state.override_labels_evaluator,
+            &client_request_details,
+        )
+        .map_err(|error| {
+            req.new_pipeline_error(PipelineErrorVariant::LabelEvaluationError(error))
+        })?;
+
+        let (normalize_payload, authorization_errors) = enforce_operation_authorization(
+            req,
+            &shared_state.router_config,
+            &normalize_payload,
+            &supergraph.authorization,
+            &supergraph.metadata,
+            &variable_payload,
+            &jwt_request_details,
+        )?;
+
+        let query_plan_payload = plan_operation_with_cache(
+            req,
+            supergraph,
+            schema_state,
+            &normalize_payload,
+            &progressive_override_ctx,
+            &query_plan_cancellation_token,
+        )
         .await?;
 
-    let normalize_payload = normalize_request_with_cache(
-        req,
-        supergraph,
-        schema_state,
-        &execution_request,
-        &parser_payload,
-    )
-    .await?;
-    let variable_payload =
-        coerce_request_variables(req, supergraph, &mut execution_request, &normalize_payload)?;
+        let planned_request = PlannedRequest {
+            normalized_payload: &normalize_payload,
+            query_plan_payload: &query_plan_payload,
+            variable_payload: &variable_payload,
+            client_request_details: &client_request_details,
+            authorization_errors: &authorization_errors,
+        };
+        let execution_result =
+            execute_plan(req, supergraph, shared_state, &planned_request).await?;
 
-    let query_plan_cancellation_token =
-        CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
-
-    let req_extensions = req.extensions();
-    let jwt_context = req_extensions.get::<JwtRequestContext>();
-    let jwt_request_details = match jwt_context {
-        Some(jwt_context) => JwtRequestDetails::Authenticated {
-            token: jwt_context.token_raw.as_str(),
-            prefix: jwt_context.token_prefix.as_deref(),
-            scopes: jwt_context.extract_scopes(),
-            claims: &jwt_context
-                .get_claims_value()
-                .map_err(|e| req.new_pipeline_error(PipelineErrorVariant::JwtForwardingError(e)))?,
-        },
-        None => JwtRequestDetails::Unauthenticated,
-    };
-
-    let client_request_details = ClientRequestDetails {
-        method: req.method(),
-        url: req.uri(),
-        headers: req.headers(),
-        operation: OperationDetails {
-            name: normalize_payload.operation_for_plan.name.as_deref(),
-            kind: match normalize_payload.operation_for_plan.operation_kind {
-                Some(OperationKind::Query) => "query",
-                Some(OperationKind::Mutation) => "mutation",
-                Some(OperationKind::Subscription) => "subscription",
-                None => "query",
-            },
-            query: &execution_request.query,
-        },
-        jwt: &jwt_request_details,
-    };
-
-    let progressive_override_ctx = request_override_context(
-        &shared_state.override_labels_evaluator,
-        &client_request_details,
-    )
-    .map_err(|error| req.new_pipeline_error(PipelineErrorVariant::LabelEvaluationError(error)))?;
-
-    let decision = enforce_operation_authorization(
-        &shared_state.router_config,
-        &normalize_payload,
-        &supergraph.authorization,
-        &supergraph.metadata,
-        &variable_payload,
-        &jwt_request_details,
-    );
-
-    let (normalize_payload, authorization_errors) = match decision {
-        AuthorizationDecision::NoChange => (normalize_payload.clone(), vec![]),
-        AuthorizationDecision::Modified {
-            new_operation_definition,
-            new_projection_plan,
-            errors,
-        } => {
-            (
-                Arc::new(GraphQLNormalizationPayload {
-                    operation_for_plan: Arc::new(new_operation_definition),
-                    // These are cheap Arc clones
-                    operation_for_introspection: normalize_payload
-                        .operation_for_introspection
-                        .clone(),
-                    root_type_name: normalize_payload.root_type_name,
-                    projection_plan: Arc::new(new_projection_plan),
-                }),
-                errors,
-            )
+        if shared_state.router_config.usage_reporting.enabled {
+            if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+                usage_reporting::collect_usage_report(
+                    supergraph.supergraph_schema.clone(),
+                    start.elapsed(),
+                    req,
+                    &client_request_details,
+                    hive_usage_agent,
+                    &shared_state.router_config.usage_reporting,
+                    &execution_result,
+                );
+            }
         }
-        AuthorizationDecision::Reject { errors } => {
-            return Err(
-                req.new_pipeline_error(PipelineErrorVariant::AuthorizationFailed(
-                    errors.iter().map(|e| e.into()).collect(),
-                )),
-            )
-        }
-    };
 
-    let query_plan_payload = plan_operation_with_cache(
-        req,
-        supergraph,
-        schema_state,
-        &normalize_payload,
-        &progressive_override_ctx,
-        &query_plan_cancellation_token,
-    )
-    .await?;
-
-    let planned_request = PlannedRequest {
-        normalized_payload: &normalize_payload,
-        query_plan_payload: &query_plan_payload,
-        variable_payload: &variable_payload,
-        client_request_details: &client_request_details,
-        authorization_errors: &authorization_errors,
-    };
-    let execution_result = execute_plan(req, supergraph, shared_state, &planned_request).await?;
-
-    if shared_state.router_config.usage_reporting.enabled {
-        if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
-            usage_reporting::collect_usage_report(
-                supergraph.supergraph_schema.clone(),
-                start.elapsed(),
-                req,
-                &client_request_details,
-                hive_usage_agent,
-                &shared_state.router_config.usage_reporting,
-                &execution_result,
-            );
-        }
+        Ok(execution_result)
     }
-
-    Ok(execution_result)
+    .instrument(operation_span.clone())
+    .await
 }
