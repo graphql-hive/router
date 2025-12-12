@@ -41,15 +41,21 @@ impl Function for Env {
                 title: "Get an environment variable",
                 source: r#"env("OTEL_EXPORTER_OTLP_ENDPOINT")"#,
                 result: Ok("http://collector:4317"),
+                file: "get_env.vrl",
+                line: 1,
             },
             Example {
                 title: "Default when unset",
                 source: r#"env("MISSING_VAR", "fallback")"#,
+                file: "default_env.vrl",
+                line: 1,
                 result: Ok("fallback"),
             },
             Example {
                 title: "Default when unset or empty",
                 source: r#"env("MAYBE_EMPTY", "fallback", true)"#,
+                file: "default_empty_env.vrl",
+                line: 1,
                 result: Ok("fallback"),
             },
         ]
