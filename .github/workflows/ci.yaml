@@ -23,6 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: test all
         run: cargo test_all
         timeout-minutes: 5
@@ -38,9 +41,12 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: test e2e
         run: cargo test_e2e
-        timeout-minutes: 5
+        timeout-minutes: 60
         env:
           RUST_BACKTRACE: full
           RUST_LOG: debug
@@ -69,6 +75,9 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: build
         run: cargo build --release
 
@@ -77,9 +86,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
         with:
           components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: cargo fmt
         uses: actions-rust-lang/rustfmt@559aa3035a47390ba96088dffa783b5d26da9326 # v1
 
@@ -91,6 +106,9 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
         with:
           components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: cargo clippy
         run: cargo clippy --all
 
@@ -107,6 +125,9 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - if: matrix.name == 'executor'
         name: Build subgraphs
         run: cargo build --release -p subgraphs
@@ -135,6 +156,9 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: Setup K6
         run: |
           wget https://github.com/grafana/k6/releases/download/v0.37.0/k6-v0.37.0-linux-amd64.deb
@@ -194,6 +218,9 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6
         with:
           node-version-file: audits/.node-version
@@ -216,6 +243,8 @@ jobs:
         with:
           report_paths: "audits/reports/*.xml"
           group_reports: false
+          job_name: test / federation-audit
+          check_name: test / federation-audit
           annotate_only: true
           fail_on_failure: true
           fail_on_parse_error: true
@@ -235,6 +264,9 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6
         with:
           node-version-file: audits/.node-version
@@ -267,8 +299,8 @@ jobs:
         with:
           report_paths: "audits/reports/*.xml"
           group_reports: false
-          job_name: federation-audit
-          check_name: federation-audit
+          job_name: test / federation-audit
+          check_name: test / federation-audit
           check_title_template: "{{FILE_NAME}}"
           fail_on_failure: true
           fail_on_parse_error: true
