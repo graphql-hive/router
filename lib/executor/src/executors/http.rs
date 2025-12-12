@@ -5,14 +5,16 @@ use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
 use dashmap::DashMap;
 use futures::TryFutureExt;
+use hive_router_internal::telemetry::otel::opentelemetry::global::get_text_map_propagator;
+use hive_router_internal::telemetry::otel::opentelemetry::propagation::Injector;
+use hive_router_internal::telemetry::otel::tracing_opentelemetry::OpenTelemetrySpanExt;
 use hive_router_internal::telemetry::traces::spans::http_request::HttpClientRequestSpanBuilder;
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
 
 use bytes::{BufMut, Bytes, BytesMut};
-use http::HeaderMap;
-use http::HeaderValue;
+use http::{HeaderMap, HeaderName, HeaderValue};
 use http_body_util::BodyExt;
 use http_body_util::Full;
 use hyper::Version;
@@ -154,8 +156,15 @@ impl HTTPSubgraphExecutor {
 
         debug!("making http request to {}", self.endpoint.to_string());
 
-        let http_request_span = HttpClientRequestSpanBuilder::from_request(&req).build();
+        let parent_context = tracing::Span::current().context();
 
+        // TODO: let's decide at some point if the tracing headers
+        //       should be part of the fingerprint or not.
+        get_text_map_propagator(|propagator| {
+            propagator.inject_context(&parent_context, &mut TraceHeaderInjector(req.headers_mut()));
+        });
+
+        let http_request_span = HttpClientRequestSpanBuilder::from_request(&req).build();
         let span = http_request_span.span.clone();
         async {
             let res_fut = self.http_client.request(req).map_err(|e| {
@@ -234,7 +243,6 @@ impl HTTPSubgraphExecutor {
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
-    #[tracing::instrument(level = "trace", skip_all, fields(subgraph_name = %self.subgraph_name))]
     async fn execute<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
@@ -315,5 +323,21 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 }
             }
         }
+    }
+}
+
+struct TraceHeaderInjector<'a>(pub &'a mut HeaderMap);
+
+impl<'a> Injector for TraceHeaderInjector<'a> {
+    fn set(&mut self, key: &str, value: String) {
+        let Ok(name) = HeaderName::from_bytes(key.as_bytes()) else {
+            return;
+        };
+
+        let Ok(val) = HeaderValue::from_str(&value) else {
+            return;
+        };
+
+        self.0.insert(name, val);
     }
 }

@@ -52,6 +52,8 @@ opentelemetry_sdk = { workspace = true, features = [
     "spec_unstable_metrics_views",
     "experimental_trace_batch_span_processor_with_async_runtime"
 ] }
+opentelemetry-jaeger-propagator = { workspace = true }
+opentelemetry-zipkin = { workspace = true }
 tracing = { workspace = true }
 tracing-opentelemetry.workspace = true
 tracing-subscriber = { workspace = true }

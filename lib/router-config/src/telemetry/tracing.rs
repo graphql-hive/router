@@ -212,6 +212,10 @@ pub struct TracingPropagationConfig {
     pub trace_context: bool,
     #[serde(default = "default_propagation_baggage")]
     pub baggage: bool,
+    #[serde(default = "default_propagation_b3")]
+    pub b3: bool,
+    #[serde(default = "default_propagation_jaeger")]
+    pub jaeger: bool,
 }
 
 impl Default for TracingPropagationConfig {
@@ -219,14 +223,22 @@ impl Default for TracingPropagationConfig {
         Self {
             trace_context: default_propagation_trace_context(),
             baggage: default_propagation_baggage(),
+            b3: default_propagation_b3(),
+            jaeger: default_propagation_jaeger(),
         }
     }
 }
 
 fn default_propagation_trace_context() -> bool {
-    false
+    true
 }
 fn default_propagation_baggage() -> bool {
+    false
+}
+fn default_propagation_b3() -> bool {
+    false
+}
+fn default_propagation_jaeger() -> bool {
     false
 }
 

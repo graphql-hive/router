@@ -9,11 +9,13 @@ use hive_router_internal::telemetry::{
             global::{set_text_map_propagator, set_tracer_provider},
             propagation::{Extractor, TextMapCompositePropagator, TextMapPropagator},
         },
+        opentelemetry_jaeger_propagator::Propagator as JaegerPropagator,
         opentelemetry_sdk::{
             logs::SdkLoggerProvider,
             propagation::{BaggagePropagator, TraceContextPropagator},
             trace::{RandomIdGenerator, SdkTracerProvider},
         },
+        opentelemetry_zipkin::Propagator as B3Propagator,
     },
     OpenTelemetry,
 };
@@ -44,6 +46,11 @@ pub(crate) struct OpenTelemetryProviders {
     pub logger: Option<SdkLoggerProvider>,
     pub tracer: Option<SdkTracerProvider>,
 }
+
+// # https://www.jaegertracing.io/ (compliant with opentracing)
+//       jaeger: false
+//       # https://github.com/openzipkin/b3-propagation (zipkin)
+//       b3: false
 
 impl OpenTelemetryProviders {
     pub(crate) async fn graceful_shutdown(&self) {
@@ -78,7 +85,7 @@ pub(crate) fn init(config: &HiveRouterConfig) -> OpenTelemetryProviders {
     let OpenTelemetry { tracer, logger } =
         OpenTelemetry::from_config(&config.telemetry, id_generator).unwrap();
 
-    if let Some(ref tracer) = tracer {
+    if let Some(tracer) = &tracer {
         set_tracer_provider(tracer.provider.clone());
     }
 
@@ -138,9 +145,17 @@ fn init_propagators(config: &TracingPropagationConfig) {
         propagators.push(Box::new(BaggagePropagator::new()))
     }
 
-    if !propagators.is_empty() {
-        let propagator = TextMapCompositePropagator::new(propagators);
-
-        set_text_map_propagator(propagator);
+    if config.b3 {
+        propagators.push(Box::new(B3Propagator::new()));
     }
+
+    if config.jaeger {
+        propagators.push(Box::new(JaegerPropagator::new()));
+    }
+
+    if propagators.is_empty() {
+        return;
+    }
+
+    set_text_map_propagator(TextMapCompositePropagator::new(propagators));
 }
