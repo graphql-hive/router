@@ -16,6 +16,7 @@ lazy_static! {
     pub static ref TEXT_HTML_CONTENT_TYPE: &'static str = "text/html";
     pub static ref APPLICATION_GRAPHQL_RESPONSE_JSON: HeaderValue =
         HeaderValue::from_static(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
+    pub static ref TEXT_EVENT_STREAM: &'static str = "text/event-stream";
 }
 
 pub trait RequestAccepts {
