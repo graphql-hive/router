@@ -30,6 +30,7 @@ env:
 
 jobs:
   config:
+    name: check / config
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'router/v'))
     steps:
@@ -61,7 +62,7 @@ jobs:
         run: git diff --exit-code ./docs/README.md
 
   binary:
-    name: ${{ matrix.name }}
+    name: publish / binary / ${{ matrix.name }}
     if: |
       github.event_name == 'push' || github.event_name == 'pull_request' || (
         github.event_name == 'release' &&
@@ -154,7 +155,7 @@ jobs:
 
   # NOTE: would publish from release.yaml but we need the artifacts. doing it from here is simpler
   npm-publish:
-    name: publish node addon
+    name: publish / node-addon
     runs-on: ubuntu-latest
     needs:
       - binary
@@ -196,6 +197,7 @@ jobs:
           tag: ${{ github.ref }}
 
   docker:
+    name: build / docker
     runs-on: ubuntu-latest
     needs:
       - binary
@@ -274,7 +276,7 @@ jobs:
             </details>
 
   test-docker-image:
-    name: test docker image
+    name: test / docker
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
     needs:

@@ -17,14 +17,14 @@ permissions:
   pull-requests: write
 
 jobs:
-  test:
-    name: cargo test
+  unit:
+    name: test / unit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - run: cargo test_all
-      - run: cargo test_e2e
+      - name: test all
+        run: cargo test_all
         timeout-minutes: 5
         env:
           RUST_BACKTRACE: full
@@ -32,23 +32,48 @@ jobs:
       - uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6
         with:
           node-version-file: lib/node-addon/.node-version
-      - name: node-addon test
-        working-directory: lib/node-addon
-        run: |
-          npm ci
-          npm run build:debug
-          npm test
-
-  build-release:
-    name: cargo build
+  e2e:
+    name: test / e2e
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - run: cargo build --release
+      - name: test e2e
+        run: cargo test_e2e
+        timeout-minutes: 5
+        env:
+          RUST_BACKTRACE: full
+          RUST_LOG: debug
+  
+  node-addon-test:
+    name: test / node-addon
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6
+        with:
+          node-version-file: lib/node-addon/.node-version
+      - name: install dependencies
+        run: npm ci
+        working-directory: lib/node-addon
+      - name: build
+        run: npm run build:debug
+        working-directory: lib/node-addon
+      - name: test
+        working-directory: lib/node-addon
+        run: npm test
+
+  build:
+    name: check / build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
+      - name: build
+        run: cargo build --release
 
   fmt:
-    name: fmt
+    name: check / fmt
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
@@ -59,7 +84,7 @@ jobs:
         uses: actions-rust-lang/rustfmt@559aa3035a47390ba96088dffa783b5d26da9326 # v1
 
   clippy:
-    name: clippy
+    name: check / clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
@@ -164,6 +189,7 @@ jobs:
           ./bench/ci-detect-regression.sh
 
   graphql-over-http:
+    name: test / graphql-over-http
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
@@ -204,6 +230,7 @@ jobs:
           exclude_sources: /lib/,/audits/node_modules/
 
   federation-audit:
+    name: test / federation-audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
