@@ -50,7 +50,7 @@ regex-automata = { workspace = true }
 
 mimalloc = { version = "0.1.48", features = ["v3"] }
 moka = { version = "0.12.10", features = ["future"] }
-hive-console-sdk = "0.2.1"
+hive-console-sdk = "0.2.2"
 ulid = "1.2.1"
 tokio-util = "0.7.16"
 cookie = "0.18.1"
