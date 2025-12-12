@@ -174,21 +174,23 @@ impl<E: SpanExporter> HttpCompatibilityExporter<E> {
                     self.process_span_spec_and_deprecated(span, get_server_deprecated_key);
                 }
             },
-            HiveSpanKind::HttpClientRequest => match self.mode {
-                SpansSemanticConventionsMode::SpecCompliant => {
-                    self.process_span_spec_compliant(span, &self.client_deprecated_keys);
+            HiveSpanKind::HttpClientRequest | HiveSpanKind::HttpInflightRequest => {
+                match self.mode {
+                    SpansSemanticConventionsMode::SpecCompliant => {
+                        self.process_span_spec_compliant(span, &self.client_deprecated_keys);
+                    }
+                    SpansSemanticConventionsMode::Deprecated => {
+                        self.process_span_deprecated_only(
+                            span,
+                            &self.client_deprecated_keys,
+                            get_client_deprecated_key,
+                        );
+                    }
+                    SpansSemanticConventionsMode::SpecAndDeprecated => {
+                        self.process_span_spec_and_deprecated(span, get_client_deprecated_key);
+                    }
                 }
-                SpansSemanticConventionsMode::Deprecated => {
-                    self.process_span_deprecated_only(
-                        span,
-                        &self.client_deprecated_keys,
-                        get_client_deprecated_key,
-                    );
-                }
-                SpansSemanticConventionsMode::SpecAndDeprecated => {
-                    self.process_span_spec_and_deprecated(span, get_client_deprecated_key);
-                }
-            },
+            }
             // Other span kinds do not need semantic convention processing.
             _ => {}
         };

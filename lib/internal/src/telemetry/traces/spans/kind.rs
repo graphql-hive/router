@@ -5,6 +5,8 @@ pub enum HiveSpanKind {
     HttpServerRequest,
     #[strum(serialize = "http.client")]
     HttpClientRequest,
+    #[strum(serialize = "http.inflight")]
+    HttpInflightRequest,
     #[strum(serialize = "graphql.parse")]
     GraphqlParse,
     #[strum(serialize = "graphql.validate")]

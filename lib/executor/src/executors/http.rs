@@ -8,7 +8,9 @@ use futures::TryFutureExt;
 use hive_router_internal::telemetry::otel::opentelemetry::global::get_text_map_propagator;
 use hive_router_internal::telemetry::otel::opentelemetry::propagation::Injector;
 use hive_router_internal::telemetry::otel::tracing_opentelemetry::OpenTelemetrySpanExt;
-use hive_router_internal::telemetry::traces::spans::http_request::HttpClientRequestSpanBuilder;
+use hive_router_internal::telemetry::traces::spans::http_request::{
+    HttpClientRequestSpanBuilder, HttpInflightRequestSpanBuilder,
+};
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
@@ -284,45 +286,67 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         }
 
         let fingerprint = request_fingerprint(&http::Method::POST, &self.endpoint, &headers, &body);
+        let span = HttpInflightRequestSpanBuilder::new(
+            &http::Method::POST,
+            &self.endpoint,
+            &headers,
+            &body,
+            fingerprint,
+        )
+        .build();
 
-        // Clone the cell from the map, dropping the lock from the DashMap immediately.
-        // Prevents any deadlocks.
-        let cell = self
-            .in_flight_requests
-            .entry(fingerprint)
-            .or_default()
-            .value()
-            .clone();
+        async {
+            // Clone the cell from the map, dropping the lock from the DashMap immediately.
+            // Prevents any deadlocks.
+            let cell = self
+                .in_flight_requests
+                .entry(fingerprint)
+                .or_default()
+                .value()
+                .clone();
 
-        let response_result = cell
-            .get_or_try_init(|| async {
-                let res = {
-                    // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
-                    // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
-                    let _permit = self.semaphore.acquire().await.unwrap();
-                    self._send_request(body, headers, timeout).await
-                };
-                // It's important to remove the entry from the map before returning the result.
-                // This ensures that once the OnceCell is set, no future requests can join it.
-                // The cache is for the lifetime of the in-flight request only.
-                self.in_flight_requests.remove(&fingerprint);
-                res
-            })
-            .await;
+            // Mark it as a joiner span by default.
+            let mut is_leader = false;
+            let response_result = cell
+                .get_or_try_init(|| async {
+                    // Override the span to be a leader span for this request.
+                    is_leader = true;
+                    let res = {
+                        // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
+                        // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
+                        let _permit = self.semaphore.acquire().await.unwrap();
+                        self._send_request(body, headers, timeout).await
+                    };
+                    // It's important to remove the entry from the map before returning the result.
+                    // This ensures that once the OnceCell is set, no future requests can join it.
+                    // The cache is for the lifetime of the in-flight request only.
+                    self.in_flight_requests.remove(&fingerprint);
+                    res
+                })
+                .await;
 
-        match response_result {
-            Ok(shared_response) => HttpExecutionResponse {
-                body: shared_response.body.clone(),
-                headers: shared_response.headers.clone(),
-            },
-            Err(e) => {
-                self.log_error(&e);
-                HttpExecutionResponse {
-                    body: self.error_to_graphql_bytes(e.clone()),
-                    headers: Default::default(),
+            if is_leader {
+                span.record_as_leader();
+            } else {
+                span.record_as_joiner();
+            }
+
+            match response_result {
+                Ok(shared_response) => HttpExecutionResponse {
+                    body: shared_response.body.clone(),
+                    headers: shared_response.headers.clone(),
+                },
+                Err(e) => {
+                    self.log_error(&e);
+                    HttpExecutionResponse {
+                        body: self.error_to_graphql_bytes(e.clone()),
+                        headers: Default::default(),
+                    }
                 }
             }
         }
+        .instrument(span.clone())
+        .await
     }
 }
 
