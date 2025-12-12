@@ -12,7 +12,7 @@ on:
 
 jobs:
   check:
-    name: find-pending-releases
+    name: check / find-pending-releases
     runs-on: ubuntu-latest
     outputs:
       crates_to_publish: ${{ steps.check_crates.outputs.crates_to_publish }}
@@ -28,6 +28,7 @@ jobs:
           ./.github/release-crates-check.sh
 
   publish-crates:
+    name: publish / crates
     runs-on: ubuntu-latest
     needs:
       - check
