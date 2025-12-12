@@ -439,6 +439,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         }
 
         let stream = sse::parse_to_stream(body_stream);
+        let endpoint = self.endpoint.to_string();
 
         Box::pin(async_stream::stream! {
             for await result in stream {
@@ -450,12 +451,32 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                         };
                     }
                     Err(e) => {
-                        let error_json = format!(
-                            r#"{{"errors":[{{"message":"SSE parse error: {}","extensions":{{"subgraph":"{}"}}}}]}}"#,
-                            e, subgraph_name
+                        // TODO: I cannot reuse self.log_error here because of 'self' move issues
+                        //       is there a nicer way to do this without repetition?
+                        let error = SubgraphExecutorError::SubscriptionStreamError(
+                            endpoint.clone(),
+                            e.to_string(),
                         );
+
+                        // self.log_error(&e);
+                        tracing::error!(
+                            error = &error as &dyn std::error::Error,
+                            "Subgraph executor error"
+                        );
+
+                        // let error_bytes = self.error_to_graphql_bytes(e);
+                        let graphql_error: GraphQLError = error.into();
+                        let graphql_error = graphql_error.add_subgraph_name(&subgraph_name);
+                        let errors = vec![graphql_error];
+                        let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
+                        let mut buffer = BytesMut::new();
+                        buffer.put_slice(b"{\"errors\":");
+                        buffer.put_slice(&errors_bytes);
+                        buffer.put_slice(b"}");
+                        let error_bytes = buffer.freeze();
+
                         yield HttpExecutionResponse {
-                            body: Bytes::from(error_json),
+                            body: error_bytes,
                             headers: response_headers.clone(),
                         };
                         return;
