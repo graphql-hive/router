@@ -30,17 +30,17 @@ impl GraphQLOperationSpan {
             "otel.status_code" = Empty,
             "otel.kind" = "Server",
             "error.type" = Empty,
-            "graphql.document" = Empty,
             "graphql.operation.name" = Empty,
             "graphql.operation.type" = Empty,
+            "graphql.operation.id" = Empty,
             "graphql.document.hash" = Empty,
-            "graphql.document.id" = Empty,
+            "graphql.document.text" = Empty,
         );
         GraphQLOperationSpan { span }
     }
 
     pub fn record_document(&self, document: &str) {
-        self.span.record("graphql.document", document);
+        self.span.record("graphql.document.text", document);
     }
 }
 
@@ -73,10 +73,10 @@ impl GraphQLParseSpan {
             "otel.kind" = "Internal",
             "error.type" = Empty,
             "cache.hit" = Empty,
-            "graphql.operation.type" = Empty,
             "graphql.operation.name" = Empty,
+            "graphql.operation.type" = Empty,
+            "graphql.operation.id" = Empty,
             "graphql.document.hash" = Empty,
-            "graphql.document.id" = Empty,
         );
         GraphQLParseSpan { span }
     }
@@ -115,10 +115,10 @@ impl GraphQLValidateSpan {
             "otel.kind" = "Internal",
             "error.type" = Empty,
             "cache.hit" = Empty,
-            "graphql.operation.type" = Empty,
             "graphql.operation.name" = Empty,
+            "graphql.operation.type" = Empty,
+            "graphql.operation.id" = Empty,
             "graphql.document.hash" = Empty,
-            "graphql.document.id" = Empty,
         );
         GraphQLValidateSpan { span }
     }
@@ -157,10 +157,10 @@ impl GraphQLVariableCoercionSpan {
             "otel.status_code" = Empty,
             "otel.kind" = "Internal",
             "error.type" = Empty,
-            "graphql.operation.type" = Empty,
             "graphql.operation.name" = Empty,
+            "graphql.operation.type" = Empty,
+            "graphql.operation.id" = Empty,
             "graphql.document.hash" = Empty,
-            "graphql.document.id" = Empty,
         );
         GraphQLVariableCoercionSpan { span }
     }
@@ -195,54 +195,12 @@ impl GraphQLNormalizeSpan {
             "otel.kind" = "Internal",
             "error.type" = Empty,
             "cache.hit" = Empty,
-            "graphql.operation.type" = Empty,
             "graphql.operation.name" = Empty,
+            "graphql.operation.type" = Empty,
+            "graphql.operation.id" = Empty,
             "graphql.document.hash" = Empty,
-            "graphql.document.id" = Empty,
         );
         GraphQLNormalizeSpan { span }
-    }
-
-    pub fn record_cache_hit(&self, hit: bool) {
-        self.span.record("cache.hit", hit);
-    }
-}
-
-#[derive(Clone)]
-pub struct GraphQLPlanSpan {
-    pub span: Span,
-}
-
-impl std::ops::Deref for GraphQLPlanSpan {
-    type Target = Span;
-    fn deref(&self) -> &Self::Target {
-        &self.span
-    }
-}
-
-impl Default for GraphQLPlanSpan {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl GraphQLPlanSpan {
-    pub fn new() -> Self {
-        let kind: &'static str = HiveSpanKind::GraphqlPlan.into();
-        let span = info_span!(
-            target: TARGET_NAME,
-            "GraphQL - Plan",
-            "hive.kind" = kind,
-            "otel.status_code" = Empty,
-            "otel.kind" = "Internal",
-            "error.type" = Empty,
-            "cache.hit" = Empty,
-            "graphql.operation.type" = Empty,
-            "graphql.operation.name" = Empty,
-            "graphql.document.hash" = Empty,
-            "graphql.document.id" = Empty,
-        );
-        GraphQLPlanSpan { span }
     }
 
     pub fn record_cache_hit(&self, hit: bool) {
@@ -278,16 +236,58 @@ impl GraphQLAuthorizeSpan {
             "otel.status_code" = Empty,
             "otel.kind" = "Internal",
             "error.type" = Empty,
-            "graphql.operation.type" = Empty,
             "graphql.operation.name" = Empty,
+            "graphql.operation.type" = Empty,
+            "graphql.operation.id" = Empty,
             "graphql.document.hash" = Empty,
-            "graphql.document.id" = Empty,
         );
         GraphQLAuthorizeSpan { span }
     }
 
     pub fn record_operation_type(&self, operation_type: &str) {
         self.span.record("graphql.operation.type", operation_type);
+    }
+}
+
+#[derive(Clone)]
+pub struct GraphQLPlanSpan {
+    pub span: Span,
+}
+
+impl std::ops::Deref for GraphQLPlanSpan {
+    type Target = Span;
+    fn deref(&self) -> &Self::Target {
+        &self.span
+    }
+}
+
+impl Default for GraphQLPlanSpan {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GraphQLPlanSpan {
+    pub fn new() -> Self {
+        let kind: &'static str = HiveSpanKind::GraphqlPlan.into();
+        let span = info_span!(
+            target: TARGET_NAME,
+            "GraphQL Operation Planning",
+            "hive.kind" = kind,
+            "otel.status_code" = Empty,
+            "otel.kind" = "Internal",
+            "error.type" = Empty,
+            "cache.hit" = Empty,
+            "graphql.operation.name" = Empty,
+            "graphql.operation.type" = Empty,
+            "graphql.operation.id" = Empty,
+            "graphql.document.hash" = Empty,
+        );
+        GraphQLPlanSpan { span }
+    }
+
+    pub fn record_cache_hit(&self, hit: bool) {
+        self.span.record("cache.hit", hit);
     }
 }
 
@@ -319,10 +319,10 @@ impl GraphQLExecuteSpan {
             "otel.status_code" = Empty,
             "otel.kind" = "Internal",
             "error.type" = Empty,
-            "graphql.operation.type" = Empty,
             "graphql.operation.name" = Empty,
+            "graphql.operation.type" = Empty,
+            "graphql.operation.id" = Empty,
             "graphql.document.hash" = Empty,
-            "graphql.document.id" = Empty,
         );
         GraphQLExecuteSpan { span }
     }
@@ -351,10 +351,9 @@ impl GraphQLSubgraphOperationSpan {
             "otel.kind" = "Internal",
             "error.type" = Empty,
             "hive.subgraph.name" = subgraph_name,
-            "graphql.operation.type" = Empty,
             "graphql.operation.name" = Empty,
+            "graphql.operation.type" = Empty,
             "graphql.document.hash" = Empty,
-            "graphql.document.id" = Empty,
         );
         GraphQLSubgraphOperationSpan { span }
     }
@@ -379,7 +378,7 @@ pub trait RecordOperationIdentity {
         self.span()
             .record("graphql.document.hash", identity.client_document_hash);
         // if let Some(id) = &identity.document_id {
-        //     self.span().record("graphql.document.id", id.as_str());
+        //     self.span().record("graphql.operation.id", id.as_str());
         // }
     }
 }
@@ -399,13 +398,11 @@ macro_rules! impl_record_operation_identity {
 }
 
 impl_record_operation_identity!(
-    GraphQLOperationSpan,
     GraphQLParseSpan,
     GraphQLValidateSpan,
     GraphQLVariableCoercionSpan,
     GraphQLNormalizeSpan,
-    GraphQLPlanSpan,
     GraphQLAuthorizeSpan,
-    GraphQLExecuteSpan,
-    GraphQLSubgraphOperationSpan
+    GraphQLPlanSpan,
+    GraphQLExecuteSpan
 );
