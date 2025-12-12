@@ -1,0 +1,11 @@
+{
+    "name": "hive-router-monorepo",
+    "type": "module",
+    "private": true,
+    "workspaces": [
+        "audits",
+        "lib/node-addon",
+        "docs/generator"
+    ],
+    "packageManager": "npm@11.7.0"
+}

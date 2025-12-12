@@ -37,16 +37,18 @@ jobs:
       - name: checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
       - name: generate config schema
         run: cargo router-config
+      - name: setup node
+        uses: the-guild-org/shared-config/setup@v1
+        with:
+          node-version-file: .node-version
       - name: generate documentation
         working-directory: docs/generator
-        run: |
-          npm install
-          npm run generate
+        run: npm run generate
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         name: upload config artifact
         with:
@@ -104,7 +106,7 @@ jobs:
         with:
           target: ${{ matrix.rust_target }}
           cache-key: ${{ matrix.name }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
 
@@ -134,14 +136,16 @@ jobs:
           if-no-files-found: error
 
       # napi build will use zigbuild when cross compiling
+      - name: setup node
+        uses: the-guild-org/shared-config/setup@v1
+        with:
+          node-version-file: .node-version
       - name: node-addon build (${{ matrix.rust_target }})
         working-directory: lib/node-addon
         env:
           CROSS_COMPILE: ${{ matrix.zigbuild }}
           TARGET: ${{ matrix.rust_target }}
-        run: |
-          npm ci
-          npm run build
+        run: npm run build
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         name: upload node addon artifact
         with:
@@ -170,10 +174,9 @@ jobs:
       - name: checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
       - name: setup node
-        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6
+        uses: the-guild-org/shared-config/setup@v1
         with:
-          node-version-file: lib/node-addon/.node-version
-          registry-url: https://registry.npmjs.org
+          node-version-file: .node-version
       - name: download node addon artifacts
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
