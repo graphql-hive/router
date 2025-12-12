@@ -32,9 +32,6 @@ jobs:
         env:
           RUST_BACKTRACE: full
           RUST_LOG: debug
-      - uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6
-        with:
-          node-version-file: lib/node-addon/.node-version
   e2e:
     name: test / e2e
     runs-on: ubuntu-latest
@@ -56,12 +53,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
-      - uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6
+      - name: setup node
+        uses: the-guild-org/shared-config/setup@v1
         with:
-          node-version-file: lib/node-addon/.node-version
-      - name: install dependencies
-        run: npm ci
-        working-directory: lib/node-addon
+          node-version-file: .node-version
       - name: build
         run: npm run build:debug
         working-directory: lib/node-addon
@@ -221,9 +216,10 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
-      - uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6
+      - name: setup node
+        uses: the-guild-org/shared-config/setup@v1
         with:
-          node-version-file: audits/.node-version
+          node-version-file: .node-version
       - run: npm install
         working-directory: audits
       - run: npm run ci:test:graphql-over-http
@@ -267,9 +263,10 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           shared-key: ${{ hashFiles('**/Cargo.lock') }}
-      - uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6
+      - name: setup node
+        uses: the-guild-org/shared-config/setup@v1
         with:
-          node-version-file: audits/.node-version
+          node-version-file: .node-version
       - run: cargo build --package hive-router
       - run: npm install
         working-directory: audits
