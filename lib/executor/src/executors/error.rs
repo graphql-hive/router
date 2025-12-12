@@ -28,6 +28,8 @@ pub enum SubgraphExecutorError {
     RequestTimeout(String, u128),
     #[error("Unsupported content-type {0} for subgraph '{1}'")]
     UnsupportedContentTypeError(String, String),
+    #[error("Failed to handle subscription stream from '{0}': {1}")]
+    SubscriptionStreamError(String, String),
 }
 
 impl From<SubgraphExecutorError> for GraphQLError {
@@ -78,6 +80,9 @@ impl SubgraphExecutorError {
             }
             SubgraphExecutorError::UnsupportedContentTypeError(_, _) => {
                 "SUBGRAPH_UNSUPPORTED_CONTENT_TYPE"
+            }
+            SubgraphExecutorError::SubscriptionStreamError(_, _) => {
+                "SUBGRAPH_SUBSCRIPTION_STREAM_ERROR"
             }
         }
     }
