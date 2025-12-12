@@ -2,7 +2,6 @@ use tracing::{field::Empty, info_span, Span};
 
 use crate::telemetry::traces::spans::{kind::HiveSpanKind, TARGET_NAME};
 
-#[derive(Clone)]
 pub struct GraphQLParseSpan {
     pub span: Span,
 }
@@ -44,7 +43,6 @@ impl GraphQLParseSpan {
     }
 }
 
-#[derive(Clone)]
 pub struct GraphQLValidateSpan {
     pub span: Span,
 }
@@ -86,7 +84,6 @@ impl GraphQLValidateSpan {
     }
 }
 
-#[derive(Clone)]
 pub struct GraphQLVariableCoercionSpan {
     pub span: Span,
 }
@@ -124,7 +121,6 @@ impl GraphQLVariableCoercionSpan {
     }
 }
 
-#[derive(Clone)]
 pub struct GraphQLNormalizeSpan {
     pub span: Span,
 }
@@ -166,7 +162,6 @@ impl GraphQLNormalizeSpan {
     }
 }
 
-#[derive(Clone)]
 pub struct GraphQLAuthorizeSpan {
     pub span: Span,
 }
@@ -207,7 +202,6 @@ impl GraphQLAuthorizeSpan {
     }
 }
 
-#[derive(Clone)]
 pub struct GraphQLPlanSpan {
     pub span: Span,
 }
@@ -249,7 +243,6 @@ impl GraphQLPlanSpan {
     }
 }
 
-#[derive(Clone)]
 pub struct GraphQLExecuteSpan {
     pub span: Span,
 }
@@ -286,7 +279,6 @@ impl GraphQLExecuteSpan {
     }
 }
 
-#[derive(Clone)]
 pub struct GraphQLOperationSpan {
     pub span: Span,
 }
@@ -328,7 +320,6 @@ impl GraphQLOperationSpan {
     }
 }
 
-#[derive(Clone)]
 pub struct GraphQLSubgraphOperationSpan {
     pub span: Span,
 }

@@ -21,7 +21,6 @@ pub struct HttpServerRequestSpanBuilder<'a> {
     url: Cow<'a, http::Uri>,
 }
 
-#[derive(Clone)]
 pub struct HttpServerRequestSpan {
     pub span: Span,
 }
@@ -138,7 +137,6 @@ pub struct HttpClientRequestSpanBuilder<'a> {
     url: Cow<'a, http::Uri>,
 }
 
-#[derive(Clone)]
 pub struct HttpClientRequestSpan {
     pub span: Span,
 }
