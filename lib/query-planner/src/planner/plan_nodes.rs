@@ -486,6 +486,12 @@ impl Display for FlattenNode {
     }
 }
 
+impl Display for SubscriptionNode {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        self.pretty_fmt(f, 0)
+    }
+}
+
 impl PrettyDisplay for QueryPlan {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
@@ -576,6 +582,16 @@ impl PrettyDisplay for ConditionNode {
     }
 }
 
+impl PrettyDisplay for SubscriptionNode {
+    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+        let indent = get_indent(depth);
+        writeln!(f, "{indent}Subscription {{")?;
+        self.primary.pretty_fmt(f, depth + 1)?;
+        writeln!(f, "{indent}}},")?;
+        Ok(())
+    }
+}
+
 impl PrettyDisplay for PlanNode {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         match self {
@@ -584,6 +600,7 @@ impl PrettyDisplay for PlanNode {
             PlanNode::Sequence(node) => node.pretty_fmt(f, depth),
             PlanNode::Parallel(node) => node.pretty_fmt(f, depth),
             PlanNode::Condition(node) => node.pretty_fmt(f, depth),
+            PlanNode::Subscription(node) => node.pretty_fmt(f, depth),
             _ => Ok(()),
         }
     }
