@@ -1,4 +1,69 @@
-#[derive(Debug, Clone, PartialEq)]
+use bytes::{Buf, Bytes};
+use futures::stream::BoxStream;
+use http_body_util::BodyExt;
+use hyper::body::Incoming;
+
+#[derive(thiserror::Error, Debug, Clone)]
+pub enum ParseError {
+    #[error("Invalid UTF-8 sequence: {0}")]
+    InvalidUtf8(String),
+    #[error("Stream read error: {0}")]
+    StreamReadError(String),
+}
+
+pub fn parse_to_stream(body_stream: Incoming) -> BoxStream<'static, Result<Bytes, ParseError>> {
+    let stream = async_stream::stream! {
+        let mut body = body_stream;
+        let mut buffer = Vec::<u8>::new();
+        loop {
+            while let Some(boundary) = find_sse_event_boundary(&buffer) {
+                let event_bytes: Vec<u8> = buffer.drain(..boundary).collect();
+
+                match parse(&event_bytes) {
+                    Ok(events) if !events.is_empty() => {
+                        let sse_event = &events[0];
+
+                        match sse_event.event.as_deref() {
+                            Some("next") if !sse_event.data.is_empty() => {
+                                yield Ok(Bytes::from(sse_event.data.clone().into_bytes()));
+                            }
+                            Some("complete") => {
+                                return;
+                            }
+                            _ => {
+                                // ping
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        yield Err(e);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+
+            match body.frame().await {
+                Some(Ok(frame)) => {
+                    if let Ok(data) = frame.into_data() {
+                        buffer.extend_from_slice(data.chunk());
+                    }
+                }
+                Some(Err(e)) => {
+                    yield Err(ParseError::StreamReadError(e.to_string()));
+                    return;
+                }
+                None => {
+                    return;
+                }
+            }
+        }
+    };
+
+    Box::pin(stream)
+}
+
+#[derive(Debug)]
 struct SubgraphSseEvent {
     pub event: Option<String>,
     pub data: String,
@@ -14,14 +79,8 @@ fn find_sse_event_boundary(buffer: &[u8]) -> Option<usize> {
     None
 }
 
-#[derive(thiserror::Error, Debug, Clone)]
-enum SseParseError {
-    #[error("Invalid UTF-8 sequence: {0}")]
-    InvalidUFT8Sequence(std::str::Utf8Error),
-}
-
-fn parse(raw: &[u8]) -> Result<Vec<SubgraphSseEvent>, SseParseError> {
-    let text = std::str::from_utf8(raw).map_err(|e| SseParseError::InvalidUFT8Sequence(e))?;
+fn parse(raw: &[u8]) -> Result<Vec<SubgraphSseEvent>, ParseError> {
+    let text = std::str::from_utf8(raw).map_err(|e| ParseError::InvalidUtf8(e.to_string()))?;
 
     let mut events = Vec::new();
     let mut current_event: Option<String> = None;

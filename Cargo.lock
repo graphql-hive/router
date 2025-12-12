@@ -2124,12 +2124,14 @@ name = "hive-router-plan-executor"
 version = "6.2.4"
 dependencies = [
  "ahash",
+ "async-stream",
  "async-trait",
  "bumpalo",
  "bytes",
  "criterion",
  "dashmap",
  "futures",
+ "futures-util",
  "graphql-parser",
  "graphql-tools",
  "hive-router-config",

@@ -3,8 +3,10 @@ use std::time::Duration;
 
 use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
+use crate::executors::sse;
 use dashmap::DashMap;
-use futures::TryFutureExt;
+use futures::stream::BoxStream;
+use futures_util::{stream, TryFutureExt};
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
@@ -305,5 +307,161 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 }
             }
         }
+    }
+
+    #[tracing::instrument(level = "trace", skip_all, fields(subgraph_name = %self.subgraph_name))]
+    async fn subscribe<'a>(
+        &self,
+        execution_request: SubgraphExecutionRequest<'a>,
+        connection_timeout: Option<Duration>,
+    ) -> BoxStream<'static, HttpExecutionResponse> {
+        // NOTE: we intentionally stream once errors. read mroe in https://github.com/enisdenjo/graphql-sse/blob/master/PROTOCOL.md#distinct-connections-mode
+
+        // is this heavy in rust? I dont see using closures elsewhere much
+        // TODO: convert to function
+        let stream_once_err = |err: SubgraphExecutorError| {
+            self.log_error(&err);
+            let error_bytes = self.error_to_graphql_bytes(err);
+            return Box::pin(stream::once(async move {
+                HttpExecutionResponse {
+                    body: error_bytes,
+                    headers: Default::default(),
+                }
+            }));
+        };
+
+        let body = match self.build_request_body(&execution_request) {
+            Ok(body) => body,
+            Err(e) => {
+                return stream_once_err(e);
+            }
+        };
+
+        let mut req = match hyper::Request::builder()
+            .method(http::Method::POST)
+            .uri(&self.endpoint)
+            .version(Version::HTTP_11)
+            .body(Full::new(Bytes::from(body)))
+        {
+            Ok(req) => req,
+            Err(e) => {
+                return stream_once_err(SubgraphExecutorError::RequestBuildFailure(
+                    self.endpoint.to_string(),
+                    e.to_string(),
+                ));
+            }
+        };
+
+        let mut headers = execution_request.headers;
+        self.header_map.iter().for_each(|(key, value)| {
+            headers.insert(key, value.clone());
+        });
+
+        // accept text/event-stream
+        // TODO: multipart
+        headers.insert(
+            http::header::ACCEPT,
+            HeaderValue::from_static(r#"text/event-stream"#),
+        );
+        *req.headers_mut() = headers;
+
+        debug!(
+            "establishing subscription connection to subgraph {} at {}",
+            self.subgraph_name,
+            self.endpoint.to_string()
+        );
+
+        let req_fut = self.http_client.request(req);
+        let res = if let Some(timeout_duration) = connection_timeout {
+            match tokio::time::timeout(timeout_duration, req_fut).await {
+                Ok(Ok(response)) => {
+                    // good
+                    response
+                }
+                Ok(Err(e)) => {
+                    // request error
+                    return stream_once_err(SubgraphExecutorError::RequestFailure(
+                        self.endpoint.to_string(),
+                        e.to_string(),
+                    ));
+                }
+                Err(_) => {
+                    // connection timeout
+                    return stream_once_err(SubgraphExecutorError::RequestTimeout(
+                        self.endpoint.to_string(),
+                        timeout_duration.as_millis(),
+                    ));
+                }
+            }
+        } else {
+            match req_fut.await {
+                Ok(response) => response,
+                Err(e) => {
+                    return stream_once_err(SubgraphExecutorError::RequestFailure(
+                        self.endpoint.to_string(),
+                        e.to_string(),
+                    ));
+                }
+            }
+        };
+
+        debug!(
+            "subscription connection to subgraph {} at {} established, status: {}",
+            self.subgraph_name,
+            self.endpoint.to_string(),
+            res.status()
+        );
+
+        if !res.status().is_success() {
+            // TODO: how are non-success statuses handled in single-shot results?
+            //       seems like the body is read regardless
+            return stream_once_err(SubgraphExecutorError::RequestFailure(
+                self.endpoint.to_string(),
+                format!("Subgraph returned non-success status: {}", res.status()),
+            ));
+        }
+
+        let (parts, body_stream) = res.into_parts();
+        let response_headers = parts.headers.clone();
+        let subgraph_name = self.subgraph_name.clone();
+
+        let content_type = parts
+            .headers
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        if content_type != "text/event-stream" {
+            return stream_once_err(SubgraphExecutorError::UnsupportedContentTypeError(
+                content_type.to_string(),
+                self.subgraph_name.clone(),
+            ));
+        }
+
+        let stream = sse::parse_to_stream(body_stream);
+
+        Box::pin(async_stream::stream! {
+            for await result in stream {
+                match result {
+                    Ok(body) => {
+                        yield HttpExecutionResponse {
+                            body,
+                            headers: response_headers.clone(),
+                        };
+                    }
+                    Err(e) => {
+                        let error_json = format!(
+                            r#"{{"errors":[{{"message":"SSE parse error: {}","extensions":{{"subgraph":"{}"}}}}]}}"#,
+                            e, subgraph_name
+                        );
+                        yield HttpExecutionResponse {
+                            body: Bytes::from(error_json),
+                            headers: response_headers.clone(),
+                        };
+                        return;
+                    }
+                }
+            }
+        })
     }
 }

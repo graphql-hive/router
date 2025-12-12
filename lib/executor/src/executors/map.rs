@@ -6,6 +6,7 @@ use std::{
 
 use bytes::{BufMut, BytesMut};
 use dashmap::DashMap;
+use futures::{stream, stream::BoxStream};
 use hive_router_config::{
     override_subgraph_urls::UrlOrExpression, traffic_shaping::DurationOrExpression,
     HiveRouterConfig,
@@ -170,6 +171,53 @@ impl SubgraphExecutorMap {
                 self.internal_server_error_response(err.into(), subgraph_name)
             }
         }
+    }
+
+    pub async fn subscribe<'a, 'req>(
+        &self,
+        subgraph_name: &str,
+        execution_request: SubgraphExecutionRequest<'a>,
+        client_request: &ClientRequestDetails<'a, 'req>,
+    ) -> BoxStream<'static, HttpExecutionResponse> {
+        match self.get_or_create_executor(subgraph_name, client_request) {
+            Ok(executor) => {
+                let timeout = self
+                    .timeouts_by_subgraph
+                    .get(subgraph_name)
+                    .map(|t| {
+                        let global_timeout_duration =
+                            resolve_timeout(&self.global_timeout, client_request, None, "all")?;
+                        resolve_timeout(
+                            t.value(),
+                            client_request,
+                            Some(global_timeout_duration),
+                            subgraph_name,
+                        )
+                    })
+                    .transpose();
+
+                return match timeout {
+                    Ok(timeout) => executor.subscribe(execution_request, timeout).await,
+                    Err(err) => {
+                        error!(
+                            "Failed to resolve timeout for subgraph '{}': {}",
+                            subgraph_name, err,
+                        );
+                        let response =
+                            self.internal_server_error_response(err.into(), subgraph_name);
+                        return Box::pin(stream::once(async move { response }));
+                    }
+                };
+            }
+            Err(err) => {
+                error!(
+                    "Subgraph executor error for subgraph '{}': {}",
+                    subgraph_name, err,
+                );
+                let response = self.internal_server_error_response(err.into(), subgraph_name);
+                return Box::pin(stream::once(async move { response }));
+            }
+        };
     }
 
     fn internal_server_error_response(
