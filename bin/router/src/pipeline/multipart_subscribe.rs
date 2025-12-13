@@ -2,6 +2,7 @@ use futures_timer::Delay;
 use futures_util::{FutureExt, Stream, StreamExt};
 use ntex::util::Bytes;
 use std::time::Duration;
+use tokio_util::bytes::BufMut;
 
 /// Create a multipart subscription stream following Apollo's Multipart spec.
 /// https://www.apollographql.com/docs/graphos/routing/operations/subscriptions/multipart-protocol
@@ -17,12 +18,16 @@ pub fn create_stream(
                 item = input.next() => {
                     match item {
                         Some(resp) => {
-                            match String::from_utf8(resp) {
-                                Ok(json_str) => {
+                            match std::str::from_utf8(&resp) {
+                                Ok(_) => {
                                     yield Ok(Bytes::from("--graphql\r\nContent-Type: application/json\r\n\r\n"));
                                     // Wrap the GraphQL response in a payload field
                                     // As per the spec.
-                                    yield Ok(Bytes::from(format!(r#"{{"payload":{}}}"#, json_str)));
+                                    let mut payload = ntex::util::BytesMut::with_capacity(resp.len() + 15);
+                                    payload.put_slice(br#"{"payload":"#);
+                                    payload.put_slice(&resp);
+                                    payload.put_slice(br"}");
+                                    yield Ok(payload.freeze());
                                     yield Ok(Bytes::from("\r\n"));
                                 }
                                 Err(e) => {
