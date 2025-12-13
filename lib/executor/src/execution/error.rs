@@ -15,6 +15,10 @@ pub enum PlanExecutionErrorKind {
     #[error(transparent)]
     #[strum(serialize = "HEADER_PROPAGATION_FAILURE")]
     HeaderPropagation(#[from] HeaderRuleRuntimeError),
+
+    #[error("{0}")]
+    #[strum(serialize = "INTERNAL_ERROR")]
+    Internal(String),
 }
 
 /// The central error type for all query plan execution failures.
@@ -55,6 +59,16 @@ impl PlanExecutionError {
             context: PlanExecutionErrorContext {
                 subgraph_name: (lazy_context.subgraph_name)(),
                 affected_path: (lazy_context.affected_path)(),
+            },
+        }
+    }
+
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self {
+            kind: PlanExecutionErrorKind::Internal(message.into()),
+            context: PlanExecutionErrorContext {
+                subgraph_name: None,
+                affected_path: None,
             },
         }
     }
