@@ -193,11 +193,107 @@ pub async fn execute_query_plan<'exec, 'req>(
 
         // Create a stream of serialized subscription events
         let body_stream = Box::pin(async_stream::stream! {
+            use crate::execution::client_request_details::{
+                ClientRequestDetails, JwtRequestDetails, OperationDetails,
+            };
+
             let mut response_stream = response_stream;
 
             while let Some(response) = response_stream.next().await {
-                let output = execute_subscription_event_plan(&response.body, &owned_ctx).await;
-                yield output.body;
+                let response_body = &response.body;
+
+                // Parse the subgraph response
+                let subgraph_response: Result<SubgraphResponse, _> = sonic_rs::from_slice(response_body);
+
+                let output = match subgraph_response {
+                    Ok(parsed_response) => {
+                        let initial_data = parsed_response.data;
+                        let mut initial_errors: Vec<GraphQLError> = owned_ctx.initial_errors.clone();
+                        if let Some(resp_errors) = parsed_response.errors {
+                            initial_errors.extend(resp_errors);
+                        }
+
+                        if owned_ctx.query_plan.node.is_some() {
+                            // entity resolution
+
+                            // Build a dummy client request details for entity resolution
+                            // TODO: it cant be a dummy, it needs to make sense
+                            let method = http::Method::POST;
+                            let uri: http::Uri = "/graphql".parse().unwrap();
+                            let headers = ntex_http::HeaderMap::new();
+                            let jwt = JwtRequestDetails::Unauthenticated;
+                            let operation = OperationDetails {
+                                name: None,
+                                query: "",
+                                kind: "subscription",
+                            };
+                            let client_request = ClientRequestDetails {
+                                method: &method,
+                                url: &uri,
+                                headers: &headers,
+                                operation,
+                                jwt: &jwt,
+                            };
+
+                            match execute_plan_with_initial_data(
+                                &owned_ctx.query_plan,
+                                &owned_ctx.projection_plan,
+                                &owned_ctx.headers_plan,
+                                &owned_ctx.variable_values,
+                                &owned_ctx.extensions,
+                                &owned_ctx.operation_type_name,
+                                &owned_ctx.executors,
+                                &owned_ctx.schema_metadata,
+                                &client_request,
+                                &None, // no jwt forwarding for entity resolution. TODO: or?
+                                initial_data,
+                                initial_errors,
+                                response_body.len() + 256,
+                            )
+                            .await
+                            {
+                                Ok(output) => output.body,
+                                Err(e) => {
+                                    // TODO: leaking?
+                                    let error = GraphQLError::from_message_and_extensions(
+                                        format!("Entity resolution error: {}", e),
+                                        Default::default(),
+                                    );
+                                    format_error_response(&[error])
+                                }
+                            }
+                        } else {
+                            // no entity resolution, just project the response
+                            match project_by_operation(
+                                &initial_data,
+                                initial_errors,
+                                &owned_ctx.extensions,
+                                &owned_ctx.operation_type_name,
+                                &owned_ctx.projection_plan,
+                                &owned_ctx.variable_values,
+                                response_body.len() + 256,
+                            ) {
+                                Ok(body) => body,
+                                Err(e) => {
+                                    let error = GraphQLError::from_message_and_extensions(
+                                        format!("Projection error: {}", e),
+                                        Default::default(),
+                                    );
+                                    format_error_response(&[error])
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let error = GraphQLError::from_message_and_extensions(
+                            format!("Failed to parse subgraph response: {}", e),
+                            Default::default(),
+                        );
+                        format_error_response(&[error])
+                    }
+                };
+
+                yield output;
             }
         });
 
@@ -238,125 +334,6 @@ pub async fn execute_query_plan<'exec, 'req>(
     )
     .await
     .map(QueryPlanExecutionResult::Single)
-}
-
-/// Execute the plan for a single subscription event.
-/// This parses the subscription event, then executes entity resolution using the
-/// same execution logic as `execute_regular_plan`.
-async fn execute_subscription_event_plan(
-    event_data: &Bytes,
-    ctx: &OwnedQueryPlanExecutionContext,
-) -> PlanExecutionOutput {
-    use crate::execution::client_request_details::{
-        ClientRequestDetails, JwtRequestDetails, OperationDetails,
-    };
-
-    // Parse the subgraph response
-    let subgraph_response: Result<SubgraphResponse, _> = sonic_rs::from_slice(event_data);
-
-    match subgraph_response {
-        Ok(response) => {
-            let initial_data = response.data;
-            let mut initial_errors: Vec<GraphQLError> = ctx.initial_errors.clone();
-            if let Some(resp_errors) = response.errors {
-                initial_errors.extend(resp_errors);
-            }
-
-            if ctx.query_plan.node.is_some() {
-                // entity resolution
-
-                // Build a dummy client request details for entity resolution
-                // TODO: it cant be a dummy, it needs to make sense
-                let method = http::Method::POST;
-                let uri: http::Uri = "/graphql".parse().unwrap();
-                let headers = ntex_http::HeaderMap::new();
-                let jwt = JwtRequestDetails::Unauthenticated;
-                let operation = OperationDetails {
-                    name: None,
-                    query: "",
-                    kind: "subscription",
-                };
-                let client_request = ClientRequestDetails {
-                    method: &method,
-                    url: &uri,
-                    headers: &headers,
-                    operation,
-                    jwt: &jwt,
-                };
-
-                match execute_plan_with_initial_data(
-                    &ctx.query_plan,
-                    &ctx.projection_plan,
-                    &ctx.headers_plan,
-                    &ctx.variable_values,
-                    &ctx.extensions,
-                    &ctx.operation_type_name,
-                    &ctx.executors,
-                    &ctx.schema_metadata,
-                    &client_request,
-                    &None, // no jwt forwarding for entity resolution. TODO: or?
-                    initial_data,
-                    initial_errors,
-                    event_data.len() + 256,
-                )
-                .await
-                {
-                    Ok(output) => output,
-                    Err(e) => {
-                        let error = GraphQLError::from_message_and_extensions(
-                            format!("Entity resolution error: {}", e),
-                            Default::default(),
-                        );
-                        PlanExecutionOutput {
-                            body: format_error_response(&[error]),
-                            headers: HeaderMap::new(),
-                            error_count: 1,
-                        }
-                    }
-                }
-            } else {
-                // no entity resolution, just project the response
-                let error_count = initial_errors.len();
-                match project_by_operation(
-                    &initial_data,
-                    initial_errors,
-                    &ctx.extensions,
-                    &ctx.operation_type_name,
-                    &ctx.projection_plan,
-                    &ctx.variable_values,
-                    event_data.len() + 256,
-                ) {
-                    Ok(body) => PlanExecutionOutput {
-                        body,
-                        headers: HeaderMap::new(),
-                        error_count,
-                    },
-                    Err(e) => {
-                        let error = GraphQLError::from_message_and_extensions(
-                            format!("Projection error: {}", e),
-                            Default::default(),
-                        );
-                        PlanExecutionOutput {
-                            body: format_error_response(&[error]),
-                            headers: HeaderMap::new(),
-                            error_count: 1,
-                        }
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            let error = GraphQLError::from_message_and_extensions(
-                format!("Failed to parse subgraph response: {}", e),
-                Default::default(),
-            );
-            PlanExecutionOutput {
-                body: format_error_response(&[error]),
-                headers: HeaderMap::new(),
-                error_count: 1,
-            }
-        }
-    }
 }
 
 /// Core execution logic shared between regular plan execution and subscription event processing.
