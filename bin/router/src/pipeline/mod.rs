@@ -1,5 +1,6 @@
 use std::{sync::Arc, time::Instant};
 
+use futures_util::Stream;
 use hive_router_plan_executor::execution::{
     client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
     plan::QueryPlanExecutionResult,
@@ -24,8 +25,8 @@ use crate::{
         execution_request::get_execution_request,
         header::{
             RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON,
-            APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, TEXT_EVENT_STREAM,
-            TEXT_HTML_CONTENT_TYPE,
+            APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, MULTIPART_MIXED,
+            TEXT_EVENT_STREAM, TEXT_HTML_CONTENT_TYPE,
         },
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::parse_operation_with_cache,
@@ -108,13 +109,32 @@ pub async fn graphql_request_handler(
                 .body(response_bytes)
         }
         Ok(QueryPlanExecutionResult::Stream(response)) => {
-            use crate::pipeline::sse;
+            use crate::pipeline::{header::TEXT_EVENT_STREAM, multipart_subscribe, sse};
 
-            let response_content_type = http::HeaderValue::from_static("text/event-stream");
-            let body = Box::pin(sse::create_stream(
-                response.body,
-                std::time::Duration::from_secs(10),
-            ));
+            // TODO: respect order of Accept header
+            let (response_content_type, body): (
+                http::HeaderValue,
+                std::pin::Pin<
+                    Box<dyn Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Send>,
+                >,
+            ) = if req.accepts_content_type(*TEXT_EVENT_STREAM) {
+                (
+                    http::HeaderValue::from_static("text/event-stream"),
+                    Box::pin(sse::create_stream(
+                        response.body,
+                        std::time::Duration::from_secs(10),
+                    )),
+                )
+            } else {
+                // NOTE: client accept headers should have been validated earlier
+                (
+                    http::HeaderValue::from_static("multipart/mixed;boundary=graphql"),
+                    Box::pin(multipart_subscribe::create_stream(
+                        response.body,
+                        std::time::Duration::from_secs(10),
+                    )),
+                )
+            };
 
             let mut response_builder = web::HttpResponse::Ok();
             for (header_name, header_value) in response.headers {
@@ -162,7 +182,10 @@ pub async fn execute_pipeline(
         Some(OperationKind::Subscription)
     );
 
-    if is_subscription && !req.accepts_content_type(*TEXT_EVENT_STREAM) {
+    if is_subscription
+        && !req.accepts_content_type(*MULTIPART_MIXED)
+        && !req.accepts_content_type(*TEXT_EVENT_STREAM)
+    {
         return Err(
             req.new_pipeline_error(PipelineErrorVariant::SubscriptionNotSupportedOverTransport)
         );
