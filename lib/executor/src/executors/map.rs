@@ -196,7 +196,7 @@ impl SubgraphExecutorMap {
                     })
                     .transpose();
 
-                return match timeout {
+                match timeout {
                     Ok(timeout) => executor.subscribe(execution_request, timeout).await,
                     Err(err) => {
                         error!(
@@ -205,9 +205,9 @@ impl SubgraphExecutorMap {
                         );
                         let response =
                             self.internal_server_error_response(err.into(), subgraph_name);
-                        return Box::pin(stream::once(async move { response }));
+                        Box::pin(stream::once(async move { response }))
                     }
-                };
+                }
             }
             Err(err) => {
                 error!(
@@ -215,9 +215,9 @@ impl SubgraphExecutorMap {
                     subgraph_name, err,
                 );
                 let response = self.internal_server_error_response(err.into(), subgraph_name);
-                return Box::pin(stream::once(async move { response }));
+                Box::pin(stream::once(async move { response }))
             }
-        };
+        }
     }
 
     fn internal_server_error_response(
