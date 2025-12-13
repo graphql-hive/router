@@ -1,14 +1,13 @@
-use std::{pin::Pin, sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant};
 
-use futures::Stream;
 use hive_router_plan_executor::execution::{
     client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
-    plan::PlanExecutionOutput,
+    plan::QueryPlanExecutionResult,
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
-use http::{header::CONTENT_TYPE, HeaderMap, HeaderValue, Method};
+use http::{header::CONTENT_TYPE, HeaderValue, Method};
 use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
@@ -37,22 +36,6 @@ use crate::{
     schema_state::{SchemaState, SupergraphData},
     shared_state::RouterSharedState,
 };
-
-pub enum PipelineResult {
-    Single(PlanExecutionOutput),
-    Stream(SubscriptionOutput),
-}
-
-/// Subscription output - simple struct with headers and a streaming body.
-/// The handler just pipes this to the HTTP response.
-pub struct SubscriptionOutput {
-    /// Response headers (from header rules)
-    pub headers: HeaderMap,
-    /// Streaming body (already formatted as SSE or multipart)
-    pub body: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
-    /// Content-Type header value (text/event-stream or multipart/mixed)
-    pub content_type: HeaderValue,
-}
 
 pub mod authorization;
 pub mod coerce_variables;
@@ -101,7 +84,7 @@ pub async fn graphql_request_handler(
     }
 
     match execute_pipeline(req, body_bytes, supergraph, shared_state, schema_state).await {
-        Ok(PipelineResult::Single(response)) => {
+        Ok(QueryPlanExecutionResult::Single(response)) => {
             let response_bytes = Bytes::from(response.body);
             let response_headers = response.headers;
 
@@ -123,18 +106,25 @@ pub async fn graphql_request_handler(
                 .header(http::header::CONTENT_TYPE, response_content_type)
                 .body(response_bytes)
         }
-        Ok(PipelineResult::Stream(subscription_output)) => {
-            let mut response_builder = web::HttpResponse::Ok();
+        Ok(QueryPlanExecutionResult::Stream(response)) => {
+            use crate::pipeline::sse;
 
-            for (header_name, header_value) in subscription_output.headers {
+            let response_content_type = http::HeaderValue::from_static("text/event-stream");
+            let body = Box::pin(sse::create_stream(
+                response.body,
+                std::time::Duration::from_secs(10),
+            ));
+
+            let mut response_builder = web::HttpResponse::Ok();
+            for (header_name, header_value) in response.headers {
                 if let Some(header_name) = header_name {
                     response_builder.header(header_name, header_value);
                 }
             }
 
             response_builder
-                .header(http::header::CONTENT_TYPE, subscription_output.content_type)
-                .streaming(subscription_output.body)
+                .header(http::header::CONTENT_TYPE, response_content_type)
+                .streaming(body)
         }
         Err(err) => err.into_response(),
     }
@@ -148,7 +138,7 @@ pub async fn execute_pipeline(
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
-) -> Result<PipelineResult, PipelineError> {
+) -> Result<QueryPlanExecutionResult, PipelineError> {
     let start = Instant::now();
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
@@ -279,7 +269,7 @@ pub async fn execute_pipeline(
     let pipeline_result = execute_plan(req, supergraph, shared_state, &planned_request).await?;
 
     // TODO: this needs to work for subscriptions too
-    if let PipelineResult::Single(ref execution_result) = pipeline_result {
+    if let QueryPlanExecutionResult::Single(ref execution_result) = pipeline_result {
         if shared_state.router_config.usage_reporting.enabled {
             if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
                 usage_reporting::collect_usage_report(
