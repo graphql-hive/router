@@ -20,7 +20,7 @@ mod subscription_e2e_tests {
     }
 
     #[ntex::test]
-    async fn subscription_no_entity_resolution_sse() {
+    async fn subscription_no_entity_resolution_sse_subgraph() {
         let _subgraphs_server = SubgraphsServer::start_with_subscriptions_protocol(
             subgraphs::SubscriptionProtocol::SseOnly,
         )
@@ -107,7 +107,7 @@ mod subscription_e2e_tests {
     }
 
     #[ntex::test]
-    async fn subscription_no_entity_resolution_multipart() {
+    async fn subscription_no_entity_resolution_multipart_subgraph() {
         let _subgraphs_server = SubgraphsServer::start_with_subscriptions_protocol(
             subgraphs::SubscriptionProtocol::MultipartOnly,
         )
@@ -275,6 +275,106 @@ mod subscription_e2e_tests {
         assert_eq!(
             content_type_header, "text/event-stream",
             "Expected Content-Type to be text/event-stream"
+        );
+    }
+
+    #[ntex::test]
+    async fn subscription_yes_entity_resolution_multipart_client() {
+        let _subgraphs_server = SubgraphsServer::start().await;
+
+        let router = init_router_from_config_inline(&format!(
+            r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            "#
+        ))
+        .await
+        .unwrap();
+
+        wait_for_readiness(&router.app).await;
+
+        let req = init_graphql_request(
+            r#"
+            subscription {
+                reviewAdded(intervalInMs: 0) {
+                    id
+                    product {
+                        name
+                    }
+                }
+            }
+            "#,
+            None,
+        )
+        .header(
+            http::header::ACCEPT,
+            // as per https://www.apollographql.com/docs/graphos/routing/operations/subscriptions/multipart-protocol#executing-a-subscription
+            r#"multipart/mixed;subscriptionSpec="1.0", application/json"#,
+        )
+        .to_request();
+
+        let res = test::call_service(&router.app, req).await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let content_type_header = get_content_type_header(&res);
+
+        let body = test::read_body(res).await;
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"1","product":{"name":"Table"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"2","product":{"name":"Table"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"3","product":{"name":"Table"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"4","product":{"name":"Table"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"5","product":{"name":"Couch"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"6","product":{"name":"Couch"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"7","product":{"name":"Couch"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"8","product":{"name":"Couch"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"9","product":{"name":"Glass"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"10","product":{"name":"Chair"}}}}}
+        --graphql
+        Content-Type: application/json
+
+        {"payload":{"data":{"reviewAdded":{"id":"11","product":{"name":"Chair"}}}}}
+        --graphql--
+        "#);
+
+        // we check this at the end because the body will hold clues to why the test fails
+        assert_eq!(
+            content_type_header, "multipart/mixed;boundary=graphql",
+            "Expected Content-Type to be multipart/mixed;boundary=graphql"
         );
     }
 

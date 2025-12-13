@@ -363,7 +363,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         headers.insert(
             http::header::ACCEPT,
             HeaderValue::from_static(
-                r#"multipart/mixed;boundary="graphql";subscriptionSpec="1.0", text/event-stream"#,
+                r#"multipart/mixed;subscriptionSpec="1.0", text/event-stream"#,
             ),
         );
         *req.headers_mut() = headers;
