@@ -2039,10 +2039,13 @@ version = "0.0.25"
 dependencies = [
  "ahash",
  "arc-swap",
+ "async-stream",
  "async-trait",
  "cookie",
  "criterion",
  "futures",
+ "futures-timer",
+ "futures-util",
  "graphql-parser",
  "graphql-tools",
  "hive-console-sdk",
