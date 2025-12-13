@@ -1,5 +1,5 @@
 pub mod accounts;
-pub mod graphql_with_sse;
+pub mod graphql_with_subscriptions;
 pub mod inventory;
 pub mod products;
 pub mod reviews;
@@ -99,8 +99,16 @@ pub struct SubgraphsServiceState {
     pub health_check_url: String,
 }
 
+#[derive(Clone)]
+pub enum SubscriptionProtocol {
+    Auto, // prefers multipart
+    SseOnly,
+    MultipartOnly,
+}
+
 pub fn start_subgraphs_server(
     port: Option<u16>,
+    subscriptions_protocol: SubscriptionProtocol,
 ) -> (JoinHandle<()>, Sender<()>, SubgraphsServiceState) {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let host = var("HOST").unwrap_or("0.0.0.0".to_owned());
@@ -128,7 +136,10 @@ pub fn start_subgraphs_server(
         )
         .route(
             "/reviews",
-            post_service(graphql_with_sse::GraphQL::new(reviews::get_subgraph())),
+            post_service(graphql_with_subscriptions::GraphQL::new(
+                reviews::get_subgraph(),
+                subscriptions_protocol,
+            )),
         )
         .layer(middleware::from_fn_with_state(
             shared_state.clone(),
