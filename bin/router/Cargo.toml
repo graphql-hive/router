@@ -57,6 +57,9 @@ cookie = "0.18.1"
 arc-swap = "1.7.1"
 lasso2 = "0.8.2"
 ahash = { workspace = true }
+async-stream = "0.3.6"
+futures-util = "0.3.31"
+futures-timer = "3.0.3"
 
 [dev-dependencies]
 criterion = { workspace = true }

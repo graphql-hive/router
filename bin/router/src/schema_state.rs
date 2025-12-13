@@ -40,10 +40,10 @@ pub struct SchemaState {
 }
 
 pub struct SupergraphData {
-    pub metadata: SchemaMetadata,
+    pub metadata: Arc<SchemaMetadata>,
     pub planner: Planner,
     pub authorization: AuthorizationMetadata,
-    pub subgraph_executor_map: SubgraphExecutorMap,
+    pub subgraph_executor_map: Arc<SubgraphExecutorMap>,
     pub supergraph_schema: Arc<Document<'static, String>>,
 }
 
@@ -126,16 +126,16 @@ impl SchemaState {
         let parsed_supergraph_sdl = parse_schema(supergraph_sdl);
         let supergraph_state = SupergraphState::new(&parsed_supergraph_sdl);
         let planner = Planner::new_from_supergraph(&parsed_supergraph_sdl)?;
-        let metadata = planner.consumer_schema.schema_metadata();
+        let metadata = Arc::new(planner.consumer_schema.schema_metadata());
         let authorization = AuthorizationMetadata::build(&planner.supergraph, &metadata)?;
-        let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(
+        let subgraph_executor_map = Arc::new(SubgraphExecutorMap::from_http_endpoint_map(
             supergraph_state.subgraph_endpoint_map,
             router_config,
-        )?;
+        )?);
 
         Ok(SupergraphData {
             supergraph_schema: Arc::new(parsed_supergraph_sdl),
-            metadata,
+            metadata: metadata.clone(),
             planner,
             authorization,
             subgraph_executor_map,
