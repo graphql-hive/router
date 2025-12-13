@@ -15,7 +15,7 @@ use ntex::{
     Pipeline, Service,
 };
 use sonic_rs::json;
-use subgraphs::{start_subgraphs_server, RequestLog, SubgraphsServiceState};
+use subgraphs::{start_subgraphs_server, RequestLog, SubgraphsServiceState, SubscriptionProtocol};
 use tracing::{info, warn};
 
 pub fn init_graphql_request(op: &str, variables: Option<sonic_rs::Value>) -> TestRequest {
@@ -92,8 +92,18 @@ impl SubgraphsServer {
     }
 
     pub async fn start_with_port(port: u16) -> Self {
+        Self::start_subgraphs(port, SubscriptionProtocol::Auto).await
+    }
+
+    pub async fn start_with_subscriptions_protocol(
+        subscriptions_protocol: SubscriptionProtocol,
+    ) -> Self {
+        Self::start_subgraphs(4200, subscriptions_protocol).await
+    }
+
+    async fn start_subgraphs(port: u16, subscriptions_protocol: SubscriptionProtocol) -> Self {
         let (_server_handle, shutdown_tx, subgraph_shared_state) =
-            start_subgraphs_server(Some(port));
+            start_subgraphs_server(Some(port), subscriptions_protocol);
 
         let health_check_url = subgraph_shared_state.health_check_url.clone();
         loop {

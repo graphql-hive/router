@@ -20,8 +20,98 @@ mod subscription_e2e_tests {
     }
 
     #[ntex::test]
-    async fn subscription_no_entity_resolution() {
-        let _subgraphs_server = SubgraphsServer::start().await;
+    async fn subscription_no_entity_resolution_sse() {
+        let _subgraphs_server = SubgraphsServer::start_with_subscriptions_protocol(
+            subgraphs::SubscriptionProtocol::SseOnly,
+        )
+        .await;
+
+        let router = init_router_from_config_inline(&format!(
+            r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            "#
+        ))
+        .await
+        .unwrap();
+
+        wait_for_readiness(&router.app).await;
+
+        let req = init_graphql_request(
+            r#"
+            subscription {
+                reviewAdded(intervalInMs: 0) {
+                    product {
+                        upc
+                    }
+                }
+            }
+            "#,
+            None,
+        )
+        .header(http::header::ACCEPT, "text/event-stream")
+        .to_request();
+
+        let res = test::call_service(&router.app, req).await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let content_type_header = get_content_type_header(&res);
+
+        let body = test::read_body(res).await;
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"1"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"1"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"1"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"1"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"2"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"2"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"2"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"2"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"3"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"4"}}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"product":{"upc":"4"}}}}
+
+        event: complete
+        "#);
+
+        // we check this at the end because the body will hold clues to why the test fails
+        assert_eq!(
+            content_type_header, "text/event-stream",
+            "Expected Content-Type to be text/event-stream"
+        );
+    }
+
+    #[ntex::test]
+    async fn subscription_no_entity_resolution_multipart() {
+        let _subgraphs_server = SubgraphsServer::start_with_subscriptions_protocol(
+            subgraphs::SubscriptionProtocol::MultipartOnly,
+        )
+        .await;
 
         let router = init_router_from_config_inline(&format!(
             r#"
