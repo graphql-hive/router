@@ -14,8 +14,8 @@ use axum::{
     BoxError,
 };
 use bytes::Bytes;
-use futures_timer::Delay;
-use futures_util::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
+use futures_util::{future::BoxFuture, stream::BoxStream, Stream, StreamExt};
+use hive_router::pipeline::sse;
 use tower_service::Service;
 
 #[derive(Clone)]
@@ -86,36 +86,20 @@ where
     }
 }
 
-pub fn create_sse_stream<'a>(
-    input: impl Stream<Item = GraphQLResponse> + Send + Unpin + 'a,
+pub fn create_sse_stream(
+    input: impl Stream<Item = GraphQLResponse> + Send + Unpin + 'static,
     heartbeat_interval: Duration,
-) -> BoxStream<'a, Bytes> {
-    let mut input = input.fuse();
-    let mut heartbeat_timer = Delay::new(heartbeat_interval).fuse();
+) -> BoxStream<'static, Bytes> {
+    // Convert GraphQLResponse stream to Vec<u8> stream for the router's SSE implementation
+    let byte_stream =
+        input.map(|resp| serde_json::to_vec(&resp).expect("Failed to serialize GraphQLResponse"));
 
-    // TODO: super ultra quick implementation
-
-    async_stream::stream! {
-        loop {
-            futures_util::select! {
-                item = input.next() => {
-                    match item {
-                        Some(resp) => {
-                            let json_str = serde_json::to_string(&resp).expect("Failed to serialize data");
-                            yield Bytes::from(format!("event: next\ndata: {}\n\n", json_str));
-                        }
-                        None => {
-                            yield Bytes::from("event: complete\n\n");
-                            break;
-                        },
-                    }
-                }
-                _ = heartbeat_timer => {
-                    heartbeat_timer = Delay::new(heartbeat_interval).fuse();
-                    yield Bytes::from(":\n\n");
-                }
-            }
-        }
-    }
-    .boxed()
+    // Use the router's SSE stream implementation
+    sse::create_stream(byte_stream, heartbeat_interval)
+        .map(|result| {
+            // Convert Result<ntex::util::Bytes, std::io::Error> to bytes::Bytes
+            // Unwrap is safe here as we control the serialization above
+            Bytes::copy_from_slice(&result.expect("SSE stream error"))
+        })
+        .boxed()
 }
