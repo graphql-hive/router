@@ -28,3 +28,4 @@ futures-util = "0.3.31"
 tower-service = "0.3.3"
 async-stream = "0.3.6"
 futures-timer = "3.0.3"
+hive-router = { path = "../../bin/router" }
