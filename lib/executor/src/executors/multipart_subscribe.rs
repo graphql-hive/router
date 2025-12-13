@@ -282,7 +282,8 @@ mod tests {
 
     #[test]
     fn test_find_multipart_boundary_incomplete() {
-        let buffer = b"--graphql\r\nContent-Type: application/json\r\n\r\n{\"payload\":{\"data\":{}}}";
+        let buffer =
+            b"--graphql\r\nContent-Type: application/json\r\n\r\n{\"payload\":{\"data\":{}}}";
 
         let result = find_multipart_boundary(buffer);
 
