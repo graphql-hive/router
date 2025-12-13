@@ -355,6 +355,7 @@ async fn execute_plan_with_initial_data<'exec, 'req>(
     estimated_response_size: usize,
 ) -> Result<PlanExecutionOutput, PlanExecutionError> {
     // Clone initial_data to make it 'static for ExecutionContext
+    // TODO: is this wasteful if initial data is null?
     // SAFETY: We're creating a new owned value that will be used within this function
     let owned_data: Value<'exec> = unsafe { std::mem::transmute(initial_data.clone()) };
 
