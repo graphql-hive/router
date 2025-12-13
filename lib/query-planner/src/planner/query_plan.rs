@@ -168,7 +168,7 @@ pub fn build_query_plan_from_fetch_graph(
 
     let overall_plan_sequence = optimize_plan_sequence(overall_plan_sequence);
 
-    // TODO: do we want postprocessing like this?
+    // TODO: have it live where fetch node is created
     let overall_plan_sequence = wrap_subscription_fetch_nodes(overall_plan_sequence);
 
     let root_node = match overall_plan_sequence.len() == 1 {
@@ -184,30 +184,27 @@ pub fn build_query_plan_from_fetch_graph(
     })
 }
 
-/// wrap subscription fetch ndoes with subscription operations in subscriptions.
+/// Wrap subscription fetch ndoes with subscription operations in subscriptions.
 /// pretty much transforming, for example:
 /// `Sequence[FetchNode(subscription), Flatten...]`
 /// into:
 /// `Sequence[SubscriptionNode { primary: FetchNode }, Flatten...]`
+/// Leaves everything else intact.
 fn wrap_subscription_fetch_nodes(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
-    nodes.into_iter().map(wrap_subscription_node).collect()
-}
-
-fn wrap_subscription_node(node: PlanNode) -> PlanNode {
-    match node {
-        PlanNode::Fetch(ref fetch)
-            if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) =>
-        {
-            PlanNode::Subscription(SubscriptionNode {
-                primary: Box::new(node),
-            })
-        }
-        PlanNode::Sequence(seq) => PlanNode::Sequence(SequenceNode {
-            nodes: wrap_subscription_fetch_nodes(seq.nodes),
-        }),
-        // others cannot be wrapped, only fetch (subgraph has all data) and sequence (entity resolution required)
-        other => other,
-    }
+    nodes
+        .into_iter()
+        .map(|node| match node {
+            PlanNode::Fetch(fetch)
+                if matches!(fetch.operation_kind, Some(OperationKind::Subscription)) =>
+            {
+                PlanNode::Subscription(SubscriptionNode { primary: fetch })
+            }
+            PlanNode::Sequence(seq) => PlanNode::Sequence(SequenceNode {
+                nodes: wrap_subscription_fetch_nodes(seq.nodes),
+            }),
+            other => other,
+        })
+        .collect()
 }
 
 fn are_conditions_compatible(c1: &ConditionNode, c2: &ConditionNode) -> bool {
