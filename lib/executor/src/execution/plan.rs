@@ -1079,7 +1079,7 @@ mod tests {
         response::graphql_error::{GraphQLErrorExtensions, GraphQLErrorPath},
     };
 
-    use super::select_fetch_variables;
+    use super::{format_error_response, select_fetch_variables, GraphQLError};
     use sonic_rs::Value;
     use std::collections::{BTreeSet, HashMap};
 
@@ -1198,5 +1198,19 @@ mod tests {
                 GraphQLErrorPathSegment::String("field1".to_string())
             ]
         );
+    }
+
+    #[test]
+    fn format_error_response_correctly() {
+        let error1 = GraphQLError::from_message_and_extensions(
+            format!("Entity resolution error: {}", "Oops!"),
+            Default::default(),
+        );
+        let error2 = GraphQLError::from_message_and_extensions(
+            "Hello World".to_string(),
+            Default::default(),
+        );
+
+        insta::assert_snapshot!(String::from_utf8(format_error_response(&[error1, error2])).unwrap(), @r#"{"data":null,"errors":[{"message":"Entity resolution error: Oops!"},{"message":"Hello World"}]}"#);
     }
 }
