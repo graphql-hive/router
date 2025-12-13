@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use crate::executors::common::HttpExecutionResponse;
 use crate::executors::dedupe::{request_fingerprint, ABuildHasher, SharedResponse};
+use crate::executors::multipart_subscribe;
 use crate::executors::sse;
 use dashmap::DashMap;
 use futures::stream::BoxStream;
@@ -357,11 +358,13 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             headers.insert(key, value.clone());
         });
 
-        // accept text/event-stream
-        // TODO: multipart
+        // Prefer multipart over SSE for subscriptions
+        // https://www.apollographql.com/docs/graphos/routing/operations/subscriptions/multipart-protocol
         headers.insert(
             http::header::ACCEPT,
-            HeaderValue::from_static(r#"text/event-stream"#),
+            HeaderValue::from_static(
+                r#"multipart/mixed;boundary="graphql";subscriptionSpec="1.0", text/event-stream"#,
+            ),
         );
         *req.headers_mut() = headers;
 
@@ -431,58 +434,105 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
 
-        if content_type != "text/event-stream" {
+        let is_multipart = content_type.starts_with("multipart/mixed");
+        let is_sse = content_type == "text/event-stream";
+
+        if !is_multipart && !is_sse {
             return stream_once_err(SubgraphExecutorError::UnsupportedContentTypeError(
                 content_type.to_string(),
                 self.subgraph_name.clone(),
             ));
         }
 
-        let stream = sse::parse_to_stream(body_stream);
         let endpoint = self.endpoint.to_string();
 
-        Box::pin(async_stream::stream! {
-            for await result in stream {
-                match result {
-                    Ok(body) => {
-                        yield HttpExecutionResponse {
-                            body,
-                            headers: response_headers.clone(),
-                        };
-                    }
-                    Err(e) => {
-                        // TODO: I cannot reuse self.log_error here because of 'self' move issues
-                        //       is there a nicer way to do this without repetition?
-                        let error = SubgraphExecutorError::SubscriptionStreamError(
-                            endpoint.clone(),
-                            e.to_string(),
-                        );
+        // Create the appropriate stream based on content type
+        if is_multipart {
+            // Boundary is always "graphql" per the multipart subscription spec
+            let stream = multipart_subscribe::parse_to_stream(body_stream);
 
-                        // self.log_error(&e);
-                        tracing::error!(
-                            error = &error as &dyn std::error::Error,
-                            "Subgraph executor error"
-                        );
+            Box::pin(async_stream::stream! {
+                for await result in stream {
+                    match result {
+                        Ok(body) => {
+                            yield HttpExecutionResponse {
+                                body,
+                                headers: response_headers.clone(),
+                            };
+                        }
+                        Err(e) => {
+                            let error = SubgraphExecutorError::SubscriptionStreamError(
+                                endpoint.clone(),
+                                e.to_string(),
+                            );
 
-                        // let error_bytes = self.error_to_graphql_bytes(e);
-                        let graphql_error: GraphQLError = error.into();
-                        let graphql_error = graphql_error.add_subgraph_name(&subgraph_name);
-                        let errors = vec![graphql_error];
-                        let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
-                        let mut buffer = BytesMut::new();
-                        buffer.put_slice(b"{\"errors\":");
-                        buffer.put_slice(&errors_bytes);
-                        buffer.put_slice(b"}");
-                        let error_bytes = buffer.freeze();
+                            tracing::error!(
+                                error = &error as &dyn std::error::Error,
+                                "Subgraph executor error"
+                            );
 
-                        yield HttpExecutionResponse {
-                            body: error_bytes,
-                            headers: response_headers.clone(),
-                        };
-                        return;
+                            let graphql_error: GraphQLError = error.into();
+                            let graphql_error = graphql_error.add_subgraph_name(&subgraph_name);
+                            let errors = vec![graphql_error];
+                            let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
+                            let mut buffer = BytesMut::new();
+                            buffer.put_slice(b"{\"errors\":");
+                            buffer.put_slice(&errors_bytes);
+                            buffer.put_slice(b"}");
+                            let error_bytes = buffer.freeze();
+
+                            yield HttpExecutionResponse {
+                                body: error_bytes,
+                                headers: response_headers.clone(),
+                            };
+                            return;
+                        }
                     }
                 }
-            }
-        })
+            })
+        } else {
+            // SSE stream
+            let stream = sse::parse_to_stream(body_stream);
+
+            Box::pin(async_stream::stream! {
+                for await result in stream {
+                    match result {
+                        Ok(body) => {
+                            yield HttpExecutionResponse {
+                                body,
+                                headers: response_headers.clone(),
+                            };
+                        }
+                        Err(e) => {
+                            let error = SubgraphExecutorError::SubscriptionStreamError(
+                                endpoint.clone(),
+                                e.to_string(),
+                            );
+
+                            tracing::error!(
+                                error = &error as &dyn std::error::Error,
+                                "Subgraph executor error"
+                            );
+
+                            let graphql_error: GraphQLError = error.into();
+                            let graphql_error = graphql_error.add_subgraph_name(&subgraph_name);
+                            let errors = vec![graphql_error];
+                            let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
+                            let mut buffer = BytesMut::new();
+                            buffer.put_slice(b"{\"errors\":");
+                            buffer.put_slice(&errors_bytes);
+                            buffer.put_slice(b"}");
+                            let error_bytes = buffer.freeze();
+
+                            yield HttpExecutionResponse {
+                                body: error_bytes,
+                                headers: response_headers.clone(),
+                            };
+                            return;
+                        }
+                    }
+                }
+            })
+        }
     }
 }
