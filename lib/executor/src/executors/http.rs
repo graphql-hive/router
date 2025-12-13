@@ -323,12 +323,12 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         let stream_once_err = |err: SubgraphExecutorError| {
             self.log_error(&err);
             let error_bytes = self.error_to_graphql_bytes(err);
-            return Box::pin(stream::once(async move {
+            Box::pin(stream::once(async move {
                 HttpExecutionResponse {
                     body: error_bytes,
                     headers: Default::default(),
                 }
-            }));
+            }))
         };
 
         let body = match self.build_request_body(&execution_request) {
