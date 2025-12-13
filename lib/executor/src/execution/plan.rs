@@ -336,6 +336,7 @@ pub async fn execute_query_plan<'exec, 'req>(
     .map(QueryPlanExecutionResult::Single)
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Core execution logic shared between regular plan execution and subscription event processing.
 /// Executes the plan nodes and projects the final response.
 async fn execute_plan_with_initial_data<'exec, 'req>(

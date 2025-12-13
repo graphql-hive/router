@@ -112,6 +112,7 @@ pub async fn graphql_request_handler(
             use crate::pipeline::{header::TEXT_EVENT_STREAM, multipart_subscribe, sse};
 
             // TODO: respect order of Accept header
+            #[allow(clippy::type_complexity)]
             let (response_content_type, body): (
                 http::HeaderValue,
                 std::pin::Pin<
