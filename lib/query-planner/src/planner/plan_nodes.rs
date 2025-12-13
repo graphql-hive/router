@@ -65,7 +65,7 @@ impl QueryPlan {
                 Self::fetch_nodes_from_node(&node.node, list);
             }
             PlanNode::Subscription(node) => {
-                Self::fetch_nodes_from_node(node.primary.as_ref(), list);
+                list.push(&node.primary);
             }
             PlanNode::Defer(_) => {
                 unreachable!("DeferNode is not supported yet");
@@ -258,7 +258,8 @@ pub struct ValueSetter {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscriptionNode {
-    pub primary: Box<PlanNode>, // Use Box to prevent size issues
+    // A subscription node can only really have a primary fetch node.
+    pub primary: FetchNode,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
