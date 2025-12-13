@@ -5,10 +5,8 @@ use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
 use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
-use crate::pipeline::{PipelineResult, SubscriptionOutput};
 use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
-use futures::StreamExt;
 use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
@@ -17,7 +15,7 @@ use hive_router_plan_executor::execution::plan::{
 };
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
-use http::{HeaderMap, HeaderName};
+use http::HeaderName;
 use ntex::web::HttpRequest;
 
 static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
@@ -43,7 +41,7 @@ pub async fn execute_plan(
     supergraph: &SupergraphData,
     app_state: &Arc<RouterSharedState>,
     planned_request: &PlannedRequest<'_>,
-) -> Result<PipelineResult, PipelineError> {
+) -> Result<QueryPlanExecutionResult, PipelineError> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
     if app_state.router_config.query_planner.allow_expose {
@@ -122,24 +120,5 @@ pub async fn execute_plan(
         req.new_pipeline_error(PipelineErrorVariant::PlanExecutionError(err))
     })?;
 
-    match result {
-        QueryPlanExecutionResult::Single(output) => Ok(PipelineResult::Single(output)),
-        QueryPlanExecutionResult::Stream(stream) => {
-            use crate::pipeline::sse;
-
-            let subscription_events = stream.map(|output| output.body);
-
-            let content_type = http::HeaderValue::from_static("text/event-stream");
-            let body = Box::pin(sse::create_stream(
-                subscription_events,
-                std::time::Duration::from_secs(10),
-            ));
-
-            Ok(PipelineResult::Stream(SubscriptionOutput {
-                headers: HeaderMap::new(), // TODO: apply header rules
-                body,
-                content_type,
-            }))
-        }
-    }
+    Ok(result)
 }

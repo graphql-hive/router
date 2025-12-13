@@ -76,10 +76,16 @@ pub struct PlanExecutionOutput {
     pub error_count: usize,
 }
 
+pub struct PlanSubscriptionOutput {
+    pub body: BoxStream<'static, Vec<u8>>,
+    pub headers: HeaderMap,
+    pub error_count: usize,
+}
+
 /// Result of executing a query plan - either a single response or a subscription stream
 pub enum QueryPlanExecutionResult {
     Single(PlanExecutionOutput),
-    Stream(BoxStream<'static, PlanExecutionOutput>),
+    Stream(PlanSubscriptionOutput),
 }
 
 /// Owned context for subscription stream processing.
@@ -185,16 +191,24 @@ pub async fn execute_query_plan<'exec, 'req>(
             remaining_nodes,
         ));
 
-        return Ok(QueryPlanExecutionResult::Stream(Box::pin(
-            async_stream::stream! {
-                let mut response_stream = response_stream;
+        // Create a stream of serialized subscription events
+        let body_stream = Box::pin(async_stream::stream! {
+            let mut response_stream = response_stream;
 
-                while let Some(response) = response_stream.next().await {
-                    let output = execute_subscription_event_plan(&response.body, &owned_ctx).await;
-                    yield output;
-                }
-            },
-        )));
+            while let Some(response) = response_stream.next().await {
+                let output = execute_subscription_event_plan(&response.body, &owned_ctx).await;
+                yield output.body;
+            }
+        });
+
+        // TODO: Extract headers from first response or aggregate them
+        let headers = HeaderMap::new();
+
+        return Ok(QueryPlanExecutionResult::Stream(PlanSubscriptionOutput {
+            body: body_stream,
+            headers,
+            error_count: 0, // TODO: Track errors across subscription events
+        }));
     }
 
     // query/mutation
