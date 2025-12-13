@@ -1,8 +1,7 @@
-use std::time::Duration;
-
 use futures_timer::Delay;
 use futures_util::{FutureExt, Stream, StreamExt};
 use ntex::util::Bytes;
+use std::time::Duration;
 
 // TODO: test this bad boy
 // TODO: not be a quick implementation
