@@ -94,6 +94,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 6.3.0 (2025-12-12)
+
+### Features
+
+#### Support environment variables in expressions
+
+We have added support for using environment variables in expressions within the Hive Router configuration.
+
+Example usage:
+```
+headers:
+  all:
+    response:
+      - insert:
+          name: "x-powered-by"
+          expression: env("SERVICE_NAME", "default-value")
+```
+
+### Fixes
+
+- Bump `vrl` dependency to `0.29.0`
+
 ## 6.2.4 (2025-12-11)
 
 ### Fixes
