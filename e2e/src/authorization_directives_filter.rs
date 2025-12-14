@@ -16,6 +16,7 @@ mod authorization_directives_in_filter_mode_e2e_tests {
         encode::<Value>(
             &jsonwebtoken::Header {
                 alg: jsonwebtoken::Algorithm::RS512,
+                kid: Some("test_id".to_string()),
                 ..Default::default()
             },
             payload,
