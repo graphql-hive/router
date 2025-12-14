@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod jwt_e2e_tests {
-    use jsonwebtoken::{encode, EncodingKey};
+    use jsonwebtoken::{Algorithm, EncodingKey, encode};
     use ntex::http::header;
     use ntex::web::test;
     use sonic_rs::{from_slice, json, JsonValueTrait, Value};
@@ -11,11 +11,15 @@ mod jwt_e2e_tests {
     };
 
     fn generate_jwt(payload: &Value) -> String {
+        generate_jwt_with_alg(payload, jsonwebtoken::Algorithm::RS512)
+    }
+
+    fn generate_jwt_with_alg(payload: &Value, algorithm: Algorithm) -> String {
         let pem = include_str!("../jwks.rsa512.pem");
 
         encode::<Value>(
             &jsonwebtoken::Header {
-                alg: jsonwebtoken::Algorithm::RS512,
+                alg: algorithm,
                 kid: Some("test_id".to_string()),
                 ..Default::default()
             },
@@ -465,6 +469,39 @@ mod jwt_e2e_tests {
             resp.status(),
             ntex::http::StatusCode::FORBIDDEN,
             "Expected 403 for wrong audience"
+        );
+    }
+
+    #[ntex::test]
+    async fn rejects_request_with_wrong_algorithm() {
+        let app = init_router_from_config_file("configs/jwt_auth_jwk_with_alg.router.yaml")
+            .await
+            .unwrap();
+        wait_for_readiness(&app.app).await;
+        let exp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600;
+        let claims = json!({
+            "sub": "user1",
+            "iat": 1516239022,
+            "exp": exp,
+        });
+
+        // Expects valid alg to be RS512 from config
+        let token = generate_jwt_with_alg(&claims, jsonwebtoken::Algorithm::RS256);
+
+        let req = init_graphql_request("{ __typename }", None).header(
+            header::AUTHORIZATION,
+            header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
+        );
+
+        let resp = test::call_service(&app.app, req.to_request()).await;
+        assert_eq!(
+            resp.status(),
+            ntex::http::StatusCode::FORBIDDEN,
+            "Expected 403 for wrong algorithm"
         );
     }
 }
