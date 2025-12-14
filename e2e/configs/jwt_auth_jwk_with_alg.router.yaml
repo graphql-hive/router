@@ -1,0 +1,10 @@
+# yaml-language-server: $schema=../../router-config.schema.json
+supergraph:
+  source: file
+  path: ../supergraph.graphql
+jwt:
+  enabled: true
+  require_authentication: true
+  jwks_providers:
+    - source: file
+      path: ../jwks.rsa512.alg.json
