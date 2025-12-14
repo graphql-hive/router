@@ -201,13 +201,17 @@ impl JwtAuthRuntime {
 
     fn try_decode_from_jwk(&self, token: &str, jwk: &Jwk) -> Result<JwtTokenPayload, JwtError> {
         let decoding_key = DecodingKey::from_jwk(jwk).map_err(JwtError::InvalidDecodingKey)?;
-        let key_alg = jwk
-            .common
-            .key_algorithm
-            .ok_or(JwtError::JwkMissingAlgorithm)?;
 
-        let alg = Algorithm::from_str(&key_alg.to_string())
-            .map_err(JwtError::JwkAlgorithmNotSupported)?;
+        let alg = match jwk.common.key_algorithm {
+            Some(key_alg) => Algorithm::from_str(&key_alg.to_string())
+                .map_err(JwtError::JwkAlgorithmNotSupported)?,
+            None => {
+                // Fallback to algorithm from JWT header if JWK doesn't specify one
+                jsonwebtoken::decode_header(token)
+                    .map_err(JwtError::InvalidJwtHeader)?
+                    .alg
+            }
+        };
 
         let mut validation = Validation::new(alg);
 
