@@ -206,12 +206,22 @@ impl JwtAuthRuntime {
             Some(key_alg) => Algorithm::from_str(&key_alg.to_string())
                 .map_err(JwtError::JwkAlgorithmNotSupported)?,
             None => {
-                // Fallback to algorithm from JWT header if JWK doesn't specify one
+                // Fallback to algorithm from JWT header if JWK doesn't specify one, we must validate the value below
+                // to protect from user modified tokens with invalid algorithms.
                 jsonwebtoken::decode_header(token)
                     .map_err(JwtError::InvalidJwtHeader)?
                     .alg
             }
         };
+
+        // Make sure the algorithm is in the allowed algorithms before proceeding
+        if let Some(allowed) = &self.config.allowed_algorithms {
+            if !allowed.contains(&alg) {
+                return Err(JwtError::JwkAlgorithmNotSupported(
+                    jsonwebtoken::errors::ErrorKind::InvalidAlgorithm.into()
+                ));
+            }
+        }
 
         let mut validation = Validation::new(alg);
 
