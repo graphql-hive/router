@@ -7,6 +7,7 @@ use crate::shared_state::RouterSharedState;
 use graphql_tools::validation::validate::validate;
 use ntex::web::HttpRequest;
 use tracing::{error, trace};
+pub mod max_depth_rule;
 
 #[inline]
 pub async fn validate_operation_with_cache(

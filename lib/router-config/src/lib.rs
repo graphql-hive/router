@@ -10,6 +10,7 @@ pub mod log;
 pub mod override_labels;
 pub mod override_subgraph_urls;
 pub mod primitives;
+pub mod query_complexity;
 pub mod query_planner;
 pub mod supergraph;
 pub mod traffic_shaping;
@@ -100,6 +101,9 @@ pub struct HiveRouterConfig {
     /// Configuration for usage reporting to GraphQL Hive.
     #[serde(default)]
     pub usage_reporting: usage_reporting::UsageReportingConfig,
+
+    #[serde(default)]
+    pub query_complexity: query_complexity::QueryComplexityConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
