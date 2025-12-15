@@ -103,6 +103,7 @@ pub struct HiveRouterConfig {
     pub usage_reporting: usage_reporting::UsageReportingConfig,
 
     #[serde(default)]
+    /// Configuration for query complexity checking.
     pub query_complexity: query_complexity::QueryComplexityConfig,
 }
 

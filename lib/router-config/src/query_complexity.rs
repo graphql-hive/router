@@ -3,6 +3,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, Default)]
 pub struct QueryComplexityConfig {
+    /// Configuration of limiting the depth of the incoming GraphQL operations.
+    /// If not specified, depth limiting is disabled.
+    ///
+    /// It is used to prevent too large queries that could lead to overfetching or DOS attacks.
+    #[serde(default)]
     pub max_depth: Option<MaxDepthRuleConfig>,
 }
 
