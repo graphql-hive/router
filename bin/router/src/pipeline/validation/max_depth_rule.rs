@@ -193,15 +193,11 @@ impl<'a, 'b> OperationVisitor<'a, ValidationErrorContext> for MaxDepthRuleVisito
                 "Query depth limit exceeded.".to_string()
             };
 
-            tracing::error!(message = %message, depth = &depth, max_depth = self.config.n, "Max depth validation error");
-
-            if self.config.propagate_on_rejection {
-                user_context.report_error(ValidationError {
-                    message,
-                    locations: vec![],
-                    error_code: "MAX_DEPTH_EXCEEDED",
-                });
-            }
+            user_context.report_error(ValidationError {
+                message,
+                locations: vec![],
+                error_code: "MAX_DEPTH_EXCEEDED",
+            });
         }
     }
 }
