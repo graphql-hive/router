@@ -1,9 +1,12 @@
 use std::{cmp, collections::HashMap};
 
 use graphql_tools::{
-    ast::{visit_document, OperationVisitor, OperationVisitorContext},
+    ast::{
+        visit_document, OperationDefinitionExtension, OperationVisitor, OperationVisitorContext,
+    },
     static_graphql::query::{
         Field, FragmentDefinition, FragmentSpread, InlineFragment, OperationDefinition, Selection,
+        SelectionSet,
     },
     validation::{
         rules::ValidationRule,
@@ -51,22 +54,13 @@ enum CountableNode<'a> {
     FragmentDefinition(&'a FragmentDefinition),
 }
 
-impl CountableNode<'_> {
-    fn get_selections(&self) -> Option<&Vec<Selection>> {
+impl<'a> CountableNode<'a> {
+    fn selection_set(&self) -> Option<&'a SelectionSet> {
         match self {
-            CountableNode::Field(field) => Some(&field.selection_set.items),
-            CountableNode::InlineFragment(inline_fragment) => {
-                Some(&inline_fragment.selection_set.items)
-            }
-            CountableNode::OperationDefinition(node) => match node {
-                OperationDefinition::SelectionSet(selection_set) => Some(&selection_set.items),
-                OperationDefinition::Query(query) => Some(&query.selection_set.items),
-                OperationDefinition::Mutation(mutation) => Some(&mutation.selection_set.items),
-                OperationDefinition::Subscription(subscription) => {
-                    Some(&subscription.selection_set.items)
-                }
-            },
-            CountableNode::FragmentDefinition(node) => Some(&node.selection_set.items),
+            CountableNode::Field(field) => Some(&field.selection_set),
+            CountableNode::InlineFragment(inline_fragment) => Some(&inline_fragment.selection_set),
+            CountableNode::OperationDefinition(node) => Some(node.selection_set()),
+            CountableNode::FragmentDefinition(node) => Some(&node.selection_set),
             CountableNode::FragmentSpread(_) => None,
         }
     }
@@ -101,12 +95,12 @@ impl<'a> From<&'a OperationDefinition> for CountableNode<'a> {
 impl MaxDepthRuleVisitor<'_> {
     fn handle_selections(
         &mut self,
-        selections: &Vec<Selection>,
+        selection_set: &SelectionSet,
         mut depth: i32,
         parent_depth: i32,
         ctx: &OperationVisitorContext<'_>,
     ) -> i32 {
-        for child in selections {
+        for child in &selection_set.items {
             if self.config.flatten_fragments
                 && (matches!(child, Selection::FragmentSpread(_))
                     || matches!(child, Selection::InlineFragment(_)))
@@ -142,8 +136,8 @@ impl MaxDepthRuleVisitor<'_> {
 
         let mut depth = parent_depth;
 
-        if let Some(selections) = node.get_selections() {
-            depth = self.handle_selections(selections, depth, parent_depth, ctx);
+        if let Some(selection_set) = node.selection_set() {
+            depth = self.handle_selections(selection_set, depth, parent_depth, ctx);
         }
 
         if let CountableNode::FragmentSpread(node) = node {
