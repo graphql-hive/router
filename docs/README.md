@@ -1763,7 +1763,6 @@ It is used to prevent too large queries that could lead to overfetching or DOS a
 |**flatten\_fragments**|`boolean`|Flatten fragment spreads and inline fragments when calculating depth.<br/>Default: `false`<br/>||
 |**ignore\_introspection**|`boolean`|Ignore the depth of introspection queries.<br/>Default: `true`<br/>||
 |**n**|`integer`|Depth threshold. A value of 0 means no limit.<br/>Default: `6`<br/>Format: `"uint"`<br/>Minimum: `0`<br/>||
-|**propagate\_on\_rejection**|`boolean`|Whether to propagate the error when the depth limit is exceeded.<br/>Default: `true`<br/>||
 
 **Example**
 
