@@ -93,31 +93,6 @@ impl<'a> From<&'a OperationDefinition> for CountableNode<'a> {
 }
 
 impl MaxDepthRuleVisitor<'_> {
-    fn handle_selections(
-        &mut self,
-        selection_set: &SelectionSet,
-        mut depth: i32,
-        parent_depth: i32,
-        ctx: &OperationVisitorContext<'_>,
-    ) -> i32 {
-        for child in &selection_set.items {
-            if self.config.flatten_fragments
-                && (matches!(child, Selection::FragmentSpread(_))
-                    || matches!(child, Selection::InlineFragment(_)))
-            {
-                depth = cmp::max(
-                    depth,
-                    self.count_depth(child.into(), Some(parent_depth), ctx),
-                );
-            } else {
-                depth = cmp::max(
-                    depth,
-                    self.count_depth(child.into(), Some(parent_depth + 1), ctx),
-                );
-            }
-        }
-        depth
-    }
     fn count_depth(
         &mut self,
         node: CountableNode,
@@ -137,7 +112,22 @@ impl MaxDepthRuleVisitor<'_> {
         let mut depth = parent_depth;
 
         if let Some(selection_set) = node.selection_set() {
-            depth = self.handle_selections(selection_set, depth, parent_depth, ctx);
+            for child in &selection_set.items {
+                if self.config.flatten_fragments
+                    && (matches!(child, Selection::FragmentSpread(_))
+                        || matches!(child, Selection::InlineFragment(_)))
+                {
+                    depth = cmp::max(
+                        depth,
+                        self.count_depth(child.into(), Some(parent_depth), ctx),
+                    );
+                } else {
+                    depth = cmp::max(
+                        depth,
+                        self.count_depth(child.into(), Some(parent_depth + 1), ctx),
+                    );
+                }
+            }
         }
 
         if let CountableNode::FragmentSpread(node) = node {
