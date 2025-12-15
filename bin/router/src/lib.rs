@@ -20,11 +20,15 @@ use crate::{
     },
     jwt::JwtAuthRuntime,
     logger::configure_logging,
-    pipeline::{graphql_request_handler, usage_reporting::init_hive_user_agent},
+    pipeline::{
+        graphql_request_handler, usage_reporting::init_hive_user_agent,
+        validation::max_depth_rule::MaxDepthRule,
+    },
 };
 
 pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
+use graphql_tools::validation::rules::default_rules_validation_plan;
 use hive_router_config::{load_config, HiveRouterConfig};
 use http::header::RETRY_AFTER;
 use ntex::{
@@ -126,10 +130,23 @@ pub async fn configure_app_from_config(
     let schema_state =
         SchemaState::new_from_config(bg_tasks_manager, router_config_arc.clone()).await?;
     let schema_state_arc = Arc::new(schema_state);
+    let mut validation_plan = default_rules_validation_plan();
+    if let Some(max_depth_config) = &router_config_arc.query_complexity.max_depth {
+        if max_depth_config.is_enabled() {
+            info!(
+                "Enabling Max Depth Rule with max depth {}",
+                max_depth_config.n
+            );
+            validation_plan.add_rule(Box::new(MaxDepthRule {
+                config: max_depth_config.clone(),
+            }));
+        }
+    }
     let shared_state = Arc::new(RouterSharedState::new(
         router_config_arc,
         jwt_runtime,
         hive_usage_agent,
+        validation_plan,
     )?);
 
     Ok((shared_state, schema_state_arc))
