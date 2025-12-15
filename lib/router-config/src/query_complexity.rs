@@ -28,10 +28,6 @@ pub struct MaxDepthRuleConfig {
     #[serde(default = "default_expose_limits")]
     /// Whether to expose the limits in the error message.
     pub expose_limits: bool,
-
-    #[serde(default = "default_propagate_on_rejection")]
-    /// Whether to propagate the error when the depth limit is exceeded.
-    pub propagate_on_rejection: bool,
 }
 
 impl MaxDepthRuleConfig {
@@ -47,7 +43,6 @@ impl Default for MaxDepthRuleConfig {
             ignore_introspection: default_ignore_introspection(),
             flatten_fragments: default_flatten_fragments(),
             expose_limits: default_expose_limits(),
-            propagate_on_rejection: default_propagate_on_rejection(),
         }
     }
 }
@@ -65,9 +60,5 @@ fn default_flatten_fragments() -> bool {
 }
 
 fn default_expose_limits() -> bool {
-    true
-}
-
-fn default_propagate_on_rejection() -> bool {
     true
 }
