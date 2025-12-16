@@ -8,6 +8,8 @@ use graphql_tools::validation::validate::validate;
 use ntex::web::HttpRequest;
 use tracing::{error, trace};
 pub mod max_depth_rule;
+pub mod max_directives_rule;
+mod shared;
 
 #[inline]
 pub async fn validate_operation_with_cache(

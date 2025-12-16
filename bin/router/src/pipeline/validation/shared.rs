@@ -1,0 +1,53 @@
+use graphql_tools::{
+    ast::OperationDefinitionExtension,
+    static_graphql::query::{
+        Field, FragmentDefinition, FragmentSpread, InlineFragment, OperationDefinition, Selection,
+        SelectionSet,
+    },
+};
+
+pub enum CountableNode<'a> {
+    Field(&'a Field),
+    FragmentSpread(&'a FragmentSpread),
+    InlineFragment(&'a InlineFragment),
+    OperationDefinition(&'a OperationDefinition),
+    FragmentDefinition(&'a FragmentDefinition),
+}
+
+impl<'a> CountableNode<'a> {
+    pub fn selection_set(&self) -> Option<&'a SelectionSet> {
+        match self {
+            CountableNode::Field(field) => Some(&field.selection_set),
+            CountableNode::InlineFragment(inline_fragment) => Some(&inline_fragment.selection_set),
+            CountableNode::OperationDefinition(node) => Some(node.selection_set()),
+            CountableNode::FragmentDefinition(node) => Some(&node.selection_set),
+            CountableNode::FragmentSpread(_) => None,
+        }
+    }
+}
+
+impl<'a> From<&'a Selection> for CountableNode<'a> {
+    fn from(selection: &'a Selection) -> Self {
+        match selection {
+            Selection::Field(field) => CountableNode::Field(field),
+            Selection::InlineFragment(inline_fragment) => {
+                CountableNode::InlineFragment(inline_fragment)
+            }
+            Selection::FragmentSpread(fragment_spread) => {
+                CountableNode::FragmentSpread(fragment_spread)
+            }
+        }
+    }
+}
+
+impl<'a> From<&&'a FragmentDefinition> for CountableNode<'a> {
+    fn from(fragment_definition: &&'a FragmentDefinition) -> Self {
+        CountableNode::FragmentDefinition(fragment_definition)
+    }
+}
+
+impl<'a> From<&'a OperationDefinition> for CountableNode<'a> {
+    fn from(operation_definition: &'a OperationDefinition) -> Self {
+        CountableNode::OperationDefinition(operation_definition)
+    }
+}

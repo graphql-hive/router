@@ -9,6 +9,13 @@ pub struct QueryComplexityConfig {
     /// It is used to prevent too large queries that could lead to overfetching or DOS attacks.
     #[serde(default)]
     pub max_depth: Option<MaxDepthRuleConfig>,
+
+    /// Configuration of limiting the number of directives in the incoming GraphQL operations.
+    /// If not specified, directive limiting is disabled.
+    ///
+    /// It is used to prevent too many directives that could lead to overfetching or DOS attacks.
+    #[serde(default)]
+    pub max_directives: Option<MaxDirectivesRuleConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -61,4 +68,34 @@ fn default_flatten_fragments() -> bool {
 
 fn default_expose_limits() -> bool {
     true
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct MaxDirectivesRuleConfig {
+    #[serde(default = "default_max_directives")]
+    /// Directives threshold. A value of 0 means no limit.
+    pub n: usize,
+
+    #[serde(default = "default_expose_limits")]
+    /// Whether to expose the limits in the error message.
+    pub expose_limits: bool,
+}
+
+fn default_max_directives() -> usize {
+    50
+}
+
+impl MaxDirectivesRuleConfig {
+    pub fn is_enabled(&self) -> bool {
+        self.n > 0
+    }
+}
+
+impl Default for MaxDirectivesRuleConfig {
+    fn default() -> Self {
+        MaxDirectivesRuleConfig {
+            n: default_max_directives(),
+            expose_limits: default_expose_limits(),
+        }
+    }
 }
