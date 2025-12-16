@@ -28,7 +28,7 @@ impl ValidationRule for MaxDepthRule {
     ) {
         for definition in &ctx.operation.definitions {
             if let Definition::Operation(op) = definition {
-                let mut visitor = MaxDepthRuleVisitor {
+                let mut visitor = MaxDepthVisitor {
                     config: &self.config,
                     visited_fragments: HashMap::new(),
                     ctx,
@@ -55,14 +55,14 @@ impl ValidationRule for MaxDepthRule {
     }
 }
 
-struct MaxDepthRuleVisitor<'a, 'b> {
-    config: &'a MaxDepthRuleConfig,
-    visited_fragments: HashMap<String, i32>,
-    ctx: &'a mut OperationVisitorContext<'b>,
+struct MaxDepthVisitor<'a, 'b> {
+    config: &'b MaxDepthRuleConfig,
+    visited_fragments: HashMap<&'a str, i32>,
+    ctx: &'b mut OperationVisitorContext<'a>,
 }
 
-impl MaxDepthRuleVisitor<'_, '_> {
-    fn count_depth(&mut self, node: CountableNode, parent_depth: Option<i32>) -> i32 {
+impl<'a> MaxDepthVisitor<'a, '_> {
+    fn count_depth(&mut self, node: CountableNode<'a>, parent_depth: Option<i32>) -> i32 {
         if self.config.ignore_introspection {
             if let CountableNode::Field(field) = node {
                 if field.name == "__schema" {
@@ -96,22 +96,21 @@ impl MaxDepthRuleVisitor<'_, '_> {
                 parent_depth += 1;
             }
 
-            let visited_fragment = self.visited_fragments.get(&node.fragment_name);
+            let fragment_name = node.fragment_name.as_str();
+            let visited_fragment = self.visited_fragments.get(fragment_name);
             if let Some(visited_fragment_depth) = visited_fragment {
                 return parent_depth + visited_fragment_depth;
             } else {
-                self.visited_fragments
-                    .insert(node.fragment_name.to_string(), -1);
+                self.visited_fragments.insert(fragment_name, -1);
             }
 
-            let fragment = self.ctx.known_fragments.get(&node.fragment_name.as_str());
+            let fragment = self.ctx.known_fragments.get(fragment_name);
             if let Some(fragment) = fragment {
                 let fragment_depth = self.count_depth(fragment.into(), Some(0));
 
                 depth = cmp::max(depth, parent_depth + fragment_depth);
-                if Some(&-1) == self.visited_fragments.get(&node.fragment_name) {
-                    self.visited_fragments
-                        .insert(node.fragment_name.to_string(), fragment_depth);
+                if Some(&-1) == self.visited_fragments.get(fragment_name) {
+                    self.visited_fragments.insert(fragment_name, fragment_depth);
                 }
             }
         }
