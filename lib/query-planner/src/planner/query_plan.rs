@@ -254,7 +254,6 @@ fn are_conditions_compatible(c1: &ConditionNode, c2: &ConditionNode) -> bool {
 }
 
 fn merge_two_condition_nodes(mut a: ConditionNode, mut b: ConditionNode) -> PlanNode {
-
     let is_if = a.if_clause.is_some();
 
     let mut inner_nodes: Vec<PlanNode> = a
