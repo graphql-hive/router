@@ -218,7 +218,7 @@ impl JwtAuthRuntime {
         if let Some(allowed) = &self.config.allowed_algorithms {
             if !allowed.contains(&alg) {
                 return Err(JwtError::JwkAlgorithmNotSupported(
-                    jsonwebtoken::errors::ErrorKind::InvalidAlgorithm.into()
+                    jsonwebtoken::errors::ErrorKind::InvalidAlgorithm.into(),
                 ));
             }
         }

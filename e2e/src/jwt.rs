@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod jwt_e2e_tests {
-    use jsonwebtoken::{Algorithm, EncodingKey, encode};
+    use jsonwebtoken::{encode, Algorithm, EncodingKey};
     use ntex::http::header;
     use ntex::web::test;
     use sonic_rs::{from_slice, json, JsonValueTrait, Value};
