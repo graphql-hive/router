@@ -300,20 +300,21 @@ fn optimize_plan_sequence(nodes: Vec<PlanNode>) -> Vec<PlanNode> {
     nodes.into_iter().fold(Vec::new(), |mut acc, current_node| {
         match (&acc[..], &current_node) {
             // Check if the last node and the current node have compatible conditions
-            ([.., PlanNode::Condition(last)], PlanNode::Condition(curr))
-                if are_conditions_compatible(last, curr) =>
+            ([.., PlanNode::Condition(last_ref)], PlanNode::Condition(current_ref))
+                if are_conditions_compatible(last_ref, current_ref) =>
             {
                 // Pop the last element - we know it exists and is a Condition from the pattern
-                let Some(PlanNode::Condition(last)) = acc.pop() else {
-                    // This branch is logically unreachable due to the slice pattern above
-                    acc.push(current_node);
-                    return acc;
+                let Some(PlanNode::Condition(last_owned)) = acc.pop() else {
+                    unreachable!(
+                        "The slice pattern guarantees the last element is a ConditionNode."
+                    );
                 };
-                let PlanNode::Condition(curr) = current_node else {
-                    // This branch is logically unreachable due to the match above
-                    return acc;
+                let PlanNode::Condition(current_owned) = current_node else {
+                    unreachable!(
+                        "The match pattern guarantees the current node is a ConditionNode."
+                    );
                 };
-                acc.push(merge_two_condition_nodes(last, curr));
+                acc.push(merge_two_condition_nodes(last_owned, current_owned));
             }
             _ => {
                 acc.push(current_node);
