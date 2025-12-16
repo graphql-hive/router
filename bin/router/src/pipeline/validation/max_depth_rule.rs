@@ -1,8 +1,8 @@
 use std::{cmp, collections::HashMap};
 
 use graphql_tools::{
-    ast::{visit_document, OperationVisitor, OperationVisitorContext},
-    static_graphql::query::{OperationDefinition, Selection},
+    ast::OperationVisitorContext,
+    static_graphql::query::{Definition, Selection},
     validation::{
         rules::ValidationRule,
         utils::{ValidationError, ValidationErrorContext},
@@ -26,30 +26,43 @@ impl ValidationRule for MaxDepthRule {
         ctx: &mut OperationVisitorContext<'_>,
         error_collector: &mut ValidationErrorContext,
     ) {
-        visit_document(
-            &mut MaxDepthRuleVisitor {
-                config: &self.config,
-                visited_fragments: HashMap::new(),
-            },
-            ctx.operation,
-            ctx,
-            error_collector,
-        );
+        for definition in &ctx.operation.definitions {
+            if let Definition::Operation(op) = definition {
+                let mut visitor = MaxDepthRuleVisitor {
+                    config: &self.config,
+                    visited_fragments: HashMap::new(),
+                    ctx,
+                };
+                let depth = visitor.count_depth(op.into(), None);
+                if depth > self.config.n as i32 {
+                    let message = if self.config.expose_limits {
+                        format!(
+                            "Query depth limit of {} exceeded, found {}.",
+                            self.config.n, depth
+                        )
+                    } else {
+                        "Query depth limit exceeded.".to_string()
+                    };
+
+                    error_collector.report_error(ValidationError {
+                        message,
+                        locations: vec![],
+                        error_code: "MAX_DEPTH_EXCEEDED",
+                    });
+                }
+            }
+        }
     }
 }
 
-struct MaxDepthRuleVisitor<'a> {
+struct MaxDepthRuleVisitor<'a, 'b> {
     config: &'a MaxDepthRuleConfig,
     visited_fragments: HashMap<String, i32>,
+    ctx: &'a mut OperationVisitorContext<'b>,
 }
 
-impl MaxDepthRuleVisitor<'_> {
-    fn count_depth(
-        &mut self,
-        node: CountableNode,
-        parent_depth: Option<i32>,
-        ctx: &OperationVisitorContext<'_>,
-    ) -> i32 {
+impl MaxDepthRuleVisitor<'_, '_> {
+    fn count_depth(&mut self, node: CountableNode, parent_depth: Option<i32>) -> i32 {
         if self.config.ignore_introspection {
             if let CountableNode::Field(field) = node {
                 if field.name == "__schema" {
@@ -68,14 +81,11 @@ impl MaxDepthRuleVisitor<'_> {
                     && (matches!(child, Selection::FragmentSpread(_))
                         || matches!(child, Selection::InlineFragment(_)))
                 {
-                    depth = cmp::max(
-                        depth,
-                        self.count_depth(child.into(), Some(parent_depth), ctx),
-                    );
+                    depth = cmp::max(depth, self.count_depth(child.into(), Some(parent_depth)));
                 } else {
                     depth = cmp::max(
                         depth,
-                        self.count_depth(child.into(), Some(parent_depth + 1), ctx),
+                        self.count_depth(child.into(), Some(parent_depth + 1)),
                     );
                 }
             }
@@ -94,9 +104,9 @@ impl MaxDepthRuleVisitor<'_> {
                     .insert(node.fragment_name.to_string(), -1);
             }
 
-            let fragment = ctx.known_fragments.get(&node.fragment_name.as_str());
+            let fragment = self.ctx.known_fragments.get(&node.fragment_name.as_str());
             if let Some(fragment) = fragment {
-                let fragment_depth = self.count_depth(fragment.into(), Some(0), ctx);
+                let fragment_depth = self.count_depth(fragment.into(), Some(0));
 
                 depth = cmp::max(depth, parent_depth + fragment_depth);
                 if Some(&-1) == self.visited_fragments.get(&node.fragment_name) {
@@ -107,33 +117,6 @@ impl MaxDepthRuleVisitor<'_> {
         }
 
         depth
-    }
-}
-
-impl<'a, 'b> OperationVisitor<'a, ValidationErrorContext> for MaxDepthRuleVisitor<'b> {
-    fn enter_operation_definition(
-        &mut self,
-        visitor_context: &mut OperationVisitorContext,
-        user_context: &mut ValidationErrorContext,
-        operation_definition: &'a OperationDefinition,
-    ) {
-        let depth = self.count_depth(operation_definition.into(), None, visitor_context);
-        if depth > self.config.n as i32 {
-            let message = if self.config.expose_limits {
-                format!(
-                    "Query depth limit of {} exceeded, found {}.",
-                    self.config.n, depth
-                )
-            } else {
-                "Query depth limit exceeded.".to_string()
-            };
-
-            user_context.report_error(ValidationError {
-                message,
-                locations: vec![],
-                error_code: "MAX_DEPTH_EXCEEDED",
-            });
-        }
     }
 }
 
