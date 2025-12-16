@@ -1,8 +1,9 @@
 use std::{sync::Arc, time::Instant};
 
+use futures_util::Stream;
 use hive_router_plan_executor::execution::{
     client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
-    plan::PlanExecutionOutput,
+    plan::QueryPlanExecutionResult,
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
@@ -24,7 +25,8 @@ use crate::{
         execution_request::get_execution_request,
         header::{
             RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON,
-            APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, TEXT_HTML_CONTENT_TYPE,
+            APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, MULTIPART_MIXED,
+            TEXT_EVENT_STREAM, TEXT_HTML_CONTENT_TYPE,
         },
         normalize::{normalize_request_with_cache, GraphQLNormalizationPayload},
         parser::parse_operation_with_cache,
@@ -44,10 +46,12 @@ pub mod error;
 pub mod execution;
 pub mod execution_request;
 pub mod header;
+pub mod multipart_subscribe;
 pub mod normalize;
 pub mod parser;
 pub mod progressive_override;
 pub mod query_plan;
+pub mod sse;
 pub mod usage_reporting;
 pub mod validation;
 
@@ -82,7 +86,7 @@ pub async fn graphql_request_handler(
     }
 
     match execute_pipeline(req, body_bytes, supergraph, shared_state, schema_state).await {
-        Ok(response) => {
+        Ok(QueryPlanExecutionResult::Single(response)) => {
             let response_bytes = Bytes::from(response.body);
             let response_headers = response.headers;
 
@@ -104,6 +108,46 @@ pub async fn graphql_request_handler(
                 .header(http::header::CONTENT_TYPE, response_content_type)
                 .body(response_bytes)
         }
+        Ok(QueryPlanExecutionResult::Stream(response)) => {
+            use crate::pipeline::{header::TEXT_EVENT_STREAM, multipart_subscribe, sse};
+
+            // TODO: respect order of Accept header
+            #[allow(clippy::type_complexity)]
+            let (response_content_type, body): (
+                http::HeaderValue,
+                std::pin::Pin<
+                    Box<dyn Stream<Item = Result<ntex::util::Bytes, std::io::Error>> + Send>,
+                >,
+            ) = if req.accepts_content_type(*TEXT_EVENT_STREAM) {
+                (
+                    http::HeaderValue::from_static("text/event-stream"),
+                    Box::pin(sse::create_stream(
+                        response.body,
+                        std::time::Duration::from_secs(10),
+                    )),
+                )
+            } else {
+                // NOTE: client accept headers should have been validated earlier
+                (
+                    http::HeaderValue::from_static("multipart/mixed;boundary=graphql"),
+                    Box::pin(multipart_subscribe::create_stream(
+                        response.body,
+                        std::time::Duration::from_secs(10),
+                    )),
+                )
+            };
+
+            let mut response_builder = web::HttpResponse::Ok();
+            for (header_name, header_value) in response.headers {
+                if let Some(header_name) = header_name {
+                    response_builder.header(header_name, header_value);
+                }
+            }
+
+            response_builder
+                .header(http::header::CONTENT_TYPE, response_content_type)
+                .streaming(body)
+        }
         Err(err) => err.into_response(),
     }
 }
@@ -116,7 +160,7 @@ pub async fn execute_pipeline(
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
-) -> Result<PlanExecutionOutput, PipelineError> {
+) -> Result<QueryPlanExecutionResult, PipelineError> {
     let start = Instant::now();
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
@@ -133,6 +177,21 @@ pub async fn execute_pipeline(
         &parser_payload,
     )
     .await?;
+
+    let is_subscription = matches!(
+        normalize_payload.operation_for_plan.operation_kind,
+        Some(OperationKind::Subscription)
+    );
+
+    if is_subscription
+        && !req.accepts_content_type(*MULTIPART_MIXED)
+        && !req.accepts_content_type(*TEXT_EVENT_STREAM)
+    {
+        return Err(
+            req.new_pipeline_error(PipelineErrorVariant::SubscriptionNotSupportedOverTransport)
+        );
+    }
+
     let variable_payload =
         coerce_request_variables(req, supergraph, &mut execution_request, &normalize_payload)?;
 
@@ -231,21 +290,25 @@ pub async fn execute_pipeline(
         client_request_details: &client_request_details,
         authorization_errors: &authorization_errors,
     };
-    let execution_result = execute_plan(req, supergraph, shared_state, &planned_request).await?;
 
-    if shared_state.router_config.usage_reporting.enabled {
-        if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
-            usage_reporting::collect_usage_report(
-                supergraph.supergraph_schema.clone(),
-                start.elapsed(),
-                req,
-                &client_request_details,
-                hive_usage_agent,
-                &shared_state.router_config.usage_reporting,
-                &execution_result,
-            );
+    let pipeline_result = execute_plan(req, supergraph, shared_state, &planned_request).await?;
+
+    // TODO: this needs to work for subscriptions too
+    if let QueryPlanExecutionResult::Single(ref execution_result) = pipeline_result {
+        if shared_state.router_config.usage_reporting.enabled {
+            if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
+                usage_reporting::collect_usage_report(
+                    supergraph.supergraph_schema.clone(),
+                    start.elapsed(),
+                    req,
+                    &client_request_details,
+                    hive_usage_agent,
+                    &shared_state.router_config.usage_reporting,
+                    execution_result,
+                );
+            }
         }
     }
 
-    Ok(execution_result)
+    Ok(pipeline_result)
 }
