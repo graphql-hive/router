@@ -8,7 +8,7 @@ pub struct BestPathTracker<'graph> {
     graph: &'graph Graph,
     /// A map from subgraph name to the best path and its cost.
     /// BTreeMap instead of HashMap to keep the order of inserted keys deterministic.
-    subgraph_to_best_paths: BTreeMap<String, (Vec<OperationPath>, u64)>,
+    subgraph_to_best_paths: BTreeMap<&'graph str, (Vec<OperationPath>, u64)>,
 }
 
 pub fn find_best_paths(paths: Vec<OperationPath>) -> Vec<OperationPath> {
@@ -45,7 +45,7 @@ impl<'graph> BestPathTracker<'graph> {
             .graph_id()
             .expect("Graph ID not found in node");
 
-        match self.subgraph_to_best_paths.entry(tail_graph_id.to_string()) {
+        match self.subgraph_to_best_paths.entry(tail_graph_id) {
             Entry::Occupied(mut entry) => {
                 let (existing_paths, existing_cost) = entry.get_mut();
 
