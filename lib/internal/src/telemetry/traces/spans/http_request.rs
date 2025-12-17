@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use http::{
     header::{HOST, USER_AGENT},
-    HeaderMap, Method, Response, Uri,
+    HeaderMap, Method, Response, StatusCode, Uri,
 };
 use http_body_util::Full;
 use hyper::body::Body;
@@ -156,26 +156,14 @@ impl Borrow<Span> for HttpClientRequestSpan {
 
 impl<'a> HttpClientRequestSpanBuilder<'a> {
     pub fn from_request(request: &'a http::Request<Full<Bytes>>) -> Self {
-        let (server_address, server_port) =
-            match request.headers().get(HOST).and_then(|h| h.to_str().ok()) {
-                Some(host) => {
-                    if let Some((host, port_str)) = host.rsplit_once(':') {
-                        (Some(host), port_str.parse::<u16>().ok())
-                    } else {
-                        (Some(host), None)
-                    }
-                }
-                None => (None, None),
-            };
-
         HttpClientRequestSpanBuilder {
             request_body_size: request.size_hint().upper().map(|v| v as usize),
             request_method: Cow::Borrowed(request.method()),
             header_user_agent: request.headers().get(USER_AGENT).map(Cow::Borrowed),
             url: Cow::Borrowed(request.uri()),
             protocol_version: version_to_protocol_version_attr(request.version()),
-            server_address,
-            server_port,
+            server_address: request.uri().host(),
+            server_port: request.uri().port_u16(),
         }
     }
 
@@ -345,21 +333,16 @@ impl HttpInflightRequestSpan {
         self.record("hive.inflight.role", "joiner");
     }
 
-    pub fn record_response<B>(&self, response: &Response<B>)
-    where
-        B: Body<Data = Bytes>,
-    {
-        let body_size = response.body().size_hint().exact().map(|s| s as usize);
+    pub fn record_response(&self, body: &Bytes, status: &StatusCode) {
+        let body_size = body.len();
 
         // Record stable attributes
-        self.record("http.response.status_code", response.status().as_str());
-        if let Some(size) = body_size {
-            self.record("http.response.body.size", size as i64);
-        }
+        self.record("http.response.status_code", status.as_str());
+        self.record("http.response.body.size", body_size as i64);
 
-        if response.status().is_server_error() {
+        if status.is_server_error() {
             self.record("otel.status_code", "Error");
-            self.record("error.type", response.status().as_str());
+            self.record("error.type", status.as_str());
         } else {
             self.record("otel.status_code", "Ok");
         }

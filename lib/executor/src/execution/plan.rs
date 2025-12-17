@@ -725,6 +725,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                 extensions: None,
             };
 
+            span.record_document(&node.operation.document_str);
             span.record_operation_identity(GraphQLSpanOperationIdentity {
                 name: subgraph_request.operation_name,
                 operation_type: match node.operation_kind {

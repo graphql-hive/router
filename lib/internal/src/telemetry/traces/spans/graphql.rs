@@ -311,12 +311,32 @@ impl GraphQLOperationSpan {
             "graphql.operation.id" = Empty,
             "graphql.document.hash" = Empty,
             "graphql.document.text" = Empty,
+            "hive.graphql.error.count" = Empty,
+            "hive.graphql.error.codes" = Empty,
+            "hive.client.name" = Empty,
+            "hive.client.version" = Empty,
+            "hive.graphql.operation.hash" = Empty, // the same hash as for usage reporting
         );
         GraphQLOperationSpan { span }
     }
 
     pub fn record_document(&self, document: &str) {
         self.span.record("graphql.document.text", document);
+    }
+
+    pub fn record_hive_operation_hash(&self, hash: &str) {
+        self.span.record("hive.graphql.operation.hash", hash);
+    }
+
+    // TODO: use it
+    pub fn record_error_count(&self, count: u32) {
+        self.span.record("hive.graphql.error.count", count);
+    }
+
+    // TODO: use it
+    pub fn record_error_codes(&self, codes: &[&str]) {
+        self.span
+            .record("hive.graphql.error.codes", &codes.join(","));
     }
 }
 
@@ -341,12 +361,33 @@ impl GraphQLSubgraphOperationSpan {
             "otel.status_code" = Empty,
             "otel.kind" = "Client",
             "error.type" = Empty,
-            "hive.subgraph.name" = subgraph_name,
             "graphql.operation.name" = Empty,
             "graphql.operation.type" = Empty,
             "graphql.document.hash" = Empty,
+            "graphql.document.text" = Empty,
+            "hive.graphql.error.count" = Empty,
+            "hive.graphql.error.codes" = Empty,
+            // Hive Console Attributes
+            "hive.graphql.subgraph.name" = subgraph_name,
+            "hive.client.name" = Empty,
+            "hive.client.version" = Empty,
         );
         GraphQLSubgraphOperationSpan { span }
+    }
+
+    pub fn record_document(&self, document: &str) {
+        self.span.record("graphql.document.text", document);
+    }
+
+    // TODO: use it
+    pub fn record_error_count(&self, count: u32) {
+        self.span.record("hive.graphql.error.count", count);
+    }
+
+    // TODO: use it
+    pub fn record_error_codes(&self, codes: &[&str]) {
+        self.span
+            .record("hive.graphql.error.codes", &codes.join(","));
     }
 }
 

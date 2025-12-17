@@ -1,14 +1,17 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::telemetry::tracing::TracingConfig;
+use crate::telemetry::{hive::HiveConfig, tracing::TracingConfig};
 
+pub mod hive;
 pub mod tracing;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 #[derive(Default)]
 pub struct TelemetryConfig {
+    #[serde(default)]
+    pub hive: HiveConfig,
     #[serde(default)]
     pub tracing: TracingConfig,
     #[serde(default)]

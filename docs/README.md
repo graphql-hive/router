@@ -16,7 +16,7 @@
 |[**override\_subgraph\_urls**](#override_subgraph_urls)|`object`|Configuration for overriding subgraph URLs.<br/>Default: `{}`<br/>||
 |[**query\_planner**](#query_planner)|`object`|Query planning configuration.<br/>Default: `{"allow_expose":false,"timeout":"10s"}`<br/>||
 |[**supergraph**](#supergraph)|`object`|Configuration for the Federation supergraph source. By default, the router will use a local file-based supergraph source (`./supergraph.graphql`).<br/>||
-|[**telemetry**](#telemetry)|`object`|Default: `{"service":{"name":"hive-router"},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
+|[**telemetry**](#telemetry)|`object`|Default: `{"hive":{"endpoint":"","target":"","token":"","tracing":{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"},"enabled":true,"grpc":null,"http":null,"protocol":"grpc"}},"service":{"name":"hive-router"},"tracing":{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}}`<br/>||
 |[**traffic\_shaping**](#traffic_shaping)|`object`|Configuration for the traffic-shaping of the executor. Use these configurations to control how requests are being executed to subgraphs.<br/>Default: `{"all":{"dedupe_enabled":true,"pool_idle_timeout":"50s","request_timeout":"30s"},"max_connections_per_host":100}`<br/>||
 |[**usage\_reporting**](#usage_reporting)|`object`|Configuration for usage reporting to GraphQL Hive.<br/>Default: `{"accept_invalid_certs":false,"access_token":null,"buffer_size":1000,"client_name_header":"graphql-client-name","client_version_header":"graphql-client-version","connect_timeout":"5s","enabled":false,"endpoint":"https://app.graphql-hive.com/usage","exclude":[],"flush_interval":"5s","request_timeout":"15s","sample_rate":"100%","target_id":null}`<br/>||
 
@@ -115,6 +115,21 @@ query_planner:
   timeout: 10s
 supergraph: {}
 telemetry:
+  hive:
+    endpoint: ''
+    target: ''
+    token: ''
+    tracing:
+      batch_processor:
+        max_concurrent_exports: 1
+        max_export_batch_size: 512
+        max_export_timeout: 5s
+        max_queue_size: 2048
+        scheduled_delay: 5s
+      enabled: true
+      grpc: null
+      http: null
+      protocol: grpc
   service:
     name: hive-router
   tracing:
@@ -1854,6 +1869,7 @@ max_retries: 10
 
 |Name|Type|Description|Required|
 |----|----|-----------|--------|
+|[**hive**](#telemetryhive)|`object`|Default: `{"endpoint":"","target":"","token":"","tracing":{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"},"enabled":true,"grpc":null,"http":null,"protocol":"grpc"}}`<br/>||
 |[**service**](#telemetryservice)|`object`|Default: `{"name":"hive-router"}`<br/>||
 |[**tracing**](#telemetrytracing)|`object`|Default: `{"collect":{"max_attributes_per_event":16,"max_attributes_per_link":32,"max_attributes_per_span":128,"max_events_per_span":128,"parent_based_sampler":false,"sampling":1},"exporters":[],"instrumentation":{"spans":{"mode":"spec_compliant"}},"propagation":{"b3":false,"baggage":false,"jaeger":false,"trace_context":true}}`<br/>||
 
@@ -1861,6 +1877,21 @@ max_retries: 10
 **Example**
 
 ```yaml
+hive:
+  endpoint: ''
+  target: ''
+  token: ''
+  tracing:
+    batch_processor:
+      max_concurrent_exports: 1
+      max_export_batch_size: 512
+      max_export_timeout: 5s
+      max_queue_size: 2048
+      scheduled_delay: 5s
+    enabled: true
+    grpc: null
+    http: null
+    protocol: grpc
 service:
   name: hive-router
 tracing:
@@ -1882,6 +1913,146 @@ tracing:
     trace_context: true
 
 ```
+
+<a name="telemetryhive"></a>
+### telemetry\.hive: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**endpoint**||Default: `""`<br/>||
+|**target**||Default: `""`<br/>||
+|**token**||Default: `""`<br/>||
+|[**tracing**](#telemetryhivetracing)|`object`|Default: `{"batch_processor":{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"},"enabled":true,"grpc":null,"http":null,"protocol":"grpc"}`<br/>|yes|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+endpoint: ''
+target: ''
+token: ''
+tracing:
+  batch_processor:
+    max_concurrent_exports: 1
+    max_export_batch_size: 512
+    max_export_timeout: 5s
+    max_queue_size: 2048
+    scheduled_delay: 5s
+  enabled: true
+  grpc: null
+  http: null
+  protocol: grpc
+
+```
+
+<a name="telemetryhivetracing"></a>
+#### telemetry\.hive\.tracing: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**batch\_processor**](#telemetryhivetracingbatch_processor)|`object`|Default: `{"max_concurrent_exports":1,"max_export_batch_size":512,"max_export_timeout":"5s","max_queue_size":2048,"scheduled_delay":"5s"}`<br/>|no|
+|**enabled**|`boolean`|Default: `true`<br/>|no|
+|[**grpc**](#telemetryhivetracinggrpc)|`object`, `null`||no|
+|[**http**](#telemetryhivetracinghttp)|`object`, `null`||no|
+|**protocol**|`string`|Enum: `"grpc"`, `"http"`<br/>|yes|
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+batch_processor:
+  max_concurrent_exports: 1
+  max_export_batch_size: 512
+  max_export_timeout: 5s
+  max_queue_size: 2048
+  scheduled_delay: 5s
+enabled: true
+grpc: null
+http: null
+protocol: grpc
+
+```
+
+<a name="telemetryhivetracingbatch_processor"></a>
+##### telemetry\.hive\.tracing\.batch\_processor: object
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**max\_concurrent\_exports**|`integer`|Default: `1`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_batch\_size**|`integer`|Default: `512`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**max\_export\_timeout**|`string`|Default: `"5s"`<br/>||
+|**max\_queue\_size**|`integer`|Default: `2048`<br/>Format: `"uint32"`<br/>Minimum: `0`<br/>||
+|**scheduled\_delay**|`string`|Default: `"5s"`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+max_concurrent_exports: 1
+max_export_batch_size: 512
+max_export_timeout: 5s
+max_queue_size: 2048
+scheduled_delay: 5s
+
+```
+
+<a name="telemetryhivetracinggrpc"></a>
+##### telemetry\.hive\.tracing\.grpc: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**metadata**](#telemetryhivetracinggrpcmetadata)|`object`|Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="telemetryhivetracinggrpcmetadata"></a>
+###### telemetry\.hive\.tracing\.grpc\.metadata: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
+
+<a name="telemetryhivetracinghttp"></a>
+##### telemetry\.hive\.tracing\.http: object,null
+
+**Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|[**headers**](#telemetryhivetracinghttpheaders)|`object`|Default: `{}`<br/>||
+
+**Additional Properties:** not allowed  
+**Example**
+
+```yaml
+{}
+
+```
+
+<a name="telemetryhivetracinghttpheaders"></a>
+###### telemetry\.hive\.tracing\.http\.headers: object
+
+**Additional Properties**
+
+|Name|Type|Description|Required|
+|----|----|-----------|--------|
+|**Additional Properties**||||
 
 <a name="telemetryservice"></a>
 ### telemetry\.service: object

@@ -332,10 +332,13 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             }
 
             match response_result {
-                Ok(shared_response) => HttpExecutionResponse {
-                    body: shared_response.body.clone(),
-                    headers: shared_response.headers.clone(),
-                },
+                Ok(shared_response) => {
+                    span.record_response(&shared_response.body, &shared_response.status);
+                    HttpExecutionResponse {
+                        body: shared_response.body.clone(),
+                        headers: shared_response.headers.clone(),
+                    }
+                }
                 Err(e) => {
                     self.log_error(&e);
                     HttpExecutionResponse {
