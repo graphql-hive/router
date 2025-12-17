@@ -96,10 +96,20 @@ impl<E: SpanExporter> HiveConsoleExporter<E> {
         let mut graphql_subgraph_operation_indexes: Vec<usize> = Vec::new();
         let mut http_client_or_inflight_indexes: Vec<usize> = Vec::new();
 
+        // Build a map of parent span IDs to their child span indexes
+        // It maps only spans relevant to our processing (with hive.kind attr)
+        let mut parent_id_to_child_indices: HashMap<SpanId, Vec<usize>> = HashMap::new();
         for (index, span) in batch.iter().enumerate() {
             let Some(kind) = self.get_hive_kind(span) else {
                 continue;
             };
+
+            if span.parent_span_id != SpanId::INVALID {
+                parent_id_to_child_indices
+                    .entry(span.parent_span_id)
+                    .or_default()
+                    .push(index);
+            }
 
             match kind {
                 HiveSpanKind::HttpServerRequest => {
@@ -130,13 +140,14 @@ impl<E: SpanExporter> HiveConsoleExporter<E> {
         self.http_server_attr_to_graphql_operation(
             batch,
             &http_server_indexes,
+            &parent_id_to_child_indices,
             &mut ignored_trace_ids,
         );
         // Transfer subgraph span attributes (http.client/http.inflight -> graphql.subgraph.operation)
         self.http_client_attr_to_subgraph_graphql_operation(
             batch,
             &graphql_subgraph_operation_indexes,
-            &http_client_or_inflight_indexes,
+            &parent_id_to_child_indices,
             &mut ignored_trace_ids,
         );
         // Gather subgraph names into hive.gateway.operation.subgraph.names attribute
@@ -166,15 +177,22 @@ impl<E: SpanExporter> HiveConsoleExporter<E> {
         &self,
         batch: &mut [SpanData],
         http_server_indexes: &[usize],
+        parent_id_to_child_indices: &HashMap<SpanId, Vec<usize>>,
         ignored_trace_ids: &mut HashSet<opentelemetry::TraceId>,
     ) {
         for http_idx in http_server_indexes {
             let http_idx = *http_idx;
 
             // Find the graphql.operation span that has this http.server as parent
-            let Some(graphql_idx) = batch
-                .iter()
-                .position(|span| span.parent_span_id == batch[http_idx].span_context.span_id())
+            let http_span_id = batch[http_idx].span_context.span_id();
+            let Some(graphql_idx) = parent_id_to_child_indices
+                .get(&http_span_id)
+                .into_iter()
+                .flatten()
+                .find(|&&child_idx| {
+                    self.get_hive_kind(&batch[child_idx]) == Some(HiveSpanKind::GraphqlOperation)
+                })
+                .copied()
             else {
                 let trace_id = batch[http_idx].span_context.trace_id();
                 tracing::error!(
@@ -264,7 +282,7 @@ impl<E: SpanExporter> HiveConsoleExporter<E> {
         &self,
         batch: &mut [SpanData],
         graphql_subgraph_operation_indexes: &[usize],
-        http_client_or_inflight_indexes: &[usize],
+        parent_id_to_child_indices: &HashMap<SpanId, Vec<usize>>,
         ignored_trace_ids: &mut HashSet<opentelemetry::TraceId>,
     ) {
         for graphql_idx in graphql_subgraph_operation_indexes {
@@ -276,15 +294,19 @@ impl<E: SpanExporter> HiveConsoleExporter<E> {
             }
 
             let graphql_span_id = batch[graphql_idx].span_context.span_id();
-            let Some(http_idx) = http_client_or_inflight_indexes.iter().find_map(|http_idx| {
-                let http_idx = *http_idx;
-
-                if batch[http_idx].parent_span_id == graphql_span_id {
-                    Some(http_idx)
-                } else {
-                    None
-                }
-            }) else {
+            let Some(http_idx) = parent_id_to_child_indices
+                .get(&graphql_span_id)
+                .into_iter()
+                .flatten()
+                .find(|&&child_idx| {
+                    matches!(
+                        self.get_hive_kind(&batch[child_idx]),
+                        Some(HiveSpanKind::HttpClientRequest)
+                            | Some(HiveSpanKind::HttpInflightRequest)
+                    )
+                })
+                .copied()
+            else {
                 let trace_id = batch[graphql_idx].span_context.trace_id();
                 tracing::error!(
                     { component = "hive_console_exporter", trace_id = trace_id.to_string() },
