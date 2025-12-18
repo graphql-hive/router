@@ -9,7 +9,7 @@ use hive_router_internal::telemetry::otel::opentelemetry::global::get_text_map_p
 use hive_router_internal::telemetry::otel::opentelemetry::propagation::Injector;
 use hive_router_internal::telemetry::otel::tracing_opentelemetry::OpenTelemetrySpanExt;
 use hive_router_internal::telemetry::traces::spans::http_request::{
-    HttpClientRequestSpanBuilder, HttpInflightRequestSpanBuilder,
+    HttpClientRequestSpan, HttpInflightRequestSpan,
 };
 use tokio::sync::OnceCell;
 
@@ -166,7 +166,7 @@ impl HTTPSubgraphExecutor {
             propagator.inject_context(&parent_context, &mut TraceHeaderInjector(req.headers_mut()));
         });
 
-        let http_request_span = HttpClientRequestSpanBuilder::from_request(&req).build();
+        let http_request_span = HttpClientRequestSpan::from_request(&req);
         let span = http_request_span.span.clone();
         async {
             let res_fut = self.http_client.request(req).map_err(|e| {
@@ -286,14 +286,13 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         }
 
         let fingerprint = request_fingerprint(&http::Method::POST, &self.endpoint, &headers, &body);
-        let span = HttpInflightRequestSpanBuilder::new(
+        let span = HttpInflightRequestSpan::new(
             &http::Method::POST,
             &self.endpoint,
             &headers,
             &body,
             fingerprint,
-        )
-        .build();
+        );
 
         async {
             // Clone the cell from the map, dropping the lock from the DashMap immediately.

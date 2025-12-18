@@ -29,7 +29,10 @@ use crate::{
     },
 };
 
+pub use control::{disabled_span, is_tracing_enabled, set_tracing_enabled};
+
 pub mod compatibility;
+pub mod control;
 pub mod hive_console_exporter;
 pub mod spans;
 

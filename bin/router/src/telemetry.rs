@@ -17,6 +17,7 @@ use hive_router_internal::telemetry::{
         },
         opentelemetry_zipkin::Propagator as B3Propagator,
     },
+    traces::set_tracing_enabled,
     OpenTelemetry,
 };
 use tracing_subscriber::util::SubscriberInitExt;
@@ -82,7 +83,10 @@ pub(crate) fn init(config: &HiveRouterConfig) -> OpenTelemetryProviders {
         OpenTelemetry::from_config(&config.telemetry, id_generator).unwrap();
 
     if let Some(tracer) = &tracer {
+        set_tracing_enabled(true);
         set_tracer_provider(tracer.provider.clone());
+    } else {
+        set_tracing_enabled(false);
     }
 
     let tracer_provider = tracer.as_ref().map(|t| t.provider.clone());

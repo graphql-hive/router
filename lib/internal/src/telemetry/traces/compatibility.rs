@@ -262,7 +262,7 @@ impl<E: SpanExporter> SpanExporter for HttpCompatibilityExporter<E> {
 mod tests {
     use super::*;
     use crate::telemetry::traces::spans::http_request::{
-        HttpClientRequestSpanBuilder, HttpServerRequestSpanBuilder,
+        HttpClientRequestSpan, HttpServerRequestSpan,
     };
     use http_body_util::Full;
     use ntex::http::header::{HOST, USER_AGENT};
@@ -339,7 +339,7 @@ mod tests {
             ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
 
         tracer.in_span("root", |_cx| {
-            let span = HttpServerRequestSpanBuilder::from_request(&http_req, &body).build();
+            let span = HttpServerRequestSpan::from_request(&http_req, &body);
             span.record_response(&http_res);
         });
 
@@ -391,7 +391,7 @@ mod tests {
             ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
 
         tracer.in_span("root", |_cx| {
-            let span = HttpServerRequestSpanBuilder::from_request(&http_req, &body).build();
+            let span = HttpServerRequestSpan::from_request(&http_req, &body);
             span.record_response(&http_res);
         });
 
@@ -442,7 +442,7 @@ mod tests {
             ntex::web::HttpResponse::build(ntex::http::StatusCode::OK).body("response body");
 
         tracer.in_span("root", |_cx| {
-            let span = HttpServerRequestSpanBuilder::from_request(&http_req, &body).build();
+            let span = HttpServerRequestSpan::from_request(&http_req, &body);
             span.record_response(&http_res);
         });
 
@@ -495,7 +495,7 @@ mod tests {
             .unwrap();
 
         tracer.in_span("root", |_cx| {
-            let span = HttpClientRequestSpanBuilder::from_request(&request).build();
+            let span = HttpClientRequestSpan::from_request(&request);
             span.record_response(&response);
         });
 
@@ -544,7 +544,7 @@ mod tests {
             .unwrap();
 
         tracer.in_span("root", |_cx| {
-            let span = HttpClientRequestSpanBuilder::from_request(&request).build();
+            let span = HttpClientRequestSpan::from_request(&request);
             span.record_response(&response);
         });
 
@@ -593,7 +593,7 @@ mod tests {
             .unwrap();
 
         tracer.in_span("root", |_cx| {
-            let span = HttpClientRequestSpanBuilder::from_request(&request).build();
+            let span = HttpClientRequestSpan::from_request(&request);
             span.record_response(&response);
         });
 

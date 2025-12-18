@@ -9,17 +9,10 @@ use ntex::http::body::MessageBody;
 use std::borrow::{Borrow, Cow};
 use tracing::{field::Empty, info_span, Span};
 
-use crate::telemetry::traces::spans::{attributes, kind::HiveSpanKind, TARGET_NAME};
-
-pub struct HttpServerRequestSpanBuilder<'a> {
-    request_body_size: Option<usize>,
-    request_method: Cow<'a, http::Method>,
-    header_user_agent: Option<Cow<'a, http::HeaderValue>>,
-    server_address: Option<&'a str>,
-    server_port: Option<u16>,
-    protocol_version: Option<&'a str>,
-    url: Cow<'a, http::Uri>,
-}
+use crate::telemetry::traces::{
+    disabled_span, is_tracing_enabled,
+    spans::{attributes, kind::HiveSpanKind, TARGET_NAME},
+};
 
 pub struct HttpServerRequestSpan {
     pub span: Span,
@@ -38,8 +31,14 @@ impl Borrow<Span> for HttpServerRequestSpan {
     }
 }
 
-impl<'a> HttpServerRequestSpanBuilder<'a> {
-    pub fn from_request(request: &'a ntex::web::HttpRequest, body: &ntex::util::Bytes) -> Self {
+impl HttpServerRequestSpan {
+    pub fn from_request(request: &ntex::web::HttpRequest, body: &ntex::util::Bytes) -> Self {
+        if !is_tracing_enabled() {
+            return Self {
+                span: disabled_span(),
+            };
+        }
+
         let (server_address, server_port) =
             match request.headers().get(HOST).and_then(|h| h.to_str().ok()) {
                 Some(host) => {
@@ -51,27 +50,17 @@ impl<'a> HttpServerRequestSpanBuilder<'a> {
                 }
                 None => (None, None),
             };
-        HttpServerRequestSpanBuilder {
-            request_body_size: Some(body.len()),
-            request_method: Cow::Borrowed(request.method()),
-            header_user_agent: request
-                .headers()
-                .get(USER_AGENT)
-                .map(|h| Cow::Owned(h.into())),
-            url: Cow::Borrowed(request.uri()),
-            protocol_version: version_to_protocol_version_attr(request.version()),
-            server_address,
-            server_port,
-        }
-    }
 
-    /// Consume self and turn into a [Span]
-    pub fn build(self) -> HttpServerRequestSpan {
+        let request_body_size = body.len();
+        let request_method = Cow::Borrowed(request.method());
+        let header_user_agent = request.headers().get(USER_AGENT);
+        let url = Cow::Borrowed(request.uri());
+        let url_full = url.to_string();
+        let protocol_version = version_to_protocol_version_attr(request.version());
+
         // We follow the HTTP server span conventions:
         // https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-server
         let kind: &'static str = HiveSpanKind::HttpServerRequest.into();
-        let url_full = self.url.to_string();
-
         let span = info_span!(
             target: TARGET_NAME,
             "http.server",
@@ -81,25 +70,23 @@ impl<'a> HttpServerRequestSpanBuilder<'a> {
             "error.type" = Empty,
 
             // Stable Attributes
-            "server.address" = self.server_address,
-            "server.port" = self.server_port,
+            "server.address" = server_address,
+            "server.port" = server_port,
             "url.full" = url_full.as_str(),
-            "url.path" = self.url.path(),
-            "url.scheme" = self.url.scheme_str(),
-            "http.request.body.size" = self.request_body_size,
-            "http.request.method" = self.request_method.as_str(),
-            "network.protocol.version" = self.protocol_version,
-            "user_agent.original" = self.header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
+            "url.path" = url.path(),
+            "url.scheme" = url.scheme_str(),
+            "http.request.body.size" = request_body_size,
+            "http.request.method" = request_method.as_str(),
+            "network.protocol.version" = protocol_version,
+            "user_agent.original" = header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
             "http.response.status_code" = Empty,
             "http.response.body.size" = Empty,
-            "http.route" = self.url.path(),
+            "http.route" = url.path(),
         );
 
-        HttpServerRequestSpan { span }
+        Self { span }
     }
-}
 
-impl HttpServerRequestSpan {
     pub fn record_response(&self, response: &ntex::web::HttpResponse) {
         let body_size: Option<u64> = response.body().as_ref().and_then(|b| match b.size() {
             ntex::http::body::BodySize::Sized(size) => Some(size),
@@ -130,16 +117,6 @@ impl HttpServerRequestSpan {
     }
 }
 
-pub struct HttpClientRequestSpanBuilder<'a> {
-    request_body_size: Option<usize>,
-    request_method: Cow<'a, http::Method>,
-    header_user_agent: Option<Cow<'a, http::HeaderValue>>,
-    server_address: Option<&'a str>,
-    server_port: Option<u16>,
-    protocol_version: Option<&'a str>,
-    url: Cow<'a, http::Uri>,
-}
-
 pub struct HttpClientRequestSpan {
     pub span: Span,
 }
@@ -157,26 +134,26 @@ impl Borrow<Span> for HttpClientRequestSpan {
     }
 }
 
-impl<'a> HttpClientRequestSpanBuilder<'a> {
-    pub fn from_request(request: &'a http::Request<Full<Bytes>>) -> Self {
-        HttpClientRequestSpanBuilder {
-            request_body_size: request.size_hint().upper().map(|v| v as usize),
-            request_method: Cow::Borrowed(request.method()),
-            header_user_agent: request.headers().get(USER_AGENT).map(Cow::Borrowed),
-            url: Cow::Borrowed(request.uri()),
-            protocol_version: version_to_protocol_version_attr(request.version()),
-            server_address: request.uri().host(),
-            server_port: request.uri().port_u16(),
+impl HttpClientRequestSpan {
+    pub fn from_request(request: &http::Request<Full<Bytes>>) -> Self {
+        if !is_tracing_enabled() {
+            return Self {
+                span: disabled_span(),
+            };
         }
-    }
 
-    /// Consume self and turn into a [Span]
-    pub fn build(self) -> HttpClientRequestSpan {
+        let request_body_size = request.size_hint().upper().map(|v| v as usize);
+        let request_method = Cow::Borrowed(request.method());
+        let header_user_agent = request.headers().get(USER_AGENT).map(Cow::Borrowed);
+        let url = Cow::Borrowed(request.uri());
+        let protocol_version = version_to_protocol_version_attr(request.version());
+        let server_address = request.uri().host();
+        let server_port = request.uri().port_u16();
+        let url_full = url.to_string();
+
         // We follow the HTTP client span conventions:
         // https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-client
         let kind: &'static str = HiveSpanKind::HttpClientRequest.into();
-        let url_full = self.url.to_string();
-
         let span = info_span!(
             target: TARGET_NAME,
             "http.client",
@@ -186,24 +163,22 @@ impl<'a> HttpClientRequestSpanBuilder<'a> {
             "error.type" = Empty,
 
             // Stable Attributes
-            "server.address" = self.server_address,
-            "server.port" = self.server_port,
+            "server.address" = server_address,
+            "server.port" = server_port,
             "url.full" = url_full.as_str(),
-            "url.path" = self.url.path(),
-            "url.scheme" = self.url.scheme_str(),
-            "http.request.body.size" = self.request_body_size,
-            "http.request.method" = self.request_method.as_str(),
-            "network.protocol.version" = self.protocol_version,
-            "user_agent.original" = self.header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
+            "url.path" = url.path(),
+            "url.scheme" = url.scheme_str(),
+            "http.request.body.size" = request_body_size,
+            "http.request.method" = request_method.as_str(),
+            "network.protocol.version" = protocol_version,
+            "user_agent.original" = header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
             "http.response.status_code" = Empty,
             "http.response.body.size" = Empty,
         );
 
-        HttpClientRequestSpan { span }
+        Self { span }
     }
-}
 
-impl HttpClientRequestSpan {
     pub fn record_response<B>(&self, response: &Response<B>)
     where
         B: Body<Data = Bytes>,
@@ -234,17 +209,6 @@ impl HttpClientRequestSpan {
     }
 }
 
-pub struct HttpInflightRequestSpanBuilder<'a> {
-    fingerprint: u64,
-    request_body_size: Option<usize>,
-    request_method: Cow<'a, http::Method>,
-    header_user_agent: Option<Cow<'a, http::HeaderValue>>,
-    server_address: Option<&'a str>,
-    server_port: Option<u16>,
-    protocol_version: Option<&'a str>,
-    url: Cow<'a, http::Uri>,
-}
-
 pub struct HttpInflightRequestSpan {
     pub span: Span,
 }
@@ -261,15 +225,20 @@ impl Borrow<Span> for HttpInflightRequestSpan {
         &self.span
     }
 }
-
-impl<'a> HttpInflightRequestSpanBuilder<'a> {
+impl HttpInflightRequestSpan {
     pub fn new(
-        method: &'a Method,
-        url: &'a Uri,
-        headers: &'a HeaderMap,
+        method: &Method,
+        url: &Uri,
+        headers: &HeaderMap,
         body_bytes: &[u8],
         fingerprint: u64,
     ) -> Self {
+        if !is_tracing_enabled() {
+            return Self {
+                span: disabled_span(),
+            };
+        }
+
         let (server_address, server_port) = match headers.get(HOST).and_then(|h| h.to_str().ok()) {
             Some(host) => {
                 if let Some((host, port_str)) = host.rsplit_once(':') {
@@ -281,25 +250,16 @@ impl<'a> HttpInflightRequestSpanBuilder<'a> {
             None => (None, None),
         };
 
-        HttpInflightRequestSpanBuilder {
-            fingerprint,
-            request_body_size: Some(body_bytes.len()),
-            request_method: Cow::Borrowed(method),
-            header_user_agent: headers.get(USER_AGENT).map(Cow::Borrowed),
-            url: Cow::Borrowed(url),
-            protocol_version: version_to_protocol_version_attr(http::Version::HTTP_11),
-            server_address,
-            server_port,
-        }
-    }
+        let request_body_size = Some(body_bytes.len());
+        let request_method = Cow::Borrowed(method);
+        let header_user_agent = headers.get(USER_AGENT).map(Cow::Borrowed);
+        let url = Cow::Borrowed(url);
+        let protocol_version = version_to_protocol_version_attr(http::Version::HTTP_11);
+        let url_full = url.to_string();
 
-    /// Consume self and turn into a [Span]
-    pub fn build(self) -> HttpInflightRequestSpan {
         // We follow the HTTP client span conventions:
         // https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-client
         let kind: &'static str = HiveSpanKind::HttpInflightRequest.into();
-        let url_full = self.url.to_string();
-
         let span = info_span!(
             target: TARGET_NAME,
             "http.inflight",
@@ -310,27 +270,25 @@ impl<'a> HttpInflightRequestSpanBuilder<'a> {
 
             // Inflight Attributes
             "hive.inflight.role" = Empty,
-            "hive.inflight.key" = self.fingerprint,
+            "hive.inflight.key" = fingerprint,
 
             // Stable Attributes
-            "server.address" = self.server_address,
-            "server.port" = self.server_port,
+            "server.address" = server_address,
+            "server.port" = server_port,
             "url.full" = url_full.as_str(),
-            "url.path" = self.url.path(),
-            "url.scheme" = self.url.scheme_str(),
-            "http.request.body.size" = self.request_body_size,
-            "http.request.method" = self.request_method.as_str(),
-            "network.protocol.version" = self.protocol_version,
-            "user_agent.original" = self.header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
+            "url.path" = url.path(),
+            "url.scheme" = url.scheme_str(),
+            "http.request.body.size" = request_body_size,
+            "http.request.method" = request_method.as_str(),
+            "network.protocol.version" = protocol_version,
+            "user_agent.original" = header_user_agent.as_ref().and_then(|v| v.to_str().ok()),
             "http.response.status_code" = Empty,
             "http.response.body.size" = Empty,
         );
 
-        HttpInflightRequestSpan { span }
+        Self { span }
     }
-}
 
-impl HttpInflightRequestSpan {
     pub fn record_as_leader(&self) {
         self.record(attributes::HIVE_INFLIGHT_ROLE, "leader");
     }
@@ -395,7 +353,7 @@ mod tests {
             .to_http_request();
         let body = ntex::util::Bytes::from("test body");
 
-        let span = HttpServerRequestSpanBuilder::from_request(&req, &body).build();
+        let span = HttpServerRequestSpan::from_request(&req, &body);
 
         assert_fields(
             &span,
@@ -428,7 +386,7 @@ mod tests {
             .body(Full::new(Bytes::from("test body")))
             .unwrap();
 
-        let span = HttpClientRequestSpanBuilder::from_request(&req).build();
+        let span = HttpClientRequestSpan::from_request(&req);
 
         assert_fields(
             &span,
@@ -462,8 +420,7 @@ mod tests {
         let body = b"test body";
         let fingerprint = 12345u64;
 
-        let span =
-            HttpInflightRequestSpanBuilder::new(&method, &url, &headers, body, fingerprint).build();
+        let span = HttpInflightRequestSpan::new(&method, &url, &headers, body, fingerprint);
 
         assert_fields(
             &span,

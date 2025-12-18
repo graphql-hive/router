@@ -1,6 +1,9 @@
 use tracing::{field::Empty, info_span, Span};
 
-use crate::telemetry::traces::spans::{attributes, kind::HiveSpanKind, TARGET_NAME};
+use crate::telemetry::traces::{
+    disabled_span, is_tracing_enabled,
+    spans::{attributes, kind::HiveSpanKind, TARGET_NAME},
+};
 
 pub struct GraphQLParseSpan {
     pub span: Span,
@@ -21,6 +24,12 @@ impl Default for GraphQLParseSpan {
 
 impl GraphQLParseSpan {
     pub fn new() -> Self {
+        if !is_tracing_enabled() {
+            return Self {
+                span: disabled_span(),
+            };
+        }
+
         let kind: &'static str = HiveSpanKind::GraphqlParse.into();
         let span = info_span!(
             target: TARGET_NAME,
@@ -62,6 +71,12 @@ impl Default for GraphQLValidateSpan {
 
 impl GraphQLValidateSpan {
     pub fn new() -> Self {
+        if !is_tracing_enabled() {
+            return Self {
+                span: disabled_span(),
+            };
+        }
+
         let kind: &'static str = HiveSpanKind::GraphqlValidate.into();
         let span = info_span!(
             target: TARGET_NAME,
@@ -103,8 +118,13 @@ impl Default for GraphQLVariableCoercionSpan {
 
 impl GraphQLVariableCoercionSpan {
     pub fn new() -> Self {
-        let kind: &'static str = HiveSpanKind::GraphqlVariableCoercion.into();
+        if !is_tracing_enabled() {
+            return Self {
+                span: disabled_span(),
+            };
+        }
 
+        let kind: &'static str = HiveSpanKind::GraphqlVariableCoercion.into();
         let span = info_span!(
             target: TARGET_NAME,
             "GraphQL Variable Coercion",
@@ -140,6 +160,12 @@ impl Default for GraphQLNormalizeSpan {
 
 impl GraphQLNormalizeSpan {
     pub fn new() -> Self {
+        if !is_tracing_enabled() {
+            return Self {
+                span: disabled_span(),
+            };
+        }
+
         let kind: &'static str = HiveSpanKind::GraphqlNormalize.into();
         let span = info_span!(
             target: TARGET_NAME,
@@ -181,6 +207,12 @@ impl Default for GraphQLAuthorizeSpan {
 
 impl GraphQLAuthorizeSpan {
     pub fn new() -> Self {
+        if !is_tracing_enabled() {
+            return Self {
+                span: disabled_span(),
+            };
+        }
+
         let kind: &'static str = HiveSpanKind::GraphqlAuthorize.into();
         let span = info_span!(
             target: TARGET_NAME,
@@ -222,6 +254,12 @@ impl Default for GraphQLPlanSpan {
 
 impl GraphQLPlanSpan {
     pub fn new() -> Self {
+        if !is_tracing_enabled() {
+            return Self {
+                span: disabled_span(),
+            };
+        }
+
         let kind: &'static str = HiveSpanKind::GraphqlPlan.into();
         let span = info_span!(
             target: TARGET_NAME,
@@ -263,6 +301,12 @@ impl Default for GraphQLExecuteSpan {
 
 impl GraphQLExecuteSpan {
     pub fn new() -> Self {
+        if !is_tracing_enabled() {
+            return Self {
+                span: disabled_span(),
+            };
+        }
+
         let kind: &'static str = HiveSpanKind::GraphqlExecute.into();
         let span = info_span!(
             target: TARGET_NAME,
@@ -299,6 +343,12 @@ impl Default for GraphQLOperationSpan {
 
 impl GraphQLOperationSpan {
     pub fn new() -> Self {
+        if !is_tracing_enabled() {
+            return Self {
+                span: disabled_span(),
+            };
+        }
+
         let kind: &'static str = HiveSpanKind::GraphqlOperation.into();
         let span = info_span!(
             target: TARGET_NAME,
@@ -357,6 +407,12 @@ impl std::ops::Deref for GraphQLSubgraphOperationSpan {
 
 impl GraphQLSubgraphOperationSpan {
     pub fn new(subgraph_name: &str) -> Self {
+        if !is_tracing_enabled() {
+            return Self {
+                span: disabled_span(),
+            };
+        }
+
         let kind: &'static str = HiveSpanKind::GraphQLSubgraphOperation.into();
         let span = info_span!(
             target: TARGET_NAME,

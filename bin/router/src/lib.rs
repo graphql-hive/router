@@ -28,7 +28,7 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 use hive_router_config::{load_config, HiveRouterConfig};
 use hive_router_internal::telemetry::{
     otel::{opentelemetry, tracing_opentelemetry::OpenTelemetrySpanExt},
-    traces::spans::http_request::HttpServerRequestSpanBuilder,
+    traces::spans::http_request::HttpServerRequestSpan,
 };
 use http::header::RETRY_AFTER;
 use ntex::{
@@ -46,8 +46,7 @@ async fn graphql_endpoint_handler(
     let parent_ctx = opentelemetry::global::get_text_map_propagator(|propagator| {
         propagator.extract(&HeaderExtractor(request.headers()))
     });
-    let root_http_request_span =
-        HttpServerRequestSpanBuilder::from_request(&request, &body_bytes).build();
+    let root_http_request_span = HttpServerRequestSpan::from_request(&request, &body_bytes);
     let _ = root_http_request_span.set_parent(parent_ctx);
 
     let maybe_supergraph = schema_state.current_supergraph();
