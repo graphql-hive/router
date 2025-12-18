@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use graphql_parser::minify_query;
 use graphql_parser::query::{Definition, Document, OperationDefinition};
+use hive_console_sdk::graphql::normalize_operation as hive_sdk_normalize_operation;
 use hive_router_internal::telemetry::traces::spans::graphql::{
     GraphQLParseSpan, GraphQLSpanOperationIdentity, RecordOperationIdentity,
 };
@@ -19,6 +20,7 @@ use tracing::{error, trace, Instrument};
 pub struct ParseCacheEntry {
     document: Arc<graphql_parser::query::Document<'static, String>>,
     document_minified_string: Arc<String>,
+    hive_operation_hash: Arc<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -29,6 +31,7 @@ pub struct GraphQLParserPayload {
     pub operation_type: String,
     pub cache_key: u64,
     pub cache_key_string: String,
+    pub hive_operation_hash: Arc<String>,
 }
 
 impl<'a> From<&'a GraphQLParserPayload> for GraphQLSpanOperationIdentity<'a> {
@@ -77,9 +80,22 @@ pub async fn parse_operation_with_cache(
                 })?)
             };
 
+            let hive_normalized_operation = hive_sdk_normalize_operation(&parsed_arc);
+            let hive_minified =
+                minify_query(hive_normalized_operation.to_string()).map_err(|err| {
+                    error!(
+                        "Failed to minify GraphQL operation normalized for Hive SDK: {}",
+                        err
+                    );
+                    req.new_pipeline_error(PipelineErrorVariant::FailedToMinifyParsedOperation(
+                        err.to_string(),
+                    ))
+                })?;
+
             let entry = ParseCacheEntry {
                 document: parsed_arc,
                 document_minified_string: minified_arc,
+                hive_operation_hash: Arc::new(format!("{:x}", md5::compute(hive_minified))),
             };
 
             app_state.parse_cache.insert(cache_key, entry.clone()).await;
@@ -123,6 +139,7 @@ pub async fn parse_operation_with_cache(
             operation_type: operation_type.to_string(),
             cache_key,
             cache_key_string,
+            hive_operation_hash: parse_cache_item.hive_operation_hash.clone(),
         };
 
         parse_span.record_operation_identity((&payload).into());

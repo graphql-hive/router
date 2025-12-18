@@ -50,13 +50,14 @@ regex-automata = { workspace = true }
 
 mimalloc = { version = "0.1.48", features = ["v3"] }
 moka = { version = "0.12.10", features = ["future"] }
-hive-console-sdk = "0.2.1"
+hive-console-sdk = { git = "https://github.com/graphql-hive/console.git", branch = "kamil-rust-sdk-export"}
 ulid = "1.2.1"
 tokio-util = "0.7.16"
 cookie = "0.18.1"
 arc-swap = "1.7.1"
 lasso2 = "0.8.2"
 ahash = "0.8.12"
+md5 = "0.8.0"
 
 [dev-dependencies]
 criterion = { workspace = true }

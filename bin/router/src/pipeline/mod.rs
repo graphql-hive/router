@@ -133,6 +133,7 @@ pub async fn execute_pipeline(
 
         operation_span.record_document(&parser_payload.minified_document);
         operation_span.record_operation_identity((&parser_payload).into());
+        operation_span.record_hive_operation_hash(&parser_payload.hive_operation_hash);
 
         validate_operation_with_cache(req, supergraph, schema_state, shared_state, &parser_payload)
             .await?;
