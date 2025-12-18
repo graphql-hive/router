@@ -98,32 +98,33 @@ pub async fn execute_plan(
         None
     };
 
-    let execute_span = GraphQLExecuteSpan::new();
-    execute_span.record_operation_identity(
-        (&planned_request.normalized_payload.operation_indentity).into(),
-    );
-
-    execute_query_plan(QueryPlanExecutionContext {
-        query_plan: planned_request.query_plan_payload,
-        projection_plan: &planned_request.normalized_payload.projection_plan,
-        headers_plan: &app_state.headers_plan,
-        variable_values: &planned_request.variable_payload.variables_map,
-        extensions,
-        client_request: planned_request.client_request_details,
-        introspection_context: &introspection_context,
-        operation_type_name: planned_request.normalized_payload.root_type_name,
-        jwt_auth_forwarding: &jwt_forward_plan,
-        executors: &supergraph.subgraph_executor_map,
-        initial_errors: planned_request
-            .authorization_errors
-            .iter()
-            .map(|e| e.into())
-            .collect(),
-    })
-    .instrument(execute_span.span)
+    async {
+        let execute_span = GraphQLExecuteSpan::new();
+        execute_span.record_operation_identity(
+            (&planned_request.normalized_payload.operation_indentity).into(),
+        );
+        execute_query_plan(QueryPlanExecutionContext {
+            query_plan: planned_request.query_plan_payload,
+            projection_plan: &planned_request.normalized_payload.projection_plan,
+            headers_plan: &app_state.headers_plan,
+            variable_values: &planned_request.variable_payload.variables_map,
+            extensions,
+            client_request: planned_request.client_request_details,
+            introspection_context: &introspection_context,
+            operation_type_name: planned_request.normalized_payload.root_type_name,
+            jwt_auth_forwarding: &jwt_forward_plan,
+            executors: &supergraph.subgraph_executor_map,
+            initial_errors: planned_request
+                .authorization_errors
+                .iter()
+                .map(|e| e.into())
+                .collect(),
+        })
+        .await
+        .map_err(|err| {
+            tracing::error!("Failed to execute query plan: {}", err);
+            req.new_pipeline_error(PipelineErrorVariant::PlanExecutionError(err))
+        })
+    }
     .await
-    .map_err(|err| {
-        tracing::error!("Failed to execute query plan: {}", err);
-        req.new_pipeline_error(PipelineErrorVariant::PlanExecutionError(err))
-    })
 }

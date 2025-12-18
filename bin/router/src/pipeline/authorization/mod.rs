@@ -105,7 +105,7 @@ pub fn enforce_operation_authorization(
     }
 
     let span = GraphQLAuthorizeSpan::new();
-    let _guard = span.span.enter();
+    // let _guard = span.span.enter();
     span.record_operation_identity((&normalized_payload.operation_indentity).into());
 
     let reject_mode =

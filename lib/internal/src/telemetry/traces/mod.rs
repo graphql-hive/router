@@ -7,6 +7,7 @@ use hive_router_config::{
         TelemetryConfig,
     },
 };
+use opentelemetry::trace::Tracer as OtelTracer;
 use opentelemetry_otlp::{
     Protocol, SpanExporter, WithExportConfig, WithHttpConfig, WithTonicConfig,
 };
@@ -17,7 +18,6 @@ use opentelemetry_sdk::{
     },
     Resource,
 };
-use tracing_opentelemetry::OpenTelemetryLayer;
 use vrl::core::Value;
 
 use self::compatibility::HttpCompatibilityExporter;
@@ -36,8 +36,7 @@ pub mod control;
 pub mod hive_console_exporter;
 pub mod spans;
 
-pub struct Tracer<Subscriber> {
-    pub layer: OpenTelemetryLayer<Subscriber, trace::Tracer>,
+pub struct Tracer {
     pub provider: SdkTracerProvider,
 }
 

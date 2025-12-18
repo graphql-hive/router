@@ -27,15 +27,14 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
 use hive_router_config::{load_config, HiveRouterConfig};
 use hive_router_internal::telemetry::{
-    otel::{opentelemetry, tracing_opentelemetry::OpenTelemetrySpanExt},
-    traces::spans::http_request::HttpServerRequestSpan,
+    otel::opentelemetry, traces::spans::http_request::HttpServerRequestSpan,
 };
 use http::header::RETRY_AFTER;
 use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
 };
-use tracing::{info, warn, Instrument};
+use tracing::{info, warn};
 
 async fn graphql_endpoint_handler(
     mut request: HttpRequest,
@@ -43,16 +42,16 @@ async fn graphql_endpoint_handler(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> impl web::Responder {
-    let parent_ctx = opentelemetry::global::get_text_map_propagator(|propagator| {
-        propagator.extract(&HeaderExtractor(request.headers()))
-    });
-    let root_http_request_span = HttpServerRequestSpan::from_request(&request, &body_bytes);
-    let _ = root_http_request_span.set_parent(parent_ctx);
+    // let parent_ctx = opentelemetry::global::get_text_map_propagator(|propagator| {
+    //     propagator.extract(&HeaderExtractor(request.headers()))
+    // });
+
+    // let _ = root_http_request_span.set_parent(parent_ctx);
 
     let maybe_supergraph = schema_state.current_supergraph();
 
-    let span = root_http_request_span.span.clone();
     async {
+        let root_http_request_span = HttpServerRequestSpan::from_request(&request, &body_bytes);
         if let Some(supergraph) = maybe_supergraph.as_ref() {
             // If an early CORS response is needed, return it immediately.
             if let Some(early_response) = app_state
@@ -90,7 +89,6 @@ async fn graphql_endpoint_handler(
                 .finish()
         }
     }
-    .instrument(span)
     .await
 }
 

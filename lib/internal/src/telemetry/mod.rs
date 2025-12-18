@@ -21,17 +21,14 @@ mod utils;
 //   http/protobuf: OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 //   gRPC: OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 
-pub struct OpenTelemetry<Subscriber> {
-    pub tracer: Option<traces::Tracer<Subscriber>>,
+pub struct OpenTelemetry {
+    pub tracer: Option<traces::Tracer>,
     // metrics: metrics::MetricsState,
     pub logger: Option<logs::Logger>,
 }
 
-impl<S> OpenTelemetry<S> {
-    pub fn new_noop() -> OpenTelemetry<S>
-    where
-        S: Subscriber + for<'span> LookupSpan<'span> + Send + Sync,
-    {
+impl OpenTelemetry {
+    pub fn new_noop() -> OpenTelemetry {
         OpenTelemetry {
             tracer: None,
             logger: None,
@@ -41,9 +38,8 @@ impl<S> OpenTelemetry<S> {
     pub fn from_config<I>(
         config: &TelemetryConfig,
         id_generator: I,
-    ) -> Result<OpenTelemetry<S>, error::TelemetryError>
+    ) -> Result<OpenTelemetry, error::TelemetryError>
     where
-        S: Subscriber + for<'span> LookupSpan<'span> + Send + Sync,
         I: IdGenerator + 'static,
     {
         if !config.is_tracing_enabled() {
@@ -62,19 +58,17 @@ impl<S> OpenTelemetry<S> {
         let traces_provider = build_trace_provider(config, id_generator, resource.clone())?;
 
         // TODO: make those configurable
-        let scope = InstrumentationScope::builder("hive-router")
-            .with_version("v0")
-            .build();
+        // let scope = InstrumentationScope::builder("hive-router")
+        //     .with_version("v0")
+        //     .build();
 
-        let tracer = traces_provider.tracer_with_scope(scope);
-        let traces_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+        // let tracer = traces_provider.tracer_with_scope(scope);
 
         // let logs_provider = build_logs_provider(config, resource)?;
         // let logs_layer = OpenTelemetryTracingBridge::new(&logs_provider);
 
         Ok(OpenTelemetry {
             tracer: Some(traces::Tracer {
-                layer: traces_layer,
                 provider: traces_provider,
             }),
             logger: None,

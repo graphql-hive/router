@@ -1,5 +1,5 @@
+use fastrace::prelude::Span;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tracing::Span;
 
 static TRACING_ENABLED: AtomicBool = AtomicBool::new(true);
 
@@ -12,5 +12,5 @@ pub fn is_tracing_enabled() -> bool {
 }
 
 pub fn disabled_span() -> Span {
-    Span::none()
+    Span::noop()
 }

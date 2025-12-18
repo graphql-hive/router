@@ -5,6 +5,7 @@ use hive_router_config::{
 };
 use hive_router_internal::telemetry::{
     otel::{
+        fastrace_opentelemetry::OpenTelemetryReporter,
         opentelemetry::{
             global::{set_text_map_propagator, set_tracer_provider},
             propagation::{Extractor, TextMapCompositePropagator, TextMapPropagator},
@@ -84,7 +85,19 @@ pub(crate) fn init(config: &HiveRouterConfig) -> OpenTelemetryProviders {
 
     if let Some(tracer) = &tracer {
         set_tracing_enabled(true);
-        set_tracer_provider(tracer.provider.clone());
+        let reporter = OpenTelemetryReporter::new(
+            tracer.provider,
+            Cow::Owned(
+                Resource::builder()
+                    .with_attributes([KeyValue::new("service.name", "asynchronous")])
+                    .build(),
+            ),
+            InstrumentationScope::builder("example-crate")
+                .with_version(env!("CARGO_PKG_VERSION"))
+                .build(),
+        );
+        fastrace::set_reporter(reporter, Config::default());
+        // set_tracer_provider(tracer.provider.clone());
     } else {
         set_tracing_enabled(false);
     }
@@ -92,9 +105,7 @@ pub(crate) fn init(config: &HiveRouterConfig) -> OpenTelemetryProviders {
     let tracer_provider = tracer.as_ref().map(|t| t.provider.clone());
     let logger_provider = logger.as_ref().map(|l| l.provider.clone());
 
-    let registry = tracing_subscriber::registry()
-        .with(tracer.map(|t| t.layer))
-        .with(logger.map(|l| l.layer));
+    let registry = tracing_subscriber::registry().with(logger.map(|l| l.layer));
 
     let is_terminal = std::io::stdout().is_terminal();
     match config.log.format {

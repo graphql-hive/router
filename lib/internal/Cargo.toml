@@ -57,6 +57,8 @@ opentelemetry-zipkin = { workspace = true }
 tracing = { workspace = true }
 tracing-opentelemetry.workspace = true
 tracing-subscriber = { workspace = true }
+fastrace = { workspace = true }
+fastrace-opentelemetry = { workspace = true }
 tonic = { workspace = true }
 
 [dev-dependencies]

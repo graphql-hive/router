@@ -7,7 +7,7 @@ use dashmap::DashMap;
 use futures::TryFutureExt;
 use hive_router_internal::telemetry::otel::opentelemetry::global::get_text_map_propagator;
 use hive_router_internal::telemetry::otel::opentelemetry::propagation::Injector;
-use hive_router_internal::telemetry::otel::tracing_opentelemetry::OpenTelemetrySpanExt;
+// use hive_router_internal::telemetry::otel::tracing_opentelemetry::OpenTelemetrySpanExt;
 use hive_router_internal::telemetry::traces::spans::http_request::{
     HttpClientRequestSpan, HttpInflightRequestSpan,
 };
@@ -158,16 +158,15 @@ impl HTTPSubgraphExecutor {
 
         debug!("making http request to {}", self.endpoint.to_string());
 
-        let parent_context = tracing::Span::current().context();
+        // let parent_context = tracing::Span::current().context();
 
-        // TODO: let's decide at some point if the tracing headers
-        //       should be part of the fingerprint or not.
-        get_text_map_propagator(|propagator| {
-            propagator.inject_context(&parent_context, &mut TraceHeaderInjector(req.headers_mut()));
-        });
+        // // TODO: let's decide at some point if the tracing headers
+        // //       should be part of the fingerprint or not.
+        // get_text_map_propagator(|propagator| {
+        //     propagator.inject_context(&parent_context, &mut TraceHeaderInjector(req.headers_mut()));
+        // });
 
         let http_request_span = HttpClientRequestSpan::from_request(&req);
-        let span = http_request_span.span.clone();
         async {
             let res_fut = self.http_client.request(req).map_err(|e| {
                 SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
@@ -216,7 +215,6 @@ impl HTTPSubgraphExecutor {
                 headers: parts.headers,
             })
         }
-        .instrument(span)
         .await
     }
 
@@ -347,7 +345,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 }
             }
         }
-        .instrument(span.clone())
+        // .instrument(span.clone())
         .await
     }
 }

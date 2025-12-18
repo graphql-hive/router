@@ -15,7 +15,6 @@ use hive_router_query_planner::{
 use http::HeaderMap;
 use serde::Deserialize;
 use sonic_rs::ValueRef;
-use tracing::Instrument;
 
 use crate::{
     context::ExecutionContext,
@@ -698,8 +697,9 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         node: &FetchNode,
         representations: Option<Vec<u8>>,
     ) -> Result<ExecutionJob, PlanExecutionError> {
-        let span = GraphQLSubgraphOperationSpan::new(&node.service_name);
         async {
+            let span = GraphQLSubgraphOperationSpan::new(&node.service_name);
+            // let _guard = span.set_local_parent();
             // TODO: We could optimize header map creation by caching them per service name
             let mut headers_map = HeaderMap::new();
             modify_subgraph_request_headers(
@@ -755,7 +755,6 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                 response,
             }))
         }
-        .instrument(span.clone())
         .await
     }
 

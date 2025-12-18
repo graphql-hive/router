@@ -39,7 +39,7 @@ pub fn coerce_request_variables(
     normalized_operation: &Arc<GraphQLNormalizationPayload>,
 ) -> Result<CoerceVariablesPayload, PipelineError> {
     let span = GraphQLVariableCoercionSpan::new();
-    let _guard = span.span.enter();
+    // let _guard = span.span.enter();
     span.record_operation_identity((&normalized_operation.operation_indentity).into());
 
     if req.method() == Method::GET {
