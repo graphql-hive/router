@@ -19,6 +19,15 @@ pub struct TracingConfig {
     pub instrumentation: TracingInstrumentationConfig,
 }
 
+impl TracingConfig {
+    pub fn is_enabled(&self) -> bool {
+        // sampling is set to 0? no nead to enable tracing
+        self.collect.sampling > 0.0 &&
+        // at least one exporter is enabled
+        self.exporters.iter().any(|exporter| exporter.is_enabled())
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct TracingInstrumentationConfig {
@@ -146,6 +155,14 @@ pub struct OtlpGrpcConfig {
 pub enum TracingExporterConfig {
     #[serde(rename = "otlp")]
     Otlp(TracingOtlpConfig),
+}
+
+impl TracingExporterConfig {
+    fn is_enabled(&self) -> bool {
+        match self {
+            TracingExporterConfig::Otlp(otlp_config) => otlp_config.enabled,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

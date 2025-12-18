@@ -9,7 +9,7 @@ use crate::{
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
 #[serde(deny_unknown_fields)]
 #[derive(Default)]
-pub struct HiveConfig {
+pub struct HiveTelemetryConfig {
     #[serde(default)]
     pub endpoint: ValueOrExpression<String>,
     #[serde(default)]

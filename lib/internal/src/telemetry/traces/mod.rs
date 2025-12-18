@@ -182,27 +182,27 @@ fn setup_exporters(
         }
     }
 
-    if config.hive.tracing.enabled {
-        let endpoint = match &config.hive.endpoint {
+    if let Some(hive_config) = &config.hive {
+        let endpoint = match &hive_config.endpoint {
             ValueOrExpression::Value(v) => v.clone(),
             ValueOrExpression::Expression { expression } => {
                 evaluate_expression_as_string(expression, "Hive OTLP endpoint")?
             }
         };
-        let token = match &config.hive.token {
+        let token = match &hive_config.token {
             ValueOrExpression::Value(v) => v.clone(),
             ValueOrExpression::Expression { expression } => {
                 evaluate_expression_as_string(expression, "Hive OTLP token")?
             }
         };
-        let target = match &config.hive.target {
+        let target = match &hive_config.target {
             ValueOrExpression::Value(v) => v.clone(),
             ValueOrExpression::Expression { expression } => {
                 evaluate_expression_as_string(expression, "Hive OTLP target")?
             }
         };
 
-        let span_exporter = match &config.hive.tracing.protocol {
+        let span_exporter = match &hive_config.tracing.protocol {
             OtlpProtocol::Grpc => {
                 unreachable!("gRPC protocol is not supported for Hive OTLP exporter");
                 // if config.hive.tracing.http.is_some() {
@@ -252,14 +252,13 @@ fn setup_exporters(
                 // HiveConsoleExporter::new(exporter)
             }
             OtlpProtocol::Http => {
-                if config.hive.tracing.grpc.is_some() {
+                if hive_config.tracing.grpc.is_some() {
                     return Err(TelemetryError::TracesExporterSetup(
                         "Hive OTLP grpc configuration found while protocol is set to HTTP"
                             .to_string(),
                     ));
                 }
-                let mut headers = config
-                    .hive
+                let mut headers = hive_config
                     .tracing
                     .http
                     .as_ref()
@@ -293,7 +292,7 @@ fn setup_exporters(
                 let exporter = SpanExporter::builder()
                     .with_http()
                     .with_endpoint(endpoint)
-                    .with_timeout(config.hive.tracing.batch_processor.max_export_timeout)
+                    .with_timeout(hive_config.tracing.batch_processor.max_export_timeout)
                     .with_headers(headers)
                     .with_protocol(Protocol::HttpBinary)
                     .build()
@@ -304,7 +303,7 @@ fn setup_exporters(
         };
 
         tracer_provider_builder = tracer_provider_builder.with_span_processor(
-            build_batched_span_processor(&config.hive.tracing.batch_processor, span_exporter),
+            build_batched_span_processor(&hive_config.tracing.batch_processor, span_exporter),
         );
     }
 

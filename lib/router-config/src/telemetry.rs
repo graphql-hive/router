@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::telemetry::{hive::HiveConfig, tracing::TracingConfig};
+use crate::telemetry::{hive::HiveTelemetryConfig, tracing::TracingConfig};
 
 pub mod hive;
 pub mod tracing;
@@ -11,11 +11,17 @@ pub mod tracing;
 #[derive(Default)]
 pub struct TelemetryConfig {
     #[serde(default)]
-    pub hive: HiveConfig,
+    pub hive: Option<HiveTelemetryConfig>,
     #[serde(default)]
     pub tracing: TracingConfig,
     #[serde(default)]
     pub service: ServiceConfig,
+}
+
+impl TelemetryConfig {
+    pub fn is_tracing_enabled(&self) -> bool {
+        self.tracing.is_enabled() || self.hive.as_ref().is_some_and(|hive| hive.tracing.enabled)
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]

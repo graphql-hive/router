@@ -47,11 +47,6 @@ pub(crate) struct OpenTelemetryProviders {
     pub tracer: Option<SdkTracerProvider>,
 }
 
-// # https://www.jaegertracing.io/ (compliant with opentracing)
-//       jaeger: false
-//       # https://github.com/openzipkin/b3-propagation (zipkin)
-//       b3: false
-
 impl OpenTelemetryProviders {
     pub(crate) async fn graceful_shutdown(&self) {
         use tokio::task::spawn_blocking;
@@ -78,6 +73,7 @@ pub(crate) fn init(config: &HiveRouterConfig) -> OpenTelemetryProviders {
     let timer = UtcTime::rfc_3339();
     let filter = EnvFilter::from_str(config.log.env_filter_str())
         .unwrap_or_else(|e| panic!("failed to initialize env-filter logger: {}", e));
+
     let id_generator = RandomIdGenerator::default();
 
     init_propagators(&config.telemetry.tracing.propagation);

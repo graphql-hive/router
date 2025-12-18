@@ -1,12 +1,12 @@
 use hive_router_config::telemetry::TelemetryConfig;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry::{InstrumentationScope, KeyValue};
-use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+// use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_sdk::{trace::IdGenerator, Resource};
 use tracing::Subscriber;
 use tracing_subscriber::registry::LookupSpan;
 
-use crate::telemetry::logs::build_logs_provider;
+// use crate::telemetry::logs::build_logs_provider;
 use crate::telemetry::traces::build_trace_provider;
 
 mod error;
@@ -46,6 +46,10 @@ impl<S> OpenTelemetry<S> {
         S: Subscriber + for<'span> LookupSpan<'span> + Send + Sync,
         I: IdGenerator + 'static,
     {
+        if !config.is_tracing_enabled() {
+            return Ok(OpenTelemetry::new_noop());
+        }
+
         // TODO: allow to configure resource attributes through config
         // TODO: make `service.name` configurable
         let resource_attributes: Vec<_> =
@@ -65,18 +69,15 @@ impl<S> OpenTelemetry<S> {
         let tracer = traces_provider.tracer_with_scope(scope);
         let traces_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
-        let logs_provider = build_logs_provider(config, resource)?;
-        let logs_layer = OpenTelemetryTracingBridge::new(&logs_provider);
+        // let logs_provider = build_logs_provider(config, resource)?;
+        // let logs_layer = OpenTelemetryTracingBridge::new(&logs_provider);
 
         Ok(OpenTelemetry {
             tracer: Some(traces::Tracer {
                 layer: traces_layer,
                 provider: traces_provider,
             }),
-            logger: Some(logs::Logger {
-                layer: logs_layer,
-                provider: logs_provider,
-            }),
+            logger: None,
         })
     }
 }
