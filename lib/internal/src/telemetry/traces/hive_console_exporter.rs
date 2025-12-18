@@ -441,7 +441,7 @@ impl<E: SpanExporter> HiveConsoleExporter<E> {
     }
 
     #[inline]
-    fn get_hive_kind<'a>(&self, span: &'a SpanData) -> Option<HiveSpanKind> {
+    fn get_hive_kind(&self, span: &SpanData) -> Option<HiveSpanKind> {
         span.attributes
             .iter()
             .find(|kv| kv.key.as_str() == "hive.kind")

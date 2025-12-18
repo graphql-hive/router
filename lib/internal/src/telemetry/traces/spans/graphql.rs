@@ -340,7 +340,7 @@ impl GraphQLOperationSpan {
     // TODO: use it
     pub fn record_error_codes(&self, codes: &[&str]) {
         self.span
-            .record(attributes::HIVE_GRAPHQL_ERROR_CODES, &codes.join(","));
+            .record(attributes::HIVE_GRAPHQL_ERROR_CODES, codes.join(","));
     }
 }
 
@@ -393,7 +393,7 @@ impl GraphQLSubgraphOperationSpan {
     // TODO: use it
     pub fn record_error_codes(&self, codes: &[&str]) {
         self.span
-            .record(attributes::HIVE_GRAPHQL_ERROR_CODES, &codes.join(","));
+            .record(attributes::HIVE_GRAPHQL_ERROR_CODES, codes.join(","));
     }
 }
 
