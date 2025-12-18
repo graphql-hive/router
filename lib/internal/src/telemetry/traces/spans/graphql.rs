@@ -1,6 +1,6 @@
 use tracing::{field::Empty, info_span, Span};
 
-use crate::telemetry::traces::spans::{kind::HiveSpanKind, TARGET_NAME};
+use crate::telemetry::traces::spans::{attributes, kind::HiveSpanKind, TARGET_NAME};
 
 pub struct GraphQLParseSpan {
     pub span: Span,
@@ -39,7 +39,7 @@ impl GraphQLParseSpan {
     }
 
     pub fn record_cache_hit(&self, hit: bool) {
-        self.span.record("cache.hit", hit);
+        self.span.record(attributes::CACHE_HIT, hit);
     }
 }
 
@@ -80,7 +80,7 @@ impl GraphQLValidateSpan {
     }
 
     pub fn record_cache_hit(&self, hit: bool) {
-        self.span.record("cache.hit", hit);
+        self.span.record(attributes::CACHE_HIT, hit);
     }
 }
 
@@ -158,7 +158,7 @@ impl GraphQLNormalizeSpan {
     }
 
     pub fn record_cache_hit(&self, hit: bool) {
-        self.span.record("cache.hit", hit);
+        self.span.record(attributes::CACHE_HIT, hit);
     }
 }
 
@@ -198,7 +198,8 @@ impl GraphQLAuthorizeSpan {
     }
 
     pub fn record_operation_type(&self, operation_type: &str) {
-        self.span.record("graphql.operation.type", operation_type);
+        self.span
+            .record(attributes::GRAPHQL_OPERATION_TYPE, operation_type);
     }
 }
 
@@ -239,7 +240,7 @@ impl GraphQLPlanSpan {
     }
 
     pub fn record_cache_hit(&self, hit: bool) {
-        self.span.record("cache.hit", hit);
+        self.span.record(attributes::CACHE_HIT, hit);
     }
 }
 
@@ -315,28 +316,31 @@ impl GraphQLOperationSpan {
             "hive.graphql.error.codes" = Empty,
             "hive.client.name" = Empty,
             "hive.client.version" = Empty,
-            "hive.graphql.operation.hash" = Empty, // the same hash as for usage reporting
+            "hive.graphql.operation.hash" = Empty,
         );
         GraphQLOperationSpan { span }
     }
 
     pub fn record_document(&self, document: &str) {
-        self.span.record("graphql.document.text", document);
+        self.span
+            .record(attributes::GRAPHQL_DOCUMENT_TEXT, document);
     }
 
     pub fn record_hive_operation_hash(&self, hash: &str) {
-        self.span.record("hive.graphql.operation.hash", hash);
+        self.span
+            .record(attributes::HIVE_GRAPHQL_OPERATION_HASH, hash);
     }
 
     // TODO: use it
     pub fn record_error_count(&self, count: u32) {
-        self.span.record("hive.graphql.error.count", count);
+        self.span
+            .record(attributes::HIVE_GRAPHQL_ERROR_COUNT, count);
     }
 
     // TODO: use it
     pub fn record_error_codes(&self, codes: &[&str]) {
         self.span
-            .record("hive.graphql.error.codes", &codes.join(","));
+            .record(attributes::HIVE_GRAPHQL_ERROR_CODES, &codes.join(","));
     }
 }
 
@@ -376,18 +380,20 @@ impl GraphQLSubgraphOperationSpan {
     }
 
     pub fn record_document(&self, document: &str) {
-        self.span.record("graphql.document.text", document);
+        self.span
+            .record(attributes::GRAPHQL_DOCUMENT_TEXT, document);
     }
 
     // TODO: use it
     pub fn record_error_count(&self, count: u32) {
-        self.span.record("hive.graphql.error.count", count);
+        self.span
+            .record(attributes::HIVE_GRAPHQL_ERROR_COUNT, count);
     }
 
     // TODO: use it
     pub fn record_error_codes(&self, codes: &[&str]) {
         self.span
-            .record("hive.graphql.error.codes", &codes.join(","));
+            .record(attributes::HIVE_GRAPHQL_ERROR_CODES, &codes.join(","));
     }
 }
 
@@ -403,14 +409,16 @@ pub trait RecordOperationIdentity {
 
     fn record_operation_identity(&self, identity: GraphQLSpanOperationIdentity) {
         if let Some(name) = &identity.name {
-            self.span().record("graphql.operation.name", name);
+            self.span().record(attributes::GRAPHQL_OPERATION_NAME, name);
         }
         self.span()
-            .record("graphql.operation.type", identity.operation_type);
-        self.span()
-            .record("graphql.document.hash", identity.client_document_hash);
+            .record(attributes::GRAPHQL_OPERATION_TYPE, identity.operation_type);
+        self.span().record(
+            attributes::GRAPHQL_DOCUMENT_HASH,
+            identity.client_document_hash,
+        );
         // if let Some(id) = &identity.document_id {
-        //     self.span().record("graphql.operation.id", id.as_str());
+        //     self.span().record(attributes::GRAPHQL_OPERATION_ID, id.as_str());
         // }
     }
 }
@@ -440,3 +448,197 @@ impl_record_operation_identity!(
     GraphQLExecuteSpan,
     GraphQLSubgraphOperationSpan
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::telemetry::traces::spans::attributes;
+
+    fn assert_fields(span: &Span, expected_fields: &[&str]) {
+        for field in expected_fields {
+            assert!(
+                span.field(*field).is_some(),
+                "Field '{}' is missing from span '{}'",
+                field,
+                span.metadata().expect("Span should have metadata").name()
+            );
+        }
+    }
+
+    #[test]
+    fn test_graphql_parse_span_fields() {
+        let span = GraphQLParseSpan::new();
+        assert_fields(
+            &span,
+            &[
+                attributes::HIVE_KIND,
+                attributes::OTEL_STATUS_CODE,
+                attributes::OTEL_KIND,
+                attributes::ERROR_TYPE,
+                attributes::CACHE_HIT,
+                attributes::GRAPHQL_OPERATION_NAME,
+                attributes::GRAPHQL_OPERATION_TYPE,
+                attributes::GRAPHQL_OPERATION_ID,
+                attributes::GRAPHQL_DOCUMENT_HASH,
+            ],
+        );
+    }
+
+    #[test]
+    fn test_graphql_validate_span_fields() {
+        let span = GraphQLValidateSpan::new();
+        assert_fields(
+            &span,
+            &[
+                attributes::HIVE_KIND,
+                attributes::OTEL_STATUS_CODE,
+                attributes::OTEL_KIND,
+                attributes::ERROR_TYPE,
+                attributes::CACHE_HIT,
+                attributes::GRAPHQL_OPERATION_NAME,
+                attributes::GRAPHQL_OPERATION_TYPE,
+                attributes::GRAPHQL_OPERATION_ID,
+                attributes::GRAPHQL_DOCUMENT_HASH,
+            ],
+        );
+    }
+
+    #[test]
+    fn test_graphql_variable_coercion_span_fields() {
+        let span = GraphQLVariableCoercionSpan::new();
+        assert_fields(
+            &span,
+            &[
+                attributes::HIVE_KIND,
+                attributes::OTEL_STATUS_CODE,
+                attributes::OTEL_KIND,
+                attributes::ERROR_TYPE,
+                attributes::GRAPHQL_OPERATION_NAME,
+                attributes::GRAPHQL_OPERATION_TYPE,
+                attributes::GRAPHQL_OPERATION_ID,
+                attributes::GRAPHQL_DOCUMENT_HASH,
+            ],
+        );
+    }
+
+    #[test]
+    fn test_graphql_normalize_span_fields() {
+        let span = GraphQLNormalizeSpan::new();
+        assert_fields(
+            &span,
+            &[
+                attributes::HIVE_KIND,
+                attributes::OTEL_STATUS_CODE,
+                attributes::OTEL_KIND,
+                attributes::ERROR_TYPE,
+                attributes::CACHE_HIT,
+                attributes::GRAPHQL_OPERATION_NAME,
+                attributes::GRAPHQL_OPERATION_TYPE,
+                attributes::GRAPHQL_OPERATION_ID,
+                attributes::GRAPHQL_DOCUMENT_HASH,
+            ],
+        );
+    }
+
+    #[test]
+    fn test_graphql_authorize_span_fields() {
+        let span = GraphQLAuthorizeSpan::new();
+        assert_fields(
+            &span,
+            &[
+                attributes::HIVE_KIND,
+                attributes::OTEL_STATUS_CODE,
+                attributes::OTEL_KIND,
+                attributes::ERROR_TYPE,
+                attributes::GRAPHQL_OPERATION_NAME,
+                attributes::GRAPHQL_OPERATION_TYPE,
+                attributes::GRAPHQL_OPERATION_ID,
+                attributes::GRAPHQL_DOCUMENT_HASH,
+            ],
+        );
+    }
+
+    #[test]
+    fn test_graphql_plan_span_fields() {
+        let span = GraphQLPlanSpan::new();
+        assert_fields(
+            &span,
+            &[
+                attributes::HIVE_KIND,
+                attributes::OTEL_STATUS_CODE,
+                attributes::OTEL_KIND,
+                attributes::ERROR_TYPE,
+                attributes::CACHE_HIT,
+                attributes::GRAPHQL_OPERATION_NAME,
+                attributes::GRAPHQL_OPERATION_TYPE,
+                attributes::GRAPHQL_OPERATION_ID,
+                attributes::GRAPHQL_DOCUMENT_HASH,
+            ],
+        );
+    }
+
+    #[test]
+    fn test_graphql_execute_span_fields() {
+        let span = GraphQLExecuteSpan::new();
+        assert_fields(
+            &span,
+            &[
+                attributes::HIVE_KIND,
+                attributes::OTEL_STATUS_CODE,
+                attributes::OTEL_KIND,
+                attributes::ERROR_TYPE,
+                attributes::GRAPHQL_OPERATION_NAME,
+                attributes::GRAPHQL_OPERATION_TYPE,
+                attributes::GRAPHQL_OPERATION_ID,
+                attributes::GRAPHQL_DOCUMENT_HASH,
+            ],
+        );
+    }
+
+    #[test]
+    fn test_graphql_operation_span_fields() {
+        let span = GraphQLOperationSpan::new();
+        assert_fields(
+            &span,
+            &[
+                attributes::HIVE_KIND,
+                attributes::OTEL_STATUS_CODE,
+                attributes::OTEL_KIND,
+                attributes::ERROR_TYPE,
+                attributes::GRAPHQL_OPERATION_NAME,
+                attributes::GRAPHQL_OPERATION_TYPE,
+                attributes::GRAPHQL_OPERATION_ID,
+                attributes::GRAPHQL_DOCUMENT_HASH,
+                attributes::GRAPHQL_DOCUMENT_TEXT,
+                attributes::HIVE_GRAPHQL_ERROR_COUNT,
+                attributes::HIVE_GRAPHQL_ERROR_CODES,
+                attributes::HIVE_CLIENT_NAME,
+                attributes::HIVE_CLIENT_VERSION,
+                attributes::HIVE_GRAPHQL_OPERATION_HASH,
+            ],
+        );
+    }
+
+    #[test]
+    fn test_graphql_subgraph_operation_span_fields() {
+        let span = GraphQLSubgraphOperationSpan::new("test-subgraph");
+        assert_fields(
+            &span,
+            &[
+                attributes::HIVE_KIND,
+                attributes::OTEL_STATUS_CODE,
+                attributes::OTEL_KIND,
+                attributes::ERROR_TYPE,
+                attributes::GRAPHQL_OPERATION_NAME,
+                attributes::GRAPHQL_OPERATION_TYPE,
+                attributes::GRAPHQL_DOCUMENT_HASH,
+                attributes::GRAPHQL_DOCUMENT_TEXT,
+                attributes::HIVE_GRAPHQL_ERROR_COUNT,
+                attributes::HIVE_GRAPHQL_ERROR_CODES,
+                attributes::HIVE_GRAPHQL_SUBGRAPH_NAME,
+                attributes::HIVE_CLIENT_NAME,
+                attributes::HIVE_CLIENT_VERSION,
+            ],
+        );
+    }
+}

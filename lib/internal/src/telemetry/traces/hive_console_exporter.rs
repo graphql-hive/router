@@ -45,26 +45,40 @@ use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
-use crate::telemetry::traces::spans::kind::HiveSpanKind;
+use crate::telemetry::traces::spans::{attributes, kind::HiveSpanKind};
 
 const HTTP_SERVER_TO_GRAPHQL_ATTR_MAP: &[(&str, &str)] = &[
-    ("http.response.status_code", "http.status_code"),
-    ("server.address", "http.host"),
-    ("http.request.method", "http.method"),
-    ("http.route", "http.route"),
-    ("url.full", "http.url"),
+    (
+        attributes::HTTP_RESPONSE_STATUS_CODE,
+        attributes::DEPRECATED_HTTP_STATUS_CODE,
+    ),
+    (attributes::SERVER_ADDRESS, attributes::DEPRECATED_HTTP_HOST),
+    (
+        attributes::HTTP_REQUEST_METHOD,
+        attributes::DEPRECATED_HTTP_METHOD,
+    ),
+    (attributes::HTTP_ROUTE, attributes::HTTP_ROUTE),
+    (attributes::URL_FULL, attributes::DEPRECATED_HTTP_URL),
 ];
 
 const HTTP_CLIENT_TO_GRAPHQL_ATTR_MAP: &[(&str, &str)] = &[
-    ("http.response.status_code", "http.status_code"),
-    ("server.address", "http.host"),
-    ("http.request.method", "http.method"),
-    ("url.path", "http.route"),
-    ("url.full", "http.url"),
+    (
+        attributes::HTTP_RESPONSE_STATUS_CODE,
+        attributes::DEPRECATED_HTTP_STATUS_CODE,
+    ),
+    (attributes::SERVER_ADDRESS, attributes::DEPRECATED_HTTP_HOST),
+    (
+        attributes::HTTP_REQUEST_METHOD,
+        attributes::DEPRECATED_HTTP_METHOD,
+    ),
+    (attributes::URL_PATH, attributes::HTTP_ROUTE),
+    (attributes::URL_FULL, attributes::DEPRECATED_HTTP_URL),
 ];
 
-const GRAPHQL_TO_HIVE_GRAPHQL_OPERATION_ATTR_MAP: &[(&str, &str)] =
-    &[("graphql.document.text", "graphql.document")];
+const GRAPHQL_TO_HIVE_GRAPHQL_OPERATION_ATTR_MAP: &[(&str, &str)] = &[(
+    attributes::GRAPHQL_DOCUMENT_TEXT,
+    attributes::DEPRECATED_GRAPHQL_DOCUMENT,
+)];
 
 #[derive(Debug)]
 pub struct HiveConsoleExporter<E: SpanExporter> {

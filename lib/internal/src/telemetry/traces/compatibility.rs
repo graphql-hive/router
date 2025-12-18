@@ -1,4 +1,4 @@
-use super::spans::kind::HiveSpanKind;
+use super::spans::{attributes, kind::HiveSpanKind};
 use hive_router_config::telemetry::tracing::SpansSemanticConventionsMode;
 use opentelemetry::KeyValue;
 use opentelemetry_sdk::error::OTelSdkResult;
@@ -9,28 +9,67 @@ use std::str::FromStr;
 
 /// Mapping of spec-compliant to deprecated attribute names for HTTP server spans.
 const SERVER_SPEC_TO_DEPRECATED: &[(&str, &str)] = &[
-    ("http.request.method", "http.method"),
-    ("url.full", "http.url"),
-    ("server.address", "http.host"),
-    ("url.scheme", "http.scheme"),
-    ("network.protocol.version", "http.flavor"),
-    ("http.request.body.size", "http.request_content_length"),
-    ("user_agent.original", "http.user_agent"),
-    ("url.path", "http.target"),
-    ("http.response.status_code", "http.status_code"),
-    ("http.response.body.size", "http.response_content_length"),
+    (
+        attributes::HTTP_REQUEST_METHOD,
+        attributes::DEPRECATED_HTTP_METHOD,
+    ),
+    (attributes::URL_FULL, attributes::DEPRECATED_HTTP_URL),
+    (attributes::SERVER_ADDRESS, attributes::DEPRECATED_HTTP_HOST),
+    (attributes::URL_SCHEME, attributes::DEPRECATED_HTTP_SCHEME),
+    (
+        attributes::NETWORK_PROTOCOL_VERSION,
+        attributes::DEPRECATED_HTTP_FLAVOR,
+    ),
+    (
+        attributes::HTTP_REQUEST_BODY_SIZE,
+        attributes::DEPRECATED_HTTP_REQUEST_CONTENT_LENGTH,
+    ),
+    (
+        attributes::USER_AGENT_ORIGINAL,
+        attributes::DEPRECATED_HTTP_USER_AGENT,
+    ),
+    (attributes::URL_PATH, attributes::DEPRECATED_HTTP_TARGET),
+    (
+        attributes::HTTP_RESPONSE_STATUS_CODE,
+        attributes::DEPRECATED_HTTP_STATUS_CODE,
+    ),
+    (
+        attributes::HTTP_RESPONSE_BODY_SIZE,
+        attributes::DEPRECATED_HTTP_RESPONSE_CONTENT_LENGTH,
+    ),
 ];
 
 /// Mapping of spec-compliant to deprecated attribute names for HTTP client spans.
 const CLIENT_SPEC_TO_DEPRECATED: &[(&str, &str)] = &[
-    ("http.request.method", "http.method"),
-    ("url.full", "http.url"),
-    ("server.address", "net.peer.name"),
-    ("server.port", "net.peer.port"),
-    ("network.protocol.version", "http.flavor"),
-    ("http.request.body.size", "http.request_content_length"),
-    ("http.response.status_code", "http.status_code"),
-    ("http.response.body.size", "http.response_content_length"),
+    (
+        attributes::HTTP_REQUEST_METHOD,
+        attributes::DEPRECATED_HTTP_METHOD,
+    ),
+    (attributes::URL_FULL, attributes::DEPRECATED_HTTP_URL),
+    (
+        attributes::SERVER_ADDRESS,
+        attributes::DEPRECATED_NET_PEER_NAME,
+    ),
+    (
+        attributes::SERVER_PORT,
+        attributes::DEPRECATED_NET_PEER_PORT,
+    ),
+    (
+        attributes::NETWORK_PROTOCOL_VERSION,
+        attributes::DEPRECATED_HTTP_FLAVOR,
+    ),
+    (
+        attributes::HTTP_REQUEST_BODY_SIZE,
+        attributes::DEPRECATED_HTTP_REQUEST_CONTENT_LENGTH,
+    ),
+    (
+        attributes::HTTP_RESPONSE_STATUS_CODE,
+        attributes::DEPRECATED_HTTP_STATUS_CODE,
+    ),
+    (
+        attributes::HTTP_RESPONSE_BODY_SIZE,
+        attributes::DEPRECATED_HTTP_RESPONSE_CONTENT_LENGTH,
+    ),
 ];
 
 /// Helper function to find the deprecated key for a given spec-compliant key (server spans).

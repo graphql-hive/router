@@ -9,7 +9,7 @@ use ntex::http::body::MessageBody;
 use std::borrow::{Borrow, Cow};
 use tracing::{field::Empty, info_span, Span};
 
-use crate::telemetry::traces::spans::{kind::HiveSpanKind, TARGET_NAME};
+use crate::telemetry::traces::spans::{attributes, kind::HiveSpanKind, TARGET_NAME};
 
 pub struct HttpServerRequestSpanBuilder<'a> {
     request_body_size: Option<usize>,
@@ -107,23 +107,26 @@ impl HttpServerRequestSpan {
         });
 
         // Record stable attributes
-        self.record("http.response.status_code", response.status().as_str());
+        self.record(
+            attributes::HTTP_RESPONSE_STATUS_CODE,
+            response.status().as_str(),
+        );
         if let Some(size) = body_size {
-            self.record("http.response.body.size", size as i64);
+            self.record(attributes::HTTP_RESPONSE_BODY_SIZE, size as i64);
         }
 
         if response.status().is_server_error() {
-            self.record("otel.status_code", "Error");
-            self.record("error.type", response.status().as_str());
+            self.record(attributes::OTEL_STATUS_CODE, "Error");
+            self.record(attributes::ERROR_TYPE, response.status().as_str());
         } else {
-            self.record("otel.status_code", "Ok");
+            self.record(attributes::OTEL_STATUS_CODE, "Ok");
         }
     }
 
     pub fn record_internal_server_error(&self) {
-        self.record("otel.status_code", "Error");
-        self.record("error.type", "500");
-        self.record("http.response.status_code", "500");
+        self.record(attributes::OTEL_STATUS_CODE, "Error");
+        self.record(attributes::ERROR_TYPE, "500");
+        self.record(attributes::HTTP_RESPONSE_STATUS_CODE, "500");
     }
 }
 
@@ -208,23 +211,26 @@ impl HttpClientRequestSpan {
         let body_size = response.body().size_hint().exact().map(|s| s as usize);
 
         // Record stable attributes
-        self.record("http.response.status_code", response.status().as_str());
+        self.record(
+            attributes::HTTP_RESPONSE_STATUS_CODE,
+            response.status().as_str(),
+        );
         if let Some(size) = body_size {
-            self.record("http.response.body.size", size as i64);
+            self.record(attributes::HTTP_RESPONSE_BODY_SIZE, size as i64);
         }
 
         if response.status().is_server_error() {
-            self.record("otel.status_code", "Error");
-            self.record("error.type", response.status().as_str());
+            self.record(attributes::OTEL_STATUS_CODE, "Error");
+            self.record(attributes::ERROR_TYPE, response.status().as_str());
         } else {
-            self.record("otel.status_code", "Ok");
+            self.record(attributes::OTEL_STATUS_CODE, "Ok");
         }
     }
 
     pub fn record_internal_server_error(&self) {
-        self.record("otel.status_code", "Error");
-        self.record("error.type", "500");
-        self.record("http.response.status_code", "500");
+        self.record(attributes::OTEL_STATUS_CODE, "Error");
+        self.record(attributes::ERROR_TYPE, "500");
+        self.record(attributes::HTTP_RESPONSE_STATUS_CODE, "500");
     }
 }
 
@@ -326,32 +332,32 @@ impl<'a> HttpInflightRequestSpanBuilder<'a> {
 
 impl HttpInflightRequestSpan {
     pub fn record_as_leader(&self) {
-        self.record("hive.inflight.role", "leader");
+        self.record(attributes::HIVE_INFLIGHT_ROLE, "leader");
     }
 
     pub fn record_as_joiner(&self) {
-        self.record("hive.inflight.role", "joiner");
+        self.record(attributes::HIVE_INFLIGHT_ROLE, "joiner");
     }
 
     pub fn record_response(&self, body: &Bytes, status: &StatusCode) {
         let body_size = body.len();
 
         // Record stable attributes
-        self.record("http.response.status_code", status.as_str());
-        self.record("http.response.body.size", body_size as i64);
+        self.record(attributes::HTTP_RESPONSE_STATUS_CODE, status.as_str());
+        self.record(attributes::HTTP_RESPONSE_BODY_SIZE, body_size as i64);
 
         if status.is_server_error() {
-            self.record("otel.status_code", "Error");
-            self.record("error.type", status.as_str());
+            self.record(attributes::OTEL_STATUS_CODE, "Error");
+            self.record(attributes::ERROR_TYPE, status.as_str());
         } else {
-            self.record("otel.status_code", "Ok");
+            self.record(attributes::OTEL_STATUS_CODE, "Ok");
         }
     }
 
     pub fn record_internal_server_error(&self) {
-        self.record("otel.status_code", "Error");
-        self.record("error.type", "500");
-        self.record("http.response.status_code", "500");
+        self.record(attributes::OTEL_STATUS_CODE, "Error");
+        self.record(attributes::ERROR_TYPE, "500");
+        self.record(attributes::HTTP_RESPONSE_STATUS_CODE, "500");
     }
 }
 
@@ -362,5 +368,124 @@ fn version_to_protocol_version_attr(version: http::Version) -> Option<&'static s
         http::Version::HTTP_2 => Some("2"),
         http::Version::HTTP_3 => Some("3"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::telemetry::traces::spans::attributes;
+
+    fn assert_fields(span: &Span, expected_fields: &[&str]) {
+        for field in expected_fields {
+            assert!(
+                span.field(*field).is_some(),
+                "Field '{}' is missing from span '{}'",
+                field,
+                span.metadata().expect("Span should have metadata").name()
+            );
+        }
+    }
+
+    #[test]
+    fn test_http_server_request_span_fields() {
+        let req = ntex::web::test::TestRequest::with_uri("/graphql")
+            .header(HOST, "localhost:8080")
+            .header(USER_AGENT, "test-agent")
+            .to_http_request();
+        let body = ntex::util::Bytes::from("test body");
+
+        let span = HttpServerRequestSpanBuilder::from_request(&req, &body).build();
+
+        assert_fields(
+            &span,
+            &[
+                attributes::HIVE_KIND,
+                attributes::OTEL_STATUS_CODE,
+                attributes::OTEL_KIND,
+                attributes::ERROR_TYPE,
+                attributes::SERVER_ADDRESS,
+                attributes::SERVER_PORT,
+                attributes::URL_FULL,
+                attributes::URL_PATH,
+                attributes::URL_SCHEME,
+                attributes::HTTP_REQUEST_BODY_SIZE,
+                attributes::HTTP_REQUEST_METHOD,
+                attributes::NETWORK_PROTOCOL_VERSION,
+                attributes::USER_AGENT_ORIGINAL,
+                attributes::HTTP_RESPONSE_STATUS_CODE,
+                attributes::HTTP_RESPONSE_BODY_SIZE,
+                attributes::HTTP_ROUTE,
+            ],
+        );
+    }
+
+    #[test]
+    fn test_http_client_request_span_fields() {
+        let req = http::Request::builder()
+            .uri("http://localhost:8081/graphql")
+            .header(USER_AGENT, "test-agent")
+            .body(Full::new(Bytes::from("test body")))
+            .unwrap();
+
+        let span = HttpClientRequestSpanBuilder::from_request(&req).build();
+
+        assert_fields(
+            &span,
+            &[
+                attributes::HIVE_KIND,
+                attributes::OTEL_STATUS_CODE,
+                attributes::OTEL_KIND,
+                attributes::ERROR_TYPE,
+                attributes::SERVER_ADDRESS,
+                attributes::SERVER_PORT,
+                attributes::URL_FULL,
+                attributes::URL_PATH,
+                attributes::URL_SCHEME,
+                attributes::HTTP_REQUEST_BODY_SIZE,
+                attributes::HTTP_REQUEST_METHOD,
+                attributes::NETWORK_PROTOCOL_VERSION,
+                attributes::USER_AGENT_ORIGINAL,
+                attributes::HTTP_RESPONSE_STATUS_CODE,
+                attributes::HTTP_RESPONSE_BODY_SIZE,
+            ],
+        );
+    }
+
+    #[test]
+    fn test_http_inflight_request_span_fields() {
+        let method = http::Method::POST;
+        let url = http::Uri::from_static("http://localhost:8082/graphql");
+        let mut headers = http::HeaderMap::new();
+        headers.insert(HOST, http::HeaderValue::from_static("localhost:8082"));
+        headers.insert(USER_AGENT, http::HeaderValue::from_static("test-agent"));
+        let body = b"test body";
+        let fingerprint = 12345u64;
+
+        let span =
+            HttpInflightRequestSpanBuilder::new(&method, &url, &headers, body, fingerprint).build();
+
+        assert_fields(
+            &span,
+            &[
+                attributes::HIVE_KIND,
+                attributes::OTEL_STATUS_CODE,
+                attributes::OTEL_KIND,
+                attributes::ERROR_TYPE,
+                attributes::HIVE_INFLIGHT_ROLE,
+                attributes::HIVE_INFLIGHT_KEY,
+                attributes::SERVER_ADDRESS,
+                attributes::SERVER_PORT,
+                attributes::URL_FULL,
+                attributes::URL_PATH,
+                attributes::URL_SCHEME,
+                attributes::HTTP_REQUEST_BODY_SIZE,
+                attributes::HTTP_REQUEST_METHOD,
+                attributes::NETWORK_PROTOCOL_VERSION,
+                attributes::USER_AGENT_ORIGINAL,
+                attributes::HTTP_RESPONSE_STATUS_CODE,
+                attributes::HTTP_RESPONSE_BODY_SIZE,
+            ],
+        );
     }
 }
