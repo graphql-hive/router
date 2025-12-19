@@ -1,5 +1,6 @@
 use ahash::AHasher;
 use bytes::Bytes;
+use hive_router_internal::telemetry::otel::opentelemetry::trace::SpanContext;
 use http::{HeaderMap, Method, StatusCode, Uri};
 use std::collections::BTreeMap;
 use std::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher};
@@ -9,6 +10,7 @@ pub struct SharedResponse {
     pub status: StatusCode,
     pub headers: HeaderMap,
     pub body: Bytes,
+    pub span_context: SpanContext,
 }
 
 pub fn request_fingerprint(

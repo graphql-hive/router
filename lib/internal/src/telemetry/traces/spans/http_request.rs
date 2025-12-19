@@ -6,8 +6,10 @@ use http::{
 use http_body_util::Full;
 use hyper::body::Body;
 use ntex::http::body::MessageBody;
+use opentelemetry::KeyValue;
 use std::borrow::{Borrow, Cow};
 use tracing::{field::Empty, info_span, Span};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::telemetry::traces::{
     disabled_span, is_tracing_enabled,
@@ -295,6 +297,20 @@ impl HttpInflightRequestSpan {
 
     pub fn record_as_joiner(&self) {
         self.record(attributes::HIVE_INFLIGHT_ROLE, "joiner");
+    }
+
+    pub fn add_link_to_leader(&self, leader_span_context: &opentelemetry::trace::SpanContext) {
+        if self.span.is_disabled() {
+            return;
+        }
+
+        self.span.add_link_with_attributes(
+            leader_span_context.clone(),
+            vec![
+                KeyValue::new("link.type", "deduplication.waits_for"),
+                KeyValue::new("hive.inflight.relationship", "joiner_to_leader"),
+            ],
+        );
     }
 
     pub fn record_response(&self, body: &Bytes, status: &StatusCode) {
