@@ -32,10 +32,10 @@ tokio = { workspace = true, features = ["sync"] }
 dashmap = { workspace = true }
 
 regex-automata = { workspace = true }
-serde_json = { workspace = true }
 
 ahash = { workspace = true }
 strum = { version = "0.27.2", features = ["derive"] }
+ntex = { workspace = true }
 
 arc-swap = "1.7.1"
 ntex = { workspace = true, features = ["tokio"] }
