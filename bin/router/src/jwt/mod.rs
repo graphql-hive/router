@@ -291,15 +291,11 @@ impl JwtAuthRuntime {
             .await;
 
         match validation_result {
-            Ok(token_payload) => {
-                Ok(
-                    Some(JwtRequestContext {
-                    token_payload,
-                    token_raw: token,
-                    token_prefix: maybe_prefix,
-                })
-                )
-            }
+            Ok(token_payload) => Ok(Some(JwtRequestContext {
+                token_payload,
+                token_raw: token,
+                token_prefix: maybe_prefix,
+            })),
             Err(err) => {
                 warn!("jwt token error: {:?}", err);
                 if self.config.require_authentication.is_some_and(|v| v) {

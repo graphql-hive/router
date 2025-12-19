@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use graphql_parser::schema::Document;
 use hive_console_sdk::agent::{AgentError, ExecutionReport, UsageAgent, UsageAgentExt};
 use hive_router_config::usage_reporting::UsageReportingConfig;
-use hive_router_plan_executor::{execution::client_request_details::ClientRequestDetails};
+use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use ntex::web::HttpRequest;
 use rand::Rng;
 use tokio_util::sync::CancellationToken;

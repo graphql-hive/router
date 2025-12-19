@@ -1,5 +1,8 @@
 use ahash::{HashMap, HashSet};
-use hive_router_internal::authorization::metadata::{AuthorizationMetadata, AuthorizationRule, FieldRulesMap, RequiredScopes, ScopeAndGroup, ScopeId, ScopeInterner, TypeFieldRulesMap, TypeRulesMap};
+use hive_router_internal::authorization::metadata::{
+    AuthorizationMetadata, AuthorizationRule, FieldRulesMap, RequiredScopes, ScopeAndGroup,
+    ScopeId, ScopeInterner, TypeFieldRulesMap, TypeRulesMap,
+};
 use hive_router_plan_executor::introspection::schema::SchemaMetadata;
 use hive_router_query_planner::ast::value::Value;
 use hive_router_query_planner::federation_spec::authorization::{
@@ -43,7 +46,8 @@ pub enum AuthorizationMetadataError {
 }
 
 pub trait AuthorizationMetadataExt
-    where Self: Sized
+where
+    Self: Sized,
 {
     /// Builds authorization metadata from the supergraph schema.
     /// Called once at router startup to extract and normalize all authorization directives.

@@ -33,9 +33,7 @@ use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use hive_router_query_planner::ast::operation::OperationDefinition;
 
-pub use metadata::{
-    AuthorizationMetadataError, UserAuthContext,
-};
+pub use metadata::{AuthorizationMetadataError, UserAuthContext};
 
 /// Error representing an unauthorized field access.
 ///

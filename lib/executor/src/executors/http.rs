@@ -164,16 +164,30 @@ impl HTTPSubgraphExecutor {
     }
 }
 
-async fn send_request(
-    http_client: &Client<HttpsConnector<HttpConnector>, Full<Bytes>>,
-    subgraph_name: &str,
-    endpoint: &http::Uri,
-    mut method: http::Method,
-    mut body: Vec<u8>,
-    mut execution_request: SubgraphExecutionRequest<'_>,
-    plugin_req_state: &Option<PluginRequestState<'_>>,
+struct SendRequestOpts<'a> {
+    http_client: &'a Client<HttpsConnector<HttpConnector>, Full<Bytes>>,
+    subgraph_name: &'a str,
+    endpoint: &'a http::Uri,
+    method: http::Method,
+    body: Vec<u8>,
+    execution_request: SubgraphExecutionRequest<'a>,
+    plugin_req_state: &'a Option<PluginRequestState<'a>>,
     timeout: Option<Duration>,
+}
+
+async fn send_request<'a>(
+    opts: SendRequestOpts<'a>,
 ) -> Result<HttpResponse, SubgraphExecutorError> {
+    let SendRequestOpts {
+        http_client,
+        subgraph_name,
+        endpoint,
+        mut method,
+        mut body,
+        mut execution_request,
+        plugin_req_state,
+        timeout,
+    } = opts;
     let mut on_end_callbacks = vec![];
     let mut response = None;
 
@@ -222,22 +236,22 @@ async fn send_request(
 
             debug!("making http request to {}", endpoint.to_string());
 
-                let res_fut = http_client.request(req).map_err(|e| {
-                    SubgraphExecutorError::RequestFailure(endpoint.to_string(), e.to_string())
-                });
+            let res_fut = http_client.request(req).map_err(|e| {
+                SubgraphExecutorError::RequestFailure(endpoint.to_string(), e.to_string())
+            });
 
-                let res = if let Some(timeout_duration) = timeout {
-                    tokio::time::timeout(timeout_duration, res_fut)
-                        .await
-                        .map_err(|_| {
-                            SubgraphExecutorError::RequestTimeout(
-                                endpoint.to_string(),
-                                timeout_duration.as_millis(),
-                            )
-                        })?
-                } else {
-                    res_fut.await
-                }?;
+            let res = if let Some(timeout_duration) = timeout {
+                tokio::time::timeout(timeout_duration, res_fut)
+                    .await
+                    .map_err(|_| {
+                        SubgraphExecutorError::RequestTimeout(
+                            endpoint.to_string(),
+                            timeout_duration.as_millis(),
+                        )
+                    })?
+            } else {
+                res_fut.await
+            }?;
 
             debug!(
                 "http request to {} completed, status: {}",
@@ -326,16 +340,17 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
-            return match send_request(
-                &self.http_client,
-                &self.subgraph_name,
-                &self.endpoint,
+
+            return match send_request(SendRequestOpts {
+                http_client: &self.http_client,
+                subgraph_name: &self.subgraph_name,
+                endpoint: &self.endpoint,
                 method,
                 body,
                 execution_request,
                 plugin_req_state,
                 timeout,
-            )
+            })
             .await
             {
                 Ok(shared_response) => shared_response,
@@ -368,16 +383,16 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
                     let _permit = self.semaphore.acquire().await.unwrap();
-                    send_request(
-                        &self.http_client,
-                        &self.subgraph_name,
-                        &self.endpoint,
+                    send_request(SendRequestOpts {
+                        http_client: &self.http_client,
+                        subgraph_name: &self.subgraph_name,
+                        endpoint: &self.endpoint,
                         method,
                         body,
                         execution_request,
                         plugin_req_state,
                         timeout,
-                    )
+                    })
                     .await
                 };
                 // It's important to remove the entry from the map before returning the result.

@@ -24,7 +24,8 @@ use crate::{
     pipeline::{
         error::PipelineError,
         graphql_request_handler,
-        header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR}, usage_reporting::init_hive_user_agent,
+        header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR},
+        usage_reporting::init_hive_user_agent,
     },
     plugins::plugins_service::PluginService,
 };
@@ -135,7 +136,7 @@ pub async fn configure_app_from_config(
             &router_config.usage_reporting,
         )?),
         false => None,
-            };
+    };
     let plugins = match plugin_registry {
         Some(plugin_registry) => plugin_registry.initialize_plugins(&router_config)?,
         None => None,

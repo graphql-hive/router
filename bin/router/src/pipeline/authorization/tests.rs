@@ -17,7 +17,7 @@ use hive_router_query_planner::{
 
 use crate::pipeline::{
     authorization::{
-        AuthorizationDecision, apply_authorization_to_operation, metadata::AuthorizationMetadataExt
+        apply_authorization_to_operation, metadata::AuthorizationMetadataExt, AuthorizationDecision,
     },
     normalize::GraphQLNormalizationPayload,
 };

@@ -7,7 +7,7 @@ use hive_router_plan_executor::introspection::schema::{FieldTypeInfo, SchemaMeta
 use hive_router_query_planner::ast::selection_set::{FieldSelection, InlineFragmentSelection};
 use hive_router_query_planner::ast::{selection_item::SelectionItem, selection_set::SelectionSet};
 
-use super::metadata::{UserAuthContext};
+use super::metadata::UserAuthContext;
 use super::AuthorizationError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

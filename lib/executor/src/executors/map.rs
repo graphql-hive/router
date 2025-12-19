@@ -25,11 +25,8 @@ use tracing::error;
 use crate::{
     execution::client_request_details::ClientRequestDetails,
     executors::{
-        common::{
-            SubgraphExecutionRequest, SubgraphExecutor,
-            SubgraphExecutorBoxedArc,
-        },
-        dedupe::{ABuildHasher},
+        common::{SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
+        dedupe::ABuildHasher,
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClient, HttpResponse},
     },
@@ -164,7 +161,8 @@ impl SubgraphExecutorMap {
                     subgraph_name,
                 )
             })
-            .transpose() {
+            .transpose()
+        {
             Ok(timeout) => timeout,
             Err(err) => {
                 error!(
@@ -211,7 +209,11 @@ impl SubgraphExecutorMap {
 
         let mut execution_result = match execution_result {
             Some(execution_result) => execution_result,
-            None => executor.execute(execution_request, timeout, plugin_req_state).await,
+            None => {
+                executor
+                    .execute(execution_request, timeout, plugin_req_state)
+                    .await
+            }
         };
 
         if let Some(plugin_req_state) = plugin_req_state.as_ref() {

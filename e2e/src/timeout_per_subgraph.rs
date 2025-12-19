@@ -10,9 +10,10 @@ mod override_subgraph_urls_e2e_tests {
     #[ntex::test]
     async fn should_not_deadlock_when_overriding_subgraph_timeout_statically() {
         let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/timeout_per_subgraph_static.router.yaml", None)
-            .await
-            .unwrap();
+        let app =
+            init_router_from_config_file("configs/timeout_per_subgraph_static.router.yaml", None)
+                .await
+                .unwrap();
         wait_for_readiness(&app.app).await;
 
         let req1 = init_graphql_request("{ users { id } }", None);
@@ -67,9 +68,10 @@ mod override_subgraph_urls_e2e_tests {
     #[ntex::test]
     async fn should_not_deadlock_when_overriding_subgraph_timeout_dynamically() {
         let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/timeout_per_subgraph_dynamic.router.yaml", None)
-            .await
-            .unwrap();
+        let app =
+            init_router_from_config_file("configs/timeout_per_subgraph_dynamic.router.yaml", None)
+                .await
+                .unwrap();
         wait_for_readiness(&app.app).await;
 
         // We want to ensure that concurrent requests with different timeout settings

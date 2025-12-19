@@ -28,8 +28,8 @@ use crate::{
         coerce_variables::coerce_request_variables,
         csrf_prevention::perform_csrf_prevention,
         deserialize_graphql_params::{deserialize_graphql_params, GetQueryStr},
-        error::{PipelineErrorVariant},
-        execution::{execute_plan},
+        error::PipelineErrorVariant,
+        execution::{execute_plan, PlannedRequest},
         header::{
             RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON,
             APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, TEXT_HTML_CONTENT_TYPE,
@@ -80,7 +80,10 @@ pub async fn graphql_request_handler(
     }
 
     let jwt_context = if let Some(jwt) = &shared_state.jwt_auth_runtime {
-        match jwt.validate_request(req, &shared_state.jwt_claims_cache).await {
+        match jwt
+            .validate_request(req, &shared_state.jwt_claims_cache)
+            .await
+        {
             Ok(jwt_context) => jwt_context,
             Err(err) => return Ok(err.make_response()),
         }
@@ -307,11 +310,9 @@ pub async fn execute_pipeline(
             )
         }
         AuthorizationDecision::Reject { errors } => {
-            return Err(
-                PipelineErrorVariant::AuthorizationFailed(
-                    errors.iter().map(|e| e.into()).collect(),
-                ),
-            )
+            return Err(PipelineErrorVariant::AuthorizationFailed(
+                errors.iter().map(|e| e.into()).collect(),
+            ))
         }
     };
 
@@ -332,18 +333,17 @@ pub async fn execute_pipeline(
         }
     };
 
-    let (execution_result, error_count) = execute_plan(
-        req,
-        supergraph,
-        shared_state,
-        &normalize_payload,
-        &query_plan_payload,
-        &variable_payload,
-        &client_request_details,
-        &plugin_req_state,
-        &authorization_errors
-    )
-    .await?;
+    let planned_request = PlannedRequest {
+        normalized_payload: &normalize_payload,
+        query_plan_payload: &query_plan_payload,
+        variable_payload: &variable_payload,
+        client_request_details: &client_request_details,
+        authorization_errors: &authorization_errors,
+        plugin_req_state: &plugin_req_state,
+    };
+
+    let (execution_result, error_count) =
+        execute_plan(req, supergraph, shared_state, &planned_request).await?;
 
     if shared_state.router_config.usage_reporting.enabled {
         if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {

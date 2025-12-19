@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
+use hive_router::pipeline::authorization::metadata::AuthorizationMetadataExt;
 use hive_router::pipeline::{
-    authorization::{apply_authorization_to_operation},
-    coerce_variables::CoerceVariablesPayload,
+    authorization::apply_authorization_to_operation, coerce_variables::CoerceVariablesPayload,
     normalize::GraphQLNormalizationPayload,
 };
 use hive_router_internal::authorization::metadata::AuthorizationMetadata;
@@ -20,7 +20,6 @@ use hive_router_query_planner::{
     utils::parsing::{parse_schema, safe_parse_operation},
 };
 use std::{hint::black_box, sync::Arc};
-use hive_router::pipeline::authorization::metadata::AuthorizationMetadataExt;
 
 struct BenchEnv<'a> {
     normalized_payload: &'a GraphQLNormalizationPayload,

@@ -1,3 +1,4 @@
+use crate::pipeline::authorization::metadata::AuthorizationMetadataExt;
 use arc_swap::{ArcSwap, Guard};
 use async_trait::async_trait;
 use graphql_tools::{static_graphql::schema::Document, validation::utils::ValidationError};
@@ -23,15 +24,15 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace};
-use crate::pipeline::authorization::metadata::AuthorizationMetadataExt;
 
 use crate::{
-    RouterSharedState, background_tasks::{BackgroundTask, BackgroundTasksManager}, pipeline::{
-        authorization::AuthorizationMetadataError, normalize::GraphQLNormalizationPayload
-    }, supergraph::{
+    background_tasks::{BackgroundTask, BackgroundTasksManager},
+    pipeline::{authorization::AuthorizationMetadataError, normalize::GraphQLNormalizationPayload},
+    supergraph::{
         base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
         resolve_from_config,
-    }
+    },
+    RouterSharedState,
 };
 
 pub struct SchemaState {

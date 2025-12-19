@@ -145,7 +145,6 @@ impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
                 affected_path: || None,
             })?;
 
-
         let error_count = exec_ctx.errors.len(); // Added for usage reporting
 
         let mut data = exec_ctx.final_response;

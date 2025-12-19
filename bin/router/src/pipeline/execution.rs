@@ -24,19 +24,21 @@ enum ExposeQueryPlanMode {
     No,
     DryRun,
 }
+pub struct PlannedRequest<'req> {
+    pub normalized_payload: &'req GraphQLNormalizationPayload,
+    pub query_plan_payload: &'req QueryPlan,
+    pub variable_payload: &'req CoerceVariablesPayload,
+    pub client_request_details: &'req ClientRequestDetails<'req, 'req>,
+    pub authorization_errors: &'req [AuthorizationError],
+    pub plugin_req_state: &'req Option<PluginRequestState<'req>>,
+}
 
-#[allow(clippy::too_many_arguments)]
 #[inline]
 pub async fn execute_plan(
     req: &HttpRequest,
     supergraph: &SupergraphData,
     app_state: &RouterSharedState,
-    normalized_payload: &GraphQLNormalizationPayload,
-    query_plan_payload: &QueryPlan,
-    variable_payload: &CoerceVariablesPayload,
-    client_request_details: &ClientRequestDetails<'_, '_>,
-    plugin_req_state: &Option<PluginRequestState<'_>>,
-    authorization_errors: &[AuthorizationError],
+    planned_request: &PlannedRequest<'_>,
 ) -> Result<(HttpResponse, usize), PipelineErrorVariant> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
@@ -57,14 +59,15 @@ pub async fn execute_plan(
     {
         Some(HashMap::from_iter([(
             "queryPlan".to_string(),
-            sonic_rs::to_value(&query_plan_payload).unwrap(),
+            sonic_rs::to_value(&planned_request.query_plan_payload).unwrap(),
         )]))
     } else {
         None
     };
 
     let introspection_context = IntrospectionContext {
-        query: normalized_payload
+        query: planned_request
+            .normalized_payload
             .operation_for_introspection
             .as_deref(),
         schema: &supergraph.planner.consumer_schema.document,
@@ -76,7 +79,8 @@ pub async fn execute_plan(
         .jwt
         .is_jwt_extensions_forwarding_enabled()
     {
-        client_request_details
+        planned_request
+            .client_request_details
             .jwt
             .build_forwarding_plan(
                 &app_state
@@ -91,19 +95,20 @@ pub async fn execute_plan(
     };
 
     let ctx = QueryPlanExecutionContext {
-        plugin_req_state,
-        query_plan: query_plan_payload,
-        operation_for_plan: &normalized_payload.operation_for_plan,
-        projection_plan: &normalized_payload.projection_plan,
+        plugin_req_state: planned_request.plugin_req_state,
+        query_plan: planned_request.query_plan_payload,
+        operation_for_plan: &planned_request.normalized_payload.operation_for_plan,
+        projection_plan: &planned_request.normalized_payload.projection_plan,
         headers_plan: &app_state.headers_plan,
-        variable_values: &variable_payload.variables_map,
+        variable_values: &planned_request.variable_payload.variables_map,
         extensions,
-        client_request: client_request_details,
+        client_request: planned_request.client_request_details,
         introspection_context: &introspection_context,
-        operation_type_name: normalized_payload.root_type_name,
+        operation_type_name: planned_request.normalized_payload.root_type_name,
         jwt_auth_forwarding,
         executors: &supergraph.subgraph_executor_map,
-        initial_errors: authorization_errors
+        initial_errors: planned_request
+            .authorization_errors
             .iter()
             .map(|e| e.into())
             .collect(),
