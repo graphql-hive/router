@@ -67,138 +67,138 @@ pub struct QueryPlanExecutionContext<'exec, 'req> {
     pub initial_errors: Vec<GraphQLError>,
 }
 
-impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
-    pub async fn execute_query_plan(self) -> Result<(HttpResponse, usize), PlanExecutionError> {
-        let mut init_value = if let Some(introspection_query) = self.introspection_context.query {
-            resolve_introspection(introspection_query, self.introspection_context)
-        } else {
-            Value::Null
+pub async fn execute_query_plan<'exec, 'req>(
+    ctx: QueryPlanExecutionContext<'exec, 'req>,
+) -> Result<(HttpResponse, usize), PlanExecutionError> {
+    let mut init_value = if let Some(introspection_query) = ctx.introspection_context.query {
+        resolve_introspection(introspection_query, ctx.introspection_context)
+    } else {
+        Value::Null
+    };
+
+    let mut initial_errors = ctx.initial_errors;
+
+    let mut query_plan = ctx.query_plan;
+
+    let dedupe_subgraph_requests = ctx.operation_type_name == "Query";
+    let mut extensions = ctx.extensions;
+
+    let mut on_end_callbacks = vec![];
+
+    if let Some(plugin_req_state) = ctx.plugin_req_state.as_ref() {
+        let mut start_payload = OnExecuteStartHookPayload {
+            router_http_request: &plugin_req_state.router_http_request,
+            context: &plugin_req_state.context,
+            query_plan,
+            operation_for_plan: ctx.operation_for_plan,
+            data: init_value,
+            errors: initial_errors,
+            extensions,
+            variable_values: ctx.variable_values,
+            dedupe_subgraph_requests,
         };
 
-        let mut initial_errors = self.initial_errors;
-
-        let mut query_plan = self.query_plan;
-
-        let dedupe_subgraph_requests = self.operation_type_name == "Query";
-        let mut extensions = self.extensions;
-
-        let mut on_end_callbacks = vec![];
-
-        if let Some(plugin_req_state) = self.plugin_req_state.as_ref() {
-            let mut start_payload = OnExecuteStartHookPayload {
-                router_http_request: &plugin_req_state.router_http_request,
-                context: &plugin_req_state.context,
-                query_plan,
-                operation_for_plan: self.operation_for_plan,
-                data: init_value,
-                errors: initial_errors,
-                extensions,
-                variable_values: self.variable_values,
-                dedupe_subgraph_requests,
-            };
-
-            for plugin in plugin_req_state.plugins.iter() {
-                let result = plugin.on_execute(start_payload).await;
-                start_payload = result.payload;
-                match result.control_flow {
-                    StartControlFlow::Continue => { /* continue to next plugin */ }
-                    StartControlFlow::EndResponse(response) => {
-                        return Ok((response, 0));
-                    }
-                    StartControlFlow::OnEnd(callback) => {
-                        on_end_callbacks.push(callback);
-                    }
+        for plugin in plugin_req_state.plugins.iter() {
+            let result = plugin.on_execute(start_payload).await;
+            start_payload = result.payload;
+            match result.control_flow {
+                StartControlFlow::Continue => { /* continue to next plugin */ }
+                StartControlFlow::EndResponse(response) => {
+                    return Ok((response, 0));
+                }
+                StartControlFlow::OnEnd(callback) => {
+                    on_end_callbacks.push(callback);
                 }
             }
-            query_plan = start_payload.query_plan;
-
-            init_value = start_payload.data;
-
-            initial_errors = start_payload.errors;
-
-            extensions = start_payload.extensions;
         }
+        query_plan = start_payload.query_plan;
 
-        let mut exec_ctx = ExecutionContext::new(query_plan, init_value, initial_errors);
-        let executor = Executor::new(
-            self.variable_values,
-            self.executors,
-            self.introspection_context.metadata,
-            self.client_request,
-            self.headers_plan,
-            self.jwt_auth_forwarding,
-            // Deduplicate subgraph requests only if the operation type is a query
-            self.operation_type_name == "Query",
-            self.plugin_req_state,
-        );
+        init_value = start_payload.data;
 
-        if query_plan.node.is_some() {
-            executor
-                .execute(&mut exec_ctx, query_plan.node.as_ref())
-                .await?;
-        }
+        initial_errors = start_payload.errors;
 
-        let mut response_headers = HeaderMap::new();
-        modify_client_response_headers(exec_ctx.response_headers_aggregator, &mut response_headers)
-            .with_plan_context(LazyPlanContext {
-                subgraph_name: || None,
-                affected_path: || None,
-            })?;
+        extensions = start_payload.extensions;
+    }
 
-        let error_count = exec_ctx.errors.len(); // Added for usage reporting
+    let mut exec_ctx = ExecutionContext::new(query_plan, init_value, initial_errors);
+    let executor = Executor::new(
+        ctx.variable_values,
+        ctx.executors,
+        ctx.introspection_context.metadata,
+        ctx.client_request,
+        ctx.headers_plan,
+        ctx.jwt_auth_forwarding,
+        // Deduplicate subgraph requests only if the operation type is a query
+        ctx.operation_type_name == "Query",
+        ctx.plugin_req_state,
+    );
 
-        let mut data = exec_ctx.final_response;
-        let mut errors = exec_ctx.errors;
-        let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
+    if query_plan.node.is_some() {
+        executor
+            .execute(&mut exec_ctx, query_plan.node.as_ref())
+            .await?;
+    }
 
-        if !on_end_callbacks.is_empty() {
-            let mut end_payload = OnExecuteEndHookPayload {
-                data,
-                errors,
-                extensions,
-                response_size_estimate,
-            };
-
-            for callback in on_end_callbacks {
-                let result = callback(end_payload);
-                end_payload = result.payload;
-                match result.control_flow {
-                    EndControlFlow::Continue => { /* continue to next callback */ }
-                    EndControlFlow::EndResponse(output) => {
-                        return Ok((output, 0));
-                    }
-                }
-            }
-
-            data = end_payload.data;
-            errors = end_payload.errors;
-            extensions = end_payload.extensions;
-            response_size_estimate = end_payload.response_size_estimate;
-        }
-
-        let body = project_by_operation(
-            &data,
-            errors,
-            &extensions,
-            self.operation_type_name,
-            self.projection_plan,
-            self.variable_values,
-            response_size_estimate,
-        )
+    let mut response_headers = HeaderMap::new();
+    modify_client_response_headers(exec_ctx.response_headers_aggregator, &mut response_headers)
         .with_plan_context(LazyPlanContext {
             subgraph_name: || None,
             affected_path: || None,
         })?;
 
-        Ok((
-            HttpResponse {
-                body: body.into(),
-                headers: response_headers,
-                status: http::StatusCode::OK,
-            },
-            error_count,
-        ))
+    let error_count = exec_ctx.errors.len(); // Added for usage reporting
+
+    let mut data = exec_ctx.final_response;
+    let mut errors = exec_ctx.errors;
+    let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
+
+    if !on_end_callbacks.is_empty() {
+        let mut end_payload = OnExecuteEndHookPayload {
+            data,
+            errors,
+            extensions,
+            response_size_estimate,
+        };
+
+        for callback in on_end_callbacks {
+            let result = callback(end_payload);
+            end_payload = result.payload;
+            match result.control_flow {
+                EndControlFlow::Continue => { /* continue to next callback */ }
+                EndControlFlow::EndResponse(output) => {
+                    return Ok((output, 0));
+                }
+            }
+        }
+
+        data = end_payload.data;
+        errors = end_payload.errors;
+        extensions = end_payload.extensions;
+        response_size_estimate = end_payload.response_size_estimate;
     }
+
+    let body = project_by_operation(
+        &data,
+        errors,
+        &extensions,
+        ctx.operation_type_name,
+        ctx.projection_plan,
+        ctx.variable_values,
+        response_size_estimate,
+    )
+    .with_plan_context(LazyPlanContext {
+        subgraph_name: || None,
+        affected_path: || None,
+    })?;
+
+    Ok((
+        HttpResponse {
+            body: body.into(),
+            headers: response_headers,
+            status: http::StatusCode::OK,
+        },
+        error_count,
+    ))
 }
 
 pub struct Executor<'exec, 'req> {

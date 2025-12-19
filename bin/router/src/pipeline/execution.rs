@@ -7,7 +7,7 @@ use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
-use hive_router_plan_executor::execution::plan::QueryPlanExecutionContext;
+use hive_router_plan_executor::execution::plan::{execute_query_plan, QueryPlanExecutionContext};
 use hive_router_plan_executor::executors::http::HttpResponse;
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
@@ -94,7 +94,7 @@ pub async fn execute_plan(
         None
     };
 
-    let ctx = QueryPlanExecutionContext {
+    execute_query_plan(QueryPlanExecutionContext {
         plugin_req_state: planned_request.plugin_req_state,
         query_plan: planned_request.query_plan_payload,
         operation_for_plan: &planned_request.normalized_payload.operation_for_plan,
@@ -112,9 +112,9 @@ pub async fn execute_plan(
             .iter()
             .map(|e| e.into())
             .collect(),
-    };
-
-    ctx.execute_query_plan().await.map_err(|err| {
+    })
+    .await
+    .map_err(|err| {
         tracing::error!("Failed to execute query plan: {}", err);
         PipelineErrorVariant::PlanExecutionError(err)
     })
