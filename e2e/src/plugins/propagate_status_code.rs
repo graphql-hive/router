@@ -10,7 +10,7 @@ use hive_router_plan_executor::{
             OnSubgraphHttpRequestHookPayload, OnSubgraphHttpRequestHookResult,
         },
     },
-    plugin_trait::{EndHookPayload, RouterPlugin, RouterPluginWithConfig, StartHookPayload},
+    plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
 };
 
 #[derive(Deserialize)]
@@ -19,7 +19,16 @@ pub struct PropagateStatusCodePluginConfig {
     pub status_codes: Vec<u64>,
 }
 
-impl RouterPluginWithConfig for PropagateStatusCodePlugin {
+pub struct PropagateStatusCodePlugin {
+    pub status_codes: Vec<StatusCode>,
+}
+
+pub struct PropagateStatusCodeCtx {
+    pub status_code: StatusCode,
+}
+
+#[async_trait::async_trait]
+impl RouterPlugin for PropagateStatusCodePlugin {
     type Config = PropagateStatusCodePluginConfig;
     fn plugin_name() -> &'static str {
         "propagate_status_code"
@@ -35,18 +44,6 @@ impl RouterPluginWithConfig for PropagateStatusCodePlugin {
             .collect();
         Some(PropagateStatusCodePlugin { status_codes })
     }
-}
-
-pub struct PropagateStatusCodePlugin {
-    pub status_codes: Vec<StatusCode>,
-}
-
-pub struct PropagateStatusCodeCtx {
-    pub status_code: StatusCode,
-}
-
-#[async_trait::async_trait]
-impl RouterPlugin for PropagateStatusCodePlugin {
     async fn on_subgraph_http_request<'exec>(
         &'exec self,
         payload: OnSubgraphHttpRequestHookPayload<'exec>,

@@ -10,7 +10,7 @@ use hive_router_plan_executor::{
             OnSubgraphExecuteStartHookResult,
         },
     },
-    plugin_trait::{EndHookPayload, RouterPlugin, RouterPluginWithConfig, StartHookPayload},
+    plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
 };
 
 #[derive(Deserialize)]
@@ -25,7 +25,8 @@ pub struct ContextData {
     response_count: u64,
 }
 
-impl RouterPluginWithConfig for ContextDataPlugin {
+#[async_trait::async_trait]
+impl RouterPlugin for ContextDataPlugin {
     type Config = ContextDataPluginConfig;
     fn plugin_name() -> &'static str {
         "context_data"
@@ -37,10 +38,6 @@ impl RouterPluginWithConfig for ContextDataPlugin {
             None
         }
     }
-}
-
-#[async_trait::async_trait]
-impl RouterPlugin for ContextDataPlugin {
     async fn on_graphql_params<'exec>(
         &'exec self,
         payload: OnGraphQLParamsStartHookPayload<'exec>,

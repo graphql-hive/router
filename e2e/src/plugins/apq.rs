@@ -7,7 +7,7 @@ use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 use hive_router_plan_executor::{
     executors::http::HttpResponse,
     hooks::on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
-    plugin_trait::{EndHookPayload, RouterPlugin, RouterPluginWithConfig, StartHookPayload},
+    plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
 };
 
 #[derive(Deserialize)]
@@ -19,7 +19,8 @@ pub struct APQPlugin {
     cache: DashMap<String, String>,
 }
 
-impl RouterPluginWithConfig for APQPlugin {
+#[async_trait::async_trait]
+impl RouterPlugin for APQPlugin {
     type Config = APQPluginConfig;
     fn plugin_name() -> &'static str {
         "apq"
@@ -33,10 +34,6 @@ impl RouterPluginWithConfig for APQPlugin {
             None
         }
     }
-}
-
-#[async_trait::async_trait]
-impl RouterPlugin for APQPlugin {
     async fn on_graphql_params<'exec>(
         &'exec self,
         payload: OnGraphQLParamsStartHookPayload<'exec>,

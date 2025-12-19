@@ -7,7 +7,7 @@ use hive_router_plan_executor::{
         OnSubgraphExecuteEndHookPayload, OnSubgraphExecuteStartHookPayload,
         OnSubgraphExecuteStartHookResult,
     },
-    plugin_trait::{EndHookPayload, RouterPlugin, RouterPluginWithConfig, StartHookPayload},
+    plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
 };
 
 #[derive(Deserialize)]
@@ -15,7 +15,12 @@ pub struct SubgraphResponseCachePluginConfig {
     enabled: bool,
 }
 
-impl RouterPluginWithConfig for SubgraphResponseCachePlugin {
+pub struct SubgraphResponseCachePlugin {
+    cache: DashMap<String, HttpResponse>,
+}
+
+#[async_trait::async_trait]
+impl RouterPlugin for SubgraphResponseCachePlugin {
     type Config = SubgraphResponseCachePluginConfig;
     fn plugin_name() -> &'static str {
         "subgraph_response_cache"
@@ -29,14 +34,6 @@ impl RouterPluginWithConfig for SubgraphResponseCachePlugin {
             None
         }
     }
-}
-
-pub struct SubgraphResponseCachePlugin {
-    cache: DashMap<String, HttpResponse>,
-}
-
-#[async_trait::async_trait]
-impl RouterPlugin for SubgraphResponseCachePlugin {
     async fn on_subgraph_execute<'exec>(
         &'exec self,
         mut payload: OnSubgraphExecuteStartHookPayload<'exec>,

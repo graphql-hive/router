@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use hive_router_plan_executor::{
     executors::http::HttpResponse,
     hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
-    plugin_trait::{RouterPlugin, RouterPluginWithConfig, StartHookPayload},
+    plugin_trait::{RouterPlugin, StartHookPayload},
 };
 use http::HeaderMap;
 use reqwest::StatusCode;
@@ -116,7 +116,11 @@ pub struct ApolloSandboxInitialStateOptions {
     pub shared_headers: HashMap<String, String>,
 }
 
-impl RouterPluginWithConfig for ApolloSandboxPlugin {
+pub struct ApolloSandboxPlugin {
+    serialized_options: String,
+}
+
+impl RouterPlugin for ApolloSandboxPlugin {
     type Config = ApolloSandboxOptions;
     fn plugin_name() -> &'static str {
         "apollo_sandbox"
@@ -131,13 +135,6 @@ impl RouterPluginWithConfig for ApolloSandboxPlugin {
             None
         }
     }
-}
-
-pub struct ApolloSandboxPlugin {
-    serialized_options: String,
-}
-
-impl RouterPlugin for ApolloSandboxPlugin {
     fn on_http_request<'req>(
         &'req self,
         payload: OnHttpRequestHookPayload<'req>,

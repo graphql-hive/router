@@ -11,7 +11,7 @@ use hive_router_plan_executor::{
             OnSubgraphHttpRequestHookPayload, OnSubgraphHttpRequestHookResult,
         },
     },
-    plugin_trait::{RouterPlugin, RouterPluginWithConfig, StartHookPayload},
+    plugin_trait::{RouterPlugin, StartHookPayload},
 };
 use multer::Multipart;
 use serde::Deserialize;
@@ -35,7 +35,8 @@ pub struct MultipartContext {
     pub files: HashMap<String, MultipartFile>,
 }
 
-impl RouterPluginWithConfig for MultipartPlugin {
+#[async_trait::async_trait]
+impl RouterPlugin for MultipartPlugin {
     type Config = MultipartPluginConfig;
     fn plugin_name() -> &'static str {
         "multipart"
@@ -47,10 +48,6 @@ impl RouterPluginWithConfig for MultipartPlugin {
             None
         }
     }
-}
-
-#[async_trait::async_trait]
-impl RouterPlugin for MultipartPlugin {
     async fn on_graphql_params<'exec>(
         &'exec self,
         mut payload: OnGraphQLParamsStartHookPayload<'exec>,

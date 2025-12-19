@@ -15,6 +15,7 @@ pub struct OnSubgraphExecuteStartHookPayload<'exec> {
     pub executor: SubgraphExecutorBoxedArc,
 
     pub execution_request: SubgraphExecutionRequest<'exec>,
+    // Override
     pub execution_result: Option<HttpResponse>,
 }
 

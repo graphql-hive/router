@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use hive_router_config::HiveRouterConfig;
-use hive_router_plan_executor::plugin_trait::{RouterPluginBoxed, RouterPluginWithConfig};
+use hive_router_plan_executor::plugin_trait::{RouterPlugin, RouterPluginBoxed};
 use serde_json::Value;
 use tracing::info;
 
@@ -33,13 +33,13 @@ impl PluginRegistry {
             map: HashMap::new(),
         }
     }
-    pub fn register<P: RouterPluginWithConfig + Send + Sync + 'static>(mut self) -> Self {
+    pub fn register<P: RouterPlugin>(mut self) -> Self {
         self.map.insert(
             P::plugin_name(),
             Box::new(|plugin_config: Value| {
                 let config: P::Config = serde_json::from_value(plugin_config)?;
                 match P::from_config(config) {
-                    Some(plugin) => Ok(Some(Box::new(plugin))),
+                    Some(plugin) => Ok(Some(Box::new(plugin) as RouterPluginBoxed)),
                     None => Ok(None),
                 }
             }),

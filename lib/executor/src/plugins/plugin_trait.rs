@@ -32,6 +32,11 @@ pub enum StartControlFlow<'exec, TEndPayload> {
     OnEnd(Box<dyn FnOnce(TEndPayload) -> EndHookResult<TEndPayload> + Send + 'exec>),
 }
 
+// Override using methods (Like builder pattern)
+// Async Drop
+// Re-export Plugin related types from router crate (graphql_tools validation stuff, plugin stuff from internal crate)
+// Move Plugin stuff from executor to internal
+
 pub trait StartHookPayload<TEndPayload: EndHookPayload>
 where
     Self: Sized,
@@ -93,18 +98,24 @@ where
     }
 }
 
-pub trait RouterPluginWithConfig
-where
-    Self: Sized,
-    Self: RouterPlugin,
-{
-    fn plugin_name() -> &'static str;
-    type Config: DeserializeOwned;
-    fn from_config(config: Self::Config) -> Option<Self>;
-}
-
 #[async_trait::async_trait]
-pub trait RouterPlugin {
+pub trait RouterPlugin: Send + Sync + 'static {
+    fn plugin_name() -> &'static str;
+
+    type Config: DeserializeOwned + Sync;
+
+    fn from_config(config: Self::Config) -> Option<Self>
+    where
+        Self: Sized;
+
+    fn as_dyn(&self) -> &dyn DynRouterPlugin
+    where
+        Self: Sized,
+        Self: DynRouterPlugin,
+    {
+        self as &dyn DynRouterPlugin
+    }
+
     fn on_http_request<'req>(
         &'req self,
         start_payload: OnHttpRequestHookPayload<'req>,
@@ -161,4 +172,105 @@ pub trait RouterPlugin {
     }
 }
 
-pub type RouterPluginBoxed = Box<dyn RouterPlugin + Send + Sync>;
+#[async_trait::async_trait]
+pub trait DynRouterPlugin: Send + Sync + 'static {
+    fn on_http_request<'req>(
+        &'req self,
+        start_payload: OnHttpRequestHookPayload<'req>,
+    ) -> OnHttpRequestHookResult<'req>;
+    async fn on_graphql_params<'exec>(
+        &'exec self,
+        start_payload: OnGraphQLParamsStartHookPayload<'exec>,
+    ) -> OnGraphQLParamsStartHookResult<'exec>;
+    async fn on_graphql_parse<'exec>(
+        &'exec self,
+        start_payload: OnGraphQLParseStartHookPayload<'exec>,
+    ) -> OnGraphQLParseHookResult<'exec>;
+    async fn on_graphql_validation<'exec>(
+        &'exec self,
+        start_payload: OnGraphQLValidationStartHookPayload<'exec>,
+    ) -> OnGraphQLValidationStartHookResult<'exec>;
+    async fn on_query_plan<'exec>(
+        &'exec self,
+        start_payload: OnQueryPlanStartHookPayload<'exec>,
+    ) -> OnQueryPlanStartHookResult<'exec>;
+    async fn on_execute<'exec>(
+        &'exec self,
+        start_payload: OnExecuteStartHookPayload<'exec>,
+    ) -> OnExecuteStartHookResult<'exec>;
+    async fn on_subgraph_execute<'exec>(
+        &'exec self,
+        start_payload: OnSubgraphExecuteStartHookPayload<'exec>,
+    ) -> OnSubgraphExecuteStartHookResult<'exec>;
+    async fn on_subgraph_http_request<'exec>(
+        &'exec self,
+        start_payload: OnSubgraphHttpRequestHookPayload<'exec>,
+    ) -> OnSubgraphHttpRequestHookResult<'exec>;
+    fn on_supergraph_reload<'exec>(
+        &'exec self,
+        start_payload: OnSupergraphLoadStartHookPayload,
+    ) -> OnSupergraphLoadStartHookResult<'exec>;
+}
+
+#[async_trait::async_trait]
+impl<P> DynRouterPlugin for P
+where
+    P: RouterPlugin,
+{
+    fn on_http_request<'req>(
+        &'req self,
+        start_payload: OnHttpRequestHookPayload<'req>,
+    ) -> OnHttpRequestHookResult<'req> {
+        RouterPlugin::on_http_request(self, start_payload)
+    }
+    async fn on_graphql_params<'exec>(
+        &'exec self,
+        start_payload: OnGraphQLParamsStartHookPayload<'exec>,
+    ) -> OnGraphQLParamsStartHookResult<'exec> {
+        RouterPlugin::on_graphql_params(self, start_payload).await
+    }
+    async fn on_graphql_parse<'exec>(
+        &'exec self,
+        start_payload: OnGraphQLParseStartHookPayload<'exec>,
+    ) -> OnGraphQLParseHookResult<'exec> {
+        RouterPlugin::on_graphql_parse(self, start_payload).await
+    }
+    async fn on_graphql_validation<'exec>(
+        &'exec self,
+        start_payload: OnGraphQLValidationStartHookPayload<'exec>,
+    ) -> OnGraphQLValidationStartHookResult<'exec> {
+        RouterPlugin::on_graphql_validation(self, start_payload).await
+    }
+    async fn on_query_plan<'exec>(
+        &'exec self,
+        start_payload: OnQueryPlanStartHookPayload<'exec>,
+    ) -> OnQueryPlanStartHookResult<'exec> {
+        RouterPlugin::on_query_plan(self, start_payload).await
+    }
+    async fn on_execute<'exec>(
+        &'exec self,
+        start_payload: OnExecuteStartHookPayload<'exec>,
+    ) -> OnExecuteStartHookResult<'exec> {
+        RouterPlugin::on_execute(self, start_payload).await
+    }
+    async fn on_subgraph_execute<'exec>(
+        &'exec self,
+        start_payload: OnSubgraphExecuteStartHookPayload<'exec>,
+    ) -> OnSubgraphExecuteStartHookResult<'exec> {
+        RouterPlugin::on_subgraph_execute(self, start_payload).await
+    }
+    async fn on_subgraph_http_request<'exec>(
+        &'exec self,
+        start_payload: OnSubgraphHttpRequestHookPayload<'exec>,
+    ) -> OnSubgraphHttpRequestHookResult<'exec> {
+        RouterPlugin::on_subgraph_http_request(self, start_payload).await
+    }
+    fn on_supergraph_reload<'exec>(
+        &'exec self,
+        start_payload: OnSupergraphLoadStartHookPayload,
+    ) -> OnSupergraphLoadStartHookResult<'exec> {
+        RouterPlugin::on_supergraph_reload(self, start_payload)
+    }
+}
+
+pub type RouterPluginBoxed = Box<dyn DynRouterPlugin>;

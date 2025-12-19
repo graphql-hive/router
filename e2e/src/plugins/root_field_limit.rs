@@ -18,7 +18,7 @@ use hive_router_plan_executor::{
         },
         on_query_plan::{OnQueryPlanStartHookPayload, OnQueryPlanStartHookResult},
     },
-    plugin_trait::{RouterPlugin, RouterPluginWithConfig, StartHookPayload},
+    plugin_trait::{RouterPlugin, StartHookPayload},
 };
 
 // This example shows two ways of limiting the number of root fields in a query:
@@ -27,6 +27,18 @@ use hive_router_plan_executor::{
 
 #[async_trait::async_trait]
 impl RouterPlugin for RootFieldLimitPlugin {
+    type Config = RootFieldLimitPluginConfig;
+    fn plugin_name() -> &'static str {
+        "root_field_limit"
+    }
+    fn from_config(config: Self::Config) -> Option<Self> {
+        if !config.enabled {
+            return None;
+        }
+        Some(RootFieldLimitPlugin {
+            max_root_fields: config.max_root_fields,
+        })
+    }
     // Using validation step
     async fn on_graphql_validation<'exec>(
         &'exec self,
@@ -91,21 +103,6 @@ impl RouterPlugin for RootFieldLimitPlugin {
 pub struct RootFieldLimitPluginConfig {
     enabled: bool,
     max_root_fields: usize,
-}
-
-impl RouterPluginWithConfig for RootFieldLimitPlugin {
-    type Config = RootFieldLimitPluginConfig;
-    fn plugin_name() -> &'static str {
-        "root_field_limit"
-    }
-    fn from_config(config: Self::Config) -> Option<Self> {
-        if !config.enabled {
-            return None;
-        }
-        Some(RootFieldLimitPlugin {
-            max_root_fields: config.max_root_fields,
-        })
-    }
 }
 
 pub struct RootFieldLimitPlugin {

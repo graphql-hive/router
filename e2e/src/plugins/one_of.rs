@@ -68,7 +68,7 @@ use hive_router_plan_executor::{
         },
         on_supergraph_load::{OnSupergraphLoadEndHookPayload, OnSupergraphLoadStartHookPayload},
     },
-    plugin_trait::{RouterPlugin, RouterPluginWithConfig, StartHookPayload, StartHookResult},
+    plugin_trait::{RouterPlugin, StartHookPayload, StartHookResult},
 };
 use serde::Deserialize;
 use sonic_rs::{json, JsonContainerTrait};
@@ -78,7 +78,12 @@ pub struct OneOfPluginConfig {
     pub enabled: bool,
 }
 
-impl RouterPluginWithConfig for OneOfPlugin {
+pub struct OneOfPlugin {
+    pub one_of_types: RwLock<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl RouterPlugin for OneOfPlugin {
     type Config = OneOfPluginConfig;
     fn plugin_name() -> &'static str {
         "oneof"
@@ -92,14 +97,6 @@ impl RouterPluginWithConfig for OneOfPlugin {
             None
         }
     }
-}
-
-pub struct OneOfPlugin {
-    pub one_of_types: RwLock<Vec<String>>,
-}
-
-#[async_trait::async_trait]
-impl RouterPlugin for OneOfPlugin {
     // 1. During validation step
     async fn on_graphql_validation<'exec>(
         &'exec self,

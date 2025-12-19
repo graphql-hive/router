@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use hive_router_plan_executor::{
     executors::http::HttpResponse,
     hooks::on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
-    plugin_trait::{RouterPlugin, RouterPluginWithConfig, StartHookPayload},
+    plugin_trait::{RouterPlugin, StartHookPayload},
 };
 
 #[derive(Deserialize)]
@@ -16,7 +16,13 @@ pub struct AllowClientIdConfig {
     pub path: String,
 }
 
-impl RouterPluginWithConfig for AllowClientIdFromFilePlugin {
+pub struct AllowClientIdFromFilePlugin {
+    header_key: String,
+    allowed_ids_path: PathBuf,
+}
+
+#[async_trait::async_trait]
+impl RouterPlugin for AllowClientIdFromFilePlugin {
     type Config = AllowClientIdConfig;
     fn plugin_name() -> &'static str {
         "allow_client_id_from_file"
@@ -31,15 +37,6 @@ impl RouterPluginWithConfig for AllowClientIdFromFilePlugin {
             None
         }
     }
-}
-
-pub struct AllowClientIdFromFilePlugin {
-    header_key: String,
-    allowed_ids_path: PathBuf,
-}
-
-#[async_trait::async_trait]
-impl RouterPlugin for AllowClientIdFromFilePlugin {
     // Whenever it is a GraphQL request,
     // We don't use on_http_request here because we want to run this only when it is a GraphQL request
     async fn on_graphql_params<'exec>(

@@ -11,7 +11,7 @@ use hive_router_plan_executor::{
         },
         on_supergraph_load::{OnSupergraphLoadStartHookPayload, OnSupergraphLoadStartHookResult},
     },
-    plugin_trait::{EndHookPayload, RouterPluginWithConfig, StartHookPayload},
+    plugin_trait::{EndHookPayload, StartHookPayload},
     plugins::plugin_trait::RouterPlugin,
     utils::consts::TYPENAME_FIELD_NAME,
 };
@@ -29,7 +29,14 @@ fn default_ttl_seconds() -> u64 {
     5
 }
 
-impl RouterPluginWithConfig for ResponseCachePlugin {
+pub struct ResponseCachePlugin {
+    redis: r2d2::Pool<redis::Client>,
+    ttl_per_type: DashMap<String, u64>,
+    default_ttl_seconds: u64,
+}
+
+#[async_trait::async_trait]
+impl RouterPlugin for ResponseCachePlugin {
     type Config = ResponseCachePluginOptions;
     fn plugin_name() -> &'static str {
         "response_cache_plugin"
@@ -49,16 +56,6 @@ impl RouterPluginWithConfig for ResponseCachePlugin {
             default_ttl_seconds: config.default_ttl_seconds,
         })
     }
-}
-
-pub struct ResponseCachePlugin {
-    redis: r2d2::Pool<redis::Client>,
-    ttl_per_type: DashMap<String, u64>,
-    default_ttl_seconds: u64,
-}
-
-#[async_trait::async_trait]
-impl RouterPlugin for ResponseCachePlugin {
     async fn on_execute<'exec>(
         &'exec self,
         payload: OnExecuteStartHookPayload<'exec>,

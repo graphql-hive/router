@@ -7,7 +7,7 @@ use serde_json::json;
 use hive_router_plan_executor::{
     executors::http::HttpResponse,
     hooks::on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
-    plugin_trait::{EndHookPayload, RouterPlugin, RouterPluginWithConfig, StartHookPayload},
+    plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
 };
 
 #[derive(Deserialize)]
@@ -16,7 +16,8 @@ pub struct ForbidAnonymousOperationsPluginConfig {
 }
 pub struct ForbidAnonymousOperationsPlugin {}
 
-impl RouterPluginWithConfig for ForbidAnonymousOperationsPlugin {
+#[async_trait::async_trait]
+impl RouterPlugin for ForbidAnonymousOperationsPlugin {
     type Config = ForbidAnonymousOperationsPluginConfig;
     fn plugin_name() -> &'static str {
         "forbid_anonymous_operations"
@@ -28,10 +29,6 @@ impl RouterPluginWithConfig for ForbidAnonymousOperationsPlugin {
             None
         }
     }
-}
-
-#[async_trait::async_trait]
-impl RouterPlugin for ForbidAnonymousOperationsPlugin {
     async fn on_graphql_params<'exec>(
         &'exec self,
         payload: OnGraphQLParamsStartHookPayload<'exec>,
@@ -39,14 +36,9 @@ impl RouterPlugin for ForbidAnonymousOperationsPlugin {
         // After the GraphQL parameters have been parsed, we can check if the operation is anonymous
         // So we use `on_end`
         payload.on_end(|payload| {
-            let maybe_operation_name = &payload
-                .graphql_params
-                .operation_name
-                .as_ref();
+            let maybe_operation_name = &payload.graphql_params.operation_name.as_ref();
 
-            if maybe_operation_name
-                .is_none_or(|operation_name| operation_name.is_empty())
-            {
+            if maybe_operation_name.is_none_or(|operation_name| operation_name.is_empty()) {
                 // let's log the error
                 tracing::error!("Operation is not allowed!");
 
