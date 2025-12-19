@@ -96,14 +96,6 @@ impl<E: SpanExporter> HiveConsoleExporter<E> {
             return;
         }
 
-        // TODO: Let's make attribute names as constants,
-        //       and add a test for every span
-        //       to ensure all attributes are present.
-        //       We need attribute names as constants,
-        //       to avoid typos and make refactoring easier.
-        //       We can't use constants in span_info macro,
-        //       so the only way to verify is to add tests.
-
         let mut ignored_trace_ids = HashSet::new();
         let mut http_server_indexes: Vec<usize> = Vec::new();
         let mut graphql_root_operation_indexes: Vec<usize> = Vec::new();

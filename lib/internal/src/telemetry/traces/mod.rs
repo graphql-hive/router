@@ -25,8 +25,9 @@ use self::compatibility::HttpCompatibilityExporter;
 use crate::{
     expressions::{CompileExpression, ExecutableProgram},
     telemetry::{
-        error::TelemetryError, traces::hive_console_exporter::HiveConsoleExporter,
-        utils::build_metadata,
+        error::TelemetryError,
+        traces::hive_console_exporter::HiveConsoleExporter,
+        utils::{build_metadata, build_tls_config},
     },
 };
 
@@ -104,16 +105,13 @@ fn setup_exporters(
                             .with_tonic()
                             .with_endpoint(endpoint)
                             .with_timeout(otlp_config.batch_processor.max_export_timeout)
-                            .with_metadata(build_metadata(metadata))
+                            .with_tls_config(build_tls_config(
+                                otlp_config.grpc.as_ref().map(|g| &g.tls),
+                            )?)
+                            .with_metadata(build_metadata(metadata)?)
                             .build()
                     }
                     OtlpProtocol::Http => {
-                        if otlp_config.grpc.is_some() {
-                            return Err(TelemetryError::TracesExporterSetup(
-                                "OTLP grpc configuration found while protocol is set to HTTP"
-                                    .to_string(),
-                            ));
-                        }
                         let headers = otlp_config
                             .http
                             .as_ref()
@@ -174,8 +172,22 @@ fn setup_hive_exporter(
     tracer_provider_builder: TracerProviderBuilder,
 ) -> Result<TracerProviderBuilder, TelemetryError> {
     let endpoint = resolve_value_or_expression(&config.endpoint, "Hive Tracing endpoint")?;
-    let token = resolve_value_or_expression(&config.token, "Hive Tracing token")?;
-    let target = resolve_value_or_expression(&config.target, "Hive Tracing target")?;
+    let token = match &config.token {
+        Some(t) => resolve_value_or_expression(t, "Hive Tracing token")?,
+        None => {
+            return Err(TelemetryError::TracesExporterSetup(
+                "Hive Tracing token is required but not provided".to_string(),
+            ))
+        }
+    };
+    let target = match &config.target {
+        Some(t) => resolve_value_or_expression(t, "Hive Tracing target")?,
+        None => {
+            return Err(TelemetryError::TracesExporterSetup(
+                "Hive Tracing target is required but not provided".to_string(),
+            ))
+        }
+    };
 
     ensure_single_protocol_config(
         "Hive Tracing",
@@ -186,12 +198,6 @@ fn setup_hive_exporter(
 
     let exporter = match &config.tracing.protocol {
         OtlpProtocol::Grpc => {
-            if config.tracing.http.is_some() {
-                return Err(TelemetryError::TracesExporterSetup(
-                    "Hive OTLP http configuration found while protocol is set to gRPC".to_string(),
-                ));
-            }
-
             let mut metadata = config
                 .tracing
                 .grpc
@@ -209,16 +215,13 @@ fn setup_hive_exporter(
                 .with_tonic()
                 .with_endpoint(endpoint)
                 .with_timeout(config.tracing.batch_processor.max_export_timeout)
-                .with_metadata(build_metadata(metadata))
-                // .with_tls_config(ClientTlsConfig::new().)
+                .with_metadata(build_metadata(metadata)?)
+                .with_tls_config(build_tls_config(
+                    config.tracing.grpc.as_ref().map(|g| &g.tls),
+                )?)
                 .build()
         }
         OtlpProtocol::Http => {
-            if config.tracing.grpc.is_some() {
-                return Err(TelemetryError::TracesExporterSetup(
-                    "Hive OTLP grpc configuration found while protocol is set to HTTP".to_string(),
-                ));
-            }
             let mut headers = config
                 .tracing
                 .http

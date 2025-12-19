@@ -10,14 +10,18 @@ use crate::{
 #[serde(deny_unknown_fields)]
 #[derive(Default)]
 pub struct HiveTelemetryConfig {
-    #[serde(default)]
+    #[serde(default = "default_hive_tracing_endpoint")]
     pub endpoint: ValueOrExpression<String>,
     #[serde(default)]
-    pub token: ValueOrExpression<String>,
+    pub token: Option<ValueOrExpression<String>>,
     #[serde(default)]
-    pub target: ValueOrExpression<String>,
+    pub target: Option<ValueOrExpression<String>>,
     #[serde(default)]
     pub tracing: TracingConfig,
+}
+
+fn default_hive_tracing_endpoint() -> ValueOrExpression<String> {
+    ValueOrExpression::Value("https://api.graphql-hive.com/otel/v1/traces".to_string())
 }
 
 impl Default for TracingConfig {
@@ -25,7 +29,7 @@ impl Default for TracingConfig {
         Self {
             enabled: default_tracing_enabled(),
             batch_processor: BatchProcessorConfig::default(),
-            protocol: OtlpProtocol::Grpc,
+            protocol: OtlpProtocol::Http,
             http: None,
             grpc: None,
         }

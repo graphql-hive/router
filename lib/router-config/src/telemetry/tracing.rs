@@ -1,4 +1,6 @@
-use std::time::Duration;
+use std::fs;
+use std::{path::PathBuf, time::Duration};
+use tonic::transport::{Certificate, ClientTlsConfig, Identity};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -148,6 +150,54 @@ pub struct OtlpHttpConfig {
 pub struct OtlpGrpcConfig {
     #[serde(default)]
     pub metadata: std::collections::HashMap<String, ValueOrExpression<String>>,
+    #[serde(default)]
+    pub tls: OtlpGrpcTlsConfig,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct OtlpGrpcTlsConfig {
+    /// The domain name used to verify the server's TLS certificate.
+    pub domain_name: Option<String>,
+    ///  The path to the client's private key file.
+    pub key: Option<PathBuf>,
+    ///  The path to the client's certificate file (PEM format).
+    pub cert: Option<PathBuf>,
+    ///  The path to the Certificate Authority (CA) certificate file (PEM format) used to verify the server's certificate.
+    pub ca: Option<PathBuf>,
+}
+
+impl TryFrom<&OtlpGrpcTlsConfig> for tonic::transport::ClientTlsConfig {
+    type Error = std::io::Error;
+
+    fn try_from(
+        value: &OtlpGrpcTlsConfig,
+    ) -> Result<tonic::transport::ClientTlsConfig, Self::Error> {
+        let mut tls = ClientTlsConfig::new();
+
+        if let Some(domain) = &value.domain_name {
+            tls = tls.domain_name(domain);
+        }
+
+        if let Some(ca) = &value.ca {
+            let ca_cert = fs::read(ca)?;
+            tls = tls.ca_certificate(Certificate::from_pem(ca_cert))
+        }
+
+        if let Some(cert) = &value.cert {
+            let cert = fs::read(cert)?;
+            let key = value
+                .key
+                .as_ref()
+                .map(fs::read)
+                .transpose()?
+                .unwrap_or_default();
+            let identity = Identity::from_pem(cert, key);
+            tls = tls.identity(identity);
+        }
+
+        Ok(tls)
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
