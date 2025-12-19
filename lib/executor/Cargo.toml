@@ -32,7 +32,6 @@ tokio = { workspace = true, features = ["sync"] }
 dashmap = { workspace = true }
 
 regex-automata = { workspace = true }
-vrl = { workspace = true }
 serde_json = { workspace = true }
 
 ahash = { workspace = true }
