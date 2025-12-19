@@ -1,8 +1,8 @@
 use arc_swap::{ArcSwap, Guard};
 use async_trait::async_trait;
-use graphql_parser::schema::Document;
 use graphql_tools::{static_graphql::schema::Document, validation::utils::ValidationError};
 use hive_router_config::{supergraph::SupergraphSource, HiveRouterConfig};
+use hive_router_internal::authorization::metadata::AuthorizationMetadata;
 use hive_router_plan_executor::{
     executors::error::SubgraphExecutorError,
     hooks::on_supergraph_load::{
@@ -23,18 +23,15 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace};
+use crate::pipeline::authorization::metadata::AuthorizationMetadataExt;
 
 use crate::{
-    background_tasks::{BackgroundTask, BackgroundTasksManager},
-    pipeline::{
-        authorization::{AuthorizationMetadata, AuthorizationMetadataError},
-        normalize::GraphQLNormalizationPayload,
-    },
-    supergraph::{
+    RouterSharedState, background_tasks::{BackgroundTask, BackgroundTasksManager}, pipeline::{
+        authorization::AuthorizationMetadataError, normalize::GraphQLNormalizationPayload
+    }, supergraph::{
         base::{LoadSupergraphError, ReloadSupergraphResult, SupergraphLoader},
         resolve_from_config,
-    },
-    RouterSharedState,
+    }
 };
 
 pub struct SchemaState {
@@ -119,7 +116,7 @@ impl SchemaState {
                     new_ast = start_payload.new_ast;
                 }
 
-                match Self::build_data(router_config.clone(), &new_ast) {
+                match Self::build_data(router_config.clone(), new_ast) {
                     Ok(new_supergraph_data) => {
                         let mut end_payload = OnSupergraphLoadEndHookPayload {
                             new_supergraph_data,
@@ -167,10 +164,10 @@ impl SchemaState {
 
     fn build_data(
         router_config: Arc<HiveRouterConfig>,
-        parsed_supergraph_sdl: &Document,
+        parsed_supergraph_sdl: Document,
     ) -> Result<SupergraphData, SupergraphManagerError> {
-        let supergraph_state = SupergraphState::new(parsed_supergraph_sdl);
-        let planner = Planner::new_from_supergraph(parsed_supergraph_sdl)?;
+        let supergraph_state = SupergraphState::new(&parsed_supergraph_sdl);
+        let planner = Planner::new_from_supergraph(&parsed_supergraph_sdl)?;
         let metadata = planner.consumer_schema.schema_metadata();
         let authorization = AuthorizationMetadata::build(&planner.supergraph, &metadata)?;
         let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(

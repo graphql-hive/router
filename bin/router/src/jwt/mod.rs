@@ -268,9 +268,9 @@ impl JwtAuthRuntime {
 
     pub async fn validate_request(
         &self,
-        request: &mut HttpRequest,
+        request: &HttpRequest,
         cache: &JwtClaimsCache,
-    ) -> Result<JwtRequestContext, JwtError> {
+    ) -> Result<Option<JwtRequestContext>, JwtError> {
         let (maybe_prefix, token) = match self.lookup(request) {
             Ok((p, t)) => (p, t),
             Err(e) => {
@@ -278,7 +278,7 @@ impl JwtAuthRuntime {
                 if self.config.require_authentication.is_some_and(|v| v) {
                     return Err(JwtError::LookupFailed(e));
                 }
-                return Ok(());
+                return Ok(None);
             }
         };
 
@@ -292,21 +292,21 @@ impl JwtAuthRuntime {
 
         match validation_result {
             Ok(token_payload) => {
-                Ok(JwtRequestContext {
+                Ok(
+                    Some(JwtRequestContext {
                     token_payload,
                     token_raw: token,
                     token_prefix: maybe_prefix,
                 })
+                )
             }
             Err(err) => {
                 warn!("jwt token error: {:?}", err);
                 if self.config.require_authentication.is_some_and(|v| v) {
                     Err((*err).clone())
                 } else {
-                    Ok(())
+                    Ok(None)
                 }
-
-                Ok(None)
             }
         }
     }

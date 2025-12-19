@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use graphql_tools::static_graphql::schema::Document;
+use hive_router_internal::authorization::metadata::AuthorizationMetadata;
 use hive_router_query_planner::planner::Planner;
 
 use crate::{
@@ -15,7 +16,7 @@ pub struct SupergraphData {
     pub planner: Planner,
     pub authorization: AuthorizationMetadata,
     pub subgraph_executor_map: SubgraphExecutorMap,
-    pub supergraph_schema: Arc<Document<'static, String>>,
+    pub supergraph_schema: Arc<Document>,
 }
 
 pub struct OnSupergraphLoadStartHookPayload {

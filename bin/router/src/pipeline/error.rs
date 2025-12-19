@@ -157,7 +157,7 @@ impl From<PipelineError> for Response {
             return ResponseBuilder::new(status).json(&validation_error_result);
         }
 
-        if let PipelineErrorVariant::AuthorizationFailed(authorization_errors) = self.error {
+        if let PipelineErrorVariant::AuthorizationFailed(authorization_errors) = val.error {
             let authorization_error_result = FailedExecutionResult {
                 errors: Some(authorization_errors),
             };
@@ -165,8 +165,8 @@ impl From<PipelineError> for Response {
             return ResponseBuilder::new(status).json(&authorization_error_result);
         }
 
-        let code = self.error.graphql_error_code();
-        let message = self.error.graphql_error_message();
+        let code = val.error.graphql_error_code();
+        let message = val.error.graphql_error_message();
 
         let graphql_error = GraphQLError::from_message_and_extensions(
             message,

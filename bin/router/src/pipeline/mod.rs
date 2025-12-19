@@ -28,9 +28,8 @@ use crate::{
         coerce_variables::coerce_request_variables,
         csrf_prevention::perform_csrf_prevention,
         deserialize_graphql_params::{deserialize_graphql_params, GetQueryStr},
-        error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant},
-        execution::{execute_plan, PlannedRequest},
-        execution_request::get_execution_request,
+        error::{PipelineErrorVariant},
+        execution::{execute_plan},
         header::{
             RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON,
             APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, TEXT_HTML_CONTENT_TYPE,
@@ -81,7 +80,7 @@ pub async fn graphql_request_handler(
     }
 
     let jwt_context = if let Some(jwt) = &shared_state.jwt_auth_runtime {
-        match jwt.validate_request(req) {
+        match jwt.validate_request(req, &shared_state.jwt_claims_cache).await {
             Ok(jwt_context) => jwt_context,
             Err(err) => return Ok(err.make_response()),
         }
@@ -284,7 +283,7 @@ pub async fn execute_pipeline(
         &supergraph.authorization,
         &supergraph.metadata,
         &variable_payload,
-        &jwt_request_details,
+        &client_request_details.jwt,
     );
 
     let (normalize_payload, authorization_errors) = match decision {
@@ -309,17 +308,17 @@ pub async fn execute_pipeline(
         }
         AuthorizationDecision::Reject { errors } => {
             return Err(
-                req.new_pipeline_error(PipelineErrorVariant::AuthorizationFailed(
+                PipelineErrorVariant::AuthorizationFailed(
                     errors.iter().map(|e| e.into()).collect(),
-                )),
+                ),
             )
         }
     };
 
     let query_plan_result = plan_operation_with_cache(
-        req,
         supergraph,
         schema_state,
+        &normalize_payload,
         &progressive_override_ctx,
         &query_plan_cancellation_token,
         &plugin_req_state,
@@ -333,7 +332,7 @@ pub async fn execute_pipeline(
         }
     };
 
-    let execution_result = execute_plan(
+    let (execution_result, error_count) = execute_plan(
         req,
         supergraph,
         shared_state,
@@ -342,6 +341,7 @@ pub async fn execute_pipeline(
         &variable_payload,
         &client_request_details,
         &plugin_req_state,
+        &authorization_errors
     )
     .await?;
 
@@ -354,7 +354,7 @@ pub async fn execute_pipeline(
                 &client_request_details,
                 hive_usage_agent,
                 &shared_state.router_config.usage_reporting,
-                &execution_result,
+                error_count,
             );
         }
     }

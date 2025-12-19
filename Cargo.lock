@@ -2162,6 +2162,7 @@ dependencies = [
 name = "hive-router-internal"
 version = "0.0.4"
 dependencies = [
+ "ahash",
  "async-trait",
  "bytes",
  "criterion",
@@ -2170,6 +2171,7 @@ dependencies = [
  "http",
  "humantime",
  "insta",
+ "lasso2",
  "once_cell",
  "sonic-rs",
  "thiserror 2.0.17",

@@ -26,10 +26,10 @@ use crate::{
     execution::client_request_details::ClientRequestDetails,
     executors::{
         common::{
-            HttpExecutionResponse, SubgraphExecutionRequest, SubgraphExecutor,
+            SubgraphExecutionRequest, SubgraphExecutor,
             SubgraphExecutorBoxedArc,
         },
-        dedupe::{ABuildHasher, SharedResponse},
+        dedupe::{ABuildHasher},
         error::SubgraphExecutorError,
         http::{HTTPSubgraphExecutor, HttpClient, HttpResponse},
     },
@@ -141,33 +141,7 @@ impl SubgraphExecutorMap {
         plugin_req_state: &Option<PluginRequestState<'req>>,
     ) -> HttpResponse {
         let mut executor = match self.get_or_create_executor(subgraph_name, client_request) {
-            Ok(Some(executor)) => {
-                let timeout = self
-                    .timeouts_by_subgraph
-                    .get(subgraph_name)
-                    .map(|t| {
-                        let global_timeout_duration =
-                            resolve_timeout(&self.global_timeout, client_request, None, "all")?;
-                        resolve_timeout(
-                            t.value(),
-                            client_request,
-                            Some(global_timeout_duration),
-                            subgraph_name,
-                        )
-                    })
-                    .transpose();
-
-                match timeout {
-                    Ok(timeout) => executor.execute(execution_request, timeout).await,
-                    Err(err) => {
-                        error!(
-                            "Failed to resolve timeout for subgraph '{}': {}",
-                            subgraph_name, err,
-                        );
-                        self.internal_server_error_response(err.into(), subgraph_name)
-                    }
-                }
-            },
+            Ok(executor) => executor,
             Err(err) => {
                 error!(
                     "Subgraph executor error for subgraph '{}': {}",
@@ -175,13 +149,29 @@ impl SubgraphExecutorMap {
                 );
                 return self.internal_server_error_response(err.into(), subgraph_name);
             }
-            Ok(None) => {
+        };
+
+        let timeout = match self
+            .timeouts_by_subgraph
+            .get(subgraph_name)
+            .map(|t| {
+                let global_timeout_duration =
+                    resolve_timeout(&self.global_timeout, client_request, None, "all")?;
+                resolve_timeout(
+                    t.value(),
+                    client_request,
+                    Some(global_timeout_duration),
+                    subgraph_name,
+                )
+            })
+            .transpose() {
+            Ok(timeout) => timeout,
+            Err(err) => {
                 error!(
-                    "Subgraph executor not found for subgraph '{}'",
-                    subgraph_name
+                    "Failed to resolve timeout for subgraph '{}': {}",
+                    subgraph_name, err,
                 );
-                return self
-                    .internal_server_error_response("Internal server error".into(), subgraph_name);
+                return self.internal_server_error_response(err.into(), subgraph_name);
             }
         };
 
@@ -221,7 +211,7 @@ impl SubgraphExecutorMap {
 
         let mut execution_result = match execution_result {
             Some(execution_result) => execution_result,
-            None => executor.execute(execution_request, plugin_req_state).await,
+            None => executor.execute(execution_request, timeout, plugin_req_state).await,
         };
 
         if let Some(plugin_req_state) = plugin_req_state.as_ref() {
@@ -430,6 +420,7 @@ impl SubgraphExecutorMap {
             subgraph_config.client,
             semaphore,
             subgraph_config.dedupe_enabled,
+            self.config.clone(),
             self.in_flight_requests.clone(),
         );
 

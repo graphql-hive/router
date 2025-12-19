@@ -24,6 +24,8 @@ http = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 thiserror = { workspace = true }
+ahash = "0.8.12"
+lasso2 = "0.8.2"
 
 [dev-dependencies]
 criterion = { workspace = true }

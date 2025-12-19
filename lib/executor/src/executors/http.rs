@@ -9,6 +9,7 @@ use crate::plugin_context::PluginRequestState;
 use crate::plugin_trait::{EndControlFlow, StartControlFlow};
 use dashmap::DashMap;
 use futures::TryFutureExt;
+use hive_router_config::HiveRouterConfig;
 use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
@@ -81,7 +82,7 @@ impl HTTPSubgraphExecutor {
         }
     }
 
-    fn build_request_body(
+    fn build_request_body<'a>(
         &self,
         execution_request: &SubgraphExecutionRequest<'a>,
     ) -> Result<Vec<u8>, SubgraphExecutorError> {
@@ -221,8 +222,8 @@ async fn send_request(
 
             debug!("making http request to {}", endpoint.to_string());
 
-                let res_fut = self.http_client.request(req).map_err(|e| {
-                    SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
+                let res_fut = http_client.request(req).map_err(|e| {
+                    SubgraphExecutorError::RequestFailure(endpoint.to_string(), e.to_string())
                 });
 
                 let res = if let Some(timeout_duration) = timeout {
@@ -230,7 +231,7 @@ async fn send_request(
                         .await
                         .map_err(|_| {
                             SubgraphExecutorError::RequestTimeout(
-                                self.endpoint.to_string(),
+                                endpoint.to_string(),
                                 timeout_duration.as_millis(),
                             )
                         })?

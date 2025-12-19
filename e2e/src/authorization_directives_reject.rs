@@ -47,7 +47,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     async fn unauthenticated_access_to_authenticated_field() {
         let subgraphs_server = SubgraphsServer::start().await;
         // This config file should have `unauthorized: { mode: "reject" }` set.
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -89,7 +89,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     #[ntex::test]
     async fn authenticated_access_to_authenticated_field() {
         let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -121,7 +121,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     #[ntex::test]
     async fn authenticated_access_to_scoped_field() {
         let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -152,7 +152,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     #[ntex::test]
     async fn complex_query_unauthenticated() {
         let subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -226,7 +226,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     #[ntex::test]
     async fn complex_query_partially_authorized() {
         let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -265,7 +265,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     #[ntex::test]
     async fn complex_query_fully_authorized() {
         let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -365,7 +365,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     #[ntex::test]
     async fn include_unauthorized_field_with_false() {
         let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -412,7 +412,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     #[ntex::test]
     async fn include_unauthorized_field_with_true() {
         let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -451,7 +451,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     #[ntex::test]
     async fn test_scope_and_logic() {
         let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -509,7 +509,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     #[ntex::test]
     async fn test_scope_or_logic() {
         let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -590,7 +590,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     #[ntex::test]
     async fn interface_field_authenticated_on_interface() {
         let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -657,7 +657,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     #[ntex::test]
     async fn interface_field_requires_all_implementor_scopes() {
         let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -749,7 +749,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     #[ntex::test]
     async fn interface_inline_fragment_github_only() {
         let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -820,7 +820,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     #[ntex::test]
     async fn interface_inline_fragment_twitter_only() {
         let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -892,7 +892,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     #[ntex::test]
     async fn interface_inline_fragments_both_implementors() {
         let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;
@@ -994,7 +994,7 @@ mod authorization_directives_in_reject_mode_e2e_tests {
     #[ntex::test]
     async fn interface_field_authorization_with_typename() {
         let _subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml")
+        let app = init_router_from_config_file("configs/jwt_auth.directives.reject.router.yaml", None)
             .await
             .unwrap();
         wait_for_readiness(&app.app).await;

@@ -103,7 +103,7 @@ impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
                 match result.control_flow {
                     StartControlFlow::Continue => { /* continue to next plugin */ }
                     StartControlFlow::EndResponse(response) => {
-                        return Ok(response);
+                        return Ok((response, 0));
                     }
                     StartControlFlow::OnEnd(callback) => {
                         on_end_callbacks.push(callback);
@@ -145,6 +145,9 @@ impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
                 affected_path: || None,
             })?;
 
+
+        let error_count = exec_ctx.errors.len(); // Added for usage reporting
+
         let mut data = exec_ctx.final_response;
         let mut errors = exec_ctx.errors;
         let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
@@ -163,7 +166,7 @@ impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
                 match result.control_flow {
                     EndControlFlow::Continue => { /* continue to next callback */ }
                     EndControlFlow::EndResponse(output) => {
-                        return Ok(output);
+                        return Ok((output, 0));
                     }
                 }
             }
@@ -188,25 +191,9 @@ impl<'exec, 'req> QueryPlanExecutionContext<'exec, 'req> {
             affected_path: || None,
         })?;
 
-        let final_response = &exec_ctx.final_response;
-        let error_count = exec_ctx.errors.len(); // Added for usage reporting
-        let body = project_by_operation(
-            final_response,
-            exec_ctx.errors,
-            &ctx.extensions,
-            ctx.operation_type_name,
-            ctx.projection_plan,
-            ctx.variable_values,
-            exec_ctx.response_storage.estimate_final_response_size(),
-        )
-        .with_plan_context(LazyPlanContext {
-            subgraph_name: || None,
-            affected_path: || None,
-        })?;
-
         Ok((
             HttpResponse {
-                body,
+                body: body.into(),
                 headers: response_headers,
                 status: http::StatusCode::OK,
             },

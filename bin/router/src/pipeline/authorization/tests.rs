@@ -1,6 +1,7 @@
 use std::{fmt::Display, sync::Arc};
 
 use graphql_parser::parse_query;
+use hive_router_internal::authorization::metadata::AuthorizationMetadata;
 use hive_router_plan_executor::{
     execution::client_request_details::JwtRequestDetails,
     introspection::{
@@ -16,7 +17,7 @@ use hive_router_query_planner::{
 
 use crate::pipeline::{
     authorization::{
-        apply_authorization_to_operation, AuthorizationDecision, AuthorizationMetadata,
+        AuthorizationDecision, apply_authorization_to_operation, metadata::AuthorizationMetadataExt
     },
     normalize::GraphQLNormalizationPayload,
 };
@@ -78,9 +79,9 @@ impl SupergraphTestData {
 
         let jwt = if let Some(scopes) = scopes {
             JwtRequestDetails::Authenticated {
-                token: "asd",
+                token: "asd".to_string(),
                 prefix: None,
-                claims: &Default::default(),
+                claims: Default::default(),
                 scopes: Some(scopes.iter().map(|s| s.to_string()).collect()),
             }
         } else {

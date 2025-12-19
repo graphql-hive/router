@@ -44,7 +44,6 @@ pub async fn plan_operation_with_cache<'req>(
         calculate_cache_key(filtered_operation_for_plan.hash(), &stable_override_context);
     let is_plan_operation_empty = filtered_operation_for_plan.selection_set.is_empty();
     let is_projection_plan_empty = normalized_operation.projection_plan.is_empty();
-    let contains_introspection = normalized_operation.operation_for_introspection.is_some();
 
     let plan_result = schema_state
         .plan_cache
@@ -61,7 +60,7 @@ pub async fn plan_operation_with_cache<'req>(
             // but we still need to project nulls for them in the response.
             // That's why we return an empty plan,
             // and allow for response projection to happen later.
-            if is_projection_plan_empty && !is_projection_plan_empty {
+            if is_plan_operation_empty && !is_projection_plan_empty {
                 return Ok(Arc::new(QueryPlan {
                     kind: "QueryPlan".to_string(),
                     node: None,

@@ -36,7 +36,8 @@ pub async fn execute_plan(
     variable_payload: &CoerceVariablesPayload,
     client_request_details: &ClientRequestDetails<'_, '_>,
     plugin_req_state: &Option<PluginRequestState<'_>>,
-) -> Result<HttpResponse, PipelineErrorVariant> {
+    authorization_errors: &[AuthorizationError],
+) -> Result<(HttpResponse, usize), PipelineErrorVariant> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
     if app_state.router_config.query_planner.allow_expose {
@@ -56,15 +57,14 @@ pub async fn execute_plan(
     {
         Some(HashMap::from_iter([(
             "queryPlan".to_string(),
-            sonic_rs::to_value(&planned_request.query_plan_payload).unwrap(),
+            sonic_rs::to_value(&query_plan_payload).unwrap(),
         )]))
     } else {
         None
     };
 
     let introspection_context = IntrospectionContext {
-        query: planned_request
-            .normalized_payload
+        query: normalized_payload
             .operation_for_introspection
             .as_deref(),
         schema: &supergraph.planner.consumer_schema.document,
@@ -76,8 +76,7 @@ pub async fn execute_plan(
         .jwt
         .is_jwt_extensions_forwarding_enabled()
     {
-        planned_request
-            .client_request_details
+        client_request_details
             .jwt
             .build_forwarding_plan(
                 &app_state
@@ -97,9 +96,9 @@ pub async fn execute_plan(
         operation_for_plan: &normalized_payload.operation_for_plan,
         projection_plan: &normalized_payload.projection_plan,
         headers_plan: &app_state.headers_plan,
-        variable_values: &planned_request.variable_payload.variables_map,
+        variable_values: &variable_payload.variables_map,
         extensions,
-        client_request: planned_request.client_request_details,
+        client_request: client_request_details,
         introspection_context: &introspection_context,
         operation_type_name: normalized_payload.root_type_name,
         jwt_auth_forwarding,
