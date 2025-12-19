@@ -207,52 +207,50 @@ fn setup_exporters(
 
         let span_exporter = match &hive_config.tracing.protocol {
             OtlpProtocol::Grpc => {
-                unreachable!("gRPC protocol is not supported for Hive OTLP exporter");
-                // if config.hive.tracing.http.is_some() {
-                //     return Err(TelemetryError::TracesExporterSetup(
-                //         "Hive OTLP http configuration found while protocol is set to gRPC"
-                //             .to_string(),
-                //     ));
-                // }
+                if hive_config.tracing.http.is_some() {
+                    return Err(TelemetryError::TracesExporterSetup(
+                        "Hive OTLP http configuration found while protocol is set to gRPC"
+                            .to_string(),
+                    ));
+                }
 
-                // let mut metadata = config
-                //     .hive
-                //     .tracing
-                //     .grpc
-                //     .as_ref()
-                //     .map(|grpc_config| {
-                //         grpc_config
-                //             .metadata
-                //             .iter()
-                //             .map(|(k, v)| match v {
-                //                 ValueOrExpression::Value(v) => {
-                //                     Ok::<_, TelemetryError>((k.clone(), v.clone()))
-                //                 }
-                //                 ValueOrExpression::Expression { expression } => {
-                //                     let value = evaluate_expression_as_string(
-                //                         expression,
-                //                         &format!("Hive OTLP grpc metadata key '{}'", k),
-                //                     )?;
-                //                     Ok::<_, TelemetryError>((k.clone(), value))
-                //                 }
-                //             })
-                //             .collect::<Result<HashMap<_, _>, TelemetryError>>()
-                //     })
-                //     .transpose()?
-                //     .unwrap_or_default();
+                let mut metadata = hive_config
+                    .tracing
+                    .grpc
+                    .as_ref()
+                    .map(|grpc_config| {
+                        grpc_config
+                            .metadata
+                            .iter()
+                            .map(|(k, v)| match v {
+                                ValueOrExpression::Value(v) => {
+                                    Ok::<_, TelemetryError>((k.clone(), v.clone()))
+                                }
+                                ValueOrExpression::Expression { expression } => {
+                                    let value = evaluate_expression_as_string(
+                                        expression,
+                                        &format!("Hive OTLP grpc metadata key '{}'", k),
+                                    )?;
+                                    Ok::<_, TelemetryError>((k.clone(), value))
+                                }
+                            })
+                            .collect::<Result<HashMap<_, _>, TelemetryError>>()
+                    })
+                    .transpose()?
+                    .unwrap_or_default();
 
-                // metadata.insert("authorization".to_string(), token);
-                // metadata.insert("x-hive-target-ref".to_string(), target);
+                metadata.insert("authorization".to_string(), token);
+                metadata.insert("x-hive-target-ref".to_string(), target);
 
-                // let exporter = SpanExporter::builder()
-                //     .with_tonic()
-                //     .with_endpoint(endpoint)
-                //     .with_timeout(config.hive.tracing.batch_processor.max_export_timeout)
-                //     .with_metadata(build_metadata(metadata))
-                //     // .with_tls_config(ClientTlsConfig::new().)
-                //     .build()
-                //     .map_err(|e| TelemetryError::TracesExporterSetup(e.to_string()))?;
-                // HiveConsoleExporter::new(exporter)
+                let exporter = SpanExporter::builder()
+                    .with_tonic()
+                    .with_endpoint(endpoint)
+                    .with_timeout(hive_config.tracing.batch_processor.max_export_timeout)
+                    .with_metadata(build_metadata(metadata))
+                    // .with_tls_config(ClientTlsConfig::new().)
+                    .build()
+                    .map_err(|e| TelemetryError::TracesExporterSetup(e.to_string()))?;
+                HiveConsoleExporter::new(exporter)
             }
             OtlpProtocol::Http => {
                 if hive_config.tracing.grpc.is_some() {
@@ -286,11 +284,8 @@ fn setup_exporters(
                     .transpose()?
                     .unwrap_or_default();
 
-                // headers.insert("authorization".to_string(), format!("Bearer {}", token));
                 headers.insert("authorization".to_string(), format!("Bearer {}", token));
                 headers.insert("x-hive-target-ref".to_string(), target);
-
-                // let exporter = StdoutSpanExporter::default();
 
                 let exporter = SpanExporter::builder()
                     .with_http()
