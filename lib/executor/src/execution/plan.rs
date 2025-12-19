@@ -72,8 +72,10 @@ pub async fn execute_query_plan<'exec, 'req>(
 ) -> Result<(HttpResponse, usize), PlanExecutionError> {
     let mut init_value = if let Some(introspection_query) = ctx.introspection_context.query {
         resolve_introspection(introspection_query, ctx.introspection_context)
-    } else {
+    } else if ctx.projection_plan.is_empty() {
         Value::Null
+    } else {
+        Value::Object(Vec::new())
     };
 
     let mut initial_errors = ctx.initial_errors;
@@ -111,12 +113,10 @@ pub async fn execute_query_plan<'exec, 'req>(
                 }
             }
         }
+
         query_plan = start_payload.query_plan;
-
         init_value = start_payload.data;
-
         initial_errors = start_payload.errors;
-
         extensions = start_payload.extensions;
     }
 

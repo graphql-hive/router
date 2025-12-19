@@ -258,8 +258,4 @@ mod tests {
         );
         container.stop().await;
     }
-    #[ntex::test]
-    async fn respect_directives_on_supergraph_reload() {
-        todo!();
-    }
 }
