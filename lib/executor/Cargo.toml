@@ -33,7 +33,6 @@ dashmap = { workspace = true }
 
 regex-automata = { workspace = true }
 vrl = { workspace = true }
-reqwest = { workspace = true, features = ["multipart"] }
 serde_json = { workspace = true }
 
 ahash = { workspace = true }
@@ -61,6 +60,7 @@ subgraphs = { path = "../../bench/subgraphs" }
 criterion = { workspace = true }
 tokio = { workspace = true }
 insta = { workspace = true }
+reqwest = { workspace = true, features = ["multipart"] }
 
 [[bench]]
 name = "executor_benches"

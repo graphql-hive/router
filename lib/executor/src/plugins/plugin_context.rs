@@ -9,8 +9,8 @@ use dashmap::{
     DashMap,
 };
 use http::Uri;
+use ntex::http::HeaderMap;
 use ntex::router::Path;
-use ntex_http::HeaderMap;
 
 use crate::plugin_trait::RouterPluginBoxed;
 
