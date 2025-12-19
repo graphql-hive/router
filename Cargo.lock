@@ -2207,7 +2207,6 @@ dependencies = [
  "itoa",
  "ntex",
  "regex-automata",
- "reqwest",
  "ryu",
  "serde",
  "sonic-rs",

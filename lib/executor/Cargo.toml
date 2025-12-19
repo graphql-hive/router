@@ -59,7 +59,6 @@ subgraphs = { path = "../../bench/subgraphs" }
 criterion = { workspace = true }
 tokio = { workspace = true }
 insta = { workspace = true }
-reqwest = { workspace = true, features = ["multipart"] }
 
 [[bench]]
 name = "executor_benches"
