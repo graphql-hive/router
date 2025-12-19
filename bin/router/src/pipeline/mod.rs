@@ -27,9 +27,9 @@ use crate::{
         authorization::{enforce_operation_authorization, AuthorizationDecision},
         coerce_variables::coerce_request_variables,
         csrf_prevention::perform_csrf_prevention,
-        deserialize_graphql_params::{deserialize_graphql_params, GetQueryStr},
         error::PipelineErrorVariant,
         execution::{execute_plan, PlannedRequest},
+        execution_request::{deserialize_graphql_params, GetQueryStr},
         header::{
             RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON,
             APPLICATION_GRAPHQL_RESPONSE_JSON_STR, APPLICATION_JSON, TEXT_HTML_CONTENT_TYPE,
@@ -48,9 +48,9 @@ pub mod authorization;
 pub mod coerce_variables;
 pub mod cors;
 pub mod csrf_prevention;
-pub mod deserialize_graphql_params;
 pub mod error;
 pub mod execution;
+pub mod execution_request;
 pub mod header;
 pub mod normalize;
 pub mod parser;

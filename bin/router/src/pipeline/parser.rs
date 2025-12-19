@@ -12,8 +12,8 @@ use hive_router_plan_executor::plugin_trait::{EndControlFlow, StartControlFlow};
 use hive_router_query_planner::utils::parsing::safe_parse_operation;
 use xxhash_rust::xxh3::Xxh3;
 
-use crate::pipeline::deserialize_graphql_params::GetQueryStr;
 use crate::pipeline::error::PipelineErrorVariant;
+use crate::pipeline::execution_request::GetQueryStr;
 use crate::shared_state::RouterSharedState;
 use tracing::{error, trace};
 
