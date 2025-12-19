@@ -3,7 +3,8 @@ use std::collections::{BTreeSet, HashMap};
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use hive_router_internal::telemetry::traces::spans::graphql::{
-    GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan, RecordOperationIdentity,
+    GraphQLOperationSpan, GraphQLSpanOperationIdentity, GraphQLSubgraphOperationSpan,
+    RecordOperationIdentity,
 };
 use hive_router_query_planner::{
     planner::plan_nodes::{
@@ -67,6 +68,7 @@ pub struct QueryPlanExecutionContext<'exec, 'req> {
     pub executors: &'exec SubgraphExecutorMap,
     pub jwt_auth_forwarding: &'exec Option<JwtAuthForwardingPlan>,
     pub initial_errors: Vec<GraphQLError>,
+    pub span: &'exec GraphQLOperationSpan,
 }
 
 pub struct PlanExecutionOutput {
@@ -113,6 +115,12 @@ pub async fn execute_query_plan<'exec, 'req>(
 
     let final_response = &exec_ctx.final_response;
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
+
+    if error_count > 0 {
+        ctx.span.record_error_count(error_count);
+        ctx.span.record_errors(&exec_ctx.errors);
+    }
+
     let body = project_by_operation(
         final_response,
         exec_ctx.errors,
@@ -177,6 +185,7 @@ struct FetchJob {
     fetch_node_id: i64,
     subgraph_name: String,
     response: SubgraphOutput,
+    span: Option<GraphQLSubgraphOperationSpan>,
 }
 
 struct FlattenFetchJob {
@@ -186,12 +195,23 @@ struct FlattenFetchJob {
     subgraph_name: String,
     representation_hashes: Vec<u64>,
     representation_hash_to_index: HashMap<u64, usize>,
+    span: Option<GraphQLSubgraphOperationSpan>,
 }
 
 enum ExecutionJob {
     Fetch(FetchJob),
     FlattenFetch(FlattenFetchJob),
     None,
+}
+
+impl ExecutionJob {
+    fn get_span(&self) -> Option<GraphQLSubgraphOperationSpan> {
+        match self {
+            ExecutionJob::Fetch(job) => job.span.clone(),
+            ExecutionJob::FlattenFetch(job) => job.span.clone(),
+            ExecutionJob::None => None,
+        }
+    }
 }
 
 impl From<ExecutionJob> for SubgraphOutput {
@@ -421,6 +441,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         ctx: &mut ExecutionContext<'exec>,
         response_bytes: Bytes,
         fetch_node_id: i64,
+        span: Option<&GraphQLSubgraphOperationSpan>,
     ) -> Option<(SubgraphResponse<'exec>, Option<&'exec Vec<FetchRewrite>>)> {
         let idx = ctx.response_storage.add_response(response_bytes);
         // SAFETY: The `bytes` are transmuted to the lifetime `'a` of the `ExecutionContext`.
@@ -440,7 +461,13 @@ impl<'exec, 'req> Executor<'exec, 'req> {
 
         let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
         let response = match SubgraphResponse::deserialize(&mut deserializer) {
-            Ok(response) => response,
+            Ok(response) => {
+                if let (Some(errors), Some(span)) = (&response.errors, &span) {
+                    span.record_error_count(errors.len());
+                    span.record_errors(errors);
+                }
+                response
+            }
             Err(e) => {
                 let message = format!("Failed to deserialize subgraph response: {}", e);
                 let extensions = GraphQLErrorExtensions::new_from_code_and_service_name(
@@ -449,6 +476,9 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                 );
                 let error = GraphQLError::from_message_and_extensions(message, extensions);
 
+                if let Some(s) = span {
+                    s.record_error_count(1)
+                }
                 ctx.errors.push(error);
                 return None;
             }
@@ -481,6 +511,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                     ctx,
                     job.response.body,
                     job.fetch_node_id,
+                    job.span.as_ref(),
                 ) {
                     ctx.handle_errors(&job.subgraph_name, None, response.errors, None);
                     if let Some(output_rewrites) = output_rewrites {
@@ -511,6 +542,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                     ctx,
                     job.response.body,
                     job.fetch_node_id,
+                    job.span.as_ref(),
                 ) {
                     if let Some(mut entities) = response.data.take_entities() {
                         if let Some(output_rewrites) = output_rewrites {
@@ -678,17 +710,20 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         filtered_representations_hashes: Option<HashMap<u64, usize>>,
     ) -> Result<ExecutionJob, PlanExecutionError> {
         Ok(match node.node.as_ref() {
-            PlanNode::Fetch(fetch_node) => ExecutionJob::FlattenFetch(FlattenFetchJob {
-                flatten_node_path: node.path.clone(),
-                response: self
-                    .execute_fetch_node(fetch_node, representations)
-                    .await?
-                    .into(),
-                fetch_node_id: fetch_node.id,
-                subgraph_name: fetch_node.service_name.clone(),
-                representation_hashes: representation_hashes.unwrap_or_default(),
-                representation_hash_to_index: filtered_representations_hashes.unwrap_or_default(),
-            }),
+            PlanNode::Fetch(fetch_node) => {
+                let response = self.execute_fetch_node(fetch_node, representations).await?;
+                let span = response.get_span();
+                ExecutionJob::FlattenFetch(FlattenFetchJob {
+                    flatten_node_path: node.path.clone(),
+                    response: response.into(),
+                    fetch_node_id: fetch_node.id,
+                    subgraph_name: fetch_node.service_name.clone(),
+                    representation_hashes: representation_hashes.unwrap_or_default(),
+                    representation_hash_to_index: filtered_representations_hashes
+                        .unwrap_or_default(),
+                    span,
+                })
+            }
             _ => ExecutionJob::None,
         })
     }
@@ -753,9 +788,10 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                 fetch_node_id: node.id,
                 subgraph_name: node.service_name.clone(),
                 response,
+                span: Some(span.clone()),
             }))
         }
-        .instrument(span.clone())
+        .instrument(span.span.clone())
         .await
     }
 

@@ -8,7 +8,7 @@ use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
 use hive_router_internal::telemetry::traces::spans::graphql::{
-    GraphQLExecuteSpan, RecordOperationIdentity,
+    GraphQLExecuteSpan, GraphQLOperationSpan, RecordOperationIdentity,
 };
 use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
@@ -43,6 +43,7 @@ pub async fn execute_plan(
     supergraph: &SupergraphData,
     app_state: &Arc<RouterSharedState>,
     planned_request: &PlannedRequest<'_>,
+    span: &GraphQLOperationSpan,
 ) -> Result<PlanExecutionOutput, PipelineError> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
@@ -119,6 +120,7 @@ pub async fn execute_plan(
             .iter()
             .map(|e| e.into())
             .collect(),
+        span,
     })
     .instrument(execute_span.span)
     .await

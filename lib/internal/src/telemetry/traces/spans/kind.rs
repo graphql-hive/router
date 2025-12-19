@@ -28,3 +28,12 @@ pub enum HiveSpanKind {
     #[strum(serialize = "graphql.subgraph.operation")]
     GraphQLSubgraphOperation,
 }
+
+#[derive(
+    Debug, strum::Display, strum::AsRefStr, strum::IntoStaticStr, strum::EnumString, PartialEq,
+)]
+#[non_exhaustive]
+pub enum HiveEventKind {
+    #[strum(serialize = "graphql.error")]
+    GraphQLError,
+}

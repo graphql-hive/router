@@ -1,7 +1,10 @@
 /// OpenTelemetry standard attributes
 pub const OTEL_STATUS_CODE: &str = "otel.status_code";
 pub const OTEL_KIND: &str = "otel.kind";
+
+/// OpenTelemetry standard attributes for errors
 pub const ERROR_TYPE: &str = "error.type";
+pub const ERROR_MESSAGE: &str = "error.message";
 
 /// HTTP attributes (OpenTelemetry Semantic Conventions)
 pub const SERVER_ADDRESS: &str = "server.address";
@@ -32,6 +35,10 @@ pub const HIVE_CLIENT_NAME: &str = "hive.client.name";
 pub const HIVE_CLIENT_VERSION: &str = "hive.client.version";
 pub const HIVE_GRAPHQL_OPERATION_HASH: &str = "hive.graphql.operation.hash";
 pub const HIVE_GRAPHQL_SUBGRAPH_NAME: &str = "hive.graphql.subgraph.name";
+/// Hive-specific attributes for errors
+pub const HIVE_ERROR_AFFECTED_PATH: &str = "hive.error.affected_path";
+pub const HIVE_ERROR_SUBGRAPH_NAME: &str = "hive.error.subgraph_name";
+pub const HIVE_ERROR_PATH: &str = "hive.error.path";
 
 /// Internal Hive attributes
 pub const HIVE_INFLIGHT_ROLE: &str = "hive.inflight.role";

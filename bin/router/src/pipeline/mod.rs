@@ -218,8 +218,14 @@ pub async fn execute_pipeline(
             client_request_details: &client_request_details,
             authorization_errors: &authorization_errors,
         };
-        let execution_result =
-            execute_plan(req, supergraph, shared_state, &planned_request).await?;
+        let execution_result = execute_plan(
+            req,
+            supergraph,
+            shared_state,
+            &planned_request,
+            &operation_span,
+        )
+        .await?;
 
         if shared_state.router_config.usage_reporting.enabled {
             if let Some(hive_usage_agent) = &shared_state.hive_usage_agent {
