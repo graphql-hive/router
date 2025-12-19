@@ -44,10 +44,19 @@ pub async fn plan_operation_with_cache<'req>(
         calculate_cache_key(filtered_operation_for_plan.hash(), &stable_override_context);
     let is_plan_operation_empty = filtered_operation_for_plan.selection_set.is_empty();
     let is_projection_plan_empty = normalized_operation.projection_plan.is_empty();
+    let contains_introspection = normalized_operation.operation_for_introspection.is_some();
+    let is_pure_introspection = is_plan_operation_empty && contains_introspection;
 
     let plan_result = schema_state
         .plan_cache
-        .try_get_with(plan_cache_key, async {
+        .try_get_with(plan_cache_key, async move {
+            if is_pure_introspection {
+                return Ok(Arc::new(QueryPlan {
+                    kind: "QueryPlan".to_string(),
+                    node: None,
+                }));
+            }
+
             // If the operation is empty, but the projection plan is not,,
             // we don't need to run the planner,
             // as there is nothing to plan,
