@@ -1,4 +1,4 @@
-use std::{collections::HashSet, sync::Arc};
+use std::collections::HashSet;
 
 use hive_router_plan_executor::projection::plan::{FieldProjectionPlan, ProjectionValueSource};
 use hive_router_query_planner::ast::{
@@ -141,18 +141,17 @@ fn rebuild_authorized_projection_plan_recursive(
 ) -> Option<IndexMap<String, FieldProjectionPlan>> {
     let mut authorized_plans = IndexMap::with_capacity(original_plans.len());
 
-    for (key, plan) in original_plans {
-        let path_segment = &plan.response_key;
+    for (path_segment, plan) in original_plans {
         let Some((child_path_position, is_unauthorized)) =
             unauthorized_path_trie.find_field(path_position, path_segment)
         else {
-            authorized_plans.insert(key.clone(), plan.clone());
+            authorized_plans.insert(path_segment.clone(), plan.clone());
             continue;
         };
 
         if is_unauthorized {
             authorized_plans.insert(
-                key.clone(),
+                path_segment.clone(),
                 plan.with_new_value(ProjectionValueSource::Null),
             );
             continue;
@@ -166,12 +165,11 @@ fn rebuild_authorized_projection_plan_recursive(
                     selections,
                     unauthorized_path_trie,
                     child_path_position,
-                )
-                .map(Arc::new),
+                ),
             },
             other => other.clone(),
         };
-        authorized_plans.insert(key.clone(), plan.with_new_value(new_value));
+        authorized_plans.insert(path_segment.clone(), plan.with_new_value(new_value));
     }
 
     if authorized_plans.is_empty() {

@@ -225,8 +225,8 @@ impl<'a, T: query_ast::Text<'a>> From<query_ast::Selection<'a, T>> for Selection
             query_ast::Selection::InlineFragment(fragment) => {
                 SelectionItem::InlineFragment(fragment.into())
             }
-            query_ast::Selection::FragmentSpread(_) => {
-                panic!("Received a fragment spread, but it should be inlined after normalization");
+            query_ast::Selection::FragmentSpread(spread) => {
+                panic!("Received a fragment spread for {}, but it should be inlined after normalization", spread.fragment_name.as_ref());
             }
         }
     }

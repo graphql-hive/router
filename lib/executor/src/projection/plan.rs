@@ -1,6 +1,5 @@
 use ahash::HashSet;
 use indexmap::IndexMap;
-use std::sync::Arc;
 use tracing::warn;
 
 use hive_router_query_planner::{
@@ -24,7 +23,7 @@ pub enum TypeCondition {
 pub enum ProjectionValueSource {
     /// Represents the entire response data from subgraphs.
     ResponseData {
-        selections: Option<Arc<IndexMap<String, FieldProjectionPlan>>>,
+        selections: Option<IndexMap<String, FieldProjectionPlan>>,
     },
     /// Represents a null value.
     Null,
@@ -50,11 +49,23 @@ pub enum FieldProjectionCondition {
     And(Box<FieldProjectionCondition>, Box<FieldProjectionCondition>),
 }
 
-pub enum FieldProjectionConditionError {
-    InvalidParentType,
-    InvalidFieldType,
-    Skip,
-    InvalidEnumValue,
+#[derive(Debug)]
+pub enum FieldProjectionConditionError<'a> {
+    InvalidParentType {
+        expected: &'a TypeCondition,
+        found: &'a str,
+    },
+    InvalidFieldType {
+        expected: &'a TypeCondition,
+        found: &'a str,
+    },
+    Skip {
+        variable_name: &'a str,
+    },
+    InvalidEnumValue {
+        expected: &'a HashSet<String>,
+        found_value: &'a str,
+    },
 }
 
 impl FieldProjectionPlan {
@@ -135,42 +146,15 @@ impl FieldProjectionPlan {
         }
     }
 
-    fn apply_directive_conditions(
-        mut condition: FieldProjectionCondition,
-        include_if: &Option<String>,
-        skip_if: &Option<String>,
-    ) -> FieldProjectionCondition {
-        if let Some(include_if_var) = include_if {
-            condition = FieldProjectionCondition::And(
-                Box::new(condition),
-                Box::new(FieldProjectionCondition::IncludeIfVariable(
-                    include_if_var.clone(),
-                )),
-            );
-        }
-        if let Some(skip_if_var) = skip_if {
-            condition = FieldProjectionCondition::And(
-                Box::new(condition),
-                Box::new(FieldProjectionCondition::SkipIfVariable(
-                    skip_if_var.clone(),
-                )),
-            );
-        }
-        condition
-    }
-
     fn merge_selections(
-        existing_selections: &mut Option<Arc<IndexMap<String, FieldProjectionPlan>>>,
-        new_selections: Option<Arc<IndexMap<String, FieldProjectionPlan>>>,
+        existing_selections: &mut Option<IndexMap<String, FieldProjectionPlan>>,
+        new_selections: Option<IndexMap<String, FieldProjectionPlan>>,
     ) {
         if let Some(new_selections) = new_selections {
             match existing_selections {
                 Some(selections) => {
-                    let selections_mut = Arc::make_mut(selections);
-                    let new_selections =
-                        Arc::try_unwrap(new_selections).unwrap_or_else(|arc| (*arc).clone());
                     for (_key, new_selection) in new_selections {
-                        Self::merge_plan(selections_mut, new_selection);
+                        new_selection.merge_into(selections);
                     }
                 }
                 None => *existing_selections = Some(new_selections),
@@ -178,17 +162,14 @@ impl FieldProjectionPlan {
         }
     }
 
-    fn merge_plan(
-        field_selections: &mut IndexMap<String, FieldProjectionPlan>,
-        plan_to_merge: FieldProjectionPlan,
-    ) {
-        if let Some(existing_plan) = field_selections.get_mut(&plan_to_merge.response_key) {
+    fn merge_into(self, field_selections: &mut IndexMap<String, FieldProjectionPlan>) {
+        if let Some(existing_plan) = field_selections.get_mut(&self.response_key) {
             existing_plan.conditions = FieldProjectionCondition::Or(
                 Box::new(existing_plan.conditions.clone()),
-                Box::new(plan_to_merge.conditions),
+                Box::new(self.conditions),
             );
 
-            match (&mut existing_plan.value, plan_to_merge.value) {
+            match (&mut existing_plan.value, self.value) {
                 (
                     ProjectionValueSource::ResponseData {
                         selections: existing_selections,
@@ -211,7 +192,7 @@ impl FieldProjectionPlan {
                 }
             }
         } else {
-            field_selections.insert(plan_to_merge.response_key.clone(), plan_to_merge);
+            field_selections.insert(self.response_key.clone(), self);
         }
     }
 
@@ -261,21 +242,16 @@ impl FieldProjectionPlan {
                     .get_possible_types(&field_type),
             )
         };
-        let conditions_for_selections = Self::apply_directive_conditions(
-            FieldProjectionCondition::ParentTypeCondition(type_condition.clone()),
-            &field.include_if,
-            &field.skip_if,
-        );
+        let conditions_for_selections =
+            FieldProjectionCondition::ParentTypeCondition(type_condition.clone())
+                .apply_directive_conditions(&field.include_if, &field.skip_if);
 
         let mut condition_for_field = FieldProjectionCondition::And(
             Box::new(parent_condition.clone()),
             Box::new(FieldProjectionCondition::FieldTypeCondition(type_condition)),
         );
-        condition_for_field = Self::apply_directive_conditions(
-            condition_for_field,
-            &field.include_if,
-            &field.skip_if,
-        );
+        condition_for_field =
+            condition_for_field.apply_directive_conditions(&field.include_if, &field.skip_if);
 
         if let Some(enum_values) = schema_metadata.enum_values.get(&field_type) {
             condition_for_field = FieldProjectionCondition::And(
@@ -297,12 +273,11 @@ impl FieldProjectionPlan {
                     schema_metadata,
                     &field_type,
                     &conditions_for_selections,
-                )
-                .map(Arc::new),
+                ),
             },
         };
 
-        Self::merge_plan(field_selections, new_plan);
+        new_plan.merge_into(field_selections);
     }
 
     fn process_inline_fragment(
@@ -329,11 +304,8 @@ impl FieldProjectionPlan {
             )),
         );
 
-        condition_for_fragment = Self::apply_directive_conditions(
-            condition_for_fragment,
-            &inline_fragment.include_if,
-            &inline_fragment.skip_if,
-        );
+        condition_for_fragment = condition_for_fragment
+            .apply_directive_conditions(&inline_fragment.include_if, &inline_fragment.skip_if);
 
         if let Some(inline_fragment_selections) = Self::from_selection_set(
             &inline_fragment.selections,
@@ -342,7 +314,7 @@ impl FieldProjectionPlan {
             &condition_for_fragment,
         ) {
             for (_key, selection) in inline_fragment_selections {
-                Self::merge_plan(field_selections, selection);
+                selection.merge_into(field_selections);
             }
         }
     }
@@ -355,5 +327,31 @@ impl FieldProjectionPlan {
             conditions: self.conditions.clone(),
             value: new_value,
         }
+    }
+}
+
+impl FieldProjectionCondition {
+    fn apply_directive_conditions(
+        mut self,
+        include_if: &Option<String>,
+        skip_if: &Option<String>,
+    ) -> FieldProjectionCondition {
+        if let Some(include_if_var) = include_if {
+            self = FieldProjectionCondition::And(
+                Box::new(self),
+                Box::new(FieldProjectionCondition::IncludeIfVariable(
+                    include_if_var.clone(),
+                )),
+            );
+        }
+        if let Some(skip_if_var) = skip_if {
+            self = FieldProjectionCondition::And(
+                Box::new(self),
+                Box::new(FieldProjectionCondition::SkipIfVariable(
+                    skip_if_var.clone(),
+                )),
+            );
+        }
+        self
     }
 }
