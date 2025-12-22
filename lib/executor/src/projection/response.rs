@@ -521,8 +521,6 @@ fn get_value_by_key<'a, TKey: PartialEq>(
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use graphql_parser::query::Definition;
     use hive_router_query_planner::{
         ast::{
@@ -623,30 +621,27 @@ mod tests {
     fn project_conflicting_selections() {
         let supergraph = hive_router_query_planner::utils::parsing::parse_schema(
             r#"
-interface ContentSection {
+interface IContent {
   id: ID!
 }
 
-type TextBlockChild {
+type ContentAChild {
   title: String!
-  isH1: Boolean!
-  text: String! 
-  # other fields
 }
 
-type TextBlock implements ContentSection {
+type ContentA implements IContent {
   id: ID!
-  textBlocks: [TextBlockChild!]!
+  contentChildren: [ContentAChild!]!
 }
 
-type TextBlockSEOChild {
+type ContentBChild {
   title: String!
   text: String!
 }
 
-type TextBlockSEO implements ContentSection {
+type ContentB implements IContent {
   id: ID!
-  textBlocks: [TextBlockSEOChild!]!
+  contentChildren: [ContentBChild!]!
 }
 
 type Query {
@@ -659,7 +654,7 @@ type ContentPage {
 
 type ContentContainer {
   id: ID!
-  section: ContentSection
+  section: IContent
 }
         "#,
         );
@@ -672,21 +667,21 @@ query {
   contentPage {
     contentBody {
       section {
-        ...TextBlockData
-        ...TextBlockSEOData
+        ...ContentAData
+        ...ContentBData
       }
     }
   }
 }
 
-fragment TextBlockData on TextBlock {
-  textBlocks {
+fragment ContentAData on ContentA {
+  contentChildren {
     title
   }
 }
 
-fragment TextBlockSEOData on TextBlockSEO {
-  textBlocks {
+fragment ContentBData on ContentB {
+  contentChildren {
     title
   }
 }
@@ -706,19 +701,19 @@ fragment TextBlockSEOData on TextBlockSEO {
                             "__typename": "ContentContainer",
                             "id": "container1",
                             "section": {
-                                "__typename": "TextBlock",
-                                "textBlocks": []
+                                "__typename": "ContentA",
+                                "contentChildren": []
                             }
                         },
                         {
                             "__typename": "ContentContainer",
                             "id": "container2",
                             "section": {
-                                "__typename": "TextBlockSEO",
-                                "textBlocks": [
+                                "__typename": "ContentB",
+                                "contentChildren": [
                                     {
-                                        "__typename": "TextBlockSEOChild",
-                                        "title": "textBlockSEO1"
+                                        "__typename": "ContentBChild",
+                                        "title": "contentBChild1"
                                     }
                                 ]
                             }
@@ -739,7 +734,7 @@ fragment TextBlockSEOData on TextBlockSEO {
         );
         let projected_bytes = projection.unwrap();
         let projected_str = String::from_utf8(projected_bytes).unwrap();
-        let expected_response = r#"{"data":{"contentPage":[{"contentBody":[{"section":{"textBlocks":[]}},{"section":{"textBlocks":[{"title":"textBlockSEO1"}]}}]}]}}"#;
+        let expected_response = r#"{"data":{"contentPage":[{"contentBody":[{"section":{"contentChildren":[]}},{"section":{"contentChildren":[{"title":"contentBChild1"}]}}]}]}}"#;
         assert_eq!(projected_str, expected_response);
     }
 }
