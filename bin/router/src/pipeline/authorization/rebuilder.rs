@@ -5,6 +5,7 @@ use hive_router_query_planner::ast::{
     operation::OperationDefinition, selection_item::SelectionItem, selection_set::SelectionSet,
     value::Value,
 };
+use indexmap::IndexMap;
 
 use crate::pipeline::authorization::tree::{PathIndex, UnauthorizedPathTrie};
 
@@ -121,9 +122,9 @@ fn rebuild_authorized_selection_set<'op>(
 
 /// Rebuilds the projection plan to exclude unauthorized fields.
 pub(super) fn rebuild_authorized_projection_plan(
-    original_plans: &Vec<FieldProjectionPlan>,
+    original_plans: &IndexMap<String, FieldProjectionPlan>,
     unauthorized_path_trie: &UnauthorizedPathTrie,
-) -> Vec<FieldProjectionPlan> {
+) -> IndexMap<String, FieldProjectionPlan> {
     rebuild_authorized_projection_plan_recursive(
         original_plans,
         unauthorized_path_trie,
@@ -134,23 +135,26 @@ pub(super) fn rebuild_authorized_projection_plan(
 
 /// Recursively filters projection plans. Unauthorized fields become null.
 fn rebuild_authorized_projection_plan_recursive(
-    original_plans: &Vec<FieldProjectionPlan>,
+    original_plans: &IndexMap<String, FieldProjectionPlan>,
     unauthorized_path_trie: &UnauthorizedPathTrie,
     path_position: PathIndex,
-) -> Option<Vec<FieldProjectionPlan>> {
-    let mut authorized_plans = Vec::with_capacity(original_plans.len());
+) -> Option<IndexMap<String, FieldProjectionPlan>> {
+    let mut authorized_plans = IndexMap::with_capacity(original_plans.len());
 
-    for plan in original_plans {
+    for (key, plan) in original_plans {
         let path_segment = &plan.response_key;
         let Some((child_path_position, is_unauthorized)) =
             unauthorized_path_trie.find_field(path_position, path_segment)
         else {
-            authorized_plans.push(plan.clone());
+            authorized_plans.insert(key.clone(), plan.clone());
             continue;
         };
 
         if is_unauthorized {
-            authorized_plans.push(plan.with_new_value(ProjectionValueSource::Null));
+            authorized_plans.insert(
+                key.clone(),
+                plan.with_new_value(ProjectionValueSource::Null),
+            );
             continue;
         }
 
@@ -167,7 +171,7 @@ fn rebuild_authorized_projection_plan_recursive(
             },
             other => other.clone(),
         };
-        authorized_plans.push(plan.with_new_value(new_value));
+        authorized_plans.insert(key.clone(), plan.with_new_value(new_value));
     }
 
     if authorized_plans.is_empty() {

@@ -7,6 +7,7 @@ use hive_router_query_planner::planner::plan_nodes::{
     QueryPlan, SequenceNode,
 };
 use http::HeaderMap;
+use indexmap::IndexMap;
 use serde::Deserialize;
 use sonic_rs::ValueRef;
 
@@ -50,7 +51,7 @@ use crate::{
 
 pub struct QueryPlanExecutionContext<'exec, 'req> {
     pub query_plan: &'exec QueryPlan,
-    pub projection_plan: &'exec Vec<FieldProjectionPlan>,
+    pub projection_plan: &'exec IndexMap<String, FieldProjectionPlan>,
     pub headers_plan: &'exec HeaderRulesPlan,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
     pub extensions: Option<HashMap<String, sonic_rs::Value>>,

@@ -24,7 +24,7 @@ pub enum TypeCondition {
 pub enum ProjectionValueSource {
     /// Represents the entire response data from subgraphs.
     ResponseData {
-        selections: Option<Arc<Vec<FieldProjectionPlan>>>,
+        selections: Option<Arc<IndexMap<String, FieldProjectionPlan>>>,
     },
     /// Represents a null value.
     Null,
@@ -61,7 +61,7 @@ impl FieldProjectionPlan {
     pub fn from_operation(
         operation: &OperationDefinition,
         schema_metadata: &SchemaMetadata,
-    ) -> (&'static str, Vec<FieldProjectionPlan>) {
+    ) -> (&'static str, IndexMap<String, FieldProjectionPlan>) {
         let root_type_name = match operation.operation_kind {
             Some(OperationKind::Query) => "Query",
             Some(OperationKind::Mutation) => "Mutation",
@@ -97,7 +97,7 @@ impl FieldProjectionPlan {
         schema_metadata: &SchemaMetadata,
         parent_type_name: &str,
         parent_condition: &FieldProjectionCondition,
-    ) -> Option<Vec<FieldProjectionPlan>> {
+    ) -> Option<IndexMap<String, FieldProjectionPlan>> {
         let mut field_selections: IndexMap<String, FieldProjectionPlan> = IndexMap::new();
 
         for selection_item in &selection_set.items {
@@ -131,7 +131,7 @@ impl FieldProjectionPlan {
         if field_selections.is_empty() {
             None
         } else {
-            Some(field_selections.into_values().collect())
+            Some(field_selections)
         }
     }
 
@@ -159,6 +159,25 @@ impl FieldProjectionPlan {
         condition
     }
 
+    fn merge_selections(
+        existing_selections: &mut Option<Arc<IndexMap<String, FieldProjectionPlan>>>,
+        new_selections: Option<Arc<IndexMap<String, FieldProjectionPlan>>>,
+    ) {
+        if let Some(new_selections) = new_selections {
+            match existing_selections {
+                Some(selections) => {
+                    let selections_mut = Arc::make_mut(selections);
+                    let new_selections =
+                        Arc::try_unwrap(new_selections).unwrap_or_else(|arc| (*arc).clone());
+                    for (_key, new_selection) in new_selections {
+                        Self::merge_plan(selections_mut, new_selection);
+                    }
+                }
+                None => *existing_selections = Some(new_selections),
+            }
+        }
+    }
+
     fn merge_plan(
         field_selections: &mut IndexMap<String, FieldProjectionPlan>,
         plan_to_merge: FieldProjectionPlan,
@@ -178,17 +197,7 @@ impl FieldProjectionPlan {
                         selections: new_selections,
                     },
                 ) => {
-                    if let Some(new_selections) = new_selections {
-                        match existing_selections {
-                            Some(selections) => {
-                                Arc::make_mut(selections).extend(
-                                    Arc::try_unwrap(new_selections)
-                                        .unwrap_or_else(|arc| (*arc).clone()),
-                                );
-                            }
-                            None => *existing_selections = Some(new_selections),
-                        }
-                    }
+                    Self::merge_selections(existing_selections, new_selections);
                 }
                 (ProjectionValueSource::Null, ProjectionValueSource::Null) => {
                     // Both plans have `Null` value source, so nothing to merge
@@ -332,7 +341,7 @@ impl FieldProjectionPlan {
             inline_fragment_type,
             &condition_for_fragment,
         ) {
-            for selection in inline_fragment_selections {
+            for (_key, selection) in inline_fragment_selections {
                 Self::merge_plan(field_selections, selection);
             }
         }

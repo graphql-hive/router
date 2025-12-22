@@ -6,6 +6,7 @@ use crate::projection::plan::{
 use crate::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use crate::response::value::Value;
 use bytes::BufMut;
+use indexmap::IndexMap;
 use sonic_rs::JsonValueTrait;
 use std::collections::HashMap;
 
@@ -23,7 +24,7 @@ pub fn project_by_operation(
     errors: Vec<GraphQLError>,
     extensions: &Option<HashMap<String, sonic_rs::Value>>,
     operation_type_name: &str,
-    selections: &Vec<FieldProjectionPlan>,
+    selections: &IndexMap<String, FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     response_size_estimate: usize,
 ) -> Result<Vec<u8>, ProjectionError> {
@@ -194,13 +195,13 @@ fn project_selection_set(
 fn project_selection_set_with_map(
     obj: &Vec<(&str, Value)>,
     errors: &mut Vec<GraphQLError>,
-    plans: &Vec<FieldProjectionPlan>,
+    plans: &IndexMap<String, FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     parent_type_name: &str,
     buffer: &mut Vec<u8>,
     first: &mut bool,
 ) {
-    for plan in plans {
+    for (_, plan) in plans {
         let field_val = obj
             .iter()
             .position(|(k, _)| k == &plan.response_key.as_str())
