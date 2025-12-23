@@ -35,7 +35,7 @@ regex-automata = { workspace = true }
 
 ahash = "0.8.12"
 strum = { version = "0.27.2", features = ["derive"] }
-ntex-http = "0.1.15"
+ntex-http = "1.0.0"
 
 hyper-tls = { version = "0.6.0", features = ["vendored"] }
 hyper-util = { version = "0.1.16", features = [
