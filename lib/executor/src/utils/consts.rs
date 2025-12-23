@@ -11,3 +11,4 @@ pub const CLOSE_BRACE: &[u8] = b"}";
 pub const OPEN_BRACKET: &[u8] = b"[";
 pub const CLOSE_BRACKET: &[u8] = b"]";
 pub const EMPTY_OBJECT: &[u8] = b"{}";
+pub const EMPTY_ARRAY: &[u8] = b"[]";
