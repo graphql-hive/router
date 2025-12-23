@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use bytes::Bytes;
-use ordered_float::NotNan;
 use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 use vrl::core::Value;
 
@@ -34,7 +33,7 @@ impl ToVrlValue for sonic_rs::Value {
         }
 
         if let Some(f) = self.as_f64() {
-            return Value::Float(NotNan::new(f).unwrap());
+            return Value::from_f64_or_zero(f);
         }
 
         if let Some(arr) = self.as_array() {

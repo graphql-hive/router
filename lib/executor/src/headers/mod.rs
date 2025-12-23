@@ -21,7 +21,7 @@ mod tests {
     };
     use hive_router_config::parse_yaml_config;
     use http::{HeaderMap, HeaderName, HeaderValue};
-    use ntex_http::HeaderMap as NtexHeaderMap;
+    use ntex::http::HeaderMap as NtexHeaderMap;
 
     fn header_name_owned(s: &str) -> HeaderName {
         HeaderName::from_bytes(s.as_bytes()).unwrap()

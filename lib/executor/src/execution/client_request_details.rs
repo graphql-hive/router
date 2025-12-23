@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use bytes::Bytes;
 use hive_router_internal::expressions::{lib::ToVrlValue, vrl::core::Value};
 use http::Method;
-use ntex_http::HeaderMap as NtexHeaderMap;
+use ntex::http::HeaderMap as NtexHeaderMap;
 
 pub struct OperationDetails<'exec> {
     pub name: Option<&'exec str>,
@@ -111,7 +111,7 @@ impl From<&ClientRequestDetails<'_, '_>> for Value {
     }
 }
 
-fn client_header_map_to_vrl_value(headers: &ntex_http::HeaderMap) -> Value {
+fn client_header_map_to_vrl_value(headers: &ntex::http::HeaderMap) -> Value {
     let mut obj = BTreeMap::new();
     for (header_name, header_value) in headers.iter() {
         if let Ok(value) = header_value.to_str() {
