@@ -16,7 +16,7 @@ hive-router-config = { path = "../router-config", version = "0.0.15" }
 tracing = { workspace = true }
 
 sonic-rs = { workspace = true }
-ordered-float = "4.2.0"
+ordered-float = "5.0.0"
 vrl = { workspace = true }
 humantime = "2.3.0"
 once_cell = "1.21.3"
