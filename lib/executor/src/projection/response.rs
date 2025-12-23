@@ -537,7 +537,7 @@ mod tests {
         },
         consumer_schema::ConsumerSchema,
         state::supergraph_state::SupergraphState,
-        utils::parsing::parse_operation,
+        utils::parsing::{parse_operation, parse_schema},
     };
     use sonic_rs::json;
 
@@ -625,10 +625,7 @@ mod tests {
         assert_eq!(projected_str, expected_response);
     }
 
-    #[test]
-    fn project_conflicting_selections() {
-        let supergraph = hive_router_query_planner::utils::parsing::parse_schema(
-            r#"
+    static CONFLICTING_SELECTIONS_SUPERGRAPH: &'static str = r#"
 interface IContent {
   id: ID!
 }
@@ -667,8 +664,98 @@ type ContentContainer {
   id: ID!
   section: IContent
 }
-        "#,
+        "#;
+
+    // This tests if the projection works correctly when there are conflicting selections with typenames
+    #[test]
+    fn project_conflicting_selections_1() {
+        let supergraph = parse_schema(CONFLICTING_SELECTIONS_SUPERGRAPH);
+        let supergraph_state = SupergraphState::new(&supergraph);
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let schema_metadata = consumer_schema.schema_metadata();
+        let query = parse_operation(
+            r#"
+query {
+  contentPage {
+    contentBody {
+      section {
+        ...ContentAData
+        ...ContentBData
+      }
+    }
+  }
+}
+
+fragment ContentAData on ContentA {
+  contentChildren {
+    title
+  }
+}
+
+fragment ContentBData on ContentB {
+  contentChildren {
+    title
+  }
+}
+            "#,
         );
+        let normalized_operation: NormalizedDocument =
+            normalize_operation(&supergraph_state, &query, None).unwrap();
+        let (operation_type_name, selections) =
+            FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
+        let data_json = json!({
+            "__typename": "Query",
+            "contentPage": [
+                {
+                    "__typename": "ContentPage",
+                    "contentBody": [
+                        {
+                            "__typename": "ContentContainer",
+                            "id": "container1",
+                            "section": {
+                                "__typename": "ContentA",
+                                "contentChildren": []
+                            }
+                        },
+                        {
+                            "__typename": "ContentContainer",
+                            "id": "container2",
+                            "section": {
+                                "__typename": "ContentB",
+                                "contentChildren": [
+                                    {
+                                        "__typename": "ContentBChild",
+                                        "title": "contentBChild1"
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+        let data = Value::from(data_json.as_ref());
+        let projection = project_by_operation(
+            &data,
+            vec![],
+            &None,
+            operation_type_name,
+            &selections,
+            &None,
+            1000,
+        );
+        let projected_bytes = projection.unwrap();
+        let projected_str = String::from_utf8(projected_bytes).unwrap();
+        insta::assert_snapshot!(
+            projected_str,
+            @r#"{"data":{"contentPage":[{"contentBody":[{"section":{"contentChildren":[]}},{"section":{"contentChildren":[{"title":"contentBChild1"}]}}]}]}}"#
+        )
+    }
+
+    // This tests if the projection works correctly when there are conflicting selections without typenames
+    #[test]
+    fn project_conflicting_selections_2() {
+        let supergraph = parse_schema(CONFLICTING_SELECTIONS_SUPERGRAPH);
         let supergraph_state = SupergraphState::new(&supergraph);
         let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
         let schema_metadata = consumer_schema.schema_metadata();
@@ -705,7 +792,7 @@ fragment ContentBData on ContentB {
     title
   }
 }
-            "#,
+    "#,
         );
         let normalized_operation: NormalizedDocument =
             normalize_operation(&supergraph_state, &query, None).unwrap();
