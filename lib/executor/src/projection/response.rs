@@ -45,7 +45,7 @@ pub fn project_by_operation(
             &mut errors,
             selections,
             variable_values,
-            operation_type_name,
+            Some(operation_type_name),
             &mut buffer,
             &mut first,
         );
@@ -153,9 +153,8 @@ fn project_selection_set(
                     selections: Some(selections),
                 } => {
                     let mut first = true;
-                    let type_name = get_value_by_key(obj, TYPENAME_FIELD_NAME)
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(selection.field_type.as_str());
+                    let type_name =
+                        get_value_by_key(obj, TYPENAME_FIELD_NAME).and_then(|v| v.as_str());
                     project_selection_set_with_map(
                         obj,
                         errors,
@@ -193,7 +192,7 @@ fn project_selection_set(
 fn project_field(
     field_val: Option<&Value>,
     plan: &FieldProjectionPlan,
-    parent_type_name: &str,
+    parent_type_name: Option<&str>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     buffer: &mut Vec<u8>,
     first: &mut bool,
@@ -280,10 +279,14 @@ fn project_field(
                     if let Some(field_val) = field_val {
                         project_selection_set(field_val, errors, plan, variable_values, buffer);
                     } else if plan.field_name == TYPENAME_FIELD_NAME {
-                        // If the field is TYPENAME_FIELD, we should set it to the parent type name
-                        buffer.put(QUOTE);
-                        buffer.put(parent_type_name.as_bytes());
-                        buffer.put(QUOTE);
+                        if let Some(parent_type_name) = parent_type_name {
+                            // If the field is TYPENAME_FIELD, we should set it to the parent type name
+                            buffer.put(QUOTE);
+                            buffer.put(parent_type_name.as_bytes());
+                            buffer.put(QUOTE);
+                        } else {
+                            buffer.put(NULL);
+                        }
                     } else {
                         // If the field is not found in the object, set it to Null
                         buffer.put(NULL);
@@ -379,7 +382,7 @@ fn project_selection_set_with_map(
     errors: &mut Vec<GraphQLError>,
     plans: &IndexMap<String, FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-    parent_type_name: &str,
+    parent_type_name: Option<&str>,
     buffer: &mut Vec<u8>,
     first: &mut bool,
 ) {
@@ -400,7 +403,7 @@ fn project_selection_set_with_map(
 
 fn check<'a>(
     cond: &'a FieldProjectionCondition,
-    parent_type_name: &'a str,
+    parent_type_name: Option<&'a str>,
     field_type_name: Option<&'a str>,
     field_value: Option<&'a Value>,
     variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
@@ -464,18 +467,21 @@ fn check<'a>(
             Ok(())
         }
         FieldProjectionCondition::ParentTypeCondition(type_condition) => {
-            let is_valid = match type_condition {
-                TypeCondition::Exact(expected_type) => parent_type_name == expected_type,
-                TypeCondition::OneOf(possible_types) => possible_types.contains(parent_type_name),
-            };
-            if is_valid {
-                Ok(())
-            } else {
-                Err(FieldProjectionConditionError::InvalidParentType {
-                    expected: type_condition,
-                    found: parent_type_name,
-                })
+            if let Some(parent_type_name) = parent_type_name {
+                let is_valid = match type_condition {
+                    TypeCondition::Exact(expected_type) => parent_type_name == expected_type,
+                    TypeCondition::OneOf(possible_types) => {
+                        possible_types.contains(parent_type_name)
+                    }
+                };
+                if !is_valid {
+                    return Err(FieldProjectionConditionError::InvalidParentType {
+                        expected: type_condition,
+                        found: parent_type_name,
+                    });
+                }
             }
+            Ok(())
         }
         FieldProjectionCondition::FieldTypeCondition(type_condition) => {
             if let Some(field_type_name) = field_type_name {
