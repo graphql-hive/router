@@ -242,8 +242,7 @@ fn project_field(
     let typename_field = field_val
         .and_then(|value| value.as_object())
         .and_then(|obj| get_value_by_key(obj, TYPENAME_FIELD_NAME))
-        .and_then(|v| v.as_str())
-        .unwrap_or(&plan.field_type);
+        .and_then(|v| v.as_str());
 
     let res = check(
         &plan.conditions,
@@ -402,7 +401,7 @@ fn project_selection_set_with_map(
 fn check<'a>(
     cond: &'a FieldProjectionCondition,
     parent_type_name: &'a str,
-    field_type_name: &'a str,
+    field_type_name: Option<&'a str>,
     field_value: Option<&'a Value>,
     variable_values: &'a Option<HashMap<String, sonic_rs::Value>>,
 ) -> Result<(), FieldProjectionConditionError<'a>> {
@@ -479,19 +478,22 @@ fn check<'a>(
             }
         }
         FieldProjectionCondition::FieldTypeCondition(type_condition) => {
-            let is_valid = match type_condition {
-                TypeCondition::Exact(expected_type) => field_type_name == expected_type,
-                TypeCondition::OneOf(possible_types) => possible_types.contains(field_type_name),
-            };
+            if let Some(field_type_name) = field_type_name {
+                let is_valid = match type_condition {
+                    TypeCondition::Exact(expected_type) => field_type_name == expected_type,
+                    TypeCondition::OneOf(possible_types) => {
+                        possible_types.contains(field_type_name)
+                    }
+                };
 
-            if is_valid {
-                Ok(())
-            } else {
-                Err(FieldProjectionConditionError::InvalidFieldType {
-                    expected: type_condition,
-                    found: field_type_name,
-                })
+                if !is_valid {
+                    return Err(FieldProjectionConditionError::InvalidFieldType {
+                        expected: type_condition,
+                        found: field_type_name,
+                    });
+                }
             }
+            Ok(())
         }
         FieldProjectionCondition::EnumValuesCondition(enum_values) => {
             if let Some(Value::String(string_value)) = field_value {
@@ -625,21 +627,24 @@ interface IContent {
   id: ID!
 }
 
+interface IElementContent {
+  id: ID!
+}
+
 type ContentAChild {
   title: String!
 }
 
-type ContentA implements IContent {
+type ContentA implements IContent & IElementContent {
   id: ID!
   contentChildren: [ContentAChild!]!
 }
 
 type ContentBChild {
   title: String!
-  text: String!
 }
 
-type ContentB implements IContent {
+type ContentB implements IContent & IElementContent {
   id: ID!
   contentChildren: [ContentBChild!]!
 }
@@ -667,20 +672,29 @@ query {
   contentPage {
     contentBody {
       section {
-        ...ContentAData
-        ...ContentBData
+        ...SectionData
       }
     }
   }
 }
 
+fragment SectionData on IContent {
+    __typename
+    id
+    ...ContentAData
+    ...ContentBData
+}
+
 fragment ContentAData on ContentA {
+  id
   contentChildren {
     title
   }
+  __typename
 }
 
 fragment ContentBData on ContentB {
+  id
   contentChildren {
     title
   }
@@ -692,35 +706,34 @@ fragment ContentBData on ContentB {
         let (operation_type_name, selections) =
             FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
         let data_json = json!({
-            "__typename": "Query",
-            "contentPage": [
-                {
-                    "__typename": "ContentPage",
+            "contentPage": {
                     "contentBody": [
                         {
-                            "__typename": "ContentContainer",
                             "id": "container1",
                             "section": {
                                 "__typename": "ContentA",
+                                "id": "contentA1",
                                 "contentChildren": []
                             }
                         },
                         {
-                            "__typename": "ContentContainer",
                             "id": "container2",
                             "section": {
                                 "__typename": "ContentB",
+                                "id": "contentB1",
                                 "contentChildren": [
                                     {
-                                        "__typename": "ContentBChild",
                                         "title": "contentBChild1"
                                     }
                                 ]
                             }
+                        },
+                        {
+                            "id": "container3",
+                            "section": null
                         }
                     ]
                 }
-            ]
         });
         let data = Value::from(data_json.as_ref());
         let projection = project_by_operation(
@@ -734,7 +747,9 @@ fragment ContentBData on ContentB {
         );
         let projected_bytes = projection.unwrap();
         let projected_str = String::from_utf8(projected_bytes).unwrap();
-        let expected_response = r#"{"data":{"contentPage":[{"contentBody":[{"section":{"contentChildren":[]}},{"section":{"contentChildren":[{"title":"contentBChild1"}]}}]}]}}"#;
-        assert_eq!(projected_str, expected_response);
+        insta::assert_snapshot!(
+            projected_str,
+            @r#"{"data":{"contentPage":{"contentBody":[{"section":{"__typename":"ContentA","id":"contentA1","contentChildren":[]}},{"section":{"__typename":"ContentB","id":"contentB1","contentChildren":[{"title":"contentBChild1"}]}},{"section":null}]}}}"#
+        )
     }
 }
