@@ -56,7 +56,7 @@ tokio-util = "0.7.16"
 cookie = "0.18.1"
 arc-swap = "1.7.1"
 lasso2 = "0.8.2"
-ahash = "0.8.12"
+ahash = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
