@@ -30,12 +30,12 @@ thiserror = { workspace = true }
 xxhash-rust = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 dashmap = { workspace = true }
-ntex = { workspace = true }
 
 regex-automata = { workspace = true }
 
 ahash = { workspace = true }
 strum = { version = "0.27.2", features = ["derive"] }
+ntex = { workspace = true }
 
 hyper-tls = { version = "0.6.0", features = ["vendored"] }
 hyper-util = { version = "0.1.16", features = [
