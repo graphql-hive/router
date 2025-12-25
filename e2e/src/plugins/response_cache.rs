@@ -123,7 +123,6 @@ impl RouterPlugin for ResponseCachePlugin {
                     // Insert the ttl into extensions for client awareness
                     payload
                         .extensions
-                        .get_or_insert_default()
                         .insert("response_cache_ttl".to_string(), sonic_rs::json!(max_ttl));
 
                     // Set the cache with the decided ttl
@@ -134,6 +133,8 @@ impl RouterPlugin for ResponseCachePlugin {
                     } else {
                         trace!("Cached response for key: {} with TTL: {}", key, max_ttl);
                     }
+
+                    payload.add_extension("response_cache_ttl", max_ttl);
                 }
                 payload.cont()
             });

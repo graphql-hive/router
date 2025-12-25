@@ -60,7 +60,6 @@ use graphql_tools::{
     },
 };
 use hive_router_plan_executor::{
-    executors::http::HttpResponse,
     hooks::{
         on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
         on_graphql_validation::{
@@ -69,9 +68,10 @@ use hive_router_plan_executor::{
         on_supergraph_load::{OnSupergraphLoadEndHookPayload, OnSupergraphLoadStartHookPayload},
     },
     plugin_trait::{RouterPlugin, StartHookPayload, StartHookResult},
+    response::graphql_error::GraphQLError,
 };
 use serde::Deserialize;
-use sonic_rs::{json, JsonContainerTrait};
+use sonic_rs::JsonContainerTrait;
 
 #[derive(Deserialize)]
 pub struct OneOfPluginConfig {
@@ -100,13 +100,12 @@ impl RouterPlugin for OneOfPlugin {
     // 1. During validation step
     async fn on_graphql_validation<'exec>(
         &'exec self,
-        mut payload: OnGraphQLValidationStartHookPayload<'exec>,
+        payload: OnGraphQLValidationStartHookPayload<'exec>,
     ) -> OnGraphQLValidationStartHookResult<'exec> {
         let rule = OneOfValidationRule {
             one_of_types: self.one_of_types.read().unwrap().clone(),
         };
-        payload.add_validation_rule(Box::new(rule));
-        payload.cont()
+        payload.with_validation_rule(rule).cont()
     }
     // 2. During execution step
     async fn on_execute<'exec>(
@@ -125,26 +124,15 @@ impl RouterPlugin for OneOfPlugin {
                     if let Some(value) = variable_values.get(var_name).and_then(|v| v.as_object()) {
                         let keys_num = value.len();
                         if keys_num > 1 {
-                            let err_msg = format!(
-                                "Variable '${}' of input object type '{}' with @oneOf directive has multiple fields set: {:?}. Only one field must be set.",
-                                var_name,
-                                variable_named_type,
-                                keys_num
-                            );
-                            return payload.end_response(HttpResponse {
-                                body: sonic_rs::to_vec(&json!({
-                                    "errors": [{
-                                        "message": err_msg,
-                                        "extensions": {
-                                            "code": "TOO_MANY_FIELDS_SET_IN_ONEOF"
-                                        }
-                                    }]
-                                }))
-                                .unwrap()
-                                .into(),
-                                headers: Default::default(),
-                                status: http::StatusCode::BAD_REQUEST,
-                            });
+                            return payload.end_graphql_error(GraphQLError::from_message_and_code(
+                                format!(
+                                    "Variable '${}' of input object type '{}' with @oneOf directive has multiple fields set: {:?}. Only one field must be set.",
+                                    var_name,
+                                    variable_named_type,
+                                    keys_num
+                                ),
+                                "TOO_MANY_FIELDS_SET_IN_ONEOF",
+                            ));
                         }
                     }
                 }

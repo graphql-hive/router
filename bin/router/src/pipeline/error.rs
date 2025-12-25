@@ -3,7 +3,7 @@ use std::sync::Arc;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_plan_executor::{
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
-    response::graphql_error::{GraphQLError, GraphQLErrorExtensions},
+    response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
     ast::normalization::error::NormalizationError, planner::PlannerError,
@@ -168,10 +168,7 @@ impl From<PipelineError> for Response {
         let code = val.error.graphql_error_code();
         let message = val.error.graphql_error_message();
 
-        let graphql_error = GraphQLError::from_message_and_extensions(
-            message,
-            GraphQLErrorExtensions::new_from_code(code),
-        );
+        let graphql_error = GraphQLError::from_message_and_code(message, code);
 
         let result = FailedExecutionResult {
             errors: Some(vec![graphql_error]),

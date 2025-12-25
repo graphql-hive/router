@@ -1,13 +1,11 @@
 // Same with https://github.com/apollographql/router/blob/dev/examples/forbid-anonymous-operations/rust/src/forbid_anonymous_operations.rs
 
-use http::StatusCode;
 use serde::Deserialize;
-use serde_json::json;
 
 use hive_router_plan_executor::{
-    executors::http::HttpResponse,
     hooks::on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
     plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
+    response::graphql_error::GraphQLError,
 };
 
 #[derive(Deserialize)]
@@ -43,21 +41,10 @@ impl RouterPlugin for ForbidAnonymousOperationsPlugin {
                 tracing::error!("Operation is not allowed!");
 
                 // Prepare an HTTP 400 response with a GraphQL error message
-                let body = json!({
-                    "errors": [
-                        {
-                            "message": "Anonymous operations are not allowed",
-                            "extensions": {
-                                "code": "ANONYMOUS_OPERATION"
-                            }
-                        }
-                    ]
-                });
-                return payload.end_response(HttpResponse {
-                    body: body.to_string().into(),
-                    headers: http::HeaderMap::new(),
-                    status: StatusCode::BAD_REQUEST,
-                });
+                return payload.end_graphql_error(GraphQLError::from_message_and_code(
+                    "Anonymous operations are not allowed".into(),
+                    "ANONYMOUS_OPERATION",
+                ));
             }
             // we're good to go!
             tracing::info!("operation is allowed!");

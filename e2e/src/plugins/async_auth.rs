@@ -1,12 +1,11 @@
 // From https://github.com/apollographql/router/blob/dev/examples/async-auth/rust/src/allow_client_id_from_file.rs
 use serde::Deserialize;
-use sonic_rs::json;
 use std::path::PathBuf;
 
 use hive_router_plan_executor::{
-    executors::http::HttpResponse,
     hooks::on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
     plugin_trait::{RouterPlugin, StartHookPayload},
+    response::graphql_error::GraphQLError,
 };
 
 #[derive(Deserialize)]
@@ -58,68 +57,27 @@ impl RouterPlugin for AllowClientIdFromFilePlugin {
 
                         if !allowed_clients.contains(&client_id.to_string()) {
                             // Prepare an HTTP 403 response with a GraphQL error message
-                            let body = json!(
-                                {
-                                    "errors": [
-                                        {
-                                            "message": "client-id is not allowed",
-                                            "extensions": {
-                                                "code": "UNAUTHORIZED_CLIENT_ID"
-                                            }
-                                        }
-                                    ]
-                                }
-                            );
-                            return payload.end_response(HttpResponse {
-                                body: sonic_rs::to_vec(&body).unwrap_or_default().into(),
-                                headers: http::HeaderMap::new(),
-                                status: http::StatusCode::FORBIDDEN,
-                            });
+                            return payload.end_graphql_error(GraphQLError::from_message_and_code(
+                                "client-id is not allowed".into(),
+                                "UNAUTHORIZED_CLIENT_ID",
+                            ));
                         }
                     }
                     Err(_not_a_string_error) => {
                         let message = format!("'{}' value is not a string", &self.header_key);
                         tracing::error!(message);
-                        let body = json!(
-                            {
-                                "errors": [
-                                    {
-                                        "message": message,
-                                        "extensions": {
-                                            "code": "BAD_CLIENT_ID"
-                                        }
-                                    }
-                                ]
-                            }
-                        );
-                        return payload.end_response(HttpResponse {
-                            body: sonic_rs::to_vec(&body).unwrap_or_default().into(),
-                            headers: http::HeaderMap::new(),
-                            status: http::StatusCode::BAD_REQUEST,
-                        });
+                        return payload.end_graphql_error(GraphQLError::from_message_and_code(
+                            message,
+                            "BAD_CLIENT_ID",
+                        ));
                     }
                 }
             }
             None => {
                 let message = format!("Missing '{}' header", &self.header_key);
                 tracing::error!(message);
-                let body = json!(
-                    {
-                        "errors": [
-                            {
-                                "message": message,
-                                "extensions": {
-                                    "code": "AUTH_ERROR"
-                                }
-                            }
-                        ]
-                    }
-                );
-                return payload.end_response(HttpResponse {
-                    body: sonic_rs::to_vec(&body).unwrap_or_default().into(),
-                    headers: http::HeaderMap::new(),
-                    status: http::StatusCode::UNAUTHORIZED,
-                });
+                return payload
+                    .end_graphql_error(GraphQLError::from_message_and_code(message, "AUTH_ERROR"));
             }
         }
         payload.cont()

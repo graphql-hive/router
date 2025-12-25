@@ -36,7 +36,7 @@ impl RouterPlugin for SubgraphResponseCachePlugin {
     }
     async fn on_subgraph_execute<'exec>(
         &'exec self,
-        mut payload: OnSubgraphExecuteStartHookPayload<'exec>,
+        payload: OnSubgraphExecuteStartHookPayload<'exec>,
     ) -> OnSubgraphExecuteStartHookResult<'exec> {
         let key = format!(
             "subgraph_response_cache:{}:{:?}",
@@ -45,8 +45,9 @@ impl RouterPlugin for SubgraphResponseCachePlugin {
         if let Some(cached_response) = self.cache.get(&key) {
             // Here payload.response is Option
             // So it is bypassing the actual subgraph request
-            payload.execution_result = Some(cached_response.clone());
-            return payload.cont();
+            return payload
+                .with_execution_result(cached_response.to_owned())
+                .cont();
         }
         payload.on_end(move |payload: OnSubgraphExecuteEndHookPayload| {
             // Here payload.response is not Option

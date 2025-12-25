@@ -10,7 +10,15 @@ pub struct OnGraphQLParseStartHookPayload<'exec> {
     pub router_http_request: &'exec RouterHttpRequest<'exec>,
     pub context: &'exec PluginContext,
     pub graphql_params: &'exec GraphQLParams,
+    // Override
     pub document: Option<Document>,
+}
+
+impl<'exec> OnGraphQLParseStartHookPayload<'exec> {
+    pub fn with_parsed_document(mut self, document: Document) -> Self {
+        self.document = Some(document);
+        self
+    }
 }
 
 impl<'exec> StartHookPayload<OnGraphQLParseEndHookPayload>

@@ -4,18 +4,16 @@ use bytes::Bytes;
 use hive_router_plan_executor::{
     executors::http::HttpResponse,
     hooks::{
-        on_graphql_params::{
-            GraphQLParams, OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult,
-        },
+        on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
         on_subgraph_http_request::{
             OnSubgraphHttpRequestHookPayload, OnSubgraphHttpRequestHookResult,
         },
     },
     plugin_trait::{RouterPlugin, StartHookPayload},
+    response::graphql_error::GraphQLError,
 };
 use multer::Multipart;
 use serde::Deserialize;
-use serde_json::json;
 use tracing::error;
 
 #[derive(Deserialize)]
@@ -68,9 +66,8 @@ impl RouterPlugin for MultipartPlugin {
                         let data = field.bytes().await.unwrap();
                         match field_name.as_str() {
                             "operations" => {
-                                let graphql_params: GraphQLParams =
-                                    sonic_rs::from_slice(&data).unwrap();
-                                payload.graphql_params = Some(graphql_params);
+                                payload = payload
+                                    .with_graphql_params(sonic_rs::from_slice(&data).unwrap());
                             }
                             "map" => {
                                 let file_map: HashMap<String, Vec<String>> =
@@ -103,7 +100,7 @@ impl RouterPlugin for MultipartPlugin {
 
     async fn on_subgraph_http_request<'exec>(
         &'exec self,
-        mut payload: OnSubgraphHttpRequestHookPayload<'exec>,
+        payload: OnSubgraphHttpRequestHookPayload<'exec>,
     ) -> OnSubgraphHttpRequestHookResult<'exec> {
         if let Some(variables) = &payload.execution_request.variables {
             let multipart_ctx = payload.context.get_ref::<MultipartContext>();
@@ -142,7 +139,7 @@ impl RouterPlugin for MultipartPlugin {
                             form = form.part(file_ref, part);
                         }
                     }
-                    let resp = reqwest::Client::new()
+                    let resp: Result<reqwest::Response, reqwest::Error> = reqwest::Client::new()
                         .post(payload.endpoint.to_string())
                         // Using query as endpoint URL
                         .multipart(form)
@@ -150,24 +147,19 @@ impl RouterPlugin for MultipartPlugin {
                         .await;
                     match resp {
                         Ok(resp) => {
-                            payload.response = Some(HttpResponse {
-                                status: resp.status(),
-                                headers: resp.headers().clone(),
-                                body: resp.bytes().await.unwrap(),
-                            });
+                            return payload
+                                .with_response(HttpResponse {
+                                    status: resp.status(),
+                                    headers: resp.headers().clone(),
+                                    body: resp.bytes().await.unwrap(),
+                                })
+                                .cont();
                         }
                         Err(err) => {
                             error!("Failed to send multipart request to subgraph: {}", err);
-                            let body = json!({
-                                "errors": [{
-                                    "message": format!("Failed to send multipart request to subgraph: {}", err)
-                                }]
-                            });
-                            return payload.end_response(HttpResponse {
-                                status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-                                headers: reqwest::header::HeaderMap::new(),
-                                body: serde_json::to_vec(&body).unwrap().into(),
-                            });
+                            return payload.end_graphql_error(GraphQLError::from(
+                                "Failed to send multipart request to subgraph",
+                            ));
                         }
                     }
                 }

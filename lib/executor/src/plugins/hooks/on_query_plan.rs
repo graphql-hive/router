@@ -16,8 +16,16 @@ pub struct OnQueryPlanStartHookPayload<'exec> {
     pub filtered_operation_for_plan: &'exec OperationDefinition,
     pub planner_override_context: PlannerOverrideContext,
     pub cancellation_token: &'exec CancellationToken,
-    pub query_plan: Option<QueryPlan>,
     pub planner: &'exec Planner,
+    // Override
+    pub query_plan: Option<QueryPlan>,
+}
+
+impl<'exec> OnQueryPlanStartHookPayload<'exec> {
+    pub fn with_query_plan(mut self, query_plan: QueryPlan) -> Self {
+        self.query_plan = Some(query_plan);
+        self
+    }
 }
 
 impl<'exec> StartHookPayload<OnQueryPlanEndHookPayload> for OnQueryPlanStartHookPayload<'exec> {}

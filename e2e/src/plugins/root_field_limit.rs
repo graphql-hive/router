@@ -8,10 +8,8 @@ use graphql_tools::{
 };
 use hive_router_query_planner::ast::selection_item::SelectionItem;
 use serde::Deserialize;
-use sonic_rs::json;
 
 use hive_router_plan_executor::{
-    executors::http::HttpResponse,
     hooks::{
         on_graphql_validation::{
             OnGraphQLValidationStartHookPayload, OnGraphQLValidationStartHookResult,
@@ -19,6 +17,7 @@ use hive_router_plan_executor::{
         on_query_plan::{OnQueryPlanStartHookPayload, OnQueryPlanStartHookResult},
     },
     plugin_trait::{RouterPlugin, StartHookPayload},
+    response::graphql_error::GraphQLError,
 };
 
 // This example shows two ways of limiting the number of root fields in a query:
@@ -42,13 +41,13 @@ impl RouterPlugin for RootFieldLimitPlugin {
     // Using validation step
     async fn on_graphql_validation<'exec>(
         &'exec self,
-        mut payload: OnGraphQLValidationStartHookPayload<'exec>,
+        payload: OnGraphQLValidationStartHookPayload<'exec>,
     ) -> OnGraphQLValidationStartHookResult<'exec> {
         let rule = RootFieldLimitRule {
             max_root_fields: self.max_root_fields,
         };
-        payload.add_validation_rule(Box::new(rule));
-        payload.cont()
+
+        payload.with_validation_rule(rule).cont()
     }
     // Or during query planning
     async fn on_query_plan<'exec>(
@@ -71,20 +70,11 @@ impl RouterPlugin for RootFieldLimitPlugin {
                             cnt, self.max_root_fields
                         );
                         tracing::warn!("{}", err_msg);
-                        let body = json!({
-                            "errors": [{
-                                "message": err_msg,
-                                "extensions": {
-                                    "code": "TOO_MANY_ROOT_FIELDS"
-                                }
-                            }]
-                        });
                         // Return error
-                        return payload.end_response(HttpResponse {
-                            body: sonic_rs::to_vec(&body).unwrap_or_default().into(),
-                            headers: http::HeaderMap::new(),
-                            status: http::StatusCode::PAYLOAD_TOO_LARGE,
-                        });
+                        return payload.end_graphql_error(GraphQLError::from_message_and_code(
+                            err_msg,
+                            "TOO_MANY_ROOT_FIELD",
+                        ));
                     }
                 }
                 SelectionItem::InlineFragment(_) => {

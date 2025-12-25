@@ -72,12 +72,17 @@ impl RouterPlugin for PropagateStatusCodePlugin {
         &'exec self,
         payload: OnHttpRequestHookPayload<'exec>,
     ) -> OnHttpRequestHookResult<'exec> {
-        payload.on_end(|mut payload| {
+        payload.on_end(|payload| {
             // Checking if there is a context entry
             let ctx = payload.context.get_ref::<PropagateStatusCodeCtx>();
             if let Some(ctx) = ctx {
                 // Update the HTTP response status code
-                *payload.response.response_mut().status_mut() = ctx.status_code;
+                return payload
+                    .map_response(|mut response| {
+                        *response.response_mut().status_mut() = ctx.status_code;
+                        response
+                    })
+                    .cont();
             }
             payload.cont()
         })

@@ -19,6 +19,13 @@ pub struct OnSubgraphExecuteStartHookPayload<'exec> {
     pub execution_result: Option<HttpResponse>,
 }
 
+impl<'exec> OnSubgraphExecuteStartHookPayload<'exec> {
+    pub fn with_execution_result(mut self, execution_result: HttpResponse) -> Self {
+        self.execution_result = Some(execution_result);
+        self
+    }
+}
+
 impl<'exec> StartHookPayload<OnSubgraphExecuteEndHookPayload<'exec>>
     for OnSubgraphExecuteStartHookPayload<'exec>
 {

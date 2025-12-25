@@ -58,7 +58,7 @@ pub struct QueryPlanExecutionContext<'exec, 'req> {
     pub projection_plan: &'exec Vec<FieldProjectionPlan>,
     pub headers_plan: &'exec HeaderRulesPlan,
     pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
-    pub extensions: Option<HashMap<String, sonic_rs::Value>>,
+    pub extensions: HashMap<String, sonic_rs::Value>,
     pub client_request: &'exec ClientRequestDetails<'exec, 'req>,
     pub introspection_context: &'exec IntrospectionContext<'exec, 'static>,
     pub operation_type_name: &'exec str,

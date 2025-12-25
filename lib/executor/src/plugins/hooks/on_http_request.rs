@@ -20,6 +20,16 @@ pub struct OnHttpResponseHookPayload<'req> {
     pub context: &'req PluginContext,
 }
 
+impl<'req> OnHttpResponseHookPayload<'req> {
+    pub fn map_response<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(web::WebResponse) -> web::WebResponse,
+    {
+        self.response = f(self.response);
+        self
+    }
+}
+
 impl<'req> EndHookPayload for OnHttpResponseHookPayload<'req> {}
 
 pub type OnHttpResponseHookResult<'req> = EndHookResult<OnHttpResponseHookPayload<'req>>;

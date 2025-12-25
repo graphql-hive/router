@@ -54,15 +54,15 @@ pub async fn execute_plan(
         }
     }
 
-    let extensions = if expose_query_plan == ExposeQueryPlanMode::Yes
+    let mut extensions = HashMap::new();
+
+    if expose_query_plan == ExposeQueryPlanMode::Yes
         || expose_query_plan == ExposeQueryPlanMode::DryRun
     {
-        Some(HashMap::from_iter([(
-            "queryPlan".to_string(),
+        extensions.insert(
+            "queryPlan".into(),
             sonic_rs::to_value(&planned_request.query_plan_payload).unwrap(),
-        )]))
-    } else {
-        None
+        );
     };
 
     let introspection_context = IntrospectionContext {

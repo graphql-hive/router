@@ -1,13 +1,11 @@
 use dashmap::DashMap;
-use http::StatusCode;
 use serde::Deserialize;
-use serde_json::json;
 use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 
 use hive_router_plan_executor::{
-    executors::http::HttpResponse,
     hooks::on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
     plugin_trait::{EndHookPayload, RouterPlugin, StartHookPayload},
+    response::graphql_error::GraphQLError,
 };
 
 #[derive(Deserialize)]
@@ -49,21 +47,10 @@ impl RouterPlugin for APQPlugin {
                 match persisted_query_ext.get(&"version").and_then(|v| v.as_i64()) {
                     Some(1) => {}
                     _ => {
-                        let body = json!({
-                            "errors": [
-                                {
-                                    "message": "Unsupported persisted query version",
-                                    "extensions": {
-                                        "code": "UNSUPPORTED_PERSISTED_QUERY_VERSION"
-                                    }
-                                }
-                            ]
-                        });
-                        return payload.end_response(HttpResponse {
-                            body: body.to_string().into_bytes().into(),
-                            status: StatusCode::BAD_REQUEST,
-                            headers: http::HeaderMap::new(),
-                        });
+                        return payload.end_graphql_error(GraphQLError::from_message_and_code(
+                            "Unsupported persisted query version".into(),
+                            "UNSUPPORTED_PERSISTED_QUERY_VERSION",
+                        ));
                     }
                 }
                 let sha256_hash = match persisted_query_ext
@@ -72,21 +59,10 @@ impl RouterPlugin for APQPlugin {
                 {
                     Some(h) => h,
                     None => {
-                        let body = json!({
-                            "errors": [
-                                {
-                                    "message": "Missing sha256Hash in persisted query",
-                                    "extensions": {
-                                        "code": "MISSING_PERSISTED_QUERY_HASH"
-                                    }
-                                }
-                            ]
-                        });
-                        return payload.end_response(HttpResponse {
-                            body: body.to_string().into_bytes().into(),
-                            status: StatusCode::BAD_REQUEST,
-                            headers: http::HeaderMap::new(),
-                        });
+                        return payload.end_graphql_error(GraphQLError::from_message_and_code(
+                            "Missing sha256Hash in persisted query".into(),
+                            "MISSING_PERSISTED_QUERY_HASH",
+                        ));
                     }
                 };
                 if let Some(query_param) = &payload.graphql_params.query {
@@ -99,21 +75,10 @@ impl RouterPlugin for APQPlugin {
                         // Update the graphql_params with the cached query
                         payload.graphql_params.query = Some(cached_query.value().to_string());
                     } else {
-                        let body = json!({
-                            "errors": [
-                                {
-                                    "message": "PersistedQueryNotFound",
-                                    "extensions": {
-                                        "code": "PERSISTED_QUERY_NOT_FOUND"
-                                    }
-                                }
-                            ]
-                        });
-                        return payload.end_response(HttpResponse {
-                            body: body.to_string().into_bytes().into(),
-                            status: StatusCode::NOT_FOUND,
-                            headers: http::HeaderMap::new(),
-                        });
+                        return payload.end_graphql_error(GraphQLError::from_message_and_code(
+                            "PersistedQueryNotFound".into(),
+                            "PERSISTED_QUERY_NOT_FOUND",
+                        ));
                     }
                 }
             }

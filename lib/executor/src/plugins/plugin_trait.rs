@@ -1,4 +1,6 @@
-use serde::de::DeserializeOwned;
+use http::StatusCode;
+use serde::{de::DeserializeOwned, Serialize};
+use sonic_rs::json;
 
 use crate::{
     executors::http::HttpResponse,
@@ -19,6 +21,7 @@ use crate::{
         },
         on_supergraph_load::{OnSupergraphLoadStartHookPayload, OnSupergraphLoadStartHookResult},
     },
+    response::graphql_error::GraphQLError,
 };
 
 pub struct StartHookResult<'exec, TStartPayload, TEndPayload> {
@@ -58,6 +61,39 @@ where
         }
     }
 
+    fn end_response_body<'exec, T: Serialize>(
+        self,
+        body: T,
+    ) -> StartHookResult<'exec, Self, TEndPayload> {
+        let http_response = HttpResponse {
+            status: StatusCode::BAD_REQUEST,
+            headers: Default::default(),
+            body: sonic_rs::to_vec(&body).unwrap().into(),
+        };
+        StartHookResult {
+            payload: self,
+            control_flow: StartControlFlow::EndResponse(http_response),
+        }
+    }
+
+    fn end_graphql_error<'exec>(
+        self,
+        error: GraphQLError,
+    ) -> StartHookResult<'exec, Self, TEndPayload> {
+        let body = json!({
+            "errors": [error]
+        });
+        let http_response = HttpResponse {
+            status: StatusCode::BAD_REQUEST,
+            headers: Default::default(),
+            body: sonic_rs::to_vec(&body).unwrap().into(),
+        };
+        StartHookResult {
+            payload: self,
+            control_flow: StartControlFlow::EndResponse(http_response),
+        }
+    }
+
     fn on_end<'exec, F>(self, f: F) -> StartHookResult<'exec, Self, TEndPayload>
     where
         F: FnOnce(TEndPayload) -> EndHookResult<TEndPayload> + Send + 'exec,
@@ -94,6 +130,33 @@ where
         EndHookResult {
             payload: self,
             control_flow: EndControlFlow::EndResponse(output),
+        }
+    }
+
+    fn end_response_body<T: Serialize>(self, body: T) -> EndHookResult<Self> {
+        let http_response = HttpResponse {
+            status: StatusCode::OK,
+            headers: Default::default(),
+            body: sonic_rs::to_vec(&body).unwrap().into(),
+        };
+        EndHookResult {
+            payload: self,
+            control_flow: EndControlFlow::EndResponse(http_response),
+        }
+    }
+
+    fn end_graphql_error(self, error: GraphQLError) -> EndHookResult<Self> {
+        let body = json!({
+            "errors": [error]
+        });
+        let http_response = HttpResponse {
+            status: StatusCode::BAD_REQUEST,
+            headers: Default::default(),
+            body: sonic_rs::to_vec(&body).unwrap().into(),
+        };
+        EndHookResult {
+            payload: self,
+            control_flow: EndControlFlow::EndResponse(http_response),
         }
     }
 }

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use bytes::Bytes;
 use hive_router_plan_executor::{
     executors::http::HttpResponse,
     hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
@@ -117,7 +118,7 @@ pub struct ApolloSandboxInitialStateOptions {
 }
 
 pub struct ApolloSandboxPlugin {
-    serialized_options: String,
+    http_response: HttpResponse,
 }
 
 impl RouterPlugin for ApolloSandboxPlugin {
@@ -127,21 +128,8 @@ impl RouterPlugin for ApolloSandboxPlugin {
     }
     fn from_config(config: ApolloSandboxOptions) -> Option<Self> {
         if config.enabled {
-            Some(ApolloSandboxPlugin {
-                serialized_options: sonic_rs::to_string(&config)
-                    .unwrap_or_else(|_| "{}".to_string()),
-            })
-        } else {
-            None
-        }
-    }
-    fn on_http_request<'req>(
-        &'req self,
-        payload: OnHttpRequestHookPayload<'req>,
-    ) -> OnHttpRequestHookResult<'req> {
-        if payload.router_http_request.path() == "/apollo-sandbox" {
-            let config =
-                sonic_rs::to_string(&self.serialized_options).unwrap_or_else(|_| "{}".to_string());
+            let serialized_options =
+                sonic_rs::to_string(&config).unwrap_or_else(|_| "{}".to_string());
             let html = format!(
                 r#"
                     <div style=\"width: 100%; height: 100%;\" id=\"embedded-sandbox\"></div>
@@ -152,15 +140,27 @@ impl RouterPlugin for ApolloSandboxPlugin {
                         new window.EmbeddedSandbox(opts);
                     </script>
                 "#,
-                config
+                serialized_options
             );
+            let html_bytes = Bytes::from(html);
             let mut headers = HeaderMap::new();
             headers.insert("Content-Type", "text/html".parse().unwrap());
-            return payload.end_response(HttpResponse {
-                body: html.into_bytes().into(),
+            let http_response = HttpResponse {
+                body: html_bytes,
                 headers,
                 status: StatusCode::OK,
-            });
+            };
+            Some(ApolloSandboxPlugin { http_response })
+        } else {
+            None
+        }
+    }
+    fn on_http_request<'req>(
+        &'req self,
+        payload: OnHttpRequestHookPayload<'req>,
+    ) -> OnHttpRequestHookResult<'req> {
+        if payload.router_http_request.path() == "/apollo-sandbox" {
+            return payload.end_response(self.http_response.to_owned());
         }
         payload.cont()
     }

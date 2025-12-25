@@ -102,6 +102,13 @@ pub struct OnGraphQLParamsStartHookPayload<'exec> {
     pub graphql_params: Option<GraphQLParams>,
 }
 
+impl<'exec> OnGraphQLParamsStartHookPayload<'exec> {
+    pub fn with_graphql_params(mut self, graphql_params: GraphQLParams) -> Self {
+        self.graphql_params = Some(graphql_params);
+        self
+    }
+}
+
 impl<'exec> StartHookPayload<OnGraphQLParamsEndHookPayload<'exec>>
     for OnGraphQLParamsStartHookPayload<'exec>
 {
