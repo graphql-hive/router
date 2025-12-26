@@ -9,7 +9,8 @@ use bollard::{
 use futures_util::TryStreamExt;
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    plugins::plugins_service::PluginService, PluginRegistry, RouterSharedState, SchemaState,
+    invoke_shutdown_hooks, plugins::plugins_service::PluginService, PluginRegistry,
+    RouterSharedState, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
 use ntex::{
@@ -174,10 +175,11 @@ impl<S> TestRouterApp<S> {
         self.app.call(req).await
     }
 
-    pub async fn flush_internal_cache(&self) {
+    pub async fn shutdown(&self) {
         self.schema_state.normalize_cache.run_pending_tasks().await;
         self.schema_state.plan_cache.run_pending_tasks().await;
         self.schema_state.validate_cache.run_pending_tasks().await;
+        invoke_shutdown_hooks(&self.shared_state).await;
     }
 }
 

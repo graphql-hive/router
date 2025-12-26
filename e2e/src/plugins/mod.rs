@@ -9,3 +9,4 @@ pub mod propagate_status_code;
 pub mod response_cache;
 pub mod root_field_limit;
 pub mod subgraph_response_cache;
+pub mod usage_reporting;

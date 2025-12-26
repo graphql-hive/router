@@ -101,6 +101,8 @@ pub async fn router_entrypoint(
     let (shared_state, schema_state) =
         configure_app_from_config(router_config, &mut bg_tasks_manager, plugin_registry).await?;
 
+    let shared_state_clone = shared_state.clone();
+
     let maybe_error = web::HttpServer::new(move || {
         web::App::new()
             .wrap(PluginService)
@@ -114,10 +116,21 @@ pub async fn router_entrypoint(
     .await
     .map_err(|err| err.into());
 
-    info!("server stopped, clearning background tasks");
+    info!("server stopped, clearing background tasks");
     bg_tasks_manager.shutdown();
 
+    invoke_shutdown_hooks(&shared_state_clone).await;
+
     maybe_error
+}
+
+pub async fn invoke_shutdown_hooks(shared_state: &RouterSharedState) {
+    if let Some(plugins) = &shared_state.plugins {
+        info!("invoking plugin shutdown hooks");
+        for plugin in plugins.iter() {
+            plugin.on_shutdown().await;
+        }
+    }
 }
 
 pub async fn configure_app_from_config(

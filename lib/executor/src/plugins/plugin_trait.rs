@@ -233,6 +233,7 @@ pub trait RouterPlugin: Send + Sync + 'static {
     ) -> OnSupergraphLoadStartHookResult<'exec> {
         start_payload.cont()
     }
+    async fn on_shutdown<'exec>(&'exec self) {}
 }
 
 #[async_trait::async_trait]
@@ -273,6 +274,7 @@ pub trait DynRouterPlugin: Send + Sync + 'static {
         &'exec self,
         start_payload: OnSupergraphLoadStartHookPayload,
     ) -> OnSupergraphLoadStartHookResult<'exec>;
+    async fn on_shutdown<'exec>(&'exec self);
 }
 
 #[async_trait::async_trait]
@@ -333,6 +335,9 @@ where
         start_payload: OnSupergraphLoadStartHookPayload,
     ) -> OnSupergraphLoadStartHookResult<'exec> {
         RouterPlugin::on_supergraph_reload(self, start_payload)
+    }
+    async fn on_shutdown<'exec>(&'exec self) {
+        RouterPlugin::on_shutdown(self).await;
     }
 }
 
