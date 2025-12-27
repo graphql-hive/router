@@ -212,30 +212,6 @@ pub struct Executor<'exec, 'req> {
     plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
 }
 
-struct ConcurrencyScope<'exec, T> {
-    jobs: FuturesUnordered<BoxFuture<'exec, T>>,
-}
-
-impl<'exec, T> ConcurrencyScope<'exec, T> {
-    fn new() -> Self {
-        Self {
-            jobs: FuturesUnordered::new(),
-        }
-    }
-
-    fn spawn(&mut self, future: BoxFuture<'exec, T>) {
-        self.jobs.push(future);
-    }
-
-    async fn join_all(mut self) -> Vec<T> {
-        let mut results = Vec::with_capacity(self.jobs.len());
-        while let Some(result) = self.jobs.next().await {
-            results.push(result);
-        }
-        results
-    }
-}
-
 struct FetchJob {
     fetch_node_id: i64,
     subgraph_name: String,
@@ -350,16 +326,14 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         ctx: &mut ExecutionContext<'exec>,
         node: &ParallelNode,
     ) -> Result<(), PlanExecutionError> {
-        let mut scope = ConcurrencyScope::new();
+        let mut scope = FuturesUnordered::new();
 
         for child in &node.nodes {
             let job_future = self.prepare_job_future(child, &ctx.final_response);
-            scope.spawn(job_future);
+            scope.push(job_future);
         }
 
-        let results = scope.join_all().await;
-
-        for result in results {
+        while let Some(result) = scope.next().await {
             match result {
                 Ok(job) => {
                     self.process_job_result(ctx, job)?;
