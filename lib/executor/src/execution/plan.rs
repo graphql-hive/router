@@ -329,8 +329,8 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         let mut scope = FuturesUnordered::new();
 
         for child in &node.nodes {
-            let job_future = self.prepare_job_future(child, &ctx.final_response);
-            scope.push(job_future);
+            let fut = self.prepare_job_future(child, &ctx.final_response);
+            scope.push(fut);
         }
 
         while let Some(result) = scope.next().await {
