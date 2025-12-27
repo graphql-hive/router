@@ -33,7 +33,7 @@ pub struct StartHookResult<'exec, TStartPayload, TEndPayload> {
 
 pub enum StartControlFlow<'exec, TEndPayload> {
     Continue,
-    EndResponse(HttpResponse),
+    EndResponse(Arc<HttpResponse>),
     OnEnd(Box<dyn FnOnce(TEndPayload) -> EndHookResult<TEndPayload> + Send + 'exec>),
 }
 
@@ -55,7 +55,7 @@ where
 
     fn end_response<'exec>(
         self,
-        output: HttpResponse,
+        output: Arc<HttpResponse>,
     ) -> StartHookResult<'exec, Self, TEndPayload> {
         StartHookResult {
             payload: self,
@@ -74,7 +74,7 @@ where
         };
         StartHookResult {
             payload: self,
-            control_flow: StartControlFlow::EndResponse(http_response),
+            control_flow: StartControlFlow::EndResponse(http_response.into()),
         }
     }
 
@@ -92,7 +92,7 @@ where
         };
         StartHookResult {
             payload: self,
-            control_flow: StartControlFlow::EndResponse(http_response),
+            control_flow: StartControlFlow::EndResponse(http_response.into()),
         }
     }
 
@@ -114,7 +114,7 @@ pub struct EndHookResult<TEndPayload> {
 
 pub enum EndControlFlow {
     Continue,
-    EndResponse(HttpResponse),
+    EndResponse(Arc<HttpResponse>),
 }
 
 pub trait EndHookPayload
@@ -128,7 +128,7 @@ where
         }
     }
 
-    fn end_response(self, output: HttpResponse) -> EndHookResult<Self> {
+    fn end_response(self, output: Arc<HttpResponse>) -> EndHookResult<Self> {
         EndHookResult {
             payload: self,
             control_flow: EndControlFlow::EndResponse(output),
@@ -143,7 +143,7 @@ where
         };
         EndHookResult {
             payload: self,
-            control_flow: EndControlFlow::EndResponse(http_response),
+            control_flow: EndControlFlow::EndResponse(http_response.into()),
         }
     }
 
@@ -158,7 +158,7 @@ where
         };
         EndHookResult {
             payload: self,
-            control_flow: EndControlFlow::EndResponse(http_response),
+            control_flow: EndControlFlow::EndResponse(http_response.into()),
         }
     }
 }
@@ -217,10 +217,10 @@ pub trait RouterPlugin: Send + Sync + 'static {
     ) -> OnExecuteStartHookResult<'exec> {
         start_payload.cont()
     }
-    async fn on_subgraph_execute<'exec>(
+    async fn on_subgraph_execute<'exec, 'req>(
         &'exec self,
-        start_payload: OnSubgraphExecuteStartHookPayload<'exec>,
-    ) -> OnSubgraphExecuteStartHookResult<'exec> {
+        start_payload: OnSubgraphExecuteStartHookPayload<'exec, 'req>,
+    ) -> OnSubgraphExecuteStartHookResult<'exec, 'req> {
         start_payload.cont()
     }
     async fn on_subgraph_http_request<'exec>(
@@ -264,10 +264,10 @@ pub trait DynRouterPlugin: Send + Sync + 'static {
         &'exec self,
         start_payload: OnExecuteStartHookPayload<'exec>,
     ) -> OnExecuteStartHookResult<'exec>;
-    async fn on_subgraph_execute<'exec>(
+    async fn on_subgraph_execute<'exec, 'req>(
         &'exec self,
-        start_payload: OnSubgraphExecuteStartHookPayload<'exec>,
-    ) -> OnSubgraphExecuteStartHookResult<'exec>;
+        start_payload: OnSubgraphExecuteStartHookPayload<'exec, 'req>,
+    ) -> OnSubgraphExecuteStartHookResult<'exec, 'req>;
     async fn on_subgraph_http_request<'exec>(
         &'exec self,
         start_payload: OnSubgraphHttpRequestHookPayload<'exec>,
@@ -320,10 +320,10 @@ where
     ) -> OnExecuteStartHookResult<'exec> {
         RouterPlugin::on_execute(self, start_payload).await
     }
-    async fn on_subgraph_execute<'exec>(
+    async fn on_subgraph_execute<'exec, 'req>(
         &'exec self,
-        start_payload: OnSubgraphExecuteStartHookPayload<'exec>,
-    ) -> OnSubgraphExecuteStartHookResult<'exec> {
+        start_payload: OnSubgraphExecuteStartHookPayload<'exec, 'req>,
+    ) -> OnSubgraphExecuteStartHookResult<'exec, 'req> {
         RouterPlugin::on_subgraph_execute(self, start_payload).await
     }
     async fn on_subgraph_http_request<'exec>(

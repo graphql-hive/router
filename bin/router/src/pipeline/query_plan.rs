@@ -19,12 +19,12 @@ use xxhash_rust::xxh3::Xxh3;
 
 pub enum QueryPlanResult {
     QueryPlan(Arc<QueryPlan>),
-    Response(HttpResponse),
+    Response(Arc<HttpResponse>),
 }
 
 pub enum QueryPlanGetterError {
     Planner(PlannerError),
-    Response(HttpResponse),
+    Response(Arc<HttpResponse>),
 }
 
 #[inline]

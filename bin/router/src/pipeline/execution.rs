@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::pipeline::authorization::AuthorizationError;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
@@ -39,7 +40,7 @@ pub async fn execute_plan(
     supergraph: &SupergraphData,
     app_state: &RouterSharedState,
     planned_request: &PlannedRequest<'_>,
-) -> Result<(HttpResponse, usize), PipelineErrorVariant> {
+) -> Result<(Arc<HttpResponse>, usize), PipelineErrorVariant> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
     if app_state.router_config.query_planner.allow_expose {

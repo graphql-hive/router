@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use bytes::Bytes;
 use hive_router_plan_executor::{
@@ -118,7 +118,7 @@ pub struct ApolloSandboxInitialStateOptions {
 }
 
 pub struct ApolloSandboxPlugin {
-    http_response: HttpResponse,
+    http_response: Arc<HttpResponse>,
 }
 
 impl RouterPlugin for ApolloSandboxPlugin {
@@ -149,7 +149,8 @@ impl RouterPlugin for ApolloSandboxPlugin {
                 body: html_bytes.into(),
                 headers,
                 status: StatusCode::OK,
-            };
+            }
+            .into();
             Some(ApolloSandboxPlugin { http_response })
         } else {
             None
@@ -160,7 +161,7 @@ impl RouterPlugin for ApolloSandboxPlugin {
         payload: OnHttpRequestHookPayload<'req>,
     ) -> OnHttpRequestHookResult<'req> {
         if payload.router_http_request.path() == "/apollo-sandbox" {
-            return payload.end_response(self.http_response.to_owned());
+            return payload.end_response(self.http_response.clone());
         }
         payload.cont()
     }

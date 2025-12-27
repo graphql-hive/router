@@ -79,11 +79,14 @@ impl RouterPlugin for ResponseCachePlugin {
                             key,
                             String::from_utf8_lossy(&body)
                         );
-                        return payload.end_response(HttpResponse {
-                            body: Arc::new(body.into()),
-                            headers: HeaderMap::new(),
-                            status: StatusCode::OK,
-                        });
+                        return payload.end_response(
+                            HttpResponse {
+                                body: Arc::new(body.into()),
+                                headers: HeaderMap::new(),
+                                status: StatusCode::OK,
+                            }
+                            .into(),
+                        );
                     }
                 }
                 Err(err) => {

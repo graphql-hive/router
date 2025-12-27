@@ -157,7 +157,7 @@ impl GraphQLError {
     /// use hive_router_plan_executor::response::graphql_error::GraphQLError;
     /// use sonic_rs::json;
     ///
-    /// let error = GraphQLError::from("An error occurred".into())
+    /// let error = GraphQLError::from("An error occurred")
     ///     .add_subgraph_name("users");
     ///
     /// assert_eq!(json!(error), json!({
@@ -184,7 +184,7 @@ impl GraphQLError {
     /// use hive_router_plan_executor::response::graphql_error::GraphQLError;
     /// use sonic_rs::json;
     ///
-    /// let error = GraphQLError::from("An error occurred".into())
+    /// let error = GraphQLError::from("An error occurred")
     ///     .add_affected_path("user.friends[0].name".to_string());
     ///
     /// assert_eq!(json!(error), json!({

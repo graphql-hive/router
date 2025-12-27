@@ -131,21 +131,16 @@ pub async fn graphql_request_handler(
         plugin_req_state,
     )
     .await?;
-    let response_status = response.status;
-    let response_bytes = response.body;
-    let response_headers = response.headers;
 
     let mut response_builder = web::HttpResponse::Ok();
-    for (header_name, header_value) in response_headers {
-        if let Some(header_name) = header_name {
-            response_builder.header(header_name, header_value);
-        }
+    for (header_name, header_value) in &response.headers {
+        response_builder.header(header_name, header_value);
     }
 
     Ok(response_builder
         .header(http::header::CONTENT_TYPE, response_content_type)
-        .status(response_status)
-        .body(response_bytes.to_vec()))
+        .status(response.status)
+        .body(response.body.to_vec()))
 }
 
 #[inline]
@@ -158,7 +153,7 @@ pub async fn execute_pipeline(
     schema_state: &SchemaState,
     jwt_context: Option<JwtRequestContext>,
     plugin_req_state: Option<PluginRequestState<'_>>,
-) -> Result<HttpResponse, PipelineErrorVariant> {
+) -> Result<Arc<HttpResponse>, PipelineErrorVariant> {
     let start = Instant::now();
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 

@@ -70,10 +70,8 @@ where
                     }
                     StartControlFlow::EndResponse(response) => {
                         let mut resp_builder = ResponseBuilder::new(response.status);
-                        for (key, value) in response.headers {
-                            if let Some(key) = key {
-                                resp_builder.header(key, value);
-                            }
+                        for (key, value) in &response.headers {
+                            resp_builder.header(key, value);
                         }
                         let response = start_payload
                             .router_http_request
@@ -101,10 +99,8 @@ where
                     }
                     EndControlFlow::EndResponse(response) => {
                         let mut resp_builder = ResponseBuilder::new(response.status);
-                        for (key, value) in response.headers {
-                            if let Some(key) = key {
-                                resp_builder.header(key, value);
-                            }
+                        for (key, value) in &response.headers {
+                            resp_builder.header(key, value);
                         }
                         let response = resp_builder.body(response.body.to_vec());
                         end_payload.response = end_payload.response.into_response(response);

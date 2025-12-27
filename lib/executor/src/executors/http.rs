@@ -8,6 +8,8 @@ use crate::hooks::on_subgraph_http_request::{
 };
 use crate::plugin_context::PluginRequestState;
 use crate::plugin_trait::{EndControlFlow, StartControlFlow};
+use crate::response::subgraph_response::SubgraphResponse;
+use crate::response::value::Value;
 use futures::TryFutureExt;
 use hive_router_config::HiveRouterConfig;
 
@@ -21,12 +23,13 @@ use http_body_util::Full;
 use hyper::Version;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use serde::Deserialize;
 use tokio::sync::Semaphore;
 use tracing::debug;
 
 use crate::executors::common::SubgraphExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
-use crate::response::graphql_error::GraphQLError;
+use crate::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use crate::utils::consts::CLOSE_BRACE;
 use crate::utils::consts::COLON;
 use crate::utils::consts::COMMA;
@@ -206,7 +209,7 @@ async fn send_request<'a>(
             match result.control_flow {
                 StartControlFlow::Continue => { /* continue to next plugin */ }
                 StartControlFlow::EndResponse(response) => {
-                    return Ok(Arc::new(response));
+                    return Ok(response);
                 }
                 StartControlFlow::OnEnd(callback) => {
                     on_end_callbacks.push(callback);
@@ -279,6 +282,7 @@ async fn send_request<'a>(
                 body: body.into(),
                 headers: parts.headers,
             }
+            .into()
         }
     };
 
@@ -294,7 +298,7 @@ async fn send_request<'a>(
             match result.control_flow {
                 EndControlFlow::Continue => { /* continue to next callback */ }
                 EndControlFlow::EndResponse(response) => {
-                    return Ok(Arc::new(response));
+                    return Ok(response);
                 }
             }
         }
@@ -302,16 +306,12 @@ async fn send_request<'a>(
         response = end_payload.response;
     }
 
-    Ok(Arc::new(response))
+    Ok(response)
 }
 
-#[async_trait]
-impl SubgraphExecutor for HTTPSubgraphExecutor {
-    fn endpoint(&self) -> &http::Uri {
-        &self.endpoint
-    }
+impl HTTPSubgraphExecutor {
     #[tracing::instrument(level = "trace", skip_all, fields(subgraph_name = %self.subgraph_name))]
-    async fn execute<'a>(
+    async fn execute_http<'a>(
         &self,
         mut execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
@@ -412,6 +412,56 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     status: StatusCode::OK,
                 }
                 .into()
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl SubgraphExecutor for HTTPSubgraphExecutor {
+    fn endpoint(&self) -> &http::Uri {
+        &self.endpoint
+    }
+    async fn execute<'a>(
+        &self,
+        execution_request: SubgraphExecutionRequest<'a>,
+        timeout: Option<Duration>,
+        plugin_req_state: &'a Option<PluginRequestState<'a>>,
+    ) -> SubgraphResponse<'a> {
+        let http_response = self
+            .execute_http(execution_request, timeout, plugin_req_state)
+            .await;
+
+        // SAFETY: The `bytes` are transmuted to the lifetime `'a` of the `ExecutionContext`.
+        // This is safe because the `response_storage` is part of the `ExecutionContext` (`ctx`)
+        // and will live as long as `'a`. The `Bytes` are stored in an `Arc`, so they won't be
+        // dropped until all references are gone. The `Value`s deserialized from this byte
+        // slice will borrow from it, and they are stored in `ctx.final_response`, which also
+        // lives for `'a`.
+
+        let bytes: Arc<Bytes> = http_response.body.clone();
+
+        let bytes: &[u8] = &bytes;
+
+        let bytes: &'a [u8] = unsafe { std::mem::transmute(bytes) };
+
+        let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
+        match SubgraphResponse::deserialize(&mut deserializer) {
+            Ok(response) => response,
+            Err(e) => {
+                let message = format!("Failed to deserialize subgraph response: {}", e);
+                let extensions = GraphQLErrorExtensions::new_from_code_and_service_name(
+                    "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILED",
+                    &self.subgraph_name,
+                );
+                let error = GraphQLError::from_message_and_extensions(message, extensions);
+
+                SubgraphResponse {
+                    data: Value::Null,
+                    errors: Some(vec![error]),
+                    extensions: None,
+                    http: None,
+                }
             }
         }
     }

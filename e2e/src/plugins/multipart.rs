@@ -148,11 +148,14 @@ impl RouterPlugin for MultipartPlugin {
                     match resp {
                         Ok(resp) => {
                             return payload
-                                .with_response(HttpResponse {
-                                    status: resp.status(),
-                                    headers: resp.headers().clone(),
-                                    body: resp.bytes().await.unwrap().into(),
-                                })
+                                .with_response(
+                                    HttpResponse {
+                                        status: resp.status(),
+                                        headers: resp.headers().clone(),
+                                        body: resp.bytes().await.unwrap().into(),
+                                    }
+                                    .into(),
+                                )
                                 .cont();
                         }
                         Err(err) => {

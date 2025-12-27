@@ -1,16 +1,12 @@
-use std::sync::Arc;
-
 use crate::{
-    executors::{
-        common::{SubgraphExecutionRequest, SubgraphExecutorBoxedArc},
-        http::HttpResponse,
-    },
+    executors::common::{SubgraphExecutionRequest, SubgraphExecutorBoxedArc},
     plugin_context::{PluginContext, RouterHttpRequest},
     plugin_trait::{EndHookPayload, EndHookResult, StartHookPayload, StartHookResult},
+    response::subgraph_response::SubgraphResponse,
 };
 
-pub struct OnSubgraphExecuteStartHookPayload<'exec> {
-    pub router_http_request: &'exec RouterHttpRequest<'exec>,
+pub struct OnSubgraphExecuteStartHookPayload<'exec, 'req> {
+    pub router_http_request: &'req RouterHttpRequest<'req>,
     pub context: &'exec PluginContext,
 
     pub subgraph_name: &'exec str,
@@ -18,29 +14,29 @@ pub struct OnSubgraphExecuteStartHookPayload<'exec> {
 
     pub execution_request: SubgraphExecutionRequest<'exec>,
     // Override
-    pub execution_result: Option<Arc<HttpResponse>>,
+    pub execution_result: Option<SubgraphResponse<'exec>>,
 }
 
-impl<'exec> OnSubgraphExecuteStartHookPayload<'exec> {
-    pub fn with_execution_result(mut self, execution_result: Arc<HttpResponse>) -> Self {
+impl<'exec> OnSubgraphExecuteStartHookPayload<'exec, '_> {
+    pub fn with_execution_result(mut self, execution_result: SubgraphResponse<'exec>) -> Self {
         self.execution_result = Some(execution_result);
         self
     }
 }
 
-impl<'exec> StartHookPayload<OnSubgraphExecuteEndHookPayload<'exec>>
-    for OnSubgraphExecuteStartHookPayload<'exec>
+impl<'exec, 'req> StartHookPayload<OnSubgraphExecuteEndHookPayload<'exec>>
+    for OnSubgraphExecuteStartHookPayload<'exec, 'req>
 {
 }
 
-pub type OnSubgraphExecuteStartHookResult<'exec> = StartHookResult<
+pub type OnSubgraphExecuteStartHookResult<'exec, 'req> = StartHookResult<
     'exec,
-    OnSubgraphExecuteStartHookPayload<'exec>,
+    OnSubgraphExecuteStartHookPayload<'exec, 'req>,
     OnSubgraphExecuteEndHookPayload<'exec>,
 >;
 
 pub struct OnSubgraphExecuteEndHookPayload<'exec> {
-    pub execution_result: Arc<HttpResponse>,
+    pub execution_result: SubgraphResponse<'exec>,
     pub context: &'exec PluginContext,
 }
 

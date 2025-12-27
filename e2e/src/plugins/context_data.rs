@@ -58,10 +58,10 @@ impl RouterPlugin for ContextDataPlugin {
             payload.cont()
         })
     }
-    async fn on_subgraph_execute<'exec>(
+    async fn on_subgraph_execute<'exec, 'req>(
         &'exec self,
-        mut payload: OnSubgraphExecuteStartHookPayload<'exec>,
-    ) -> OnSubgraphExecuteStartHookResult<'exec> {
+        mut payload: OnSubgraphExecuteStartHookPayload<'exec, 'req>,
+    ) -> OnSubgraphExecuteStartHookResult<'exec, 'req> {
         let context_data_entry = payload.context.get_ref::<ContextData>();
         if let Some(ref context_data_entry) = context_data_entry {
             tracing::info!("hello {}", context_data_entry.incoming_data); // Hello world!

@@ -21,7 +21,7 @@ pub async fn validate_operation_with_cache(
     app_state: &RouterSharedState,
     parser_payload: &GraphQLParserPayload,
     plugin_req_state: &Option<PluginRequestState<'_>>,
-) -> Result<Option<HttpResponse>, PipelineErrorVariant> {
+) -> Result<Option<Arc<HttpResponse>>, PipelineErrorVariant> {
     let consumer_schema_ast = &supergraph.planner.consumer_schema.document;
 
     let validation_result = match schema_state

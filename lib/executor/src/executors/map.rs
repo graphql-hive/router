@@ -4,7 +4,6 @@ use std::{
     time::Duration,
 };
 
-use bytes::{BufMut, BytesMut};
 use dashmap::DashMap;
 use hive_router_config::{
     override_subgraph_urls::UrlOrExpression, traffic_shaping::DurationOrExpression,
@@ -35,7 +34,7 @@ use crate::{
     },
     plugin_context::PluginRequestState,
     plugin_trait::{EndControlFlow, StartControlFlow},
-    response::graphql_error::GraphQLError,
+    response::{graphql_error::GraphQLError, subgraph_response::SubgraphResponse, value::Value},
 };
 
 type SubgraphName = String;
@@ -134,11 +133,11 @@ impl SubgraphExecutorMap {
 
     pub async fn execute<'exec, 'req>(
         &self,
-        subgraph_name: &str,
+        subgraph_name: &'exec str,
         execution_request: SubgraphExecutionRequest<'exec>,
         client_request: &ClientRequestDetails<'exec, 'req>,
-        plugin_req_state: &Option<PluginRequestState<'req>>,
-    ) -> Arc<HttpResponse> {
+        plugin_req_state: &'exec Option<PluginRequestState<'req>>,
+    ) -> SubgraphResponse<'exec> {
         let mut executor = match self.get_or_create_executor(subgraph_name, client_request) {
             Ok(executor) => executor,
             Err(err) => {
@@ -146,9 +145,7 @@ impl SubgraphExecutorMap {
                     "Subgraph executor error for subgraph '{}': {}",
                     subgraph_name, err,
                 );
-                return self
-                    .internal_server_error_response(err.into(), subgraph_name)
-                    .into();
+                return self.internal_server_error_response(err.into(), subgraph_name);
             }
         };
 
@@ -173,16 +170,14 @@ impl SubgraphExecutorMap {
                     "Failed to resolve timeout for subgraph '{}': {}",
                     subgraph_name, err,
                 );
-                return self
-                    .internal_server_error_response(err.into(), subgraph_name)
-                    .into();
+                return self.internal_server_error_response(err.into(), subgraph_name);
             }
         };
 
         let mut on_end_callbacks = vec![];
 
         let mut execution_request = execution_request;
-        let mut execution_result = None;
+        let mut execution_result: Option<SubgraphResponse<'exec>> = None;
         if let Some(plugin_req_state) = plugin_req_state.as_ref() {
             let mut start_payload = OnSubgraphExecuteStartHookPayload {
                 router_http_request: &plugin_req_state.router_http_request,
@@ -199,9 +194,9 @@ impl SubgraphExecutorMap {
                     StartControlFlow::Continue => {
                         // continue to next plugin
                     }
-                    StartControlFlow::EndResponse(response) => {
+                    StartControlFlow::EndResponse(_response) => {
                         // TODO: FFIX
-                        return response.into();
+                        todo!()
                     }
                     StartControlFlow::OnEnd(callback) => {
                         on_end_callbacks.push(callback);
@@ -235,9 +230,9 @@ impl SubgraphExecutorMap {
                     EndControlFlow::Continue => {
                         // continue to next callback
                     }
-                    EndControlFlow::EndResponse(response) => {
+                    EndControlFlow::EndResponse(_response) => {
                         // TODO: FFIX
-                        return response.into();
+                        todo!("Handle EndResponse in end hooks");
                     }
                 }
             }
@@ -248,22 +243,17 @@ impl SubgraphExecutorMap {
         execution_result
     }
 
-    fn internal_server_error_response(
+    fn internal_server_error_response<'a>(
         &self,
         graphql_error: GraphQLError,
         subgraph_name: &str,
-    ) -> HttpResponse {
+    ) -> SubgraphResponse<'a> {
         let errors = vec![graphql_error.add_subgraph_name(subgraph_name)];
-        let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
-        let mut buffer = BytesMut::new();
-        buffer.put_slice(b"{\"errors\":");
-        buffer.put_slice(&errors_bytes);
-        buffer.put_slice(b"}");
-
-        HttpResponse {
-            body: buffer.freeze().into(),
-            headers: Default::default(),
-            status: http::StatusCode::INTERNAL_SERVER_ERROR,
+        SubgraphResponse {
+            data: Value::Null,
+            errors: Some(errors),
+            extensions: None,
+            http: None,
         }
     }
 

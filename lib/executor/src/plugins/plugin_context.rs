@@ -14,14 +14,14 @@ use ntex::router::Path;
 
 use crate::plugin_trait::RouterPluginBoxed;
 
-pub struct RouterHttpRequest<'exec> {
-    pub uri: &'exec Uri,
-    pub method: &'exec http::Method,
+pub struct RouterHttpRequest<'req> {
+    pub uri: &'req Uri,
+    pub method: &'req http::Method,
     pub version: http::Version,
-    pub headers: &'exec HeaderMap,
-    pub path: &'exec str,
-    pub query_string: &'exec str,
-    pub match_info: &'exec Path<Uri>,
+    pub headers: &'req HeaderMap,
+    pub path: &'req str,
+    pub query_string: &'req str,
+    pub match_info: &'req Path<Uri>,
 }
 
 #[derive(Default)]

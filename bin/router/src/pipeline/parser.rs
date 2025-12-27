@@ -25,7 +25,7 @@ pub struct GraphQLParserPayload {
 
 pub enum ParseResult {
     Payload(GraphQLParserPayload),
-    Response(HttpResponse),
+    Response(Arc<HttpResponse>),
 }
 
 #[inline]
