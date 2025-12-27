@@ -23,7 +23,7 @@ export default function () {
 }
 
 export function handleSummary(data) {
-  if (__ENV.GITHUB_TOKEN) {
+  if (__ENV.GITHUB_TOKEN && !__ENV.NO_COMMIT) {
     githubComment(data, {
       token: __ENV.GITHUB_TOKEN,
       commit: __ENV.GITHUB_SHA,
