@@ -4,7 +4,6 @@ use std::{
     time::Duration,
 };
 
-use bytes::{BufMut, BytesMut};
 use dashmap::DashMap;
 use hive_router_config::{
     override_subgraph_urls::UrlOrExpression, traffic_shaping::DurationOrExpression,
@@ -25,15 +24,17 @@ use tracing::error;
 use crate::{
     execution::client_request_details::ClientRequestDetails,
     executors::{
-        common::{
-            HttpExecutionResponse, SubgraphExecutionRequest, SubgraphExecutor,
-            SubgraphExecutorBoxedArc,
-        },
-        dedupe::{ABuildHasher, SharedResponse},
+        common::{SubgraphExecutionRequest, SubgraphExecutor, SubgraphExecutorBoxedArc},
+        dedupe::ABuildHasher,
         error::SubgraphExecutorError,
-        http::{HTTPSubgraphExecutor, HttpClient},
+        http::{HTTPSubgraphExecutor, HttpClient, HttpResponse},
     },
-    response::graphql_error::GraphQLError,
+    hooks::on_subgraph_execute::{
+        OnSubgraphExecuteEndHookPayload, OnSubgraphExecuteStartHookPayload,
+    },
+    plugin_context::PluginRequestState,
+    plugin_trait::{EndControlFlow, StartControlFlow},
+    response::{graphql_error::GraphQLError, subgraph_response::SubgraphResponse, value::Value},
 };
 
 type SubgraphName = String;
@@ -50,6 +51,8 @@ struct ResolvedSubgraphConfig<'a> {
     dedupe_enabled: bool,
 }
 
+pub type InflightRequestsMap = Arc<DashMap<u64, Arc<OnceCell<Arc<HttpResponse>>>, ABuildHasher>>;
+
 pub struct SubgraphExecutorMap {
     executors_by_subgraph: ExecutorsBySubgraphMap,
     /// Mapping from subgraph name to static endpoint for quick lookup
@@ -64,7 +67,7 @@ pub struct SubgraphExecutorMap {
     client: Arc<HttpClient>,
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
     max_connections_per_host: usize,
-    in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<SharedResponse>>, ABuildHasher>>,
+    in_flight_requests: InflightRequestsMap,
 }
 
 impl SubgraphExecutorMap {
@@ -128,65 +131,129 @@ impl SubgraphExecutorMap {
         Ok(subgraph_executor_map)
     }
 
-    pub async fn execute<'a, 'req>(
+    pub async fn execute<'exec, 'req>(
         &self,
-        subgraph_name: &str,
-        execution_request: SubgraphExecutionRequest<'a>,
-        client_request: &ClientRequestDetails<'a, 'req>,
-    ) -> HttpExecutionResponse {
-        match self.get_or_create_executor(subgraph_name, client_request) {
-            Ok(executor) => {
-                let timeout = self
-                    .timeouts_by_subgraph
-                    .get(subgraph_name)
-                    .map(|t| {
-                        let global_timeout_duration =
-                            resolve_timeout(&self.global_timeout, client_request, None, "all")?;
-                        resolve_timeout(
-                            t.value(),
-                            client_request,
-                            Some(global_timeout_duration),
-                            subgraph_name,
-                        )
-                    })
-                    .transpose();
-
-                match timeout {
-                    Ok(timeout) => executor.execute(execution_request, timeout).await,
-                    Err(err) => {
-                        error!(
-                            "Failed to resolve timeout for subgraph '{}': {}",
-                            subgraph_name, err,
-                        );
-                        self.internal_server_error_response(err.into(), subgraph_name)
-                    }
-                }
-            }
+        subgraph_name: &'exec str,
+        execution_request: SubgraphExecutionRequest<'exec>,
+        client_request: &ClientRequestDetails<'exec, 'req>,
+        plugin_req_state: &'exec Option<PluginRequestState<'req>>,
+    ) -> SubgraphResponse<'exec> {
+        let mut executor = match self.get_or_create_executor(subgraph_name, client_request) {
+            Ok(executor) => executor,
             Err(err) => {
                 error!(
                     "Subgraph executor error for subgraph '{}': {}",
                     subgraph_name, err,
                 );
-                self.internal_server_error_response(err.into(), subgraph_name)
+                return self.internal_server_error_response(err.into(), subgraph_name);
             }
+        };
+
+        let timeout = match self
+            .timeouts_by_subgraph
+            .get(subgraph_name)
+            .map(|t| {
+                let global_timeout_duration =
+                    resolve_timeout(&self.global_timeout, client_request, None, "all")?;
+                resolve_timeout(
+                    t.value(),
+                    client_request,
+                    Some(global_timeout_duration),
+                    subgraph_name,
+                )
+            })
+            .transpose()
+        {
+            Ok(timeout) => timeout,
+            Err(err) => {
+                error!(
+                    "Failed to resolve timeout for subgraph '{}': {}",
+                    subgraph_name, err,
+                );
+                return self.internal_server_error_response(err.into(), subgraph_name);
+            }
+        };
+
+        let mut on_end_callbacks = vec![];
+
+        let mut execution_request = execution_request;
+        let mut execution_result: Option<SubgraphResponse<'exec>> = None;
+        if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+            let mut start_payload = OnSubgraphExecuteStartHookPayload {
+                router_http_request: &plugin_req_state.router_http_request,
+                context: &plugin_req_state.context,
+                subgraph_name,
+                executor,
+                execution_request,
+                execution_result,
+            };
+            for plugin in plugin_req_state.plugins.as_ref() {
+                let result = plugin.on_subgraph_execute(start_payload).await;
+                start_payload = result.payload;
+                match result.control_flow {
+                    StartControlFlow::Continue => {
+                        // continue to next plugin
+                    }
+                    StartControlFlow::EndResponse(_response) => {
+                        // TODO: FFIX
+                        todo!()
+                    }
+                    StartControlFlow::OnEnd(callback) => {
+                        on_end_callbacks.push(callback);
+                    }
+                }
+            }
+            execution_request = start_payload.execution_request;
+            execution_result = start_payload.execution_result;
+            executor = start_payload.executor;
         }
+
+        let mut execution_result = match execution_result {
+            Some(execution_result) => execution_result,
+            None => {
+                executor
+                    .execute(execution_request, timeout, plugin_req_state)
+                    .await
+            }
+        };
+
+        if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+            let mut end_payload = OnSubgraphExecuteEndHookPayload {
+                context: &plugin_req_state.context,
+                execution_result,
+            };
+
+            for callback in on_end_callbacks {
+                let result = callback(end_payload);
+                end_payload = result.payload;
+                match result.control_flow {
+                    EndControlFlow::Continue => {
+                        // continue to next callback
+                    }
+                    EndControlFlow::EndResponse(_response) => {
+                        // TODO: FFIX
+                        todo!("Handle EndResponse in end hooks");
+                    }
+                }
+            }
+
+            execution_result = end_payload.execution_result;
+        }
+
+        execution_result
     }
 
-    fn internal_server_error_response(
+    fn internal_server_error_response<'a>(
         &self,
         graphql_error: GraphQLError,
         subgraph_name: &str,
-    ) -> HttpExecutionResponse {
+    ) -> SubgraphResponse<'a> {
         let errors = vec![graphql_error.add_subgraph_name(subgraph_name)];
-        let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
-        let mut buffer = BytesMut::new();
-        buffer.put_slice(b"{\"errors\":");
-        buffer.put_slice(&errors_bytes);
-        buffer.put_slice(b"}");
-
-        HttpExecutionResponse {
-            body: buffer.freeze(),
-            headers: Default::default(),
+        SubgraphResponse {
+            data: Value::Null,
+            errors: Some(errors),
+            extensions: None,
+            http: None,
         }
     }
 
@@ -351,6 +418,7 @@ impl SubgraphExecutorMap {
             subgraph_config.client,
             semaphore,
             subgraph_config.dedupe_enabled,
+            self.config.clone(),
             self.in_flight_requests.clone(),
         );
 

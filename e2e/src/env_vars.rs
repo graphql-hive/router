@@ -20,7 +20,7 @@ mod env_vars_e2e_tests {
 
         // Makes the expression to evaluate to port 4200 (value of .default)
         {
-            let app = init_router_from_config_file("configs/env_vars.router.yaml")
+            let app = init_router_from_config_file("configs/env_vars.router.yaml", None)
                 .await
                 .unwrap();
             wait_for_readiness(&app.app).await;
@@ -51,7 +51,7 @@ mod env_vars_e2e_tests {
             let _env_guard =
                 EnvVarGuard::new("ACCOUNTS_URL_OVERRIDE", "http://0.0.0.0:4100/accounts");
 
-            let app = init_router_from_config_file("configs/env_vars.router.yaml")
+            let app = init_router_from_config_file("configs/env_vars.router.yaml", None)
                 .await
                 .unwrap();
             wait_for_readiness(&app.app).await;
@@ -92,7 +92,7 @@ mod env_vars_e2e_tests {
 
         // Makes the expression to evaluate to "default" (default value provided)
         {
-            let app = init_router_from_config_file("configs/env_vars.router.yaml")
+            let app = init_router_from_config_file("configs/env_vars.router.yaml", None)
                 .await
                 .unwrap();
             wait_for_readiness(&app.app).await;
@@ -115,7 +115,7 @@ mod env_vars_e2e_tests {
         {
             let _env_guard = EnvVarGuard::new("ROUTER_ENV_HEADER", "e2e");
 
-            let app = init_router_from_config_file("configs/env_vars.router.yaml")
+            let app = init_router_from_config_file("configs/env_vars.router.yaml", None)
                 .await
                 .unwrap();
             wait_for_readiness(&app.app).await;

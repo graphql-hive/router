@@ -16,6 +16,7 @@ mod override_subgraph_urls_e2e_tests {
         let subgraphs_server = SubgraphsServer::start_with_port(4100).await;
         let app = init_router_from_config_file(
             "configs/override_subgraph_urls/override_static.router.yaml",
+            None,
         )
         .await
         .unwrap();
@@ -48,6 +49,7 @@ mod override_subgraph_urls_e2e_tests {
         let subgraphs_server = SubgraphsServer::start_with_port(4100).await;
         let app = init_router_from_config_file(
             "configs/override_subgraph_urls/override_dynamic_header.router.yaml",
+            None,
         )
         .await
         .unwrap();
