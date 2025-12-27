@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     executors::{
         common::{SubgraphExecutionRequest, SubgraphExecutorBoxedArc},
@@ -16,11 +18,11 @@ pub struct OnSubgraphExecuteStartHookPayload<'exec> {
 
     pub execution_request: SubgraphExecutionRequest<'exec>,
     // Override
-    pub execution_result: Option<HttpResponse>,
+    pub execution_result: Option<Arc<HttpResponse>>,
 }
 
 impl<'exec> OnSubgraphExecuteStartHookPayload<'exec> {
-    pub fn with_execution_result(mut self, execution_result: HttpResponse) -> Self {
+    pub fn with_execution_result(mut self, execution_result: Arc<HttpResponse>) -> Self {
         self.execution_result = Some(execution_result);
         self
     }
@@ -38,7 +40,7 @@ pub type OnSubgraphExecuteStartHookResult<'exec> = StartHookResult<
 >;
 
 pub struct OnSubgraphExecuteEndHookPayload<'exec> {
-    pub execution_result: HttpResponse,
+    pub execution_result: Arc<HttpResponse>,
     pub context: &'exec PluginContext,
 }
 

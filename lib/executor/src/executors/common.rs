@@ -14,7 +14,7 @@ pub trait SubgraphExecutor {
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
         plugin_req_state: &'a Option<PluginRequestState<'a>>,
-    ) -> HttpResponse;
+    ) -> Arc<HttpResponse>;
 
     fn to_boxed_arc<'a>(self) -> Arc<Box<dyn SubgraphExecutor + Send + Sync + 'a>>
     where

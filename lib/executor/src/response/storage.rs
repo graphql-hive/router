@@ -19,9 +19,9 @@ impl ResponsesStorage {
         }
     }
 
-    pub fn add_response(&mut self, response: Bytes) -> usize {
+    pub fn add_response(&mut self, response: Arc<Bytes>) -> usize {
         let new_item_index = self.responses.len();
-        self.responses.push(Arc::new(response));
+        self.responses.push(response);
         new_item_index
     }
 

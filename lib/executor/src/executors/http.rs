@@ -1,16 +1,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::executors::dedupe::{request_fingerprint, ABuildHasher};
+use crate::executors::dedupe::request_fingerprint;
+use crate::executors::map::InflightRequestsMap;
 use crate::hooks::on_subgraph_http_request::{
     OnSubgraphHttpRequestHookPayload, OnSubgraphHttpResponseHookPayload,
 };
 use crate::plugin_context::PluginRequestState;
 use crate::plugin_trait::{EndControlFlow, StartControlFlow};
-use dashmap::DashMap;
 use futures::TryFutureExt;
 use hive_router_config::HiveRouterConfig;
-use tokio::sync::OnceCell;
 
 use async_trait::async_trait;
 
@@ -42,7 +41,7 @@ pub struct HTTPSubgraphExecutor {
     pub semaphore: Arc<Semaphore>,
     pub dedupe_enabled: bool,
     pub config: Arc<HiveRouterConfig>,
-    pub in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<HttpResponse>>, ABuildHasher>>,
+    pub in_flight_requests: InflightRequestsMap,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -58,7 +57,7 @@ impl HTTPSubgraphExecutor {
         semaphore: Arc<Semaphore>,
         dedupe_enabled: bool,
         config: Arc<HiveRouterConfig>,
-        in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<HttpResponse>>, ABuildHasher>>,
+        in_flight_requests: InflightRequestsMap,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -177,7 +176,7 @@ struct SendRequestOpts<'a> {
 
 async fn send_request<'a>(
     opts: SendRequestOpts<'a>,
-) -> Result<HttpResponse, SubgraphExecutorError> {
+) -> Result<Arc<HttpResponse>, SubgraphExecutorError> {
     let SendRequestOpts {
         http_client,
         subgraph_name,
@@ -207,7 +206,7 @@ async fn send_request<'a>(
             match result.control_flow {
                 StartControlFlow::Continue => { /* continue to next plugin */ }
                 StartControlFlow::EndResponse(response) => {
-                    return Ok(response);
+                    return Ok(Arc::new(response));
                 }
                 StartControlFlow::OnEnd(callback) => {
                     on_end_callbacks.push(callback);
@@ -277,7 +276,7 @@ async fn send_request<'a>(
 
             HttpResponse {
                 status: parts.status,
-                body,
+                body: body.into(),
                 headers: parts.headers,
             }
         }
@@ -295,7 +294,7 @@ async fn send_request<'a>(
             match result.control_flow {
                 EndControlFlow::Continue => { /* continue to next callback */ }
                 EndControlFlow::EndResponse(response) => {
-                    return Ok(response);
+                    return Ok(Arc::new(response));
                 }
             }
         }
@@ -303,7 +302,7 @@ async fn send_request<'a>(
         response = end_payload.response;
     }
 
-    Ok(response)
+    Ok(Arc::new(response))
 }
 
 #[async_trait]
@@ -317,16 +316,17 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         mut execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
         plugin_req_state: &'a Option<PluginRequestState<'a>>,
-    ) -> HttpResponse {
+    ) -> Arc<HttpResponse> {
         let body = match self.build_request_body(&execution_request) {
             Ok(body) => body,
             Err(e) => {
                 self.log_error(&e);
                 return HttpResponse {
-                    body: self.error_to_graphql_bytes(e),
+                    body: self.error_to_graphql_bytes(e).into(),
                     headers: Default::default(),
                     status: StatusCode::OK,
-                };
+                }
+                .into();
             }
         };
 
@@ -357,10 +357,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 Err(e) => {
                     self.log_error(&e);
                     HttpResponse {
-                        body: self.error_to_graphql_bytes(e),
+                        body: self.error_to_graphql_bytes(e).into(),
                         headers: Default::default(),
                         status: StatusCode::OK,
                     }
+                    .into()
                 }
             };
         }
@@ -374,7 +375,6 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             .in_flight_requests
             .entry(fingerprint)
             .or_default()
-            .value()
             .clone();
 
         let response_result = cell
@@ -398,7 +398,6 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 // It's important to remove the entry from the map before returning the result.
                 // This ensures that once the OnceCell is set, no future requests can join it.
                 // The cache is for the lifetime of the in-flight request only.
-                self.in_flight_requests.remove(&fingerprint);
                 res
             })
             .await;
@@ -408,10 +407,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             Err(e) => {
                 self.log_error(&e);
                 HttpResponse {
-                    body: self.error_to_graphql_bytes(e.clone()),
+                    body: self.error_to_graphql_bytes(e).into(),
                     headers: Default::default(),
                     status: StatusCode::OK,
                 }
+                .into()
             }
         }
     }
@@ -421,5 +421,5 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 pub struct HttpResponse {
     pub status: StatusCode,
     pub headers: HeaderMap,
-    pub body: Bytes,
+    pub body: Arc<Bytes>,
 }

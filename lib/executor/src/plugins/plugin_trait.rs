@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use http::StatusCode;
 use serde::{de::DeserializeOwned, Serialize};
 use sonic_rs::json;
@@ -68,7 +70,7 @@ where
         let http_response = HttpResponse {
             status: StatusCode::BAD_REQUEST,
             headers: Default::default(),
-            body: sonic_rs::to_vec(&body).unwrap().into(),
+            body: Arc::new(sonic_rs::to_vec(&body).unwrap().into()),
         };
         StartHookResult {
             payload: self,
@@ -86,7 +88,7 @@ where
         let http_response = HttpResponse {
             status: StatusCode::BAD_REQUEST,
             headers: Default::default(),
-            body: sonic_rs::to_vec(&body).unwrap().into(),
+            body: Arc::new(sonic_rs::to_vec(&body).unwrap().into()),
         };
         StartHookResult {
             payload: self,
@@ -137,7 +139,7 @@ where
         let http_response = HttpResponse {
             status: StatusCode::OK,
             headers: Default::default(),
-            body: sonic_rs::to_vec(&body).unwrap().into(),
+            body: Arc::new(sonic_rs::to_vec(&body).unwrap().into()),
         };
         EndHookResult {
             payload: self,
@@ -152,7 +154,7 @@ where
         let http_response = HttpResponse {
             status: StatusCode::BAD_REQUEST,
             headers: Default::default(),
-            body: sonic_rs::to_vec(&body).unwrap().into(),
+            body: Arc::new(sonic_rs::to_vec(&body).unwrap().into()),
         };
         EndHookResult {
             payload: self,

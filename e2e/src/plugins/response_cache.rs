@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use dashmap::DashMap;
 use http::{HeaderMap, StatusCode};
 use redis::Commands;
@@ -78,7 +80,7 @@ impl RouterPlugin for ResponseCachePlugin {
                             String::from_utf8_lossy(&body)
                         );
                         return payload.end_response(HttpResponse {
-                            body: body.into(),
+                            body: Arc::new(body.into()),
                             headers: HeaderMap::new(),
                             status: StatusCode::OK,
                         });

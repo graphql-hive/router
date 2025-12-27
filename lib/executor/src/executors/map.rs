@@ -52,6 +52,8 @@ struct ResolvedSubgraphConfig<'a> {
     dedupe_enabled: bool,
 }
 
+pub type InflightRequestsMap = Arc<DashMap<u64, Arc<OnceCell<Arc<HttpResponse>>>, ABuildHasher>>;
+
 pub struct SubgraphExecutorMap {
     executors_by_subgraph: ExecutorsBySubgraphMap,
     /// Mapping from subgraph name to static endpoint for quick lookup
@@ -66,7 +68,7 @@ pub struct SubgraphExecutorMap {
     client: Arc<HttpClient>,
     semaphores_by_origin: DashMap<String, Arc<Semaphore>>,
     max_connections_per_host: usize,
-    in_flight_requests: Arc<DashMap<u64, Arc<OnceCell<HttpResponse>>, ABuildHasher>>,
+    in_flight_requests: InflightRequestsMap,
 }
 
 impl SubgraphExecutorMap {
@@ -136,7 +138,7 @@ impl SubgraphExecutorMap {
         execution_request: SubgraphExecutionRequest<'exec>,
         client_request: &ClientRequestDetails<'exec, 'req>,
         plugin_req_state: &Option<PluginRequestState<'req>>,
-    ) -> HttpResponse {
+    ) -> Arc<HttpResponse> {
         let mut executor = match self.get_or_create_executor(subgraph_name, client_request) {
             Ok(executor) => executor,
             Err(err) => {
@@ -144,7 +146,9 @@ impl SubgraphExecutorMap {
                     "Subgraph executor error for subgraph '{}': {}",
                     subgraph_name, err,
                 );
-                return self.internal_server_error_response(err.into(), subgraph_name);
+                return self
+                    .internal_server_error_response(err.into(), subgraph_name)
+                    .into();
             }
         };
 
@@ -169,7 +173,9 @@ impl SubgraphExecutorMap {
                     "Failed to resolve timeout for subgraph '{}': {}",
                     subgraph_name, err,
                 );
-                return self.internal_server_error_response(err.into(), subgraph_name);
+                return self
+                    .internal_server_error_response(err.into(), subgraph_name)
+                    .into();
             }
         };
 
@@ -195,7 +201,7 @@ impl SubgraphExecutorMap {
                     }
                     StartControlFlow::EndResponse(response) => {
                         // TODO: FFIX
-                        return response;
+                        return response.into();
                     }
                     StartControlFlow::OnEnd(callback) => {
                         on_end_callbacks.push(callback);
@@ -231,7 +237,7 @@ impl SubgraphExecutorMap {
                     }
                     EndControlFlow::EndResponse(response) => {
                         // TODO: FFIX
-                        return response;
+                        return response.into();
                     }
                 }
             }
@@ -255,7 +261,7 @@ impl SubgraphExecutorMap {
         buffer.put_slice(b"}");
 
         HttpResponse {
-            body: buffer.freeze(),
+            body: buffer.freeze().into(),
             headers: Default::default(),
             status: http::StatusCode::INTERNAL_SERVER_ERROR,
         }

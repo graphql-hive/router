@@ -151,7 +151,7 @@ impl RouterPlugin for MultipartPlugin {
                                 .with_response(HttpResponse {
                                     status: resp.status(),
                                     headers: resp.headers().clone(),
-                                    body: resp.bytes().await.unwrap(),
+                                    body: resp.bytes().await.unwrap().into(),
                                 })
                                 .cont();
                         }

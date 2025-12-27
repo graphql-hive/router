@@ -1,4 +1,7 @@
-use std::collections::{BTreeSet, HashMap};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use bytes::{BufMut, Bytes};
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
@@ -193,7 +196,7 @@ pub async fn execute_query_plan<'exec, 'req>(
 
     Ok((
         HttpResponse {
-            body: body.into(),
+            body: Arc::new(body.into()),
             headers: response_headers,
             status: http::StatusCode::OK,
         },
@@ -215,12 +218,12 @@ pub struct Executor<'exec, 'req> {
 struct FetchJob {
     fetch_node_id: i64,
     subgraph_name: String,
-    response: HttpResponse,
+    response: Arc<HttpResponse>,
 }
 
 struct FlattenFetchJob {
     flatten_node_path: FlattenNodePath,
-    response: HttpResponse,
+    response: Arc<HttpResponse>,
     fetch_node_id: i64,
     subgraph_name: String,
     representation_hashes: Vec<u64>,
@@ -233,16 +236,17 @@ enum ExecutionJob {
     None,
 }
 
-impl From<ExecutionJob> for HttpResponse {
+impl From<ExecutionJob> for Arc<HttpResponse> {
     fn from(value: ExecutionJob) -> Self {
         match value {
             ExecutionJob::Fetch(j) => j.response,
             ExecutionJob::FlattenFetch(j) => j.response,
-            ExecutionJob::None => Self {
+            ExecutionJob::None => HttpResponse {
                 status: http::StatusCode::OK,
-                body: Bytes::new(),
+                body: Bytes::new().into(),
                 headers: HeaderMap::new(),
-            },
+            }
+            .into(),
         }
     }
 }
@@ -445,7 +449,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         &self,
         subgraph_name: &str,
         ctx: &mut ExecutionContext<'exec>,
-        response_bytes: Bytes,
+        response_bytes: Arc<Bytes>,
         fetch_node_id: i64,
     ) -> Option<(SubgraphResponse<'exec>, Option<&'exec Vec<FetchRewrite>>)> {
         let idx = ctx.response_storage.add_response(response_bytes);
@@ -505,7 +509,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                 if let Some((mut response, output_rewrites)) = self.process_subgraph_response(
                     job.subgraph_name.as_ref(),
                     ctx,
-                    job.response.body,
+                    job.response.body.clone(),
                     job.fetch_node_id,
                 ) {
                     ctx.handle_errors(&job.subgraph_name, None, response.errors, None);
@@ -535,7 +539,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                 if let Some((mut response, output_rewrites)) = self.process_subgraph_response(
                     &job.subgraph_name,
                     ctx,
-                    job.response.body,
+                    job.response.body.clone(),
                     job.fetch_node_id,
                 ) {
                     if let Some(mut entities) = response.data.take_entities() {

@@ -146,7 +146,7 @@ impl RouterPlugin for ApolloSandboxPlugin {
             let mut headers = HeaderMap::new();
             headers.insert("Content-Type", "text/html".parse().unwrap());
             let http_response = HttpResponse {
-                body: html_bytes,
+                body: html_bytes.into(),
                 headers,
                 status: StatusCode::OK,
             };
