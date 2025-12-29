@@ -19,7 +19,6 @@ use hyper_util::{
     rt::{TokioExecutor, TokioTimer},
 };
 use tokio::sync::{OnceCell, Semaphore};
-use tracing::error;
 
 use crate::{
     execution::client_request_details::ClientRequestDetails,
@@ -34,7 +33,7 @@ use crate::{
     },
     plugin_context::PluginRequestState,
     plugin_trait::{EndControlFlow, StartControlFlow},
-    response::{graphql_error::GraphQLError, subgraph_response::SubgraphResponse, value::Value},
+    response::subgraph_response::SubgraphResponse,
 };
 
 type SubgraphName = String;
@@ -137,19 +136,10 @@ impl SubgraphExecutorMap {
         execution_request: SubgraphExecutionRequest<'exec>,
         client_request: &ClientRequestDetails<'exec, 'req>,
         plugin_req_state: &'exec Option<PluginRequestState<'req>>,
-    ) -> SubgraphResponse<'exec> {
-        let mut executor = match self.get_or_create_executor(subgraph_name, client_request) {
-            Ok(executor) => executor,
-            Err(err) => {
-                error!(
-                    "Subgraph executor error for subgraph '{}': {}",
-                    subgraph_name, err,
-                );
-                return self.internal_server_error_response(err.into(), subgraph_name);
-            }
-        };
+    ) -> Result<SubgraphResponse<'exec>, SubgraphExecutorError> {
+        let mut executor = self.get_or_create_executor(subgraph_name, client_request)?;
 
-        let timeout = match self
+        let timeout = self
             .timeouts_by_subgraph
             .get(subgraph_name)
             .map(|t| {
@@ -162,17 +152,7 @@ impl SubgraphExecutorMap {
                     subgraph_name,
                 )
             })
-            .transpose()
-        {
-            Ok(timeout) => timeout,
-            Err(err) => {
-                error!(
-                    "Failed to resolve timeout for subgraph '{}': {}",
-                    subgraph_name, err,
-                );
-                return self.internal_server_error_response(err.into(), subgraph_name);
-            }
-        };
+            .transpose()?;
 
         let mut on_end_callbacks = vec![];
 
@@ -213,7 +193,7 @@ impl SubgraphExecutorMap {
             None => {
                 executor
                     .execute(execution_request, timeout, plugin_req_state)
-                    .await
+                    .await?
             }
         };
 
@@ -240,22 +220,7 @@ impl SubgraphExecutorMap {
             execution_result = end_payload.execution_result;
         }
 
-        execution_result
-    }
-
-    fn internal_server_error_response<'a>(
-        &self,
-        graphql_error: GraphQLError,
-        subgraph_name: &str,
-    ) -> SubgraphResponse<'a> {
-        let errors = vec![graphql_error.add_subgraph_name(subgraph_name)];
-        SubgraphResponse {
-            data: Value::Null,
-            errors: Some(errors),
-            extensions: None,
-            headers: None,
-            bytes: None,
-        }
+        Ok(execution_result)
     }
 
     /// Looks up a subgraph executor based on the subgraph name.

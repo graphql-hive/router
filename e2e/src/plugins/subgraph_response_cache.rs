@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use dashmap::DashMap;
 use serde::Deserialize;
 
@@ -18,7 +16,7 @@ pub struct SubgraphResponseCachePluginConfig {
 }
 
 pub struct SubgraphResponseCachePlugin {
-    cache: DashMap<String, Arc<HttpResponse>>,
+    cache: DashMap<String, HttpResponse>,
 }
 
 #[async_trait::async_trait]
@@ -47,7 +45,7 @@ impl RouterPlugin for SubgraphResponseCachePlugin {
         if let Some(cached_response) = self.cache.get(&key) {
             // Here payload.response is Option
             // So it is bypassing the actual subgraph request
-            return payload.with_response(Arc::clone(&cached_response)).cont();
+            return payload.with_response(cached_response.clone()).cont();
         }
         payload.on_end(move |payload: OnSubgraphHttpResponseHookPayload| {
             // Here payload.response is not Option

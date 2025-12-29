@@ -1,6 +1,7 @@
 use strum::IntoStaticStr;
 
 use crate::{
+    executors::error::SubgraphExecutorError,
     headers::errors::HeaderRuleRuntimeError,
     projection::error::ProjectionError,
     response::graphql_error::{GraphQLError, GraphQLErrorExtensions},
@@ -8,13 +9,17 @@ use crate::{
 
 #[derive(thiserror::Error, Debug, Clone, IntoStaticStr)]
 pub enum PlanExecutionErrorKind {
-    #[error("Projection faiure: {0}")]
+    #[error("Projection failure: {0}")]
     #[strum(serialize = "PROJECTION_FAILURE")]
     ProjectionFailure(#[from] ProjectionError),
 
     #[error(transparent)]
     #[strum(serialize = "HEADER_PROPAGATION_FAILURE")]
     HeaderPropagation(#[from] HeaderRuleRuntimeError),
+
+    #[error("Failed to execute subgraph request: {0}")]
+    #[strum(serialize = "SUBGRAPH_EXECUTION_FAILURE")]
+    SubgraphExecution(#[from] SubgraphExecutorError),
 }
 
 /// The central error type for all query plan execution failures.
@@ -130,6 +135,22 @@ impl<T> IntoPlanExecutionError<T> for Result<T, HeaderRuleRuntimeError> {
     {
         self.map_err(|source| {
             let kind = PlanExecutionErrorKind::HeaderPropagation(source);
+            PlanExecutionError::new(kind, context)
+        })
+    }
+}
+
+impl<T> IntoPlanExecutionError<T> for Result<T, SubgraphExecutorError> {
+    fn with_plan_context<SN, AP>(
+        self,
+        context: LazyPlanContext<SN, AP>,
+    ) -> Result<T, PlanExecutionError>
+    where
+        SN: FnOnce() -> Option<String>,
+        AP: FnOnce() -> Option<String>,
+    {
+        self.map_err(|source| {
+            let kind = PlanExecutionErrorKind::SubgraphExecution(source);
             PlanExecutionError::new(kind, context)
         })
     }

@@ -15,7 +15,7 @@ use hive_router_config::HiveRouterConfig;
 
 use async_trait::async_trait;
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes};
 use http::HeaderValue;
 use http::{HeaderMap, StatusCode};
 use http_body_util::BodyExt;
@@ -141,28 +141,6 @@ impl HTTPSubgraphExecutor {
 
         Ok(body)
     }
-
-    fn error_to_graphql_bytes(&self, error: SubgraphExecutorError) -> Bytes {
-        let graphql_error: GraphQLError = error.into();
-        let mut graphql_error = graphql_error.add_subgraph_name(&self.subgraph_name);
-        graphql_error.message = "Failed to execute request to subgraph".to_string();
-
-        let errors = vec![graphql_error];
-        // This unwrap is safe as GraphQLError serialization shouldn't fail.
-        let errors_bytes = sonic_rs::to_vec(&errors).unwrap();
-        let mut buffer = BytesMut::new();
-        buffer.put_slice(b"{\"errors\":");
-        buffer.put_slice(&errors_bytes);
-        buffer.put_slice(b"}");
-        buffer.freeze()
-    }
-
-    fn log_error(&self, error: &SubgraphExecutorError) {
-        tracing::error!(
-            error = error as &dyn std::error::Error,
-            "Subgraph executor error"
-        );
-    }
 }
 
 struct SendRequestOpts<'a> {
@@ -178,7 +156,7 @@ struct SendRequestOpts<'a> {
 
 async fn send_request<'a>(
     opts: SendRequestOpts<'a>,
-) -> Result<Arc<HttpResponse>, SubgraphExecutorError> {
+) -> Result<HttpResponse, SubgraphExecutorError> {
     let SendRequestOpts {
         http_client,
         subgraph_name,
@@ -208,7 +186,7 @@ async fn send_request<'a>(
             match result.control_flow {
                 StartControlFlow::Continue => { /* continue to next plugin */ }
                 StartControlFlow::EndResponse(response) => {
-                    return Ok(response.into());
+                    return Ok(response);
                 }
                 StartControlFlow::OnEnd(callback) => {
                     on_end_callbacks.push(callback);
@@ -281,7 +259,6 @@ async fn send_request<'a>(
                 body: body.into(),
                 headers: parts.headers.into(),
             }
-            .into()
         }
     };
 
@@ -297,7 +274,7 @@ async fn send_request<'a>(
             match result.control_flow {
                 EndControlFlow::Continue => { /* continue to next callback */ }
                 EndControlFlow::EndResponse(response) => {
-                    return Ok(response.into());
+                    return Ok(response);
                 }
             }
         }
@@ -315,19 +292,8 @@ impl HTTPSubgraphExecutor {
         mut execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
         plugin_req_state: &'a Option<PluginRequestState<'a>>,
-    ) -> Arc<HttpResponse> {
-        let body = match self.build_request_body(&execution_request) {
-            Ok(body) => body,
-            Err(e) => {
-                self.log_error(&e);
-                return HttpResponse {
-                    body: self.error_to_graphql_bytes(e).into(),
-                    headers: Default::default(),
-                    status: StatusCode::OK,
-                }
-                .into();
-            }
-        };
+    ) -> Result<Arc<HttpResponse>, SubgraphExecutorError> {
+        let body = self.build_request_body(&execution_request)?;
 
         self.header_map.iter().for_each(|(key, value)| {
             execution_request.headers.insert(key, value.clone());
@@ -340,7 +306,7 @@ impl HTTPSubgraphExecutor {
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
 
-            return match send_request(SendRequestOpts {
+            let response = send_request(SendRequestOpts {
                 http_client: &self.http_client,
                 subgraph_name: &self.subgraph_name,
                 endpoint: &self.endpoint,
@@ -350,19 +316,9 @@ impl HTTPSubgraphExecutor {
                 plugin_req_state,
                 timeout,
             })
-            .await
-            {
-                Ok(shared_response) => shared_response,
-                Err(e) => {
-                    self.log_error(&e);
-                    HttpResponse {
-                        body: self.error_to_graphql_bytes(e).into(),
-                        headers: Default::default(),
-                        status: StatusCode::OK,
-                    }
-                    .into()
-                }
-            };
+            .await?;
+
+            return Ok(response.into());
         }
 
         let fingerprint =
@@ -378,7 +334,7 @@ impl HTTPSubgraphExecutor {
 
         let response_result = cell
             .get_or_try_init(|| async {
-                let res = {
+                let res: Result<HttpResponse, SubgraphExecutorError> = {
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
                     let _permit = self.semaphore.acquire().await.unwrap();
@@ -398,22 +354,14 @@ impl HTTPSubgraphExecutor {
                 // This ensures that once the OnceCell is set, no future requests can join it.
                 // The cache is for the lifetime of the in-flight request only.
                 self.in_flight_requests.remove(&fingerprint);
-                res
-            })
-            .await;
-
-        match response_result {
-            Ok(shared_response) => shared_response.clone(),
-            Err(e) => {
-                self.log_error(&e);
-                HttpResponse {
-                    body: self.error_to_graphql_bytes(e).into(),
-                    headers: Default::default(),
-                    status: StatusCode::OK,
+                match res {
+                    Ok(response) => Ok(Arc::new(response)),
+                    Err(err) => Err(err),
                 }
-                .into()
-            }
-        }
+            })
+            .await?;
+
+        Ok(response_result.clone())
     }
 }
 
@@ -427,12 +375,12 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
         plugin_req_state: &'a Option<PluginRequestState<'a>>,
-    ) -> SubgraphResponse<'a> {
+    ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
         let http_response = self
             .execute_http(execution_request, timeout, plugin_req_state)
-            .await;
+            .await?;
 
-        http_response.into()
+        Ok(http_response.into())
     }
 }
 

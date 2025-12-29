@@ -744,7 +744,11 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                     self.client_request,
                     self.plugin_req_state,
                 )
-                .await,
+                .await
+                .with_plan_context(LazyPlanContext {
+                    subgraph_name: || Some(node.service_name.clone()),
+                    affected_path: || None,
+                })?,
         }))
     }
 

@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::{
     executors::{common::SubgraphExecutionRequest, http::HttpResponse},
     plugin_context::PluginContext,
@@ -17,7 +15,7 @@ pub struct OnSubgraphHttpRequestHookPayload<'exec> {
     pub context: &'exec PluginContext,
 
     // Early response
-    pub response: Option<Arc<HttpResponse>>,
+    pub response: Option<HttpResponse>,
 }
 
 impl<'exec> StartHookPayload<OnSubgraphHttpResponseHookPayload<'exec>>
@@ -34,7 +32,7 @@ pub type OnSubgraphHttpRequestHookResult<'exec> = crate::plugin_trait::StartHook
 impl<'exec> OnSubgraphHttpRequestHookPayload<'exec> {
     /// Sets the subgraph http response earlier
     /// And this skips the actual subgraph http call
-    pub fn with_response(mut self, response: Arc<HttpResponse>) -> Self {
+    pub fn with_response(mut self, response: HttpResponse) -> Self {
         self.response = Some(response);
         self
     }
@@ -42,7 +40,7 @@ impl<'exec> OnSubgraphHttpRequestHookPayload<'exec> {
 
 pub struct OnSubgraphHttpResponseHookPayload<'exec> {
     pub context: &'exec PluginContext,
-    pub response: Arc<HttpResponse>,
+    pub response: HttpResponse,
 }
 
 impl<'exec> EndHookPayload for OnSubgraphHttpResponseHookPayload<'exec> {}

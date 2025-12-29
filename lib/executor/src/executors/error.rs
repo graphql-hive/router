@@ -1,7 +1,5 @@
 use hive_router_internal::expressions::vrl::prelude::ExpressionError;
 
-use crate::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
-
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum SubgraphExecutorError {
     #[error("Failed to parse endpoint \"{0}\" as URI: {1}")]
@@ -26,17 +24,6 @@ pub enum SubgraphExecutorError {
     TimeoutExpressionResolution(String, String),
     #[error("Request to subgraph \"{0}\" timed out after {1} milliseconds")]
     RequestTimeout(String, u128),
-}
-
-impl From<SubgraphExecutorError> for GraphQLError {
-    fn from(error: SubgraphExecutorError) -> Self {
-        GraphQLError {
-            message: "Internal server error".to_string(),
-            locations: None,
-            path: None,
-            extensions: GraphQLErrorExtensions::new_from_code(error.error_code()),
-        }
-    }
 }
 
 impl SubgraphExecutorError {
