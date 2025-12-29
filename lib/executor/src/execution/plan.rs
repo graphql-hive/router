@@ -196,7 +196,7 @@ pub async fn execute_query_plan<'exec, 'req>(
     Ok((
         HttpResponse {
             body: Arc::new(body.into()),
-            headers: response_headers,
+            headers: response_headers.into(),
             status: http::StatusCode::OK,
         },
         error_count,
@@ -244,7 +244,8 @@ impl<'exec> From<ExecutionJob<'exec>> for SubgraphResponse<'exec> {
                 data: Value::Null,
                 errors: None,
                 extensions: None,
-                http: None,
+                headers: None,
+                bytes: None,
             },
         }
     }
@@ -470,11 +471,11 @@ impl<'exec, 'req> Executor<'exec, 'req> {
     ) -> Result<(), PlanExecutionError> {
         let _: () = match job {
             ExecutionJob::Fetch(mut job) => {
-                if let Some(ref http_response) = job.response.http {
+                if let Some(ref subgraph_headers) = job.response.headers {
                     apply_subgraph_response_headers(
                         self.headers_plan,
                         &job.subgraph_name,
-                        &http_response.headers,
+                        subgraph_headers,
                         self.client_request,
                         &mut ctx.response_headers_aggregator,
                     )
@@ -483,13 +484,9 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                         affected_path: || None,
                     })?;
                 }
-                if let Some(output_rewrites) = self.process_subgraph_response(
-                    ctx,
-                    job.response
-                        .http
-                        .map(|http_res| http_res.clone().body.clone()),
-                    job.fetch_node_id,
-                ) {
+                if let Some(output_rewrites) =
+                    self.process_subgraph_response(ctx, job.response.bytes, job.fetch_node_id)
+                {
                     for output_rewrite in output_rewrites {
                         output_rewrite
                             .rewrite(&self.schema_metadata.possible_types, &mut job.response.data);
@@ -501,11 +498,11 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                 deep_merge(&mut ctx.final_response, job.response.data);
             }
             ExecutionJob::FlattenFetch(mut job) => {
-                if let Some(ref http_response) = job.response.http {
+                if let Some(ref subgraph_headers) = job.response.headers {
                     apply_subgraph_response_headers(
                         self.headers_plan,
                         &job.subgraph_name,
-                        &http_response.headers,
+                        subgraph_headers,
                         self.client_request,
                         &mut ctx.response_headers_aggregator,
                     )
@@ -515,13 +512,8 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                     })?;
                 }
 
-                let output_rewrites = self.process_subgraph_response(
-                    ctx,
-                    job.response
-                        .http
-                        .map(|http_res| http_res.clone().body.clone()),
-                    job.fetch_node_id,
-                );
+                let output_rewrites =
+                    self.process_subgraph_response(ctx, job.response.bytes, job.fetch_node_id);
 
                 if let Some(mut entities) = job.response.data.take_entities() {
                     if let Some(output_rewrites) = output_rewrites {

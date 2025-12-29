@@ -253,7 +253,8 @@ impl SubgraphExecutorMap {
             data: Value::Null,
             errors: Some(errors),
             extensions: None,
-            http: None,
+            headers: None,
+            bytes: None,
         }
     }
 

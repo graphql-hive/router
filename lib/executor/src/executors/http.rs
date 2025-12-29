@@ -9,7 +9,6 @@ use crate::hooks::on_subgraph_http_request::{
 use crate::plugin_context::PluginRequestState;
 use crate::plugin_trait::{EndControlFlow, StartControlFlow};
 use crate::response::subgraph_response::SubgraphResponse;
-use crate::response::value::Value;
 use futures::TryFutureExt;
 use hive_router_config::HiveRouterConfig;
 
@@ -23,7 +22,6 @@ use http_body_util::Full;
 use hyper::Version;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
-use serde::Deserialize;
 use tokio::sync::Semaphore;
 use tracing::debug;
 
@@ -280,7 +278,7 @@ async fn send_request<'a>(
             HttpResponse {
                 status: parts.status,
                 body: body.into(),
-                headers: parts.headers,
+                headers: parts.headers.into(),
             }
             .into()
         }
@@ -433,9 +431,20 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             .execute_http(execution_request, timeout, plugin_req_state)
             .await;
 
-        let bytes: Arc<Bytes> = http_response.body.clone();
+        http_response.into()
+    }
+}
 
-        let bytes: &[u8] = &bytes;
+#[derive(Clone)]
+pub struct HttpResponse {
+    pub status: StatusCode,
+    pub headers: Arc<HeaderMap>,
+    pub body: Arc<Bytes>,
+}
+
+impl<'a> From<Arc<HttpResponse>> for SubgraphResponse<'a> {
+    fn from(http_response: Arc<HttpResponse>) -> Self {
+        let bytes: &[u8] = &http_response.body;
 
         // SAFETY: The `bytes` are transmuted to the lifetime `'a` of the `ExecutionContext`.
         // This is safe because the `response_storage` is part of the `ExecutionContext` (`ctx`)
@@ -445,33 +454,20 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         // lives for `'a`.
         let bytes: &'a [u8] = unsafe { std::mem::transmute(bytes) };
 
-        let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
-        let mut subgraph_response = match SubgraphResponse::deserialize(&mut deserializer) {
+        let mut subgraph_response: SubgraphResponse<'a> = match sonic_rs::from_slice(bytes) {
             Ok(response) => response,
             Err(e) => {
                 let message = format!("Failed to deserialize subgraph response: {}", e);
-                let extensions = GraphQLErrorExtensions::new_from_code_and_service_name(
+                let extensions = GraphQLErrorExtensions::new_from_code(
                     "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILED",
-                    &self.subgraph_name,
                 );
                 let error = GraphQLError::from_message_and_extensions(message, extensions);
 
-                SubgraphResponse {
-                    data: Value::Null,
-                    errors: Some(vec![error]),
-                    extensions: None,
-                    http: None,
-                }
+                error.into()
             }
         };
-        subgraph_response.http = Some(http_response);
+        subgraph_response.headers = Some(http_response.headers.clone());
+        subgraph_response.bytes = Some(http_response.body.clone());
         subgraph_response
     }
-}
-
-#[derive(Clone)]
-pub struct HttpResponse {
-    pub status: StatusCode,
-    pub headers: HeaderMap,
-    pub body: Arc<Bytes>,
 }

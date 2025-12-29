@@ -82,7 +82,7 @@ impl RouterPlugin for ResponseCachePlugin {
                         return payload.end_response(
                             HttpResponse {
                                 body: Arc::new(body.into()),
-                                headers: HeaderMap::new(),
+                                headers: HeaderMap::new().into(),
                                 status: StatusCode::OK,
                             }
                             .into(),

@@ -147,7 +147,7 @@ impl RouterPlugin for ApolloSandboxPlugin {
             headers.insert("Content-Type", "text/html".parse().unwrap());
             let http_response = HttpResponse {
                 body: html_bytes.into(),
-                headers,
+                headers: headers.into(),
                 status: StatusCode::OK,
             }
             .into();

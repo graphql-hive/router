@@ -70,7 +70,7 @@ where
                     }
                     StartControlFlow::EndResponse(response) => {
                         let mut resp_builder = ResponseBuilder::new(response.status);
-                        for (key, value) in &response.headers {
+                        for (key, value) in response.headers.iter() {
                             resp_builder.header(key, value);
                         }
                         let response = start_payload
@@ -99,7 +99,7 @@ where
                     }
                     EndControlFlow::EndResponse(response) => {
                         let mut resp_builder = ResponseBuilder::new(response.status);
-                        for (key, value) in &response.headers {
+                        for (key, value) in response.headers.iter() {
                             resp_builder.header(key, value);
                         }
                         let response = resp_builder.body(response.body.to_vec());

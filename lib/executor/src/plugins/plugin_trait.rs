@@ -218,10 +218,10 @@ pub trait RouterPlugin: Send + Sync + 'static {
     ) -> OnExecuteStartHookResult<'exec> {
         start_payload.cont()
     }
-    async fn on_subgraph_execute<'exec, 'req>(
+    async fn on_subgraph_execute<'exec>(
         &'exec self,
-        start_payload: OnSubgraphExecuteStartHookPayload<'exec, 'req>,
-    ) -> OnSubgraphExecuteStartHookResult<'exec, 'req> {
+        start_payload: OnSubgraphExecuteStartHookPayload<'exec>,
+    ) -> OnSubgraphExecuteStartHookResult<'exec> {
         start_payload.cont()
     }
     async fn on_subgraph_http_request<'exec>(
@@ -265,10 +265,10 @@ pub trait DynRouterPlugin: Send + Sync + 'static {
         &'exec self,
         start_payload: OnExecuteStartHookPayload<'exec>,
     ) -> OnExecuteStartHookResult<'exec>;
-    async fn on_subgraph_execute<'exec, 'req>(
+    async fn on_subgraph_execute<'exec>(
         &'exec self,
-        start_payload: OnSubgraphExecuteStartHookPayload<'exec, 'req>,
-    ) -> OnSubgraphExecuteStartHookResult<'exec, 'req>;
+        start_payload: OnSubgraphExecuteStartHookPayload<'exec>,
+    ) -> OnSubgraphExecuteStartHookResult<'exec>;
     async fn on_subgraph_http_request<'exec>(
         &'exec self,
         start_payload: OnSubgraphHttpRequestHookPayload<'exec>,
@@ -321,10 +321,10 @@ where
     ) -> OnExecuteStartHookResult<'exec> {
         RouterPlugin::on_execute(self, start_payload).await
     }
-    async fn on_subgraph_execute<'exec, 'req>(
+    async fn on_subgraph_execute<'exec>(
         &'exec self,
-        start_payload: OnSubgraphExecuteStartHookPayload<'exec, 'req>,
-    ) -> OnSubgraphExecuteStartHookResult<'exec, 'req> {
+        start_payload: OnSubgraphExecuteStartHookPayload<'exec>,
+    ) -> OnSubgraphExecuteStartHookResult<'exec> {
         RouterPlugin::on_subgraph_execute(self, start_payload).await
     }
     async fn on_subgraph_http_request<'exec>(

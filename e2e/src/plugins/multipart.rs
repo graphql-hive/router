@@ -21,7 +21,9 @@ use tracing::error;
 pub struct MultipartPluginConfig {
     pub enabled: bool,
 }
-pub struct MultipartPlugin {}
+pub struct MultipartPlugin {
+    client: reqwest::Client,
+}
 
 pub struct MultipartFile {
     pub filename: Option<String>,
@@ -42,7 +44,9 @@ impl RouterPlugin for MultipartPlugin {
     }
     fn from_config(config: MultipartPluginConfig) -> Option<Self> {
         if config.enabled {
-            Some(MultipartPlugin {})
+            Some(MultipartPlugin {
+                client: reqwest::Client::new(),
+            })
         } else {
             None
         }
@@ -140,33 +144,32 @@ impl RouterPlugin for MultipartPlugin {
                             form = form.part(file_ref, part);
                         }
                     }
-                    let resp: Result<reqwest::Response, reqwest::Error> = reqwest::Client::new()
+                    return match self
+                        .client
                         .post(payload.endpoint.to_string())
                         // Using query as endpoint URL
                         .multipart(form)
                         .send()
-                        .await;
-                    match resp {
-                        Ok(resp) => {
-                            return payload
-                                .with_response(
-                                    HttpResponse {
-                                        status: resp.status(),
-                                        headers: resp.headers().clone(),
-                                        body: resp.bytes().await.unwrap().into(),
-                                    }
-                                    .into(),
-                                )
-                                .cont();
-                        }
+                        .await
+                    {
+                        Ok(resp) => payload
+                            .with_response(
+                                HttpResponse {
+                                    status: resp.status(),
+                                    headers: resp.headers().clone().into(),
+                                    body: resp.bytes().await.unwrap().into(),
+                                }
+                                .into(),
+                            )
+                            .cont(),
                         Err(err) => {
                             error!("Failed to send multipart request to subgraph: {}", err);
-                            return payload.end_graphql_error(
+                            payload.end_graphql_error(
                                 GraphQLError::from("Failed to send multipart request to subgraph"),
                                 StatusCode::BAD_REQUEST,
-                            );
+                            )
                         }
-                    }
+                    };
                 }
             }
         }

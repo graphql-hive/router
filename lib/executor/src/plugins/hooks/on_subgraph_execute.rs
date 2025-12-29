@@ -5,8 +5,8 @@ use crate::{
     response::subgraph_response::SubgraphResponse,
 };
 
-pub struct OnSubgraphExecuteStartHookPayload<'exec, 'req> {
-    pub router_http_request: &'req RouterHttpRequest<'req>,
+pub struct OnSubgraphExecuteStartHookPayload<'exec> {
+    pub router_http_request: &'exec RouterHttpRequest<'exec>,
     pub context: &'exec PluginContext,
 
     pub subgraph_name: &'exec str,
@@ -17,21 +17,21 @@ pub struct OnSubgraphExecuteStartHookPayload<'exec, 'req> {
     pub execution_result: Option<SubgraphResponse<'exec>>,
 }
 
-impl<'exec> OnSubgraphExecuteStartHookPayload<'exec, '_> {
+impl<'exec> OnSubgraphExecuteStartHookPayload<'exec> {
     pub fn with_execution_result(mut self, execution_result: SubgraphResponse<'exec>) -> Self {
         self.execution_result = Some(execution_result);
         self
     }
 }
 
-impl<'exec, 'req> StartHookPayload<OnSubgraphExecuteEndHookPayload<'exec>>
-    for OnSubgraphExecuteStartHookPayload<'exec, 'req>
+impl<'exec> StartHookPayload<OnSubgraphExecuteEndHookPayload<'exec>>
+    for OnSubgraphExecuteStartHookPayload<'exec>
 {
 }
 
-pub type OnSubgraphExecuteStartHookResult<'exec, 'req> = StartHookResult<
+pub type OnSubgraphExecuteStartHookResult<'exec> = StartHookResult<
     'exec,
-    OnSubgraphExecuteStartHookPayload<'exec, 'req>,
+    OnSubgraphExecuteStartHookPayload<'exec>,
     OnSubgraphExecuteEndHookPayload<'exec>,
 >;
 

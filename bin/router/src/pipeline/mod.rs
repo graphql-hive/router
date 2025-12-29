@@ -133,7 +133,7 @@ pub async fn graphql_request_handler(
     .await?;
 
     let mut response_builder = web::HttpResponse::Ok();
-    for (header_name, header_value) in &response.headers {
+    for (header_name, header_value) in response.headers.iter() {
         response_builder.header(header_name, header_value);
     }
 
