@@ -363,11 +363,21 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
     }
 }
 
-#[derive(Clone)]
 pub struct HttpResponse {
     pub status: StatusCode,
     pub headers: Arc<HeaderMap>,
     pub body: Arc<Bytes>,
+}
+
+// Zero-cost clone
+impl Clone for HttpResponse {
+    fn clone(&self) -> Self {
+        Self {
+            status: self.status,
+            headers: Arc::clone(&self.headers),
+            body: Arc::clone(&self.body),
+        }
+    }
 }
 
 fn deserialize_http_response<'a>(
