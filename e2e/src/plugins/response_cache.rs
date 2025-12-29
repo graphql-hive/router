@@ -126,20 +126,15 @@ impl RouterPlugin for ResponseCachePlugin {
                     trace!("Using TTL of {} seconds for key: {}", max_ttl, key);
 
                     // Insert the ttl into extensions for client awareness
-                    payload
-                        .extensions
-                        .insert("response_cache_ttl".to_string(), sonic_rs::json!(max_ttl));
+                    payload.add_extension("response_cache_ttl", max_ttl);
 
                     // Set the cache with the decided ttl
-                    let result =
-                        conn.set_ex::<&str, Vec<u8>, ()>(&key, serialized.clone(), max_ttl);
+                    let result = conn.set_ex::<&str, Vec<u8>, ()>(&key, serialized, max_ttl);
                     if let Err(err) = result {
                         trace!("Failed to set cache for key {}: {}", key, err);
                     } else {
                         trace!("Cached response for key: {} with TTL: {}", key, max_ttl);
                     }
-
-                    payload.add_extension("response_cache_ttl", max_ttl);
                 }
                 payload.cont()
             });

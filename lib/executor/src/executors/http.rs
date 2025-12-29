@@ -398,6 +398,7 @@ impl HTTPSubgraphExecutor {
                 // It's important to remove the entry from the map before returning the result.
                 // This ensures that once the OnceCell is set, no future requests can join it.
                 // The cache is for the lifetime of the in-flight request only.
+                self.in_flight_requests.remove(&fingerprint);
                 res
             })
             .await;
@@ -446,7 +447,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         let bytes: &'a [u8] = unsafe { std::mem::transmute(bytes) };
 
         let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
-        match SubgraphResponse::deserialize(&mut deserializer) {
+        let mut subgraph_response = match SubgraphResponse::deserialize(&mut deserializer) {
             Ok(response) => response,
             Err(e) => {
                 let message = format!("Failed to deserialize subgraph response: {}", e);
@@ -463,7 +464,9 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                     http: None,
                 }
             }
-        }
+        };
+        subgraph_response.http = Some(http_response);
+        subgraph_response
     }
 }
 
