@@ -285,14 +285,17 @@ async fn send_request<'a>(
     Ok(response)
 }
 
-impl HTTPSubgraphExecutor {
-    #[tracing::instrument(level = "trace", skip_all, fields(subgraph_name = %self.subgraph_name))]
-    async fn execute_http<'a>(
+#[async_trait]
+impl SubgraphExecutor for HTTPSubgraphExecutor {
+    fn endpoint(&self) -> &http::Uri {
+        &self.endpoint
+    }
+    async fn execute<'a>(
         &self,
         mut execution_request: SubgraphExecutionRequest<'a>,
         timeout: Option<Duration>,
         plugin_req_state: &'a Option<PluginRequestState<'a>>,
-    ) -> Result<Arc<HttpResponse>, SubgraphExecutorError> {
+    ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
         let body = self.build_request_body(&execution_request)?;
 
         self.header_map.iter().for_each(|(key, value)| {
@@ -318,7 +321,7 @@ impl HTTPSubgraphExecutor {
             })
             .await?;
 
-            return Ok(response.into());
+            return Ok(Arc::new(response).into());
         }
 
         let fingerprint =
@@ -332,7 +335,7 @@ impl HTTPSubgraphExecutor {
             .or_default()
             .clone();
 
-        let response_result = cell
+        let http_response = cell
             .get_or_try_init(|| async {
                 let res: Result<HttpResponse, SubgraphExecutorError> = {
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
@@ -361,26 +364,7 @@ impl HTTPSubgraphExecutor {
             })
             .await?;
 
-        Ok(response_result.clone())
-    }
-}
-
-#[async_trait]
-impl SubgraphExecutor for HTTPSubgraphExecutor {
-    fn endpoint(&self) -> &http::Uri {
-        &self.endpoint
-    }
-    async fn execute<'a>(
-        &self,
-        execution_request: SubgraphExecutionRequest<'a>,
-        timeout: Option<Duration>,
-        plugin_req_state: &'a Option<PluginRequestState<'a>>,
-    ) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
-        let http_response = self
-            .execute_http(execution_request, timeout, plugin_req_state)
-            .await?;
-
-        Ok(http_response.into())
+        Ok(http_response.clone().into())
     }
 }
 

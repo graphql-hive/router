@@ -17,8 +17,7 @@ pub enum PlanExecutionErrorKind {
     #[strum(serialize = "HEADER_PROPAGATION_FAILURE")]
     HeaderPropagation(#[from] HeaderRuleRuntimeError),
 
-    #[error("Failed to execute subgraph request: {0}")]
-    #[strum(serialize = "SUBGRAPH_EXECUTION_FAILURE")]
+    #[error(transparent)]
     SubgraphExecution(#[from] SubgraphExecutorError),
 }
 
