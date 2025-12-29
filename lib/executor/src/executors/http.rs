@@ -9,7 +9,6 @@ use crate::hooks::on_subgraph_http_request::{
 use crate::plugin_context::PluginRequestState;
 use crate::plugin_trait::{EndControlFlow, StartControlFlow};
 use crate::response::subgraph_response::SubgraphResponse;
-use crate::response::value::Value;
 use futures::TryFutureExt;
 use hive_router_config::HiveRouterConfig;
 
@@ -28,7 +27,6 @@ use tracing::debug;
 
 use crate::executors::common::SubgraphExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
-use crate::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use crate::utils::consts::CLOSE_BRACE;
 use crate::utils::consts::COLON;
 use crate::utils::consts::COMMA;
@@ -309,7 +307,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
             let _permit = self.semaphore.acquire().await.unwrap();
 
-            let response = send_request(SendRequestOpts {
+            let http_response = send_request(SendRequestOpts {
                 http_client: &self.http_client,
                 subgraph_name: &self.subgraph_name,
                 endpoint: &self.endpoint,
@@ -321,7 +319,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             })
             .await?;
 
-            return Ok((&response).into());
+            return deserialize_http_response(&http_response);
         }
 
         let fingerprint =
@@ -361,7 +359,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             })
             .await?;
 
-        Ok(http_response.into())
+        deserialize_http_response(http_response)
     }
 }
 
@@ -372,41 +370,24 @@ pub struct HttpResponse {
     pub body: Arc<Bytes>,
 }
 
-impl<'a> From<&HttpResponse> for SubgraphResponse<'a> {
-    fn from(http_response: &HttpResponse) -> Self {
-        let bytes_ref: &[u8] = &http_response.body;
+fn deserialize_http_response<'a>(
+    http_response: &HttpResponse,
+) -> Result<SubgraphResponse<'a>, SubgraphExecutorError> {
+    let bytes_ref: &[u8] = &http_response.body;
 
-        // SAFETY: The `bytes` are transmuted to the lifetime `'a` of the `ExecutionContext`.
-        // This is safe because the `response_storage` is part of the `ExecutionContext` (`ctx`)
-        // and will live as long as `'a`. The `Bytes` are stored in an `Arc`, so they won't be
-        // dropped until all references are gone. The `Value`s deserialized from this byte
-        // slice will borrow from it, and they are stored in `ctx.final_response`, which also
-        // lives for `'a`.
-        let bytes_ref: &'a [u8] = unsafe { std::mem::transmute(bytes_ref) };
+    // SAFETY: The `bytes` are transmuted to the lifetime `'a` of the `ExecutionContext`.
+    // This is safe because the `response_storage` is part of the `ExecutionContext` (`ctx`)
+    // and will live as long as `'a`. The `Bytes` are stored in an `Arc`, so they won't be
+    // dropped until all references are gone. The `Value`s deserialized from this byte
+    // slice will borrow from it, and they are stored in `ctx.final_response`, which also
+    // lives for `'a`.
+    let bytes_ref: &'a [u8] = unsafe { std::mem::transmute(bytes_ref) };
 
-        let headers = Some(http_response.headers.clone());
-        let bytes = Some(http_response.body.clone());
-
-        match sonic_rs::from_slice::<SubgraphResponse<'a>>(bytes_ref) {
-            Ok(mut res) => {
-                res.headers = headers;
-                res.bytes = bytes;
-                res
-            }
-            Err(err) => {
-                let message = format!("Failed to deserialize subgraph response: {}", err);
-                let extensions = GraphQLErrorExtensions::new_from_code(
-                    "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILED",
-                );
-                let graphql_error = GraphQLError::from_message_and_extensions(message, extensions);
-                SubgraphResponse {
-                    data: Value::Null,
-                    errors: Some(vec![graphql_error]),
-                    extensions: None,
-                    headers,
-                    bytes,
-                }
-            }
-        }
-    }
+    sonic_rs::from_slice(bytes_ref)
+        .map_err(|err| SubgraphExecutorError::ResponseDeserializationFailure(err.to_string()))
+        .map(|mut resp: SubgraphResponse<'a>| {
+            resp.headers = Some(http_response.headers.clone());
+            resp.bytes = Some(http_response.body.clone());
+            resp
+        })
 }
