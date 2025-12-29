@@ -6,7 +6,6 @@ use bytes::Bytes;
 use http::HeaderMap;
 use serde::de::{self, Deserializer, MapAccess, Visitor};
 
-#[derive(Clone)]
 pub struct SubgraphResponse<'a> {
     pub data: Value<'a>,
     pub errors: Option<Vec<GraphQLError>>,
@@ -15,7 +14,13 @@ pub struct SubgraphResponse<'a> {
     pub bytes: Option<Arc<Bytes>>,
 }
 
-impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
+pub struct SubgraphResponseDeserialized<'a> {
+    pub data: Value<'a>,
+    pub errors: Option<Vec<GraphQLError>>,
+    pub extensions: Option<Value<'a>>,
+}
+
+impl<'de> de::Deserialize<'de> for SubgraphResponseDeserialized<'de> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -25,7 +30,7 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
         }
 
         impl<'de> Visitor<'de> for SubgraphResponseVisitor<'de> {
-            type Value = SubgraphResponse<'de>;
+            type Value = SubgraphResponseDeserialized<'de>;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter
@@ -73,12 +78,10 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
                 // Data field is required in a successful response, but might be null in case of errors
                 let data = data.unwrap_or(Value::Null);
 
-                Ok(SubgraphResponse {
+                Ok(SubgraphResponseDeserialized {
                     data,
                     errors,
                     extensions,
-                    headers: None,
-                    bytes: None,
                 })
             }
         }
@@ -118,7 +121,7 @@ mod tests {
             ]
         }"#;
 
-        let response: super::SubgraphResponse =
+        let response: super::SubgraphResponseDeserialized =
             sonic_rs::from_str(json_response).expect("Failed to deserialize");
 
         assert!(response.data.is_null());

@@ -8,7 +8,8 @@ use crate::hooks::on_subgraph_http_request::{
 };
 use crate::plugin_context::PluginRequestState;
 use crate::plugin_trait::{EndControlFlow, StartControlFlow};
-use crate::response::subgraph_response::SubgraphResponse;
+use crate::response::subgraph_response::{SubgraphResponse, SubgraphResponseDeserialized};
+use crate::response::value::Value;
 use futures::TryFutureExt;
 use hive_router_config::HiveRouterConfig;
 
@@ -454,20 +455,33 @@ impl<'a> From<Arc<HttpResponse>> for SubgraphResponse<'a> {
         // lives for `'a`.
         let bytes: &'a [u8] = unsafe { std::mem::transmute(bytes) };
 
-        let mut subgraph_response: SubgraphResponse<'a> = match sonic_rs::from_slice(bytes) {
-            Ok(response) => response,
-            Err(e) => {
+        let subgraph_res_deserialized: Result<SubgraphResponseDeserialized<'a>, GraphQLError> =
+            sonic_rs::from_slice(bytes).map_err(|e| {
                 let message = format!("Failed to deserialize subgraph response: {}", e);
                 let extensions = GraphQLErrorExtensions::new_from_code(
                     "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILED",
                 );
-                let error = GraphQLError::from_message_and_extensions(message, extensions);
+                GraphQLError::from_message_and_extensions(message, extensions)
+            });
 
-                error.into()
-            }
-        };
-        subgraph_response.headers = Some(http_response.headers.clone());
-        subgraph_response.bytes = Some(http_response.body.clone());
-        subgraph_response
+        let headers = Some(http_response.headers.clone());
+        let bytes = Some(http_response.body.clone());
+
+        match subgraph_res_deserialized {
+            Ok(res) => SubgraphResponse {
+                data: res.data,
+                errors: res.errors,
+                extensions: res.extensions,
+                headers,
+                bytes,
+            },
+            Err(e) => SubgraphResponse {
+                data: Value::Null,
+                errors: Some(vec![e]),
+                extensions: None,
+                headers,
+                bytes,
+            },
+        }
     }
 }
