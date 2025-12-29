@@ -33,7 +33,7 @@ pub struct StartHookResult<'exec, TStartPayload, TEndPayload> {
 
 pub enum StartControlFlow<'exec, TEndPayload> {
     Continue,
-    EndResponse(Arc<HttpResponse>),
+    EndResponse(HttpResponse),
     OnEnd(Box<dyn FnOnce(TEndPayload) -> EndHookResult<TEndPayload> + Send + 'exec>),
 }
 
@@ -55,7 +55,7 @@ where
 
     fn end_response<'exec>(
         self,
-        output: Arc<HttpResponse>,
+        output: HttpResponse,
     ) -> StartHookResult<'exec, Self, TEndPayload> {
         StartHookResult {
             payload: self,
@@ -74,7 +74,7 @@ where
         };
         StartHookResult {
             payload: self,
-            control_flow: StartControlFlow::EndResponse(http_response.into()),
+            control_flow: StartControlFlow::EndResponse(http_response),
         }
     }
 
@@ -93,7 +93,7 @@ where
         };
         StartHookResult {
             payload: self,
-            control_flow: StartControlFlow::EndResponse(http_response.into()),
+            control_flow: StartControlFlow::EndResponse(http_response),
         }
     }
 
@@ -115,7 +115,7 @@ pub struct EndHookResult<TEndPayload> {
 
 pub enum EndControlFlow {
     Continue,
-    EndResponse(Arc<HttpResponse>),
+    EndResponse(HttpResponse),
 }
 
 pub trait EndHookPayload
@@ -129,7 +129,7 @@ where
         }
     }
 
-    fn end_response(self, output: Arc<HttpResponse>) -> EndHookResult<Self> {
+    fn end_response(self, output: HttpResponse) -> EndHookResult<Self> {
         EndHookResult {
             payload: self,
             control_flow: EndControlFlow::EndResponse(output),
@@ -144,7 +144,7 @@ where
         };
         EndHookResult {
             payload: self,
-            control_flow: EndControlFlow::EndResponse(http_response.into()),
+            control_flow: EndControlFlow::EndResponse(http_response),
         }
     }
 
@@ -159,7 +159,7 @@ where
         };
         EndHookResult {
             payload: self,
-            control_flow: EndControlFlow::EndResponse(http_response.into()),
+            control_flow: EndControlFlow::EndResponse(http_response),
         }
     }
 }

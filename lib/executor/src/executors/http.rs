@@ -209,7 +209,7 @@ async fn send_request<'a>(
             match result.control_flow {
                 StartControlFlow::Continue => { /* continue to next plugin */ }
                 StartControlFlow::EndResponse(response) => {
-                    return Ok(response);
+                    return Ok(response.into());
                 }
                 StartControlFlow::OnEnd(callback) => {
                     on_end_callbacks.push(callback);
@@ -298,7 +298,7 @@ async fn send_request<'a>(
             match result.control_flow {
                 EndControlFlow::Continue => { /* continue to next callback */ }
                 EndControlFlow::EndResponse(response) => {
-                    return Ok(response);
+                    return Ok(response.into());
                 }
             }
         }

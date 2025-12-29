@@ -153,7 +153,7 @@ pub async fn execute_pipeline(
     schema_state: &SchemaState,
     jwt_context: Option<JwtRequestContext>,
     plugin_req_state: Option<PluginRequestState<'_>>,
-) -> Result<Arc<HttpResponse>, PipelineErrorVariant> {
+) -> Result<HttpResponse, PipelineErrorVariant> {
     let start = Instant::now();
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 

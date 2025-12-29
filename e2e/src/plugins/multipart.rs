@@ -161,9 +161,10 @@ impl RouterPlugin for MultipartPlugin {
                         }
                         Err(err) => {
                             error!("Failed to send multipart request to subgraph: {}", err);
-                            return payload.end_graphql_error(GraphQLError::from(
-                                "Failed to send multipart request to subgraph",
-                            ), StatusCode::BAD_REQUEST);
+                            return payload.end_graphql_error(
+                                GraphQLError::from("Failed to send multipart request to subgraph"),
+                                StatusCode::BAD_REQUEST,
+                            );
                         }
                     }
                 }

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use bytes::Bytes;
 use hive_router_plan_executor::{
@@ -118,7 +118,7 @@ pub struct ApolloSandboxInitialStateOptions {
 }
 
 pub struct ApolloSandboxPlugin {
-    http_response: Arc<HttpResponse>,
+    http_response: HttpResponse,
 }
 
 impl RouterPlugin for ApolloSandboxPlugin {

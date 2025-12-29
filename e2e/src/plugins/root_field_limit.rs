@@ -72,10 +72,10 @@ impl RouterPlugin for RootFieldLimitPlugin {
                         );
                         tracing::warn!("{}", err_msg);
                         // Return error
-                        return payload.end_graphql_error(GraphQLError::from_message_and_code(
-                            err_msg,
-                            "TOO_MANY_ROOT_FIELD",
-                        ), StatusCode::PAYLOAD_TOO_LARGE);
+                        return payload.end_graphql_error(
+                            GraphQLError::from_message_and_code(err_msg, "TOO_MANY_ROOT_FIELD"),
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                        );
                     }
                 }
                 SelectionItem::InlineFragment(_) => {

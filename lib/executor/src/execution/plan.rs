@@ -71,7 +71,7 @@ pub struct QueryPlanExecutionContext<'exec, 'req> {
 
 pub async fn execute_query_plan<'exec, 'req>(
     ctx: QueryPlanExecutionContext<'exec, 'req>,
-) -> Result<(Arc<HttpResponse>, usize), PlanExecutionError> {
+) -> Result<(HttpResponse, usize), PlanExecutionError> {
     let mut init_value = if let Some(introspection_query) = ctx.introspection_context.query {
         resolve_introspection(introspection_query, ctx.introspection_context)
     } else if ctx.projection_plan.is_empty() {
@@ -198,8 +198,7 @@ pub async fn execute_query_plan<'exec, 'req>(
             body: Arc::new(body.into()),
             headers: response_headers,
             status: http::StatusCode::OK,
-        }
-        .into(),
+        },
         error_count,
     ))
 }
