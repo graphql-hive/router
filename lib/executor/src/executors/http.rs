@@ -321,7 +321,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             })
             .await?;
 
-            return Ok(Arc::new(response).into());
+            return Ok((&response).into());
         }
 
         let fingerprint =
@@ -357,14 +357,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
                 // This ensures that once the OnceCell is set, no future requests can join it.
                 // The cache is for the lifetime of the in-flight request only.
                 self.in_flight_requests.remove(&fingerprint);
-                match res {
-                    Ok(response) => Ok(Arc::new(response)),
-                    Err(err) => Err(err),
-                }
+                res
             })
             .await?;
 
-        Ok(http_response.clone().into())
+        Ok(http_response.into())
     }
 }
 
@@ -375,8 +372,8 @@ pub struct HttpResponse {
     pub body: Arc<Bytes>,
 }
 
-impl<'a> From<Arc<HttpResponse>> for SubgraphResponse<'a> {
-    fn from(http_response: Arc<HttpResponse>) -> Self {
+impl<'a> From<&HttpResponse> for SubgraphResponse<'a> {
+    fn from(http_response: &HttpResponse) -> Self {
         let bytes_ref: &[u8] = &http_response.body;
 
         // SAFETY: The `bytes` are transmuted to the lifetime `'a` of the `ExecutionContext`.
