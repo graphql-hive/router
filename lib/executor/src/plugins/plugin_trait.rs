@@ -81,12 +81,13 @@ where
     fn end_graphql_error<'exec>(
         self,
         error: GraphQLError,
+        status: StatusCode,
     ) -> StartHookResult<'exec, Self, TEndPayload> {
         let body = json!({
             "errors": [error]
         });
         let http_response = HttpResponse {
-            status: StatusCode::BAD_REQUEST,
+            status,
             headers: Default::default(),
             body: Arc::new(sonic_rs::to_vec(&body).unwrap().into()),
         };

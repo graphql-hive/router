@@ -12,6 +12,7 @@ use hive_router_plan_executor::{
     plugin_trait::{RouterPlugin, StartHookPayload},
     response::graphql_error::GraphQLError,
 };
+use http::StatusCode;
 use multer::Multipart;
 use serde::Deserialize;
 use tracing::error;
@@ -162,7 +163,7 @@ impl RouterPlugin for MultipartPlugin {
                             error!("Failed to send multipart request to subgraph: {}", err);
                             return payload.end_graphql_error(GraphQLError::from(
                                 "Failed to send multipart request to subgraph",
-                            ));
+                            ), StatusCode::BAD_REQUEST);
                         }
                     }
                 }

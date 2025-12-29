@@ -70,6 +70,7 @@ use hive_router_plan_executor::{
     plugin_trait::{RouterPlugin, StartHookPayload, StartHookResult},
     response::graphql_error::GraphQLError,
 };
+use http::StatusCode;
 use serde::Deserialize;
 use sonic_rs::JsonContainerTrait;
 
@@ -132,7 +133,7 @@ impl RouterPlugin for OneOfPlugin {
                                     keys_num
                                 ),
                                 "TOO_MANY_FIELDS_SET_IN_ONEOF",
-                            ));
+                            ), StatusCode::BAD_REQUEST);
                         }
                     }
                 }

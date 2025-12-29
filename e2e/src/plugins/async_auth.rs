@@ -1,3 +1,4 @@
+use http::StatusCode;
 // From https://github.com/apollographql/router/blob/dev/examples/async-auth/rust/src/allow_client_id_from_file.rs
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -57,27 +58,32 @@ impl RouterPlugin for AllowClientIdFromFilePlugin {
 
                         if !allowed_clients.contains(&client_id.to_string()) {
                             // Prepare an HTTP 403 response with a GraphQL error message
-                            return payload.end_graphql_error(GraphQLError::from_message_and_code(
-                                "client-id is not allowed".into(),
-                                "UNAUTHORIZED_CLIENT_ID",
-                            ));
+                            return payload.end_graphql_error(
+                                GraphQLError::from_message_and_code(
+                                    "client-id is not allowed".into(),
+                                    "UNAUTHORIZED_CLIENT_ID",
+                                ),
+                                StatusCode::FORBIDDEN,
+                            );
                         }
                     }
                     Err(_not_a_string_error) => {
                         let message = format!("'{}' value is not a string", &self.header_key);
                         tracing::error!(message);
-                        return payload.end_graphql_error(GraphQLError::from_message_and_code(
-                            message,
-                            "BAD_CLIENT_ID",
-                        ));
+                        return payload.end_graphql_error(
+                            GraphQLError::from_message_and_code(message, "BAD_CLIENT_ID"),
+                            StatusCode::BAD_REQUEST,
+                        );
                     }
                 }
             }
             None => {
                 let message = format!("Missing '{}' header", &self.header_key);
                 tracing::error!(message);
-                return payload
-                    .end_graphql_error(GraphQLError::from_message_and_code(message, "AUTH_ERROR"));
+                return payload.end_graphql_error(
+                    GraphQLError::from_message_and_code(message, "AUTH_ERROR"),
+                    StatusCode::UNAUTHORIZED,
+                );
             }
         }
         payload.cont()
@@ -94,7 +100,7 @@ mod tests {
     use ntex::web::test;
     use serde_json::Value;
     #[ntex::test]
-    async fn should_allow_only_allowed_client_ids() {
+    async fn should_allow_only_allowed_client_ids() -> Result<(), Box<dyn std::error::Error>> {
         SubgraphsServer::start().await;
 
         let app = init_router_from_config_inline(
@@ -107,8 +113,7 @@ mod tests {
             "#,
             Some(PluginRegistry::new().register::<super::AllowClientIdFromFilePlugin>()),
         )
-        .await
-        .expect("Router should initialize successfully");
+        .await?;
         wait_for_readiness(&app.app).await;
         // Test with an allowed client id
         let req = init_graphql_request("{ users { id } }", None).header("x-client-id", "urql");
@@ -125,8 +130,7 @@ mod tests {
             "Expected 403 FORBIDDEN for disallowed client id"
         );
         let body_bytes = test::read_body(resp).await;
-        let body_json: Value =
-            serde_json::from_slice(&body_bytes).expect("Response body should be valid JSON");
+        let body_json: Value = serde_json::from_slice(&body_bytes)?;
         assert_eq!(
             body_json,
             serde_json::json!({
@@ -150,8 +154,7 @@ mod tests {
             "Expected 401 UNAUTHORIZED for missing client id"
         );
         let body_bytes = test::read_body(resp).await;
-        let body_json: Value =
-            serde_json::from_slice(&body_bytes).expect("Response body should be valid JSON");
+        let body_json: Value = serde_json::from_slice(&body_bytes)?;
         assert_eq!(
             body_json,
             serde_json::json!({
@@ -166,5 +169,7 @@ mod tests {
             }),
             "Expected error message for missing client id"
         );
+
+        Ok(())
     }
 }

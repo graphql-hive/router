@@ -7,6 +7,7 @@ use graphql_tools::{
     },
 };
 use hive_router_query_planner::ast::selection_item::SelectionItem;
+use http::StatusCode;
 use serde::Deserialize;
 
 use hive_router_plan_executor::{
@@ -74,7 +75,7 @@ impl RouterPlugin for RootFieldLimitPlugin {
                         return payload.end_graphql_error(GraphQLError::from_message_and_code(
                             err_msg,
                             "TOO_MANY_ROOT_FIELD",
-                        ));
+                        ), StatusCode::PAYLOAD_TOO_LARGE);
                     }
                 }
                 SelectionItem::InlineFragment(_) => {
