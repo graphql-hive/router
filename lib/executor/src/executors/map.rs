@@ -95,7 +95,7 @@ impl SubgraphExecutorMap {
     }
 
     pub fn from_http_endpoint_map(
-        subgraph_endpoint_map: HashMap<SubgraphName, String>,
+        subgraph_endpoint_map: &HashMap<SubgraphName, String>,
         config: Arc<HiveRouterConfig>,
     ) -> Result<Self, SubgraphExecutorError> {
         let global_timeout = DurationOrProgram::compile(
@@ -107,24 +107,24 @@ impl SubgraphExecutorMap {
         })?;
         let mut subgraph_executor_map = SubgraphExecutorMap::new(config.clone(), global_timeout);
 
-        for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.into_iter() {
+        for (subgraph_name, original_endpoint_str) in subgraph_endpoint_map.iter() {
             let endpoint_config = config
                 .override_subgraph_urls
-                .get_subgraph_url(&subgraph_name);
+                .get_subgraph_url(subgraph_name);
 
             let endpoint_str = match endpoint_config {
                 Some(UrlOrExpression::Url(url)) => url.clone(),
                 Some(UrlOrExpression::Expression { expression }) => {
                     subgraph_executor_map
-                        .register_endpoint_expression(&subgraph_name, expression)?;
+                        .register_endpoint_expression(subgraph_name, expression)?;
                     original_endpoint_str.clone()
                 }
                 None => original_endpoint_str.clone(),
             };
 
-            subgraph_executor_map.register_static_endpoint(&subgraph_name, &endpoint_str);
-            subgraph_executor_map.register_executor(&subgraph_name, &endpoint_str)?;
-            subgraph_executor_map.register_subgraph_timeout(&subgraph_name)?;
+            subgraph_executor_map.register_static_endpoint(subgraph_name, &endpoint_str);
+            subgraph_executor_map.register_executor(subgraph_name, &endpoint_str)?;
+            subgraph_executor_map.register_subgraph_timeout(subgraph_name)?;
         }
 
         Ok(subgraph_executor_map)

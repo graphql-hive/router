@@ -16,7 +16,6 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::{
     planner::{Planner, PlannerError},
-    state::supergraph_state::SupergraphState,
     utils::parsing::parse_schema,
 };
 use moka::future::Cache;
@@ -167,12 +166,11 @@ impl SchemaState {
         router_config: Arc<HiveRouterConfig>,
         parsed_supergraph_sdl: Document,
     ) -> Result<SupergraphData, SupergraphManagerError> {
-        let supergraph_state = SupergraphState::new(&parsed_supergraph_sdl);
         let planner = Planner::new_from_supergraph(&parsed_supergraph_sdl)?;
         let metadata = planner.consumer_schema.schema_metadata();
         let authorization = AuthorizationMetadata::build(&planner.supergraph, &metadata)?;
         let subgraph_executor_map = SubgraphExecutorMap::from_http_endpoint_map(
-            supergraph_state.subgraph_endpoint_map,
+            &planner.supergraph.subgraph_endpoint_map,
             router_config,
         )?;
 
