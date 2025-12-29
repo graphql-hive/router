@@ -433,17 +433,16 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
             .execute_http(execution_request, timeout, plugin_req_state)
             .await;
 
+        let bytes: Arc<Bytes> = http_response.body.clone();
+
+        let bytes: &[u8] = &bytes;
+
         // SAFETY: The `bytes` are transmuted to the lifetime `'a` of the `ExecutionContext`.
         // This is safe because the `response_storage` is part of the `ExecutionContext` (`ctx`)
         // and will live as long as `'a`. The `Bytes` are stored in an `Arc`, so they won't be
         // dropped until all references are gone. The `Value`s deserialized from this byte
         // slice will borrow from it, and they are stored in `ctx.final_response`, which also
         // lives for `'a`.
-
-        let bytes: Arc<Bytes> = http_response.body.clone();
-
-        let bytes: &[u8] = &bytes;
-
         let bytes: &'a [u8] = unsafe { std::mem::transmute(bytes) };
 
         let mut deserializer = sonic_rs::Deserializer::from_slice(bytes);
