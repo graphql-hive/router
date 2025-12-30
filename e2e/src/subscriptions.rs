@@ -698,16 +698,16 @@ mod subscription_e2e_tests {
 
         assert_snapshot!(body_str, @r#"
         event: next
-        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products"}}]}
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products","affectedPath":"reviewAddedForProduct.product"}}]}
 
         event: next
-        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products"}}]}
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products","affectedPath":"reviewAddedForProduct.product"}}]}
 
         event: next
-        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products"}}]}
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products","affectedPath":"reviewAddedForProduct.product"}}]}
 
         event: next
-        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products"}}]}
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products","affectedPath":"reviewAddedForProduct.product"}}]}
 
         event: complete
         "#);
