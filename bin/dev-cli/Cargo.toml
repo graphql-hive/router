@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 hive-router-query-planner = { path = "../../lib/query-planner" }
+hive-router-plan-executor = { path = "../../lib/executor" }
 
 graphql-parser = { workspace = true }
 tracing-subscriber = { workspace = true }

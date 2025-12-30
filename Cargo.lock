@@ -4150,6 +4150,7 @@ name = "qp-dev-cli"
 version = "0.0.0"
 dependencies = [
  "graphql-parser",
+ "hive-router-plan-executor",
  "hive-router-query-planner",
  "serde_json",
  "tracing-subscriber",
