@@ -230,9 +230,9 @@ enum ExecutionJob<'exec> {
     None,
 }
 
-impl<'exec> From<ExecutionJob<'exec>> for SubgraphResponse<'exec> {
-    fn from(value: ExecutionJob<'exec>) -> Self {
-        match value {
+impl<'exec> ExecutionJob<'exec> {
+    fn response(self) -> SubgraphResponse<'exec> {
+        match self {
             ExecutionJob::Fetch(j) => j.response,
             ExecutionJob::FlattenFetch(j) => j.response,
             ExecutionJob::None => SubgraphResponse {
@@ -649,7 +649,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                 response: self
                     .execute_fetch_node(fetch_node, representations)
                     .await?
-                    .into(),
+                    .response(),
                 fetch_node_id: fetch_node.id,
                 subgraph_name: fetch_node.service_name.clone(),
                 representation_hashes: representation_hashes.unwrap_or_default(),
