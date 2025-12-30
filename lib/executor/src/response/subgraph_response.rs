@@ -88,18 +88,6 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
     }
 }
 
-impl From<GraphQLError> for SubgraphResponse<'_> {
-    fn from(error: GraphQLError) -> Self {
-        SubgraphResponse {
-            data: Value::Null,
-            errors: Some(vec![error]),
-            extensions: None,
-            headers: None,
-            bytes: None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     // When subgraph returns an error with custom extensions but without `data` field
