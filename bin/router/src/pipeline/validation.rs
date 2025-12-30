@@ -38,7 +38,7 @@ pub async fn validate_operation_with_cache(
         }
         None => {
             trace!(
-                "validation result of hash {} does not exists in cache",
+                "validation result of hash {} does not exist in cache",
                 parser_payload.cache_key
             );
 

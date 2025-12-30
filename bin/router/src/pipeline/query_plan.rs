@@ -149,10 +149,11 @@ pub async fn plan_operation_with_cache<'req>(
 
     match schema_state.plan_cache.get(&plan_cache_key).await {
         Some(cached_plan) => {
-            tracing::trace!("Found cached query plan for operation");
+            tracing::trace!("query plan for this operation exists in the cache");
             Ok(QueryPlanResult::QueryPlan(cached_plan))
         }
         None => {
+            tracing::trace!("query plan for this operation does not exist in the cache");
             let result = get_query_plan(
                 supergraph,
                 normalized_operation,
@@ -164,7 +165,13 @@ pub async fn plan_operation_with_cache<'req>(
             .await;
 
             match result {
-                Ok(plan) => Ok(QueryPlanResult::QueryPlan(plan)),
+                Ok(plan) => {
+                    schema_state
+                        .plan_cache
+                        .insert(plan_cache_key, plan.clone())
+                        .await;
+                    Ok(QueryPlanResult::QueryPlan(plan))
+                }
                 Err(e) => match e {
                     QueryPlanError::Planner(e) => Err(PipelineErrorVariant::PlannerError(e)),
                     QueryPlanError::Response(response) => Ok(QueryPlanResult::Response(response)),
