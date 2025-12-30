@@ -10,6 +10,7 @@ use hive_router_query_planner::planner::plan_nodes::{
     QueryPlan, SequenceNode,
 };
 use http::HeaderMap;
+use ntex::http::HeaderMap as NtexHeaderMap;
 use serde::Deserialize;
 use sonic_rs::ValueRef;
 
@@ -220,7 +221,7 @@ pub async fn execute_query_plan<'exec, 'req>(
                             // TODO: it cant be a dummy, it needs to make sense
                             let method = http::Method::POST;
                             let uri: http::Uri = "/graphql".parse().unwrap();
-                            let headers = ntex_http::HeaderMap::new();
+                            let headers = NtexHeaderMap::new();
                             let jwt = JwtRequestDetails::Unauthenticated;
                             let operation = OperationDetails {
                                 name: None,
