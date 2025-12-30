@@ -591,7 +591,7 @@ mod subscription_e2e_tests {
     }
 
     #[ntex::test]
-    async fn subscription_stream_failed_subgraph_requests() {
+    async fn subscription_stream_failed_source_subgraph_requests() {
         let _subgraphs_server = SubgraphsServer::start_with_interceptor(Arc::new(|_req| {
             Some(InterceptedResponse::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -614,18 +614,13 @@ mod subscription_e2e_tests {
 
         let req = init_graphql_request(
             r#"
-            subscription ($upc: String!) {
-                reviewAddedForProduct(productUpc: $upc, intervalInMs: 0) {
-                    product {
-                        upc
-                        name
-                    }
+            subscription {
+                reviewAdded(intervalInMs: 0) {
+                    id
                 }
             }
             "#,
-            Some(json!({
-                "upc": "2"
-            })),
+            None,
         )
         .header(http::header::ACCEPT, "text/event-stream")
         .to_request();
