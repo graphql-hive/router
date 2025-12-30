@@ -637,4 +637,79 @@ mod subscription_e2e_tests {
         event: complete
         "#);
     }
+
+    #[ntex::test]
+    async fn subscription_stream_failed_entity_resolution_requests() {
+        let _subgraphs_server = SubgraphsServer::start_with_interceptor(Arc::new(|req| {
+            if req.path.contains("products") {
+                // entity resolution
+                Some(
+                    InterceptedResponse::new(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Some(
+                            json!({
+                                "errors": [{"message": "Something Went Wrong!"}]
+                            })
+                            .to_string(),
+                        ),
+                    )
+                    .with_header("content-type", "application/json"),
+                )
+            } else {
+                // subscription itself (on "reviews" subgraph)
+                None
+            }
+        }))
+        .await;
+
+        let router = init_router_from_config_inline(&format!(
+            r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            "#
+        ))
+        .await
+        .unwrap();
+
+        wait_for_readiness(&router.app).await;
+
+        let req = init_graphql_request(
+            r#"
+            subscription ($upc: String!) {
+                reviewAddedForProduct(productUpc: $upc, intervalInMs: 0) {
+                    product {
+                        name
+                    }
+                }
+            }
+            "#,
+            Some(json!({
+                "upc": "2"
+            })),
+        )
+        .header(http::header::ACCEPT, "text/event-stream")
+        .to_request();
+
+        let res = test::call_service(&router.app, req).await;
+
+        let body = test::read_body(res).await;
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products"}}]}
+
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products"}}]}
+
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products"}}]}
+
+        event: next
+        data: {"data":{"reviewAddedForProduct":{"product":{"name":null}}},"errors":[{"message":"Something Went Wrong!","extensions":{"code":"DOWNSTREAM_SERVICE_ERROR","serviceName":"products"}}]}
+
+        event: complete
+        "#);
+    }
 }
