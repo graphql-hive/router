@@ -30,13 +30,13 @@ impl<'de> Deserialize<'de> for GraphQLParams {
     where
         D: Deserializer<'de>,
     {
-        struct GraphQLErrorExtensionsVisitor;
+        struct GraphQLParamsVisitor;
 
-        impl<'de> de::Visitor<'de> for GraphQLErrorExtensionsVisitor {
+        impl<'de> de::Visitor<'de> for GraphQLParamsVisitor {
             type Value = GraphQLParams;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a map for GraphQLErrorExtensions")
+                formatter.write_str("a map for GraphQLParams")
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -91,7 +91,7 @@ impl<'de> Deserialize<'de> for GraphQLParams {
             }
         }
 
-        deserializer.deserialize_map(GraphQLErrorExtensionsVisitor)
+        deserializer.deserialize_map(GraphQLParamsVisitor)
     }
 }
 

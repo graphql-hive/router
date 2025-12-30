@@ -79,13 +79,9 @@ pub async fn graphql_request_handler(
     }
 
     let jwt_context = if let Some(jwt) = &shared_state.jwt_auth_runtime {
-        match jwt
-            .validate_request(req, &shared_state.jwt_claims_cache)
+        jwt.validate_request(req, &shared_state.jwt_claims_cache)
             .await
-        {
-            Ok(jwt_context) => jwt_context,
-            Err(err) => return Ok(err.make_response()),
-        }
+            .map_err(PipelineErrorVariant::JwtError)?
     } else {
         None
     };
@@ -299,9 +295,7 @@ pub async fn execute_pipeline(
             )
         }
         AuthorizationDecision::Reject { errors } => {
-            return Err(PipelineErrorVariant::AuthorizationFailed(
-                errors.iter().map(|e| e.into()).collect(),
-            ))
+            return Err(PipelineErrorVariant::AuthorizationFailed(errors))
         }
     };
 

@@ -1,13 +1,5 @@
-use crate::pipeline::error::FailedExecutionResult;
-use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use http::StatusCode;
-use ntex::{
-    http::{
-        header::{InvalidHeaderValue, ToStrError},
-        ResponseBuilder,
-    },
-    web,
-};
+use ntex::http::header::{InvalidHeaderValue, ToStrError};
 
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum LookupError {
@@ -44,14 +36,6 @@ pub enum JwtError {
 }
 
 impl JwtError {
-    pub fn make_response(&self) -> web::HttpResponse {
-        let validation_error_result = FailedExecutionResult {
-            errors: Some(vec![self.into()]),
-        };
-
-        ResponseBuilder::new(self.into()).json(&validation_error_result)
-    }
-
     pub fn error_code(&self) -> &'static str {
         match self {
             JwtError::AllProvidersFailedToDecode(_) => "MISSING_JWT",
@@ -65,11 +49,8 @@ impl JwtError {
             JwtError::LookupFailed(_) => "JWT_LOOKUP_FAILED",
         }
     }
-}
-
-impl From<&JwtError> for StatusCode {
-    fn from(val: &JwtError) -> Self {
-        match val {
+    pub fn status_code(&self) -> StatusCode {
+        match self {
             JwtError::LookupFailed(_) => StatusCode::UNAUTHORIZED,
             JwtError::JwkAlgorithmNotSupported(_) | JwtError::HTTPRequestParsingError(_) => {
                 StatusCode::BAD_REQUEST
@@ -81,11 +62,5 @@ impl From<&JwtError> for StatusCode {
             | JwtError::FailedToLocateProvider
             | JwtError::FailedToDecodeToken(_) => StatusCode::FORBIDDEN,
         }
-    }
-}
-
-impl From<&JwtError> for GraphQLError {
-    fn from(val: &JwtError) -> Self {
-        GraphQLError::from_message_and_code(val.to_string(), val.error_code())
     }
 }

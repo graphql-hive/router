@@ -1,10 +1,8 @@
 use strum::IntoStaticStr;
 
 use crate::{
-    executors::error::SubgraphExecutorError,
-    headers::errors::HeaderRuleRuntimeError,
+    executors::error::SubgraphExecutorError, headers::errors::HeaderRuleRuntimeError,
     projection::error::ProjectionError,
-    response::graphql_error::{GraphQLError, GraphQLErrorExtensions},
 };
 
 #[derive(thiserror::Error, Debug, Clone, IntoStaticStr)]
@@ -73,23 +71,6 @@ impl PlanExecutionError {
 
     pub fn affected_path(&self) -> &Option<String> {
         &self.context.affected_path
-    }
-}
-
-impl From<PlanExecutionError> for GraphQLError {
-    fn from(val: PlanExecutionError) -> Self {
-        let message = val.to_string();
-        GraphQLError {
-            extensions: GraphQLErrorExtensions {
-                code: Some(val.error_code().into()),
-                service_name: val.context.subgraph_name,
-                affected_path: val.context.affected_path,
-                extensions: Default::default(),
-            },
-            message,
-            locations: None,
-            path: None,
-        }
     }
 }
 

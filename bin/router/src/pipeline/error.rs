@@ -15,7 +15,10 @@ use ntex::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::pipeline::progressive_override::LabelEvaluationError;
+use crate::{
+    jwt::errors::JwtError,
+    pipeline::{authorization::AuthorizationError, progressive_override::LabelEvaluationError},
+};
 
 #[derive(Debug)]
 pub struct PipelineError {
@@ -61,7 +64,7 @@ pub enum PipelineErrorVariant {
     #[error("Validation errors")]
     ValidationErrors(Arc<Vec<ValidationError>>),
     #[error("Authorization failed")]
-    AuthorizationFailed(Vec<GraphQLError>),
+    AuthorizationFailed(Vec<AuthorizationError>),
     #[error("Failed to execute a plan: {0}")]
     PlanExecutionError(PlanExecutionError),
     #[error("Failed to produce a plan: {0}")]
@@ -74,6 +77,8 @@ pub enum PipelineErrorVariant {
     CsrfPreventionFailed,
 
     // JWT-auth plugin errors
+    #[error(transparent)]
+    JwtError(JwtError),
     #[error("Failed to forward jwt: {0}")]
     JwtForwardingError(JwtForwardingError),
 }
@@ -98,6 +103,7 @@ impl PipelineErrorVariant {
             Self::NormalizationError(NormalizationError::MultipleMatchingOperationsFound) => {
                 "OPERATION_RESOLUTION_FAILURE"
             }
+            Self::JwtError(jwt_error) => jwt_error.error_code(),
             _ => "BAD_REQUEST",
         }
     }
@@ -135,6 +141,7 @@ impl PipelineErrorVariant {
             (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
+            (Self::JwtError(jwt_error), _) => jwt_error.status_code(),
         }
     }
 }
@@ -159,7 +166,12 @@ impl From<PipelineError> for Response {
 
         if let PipelineErrorVariant::AuthorizationFailed(authorization_errors) = val.error {
             let authorization_error_result = FailedExecutionResult {
-                errors: Some(authorization_errors),
+                errors: Some(
+                    authorization_errors
+                        .iter()
+                        .map(|error| error.into())
+                        .collect(),
+                ),
             };
 
             return ResponseBuilder::new(status).json(&authorization_error_result);

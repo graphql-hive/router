@@ -298,14 +298,8 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         ctx: &mut ExecutionContext<'exec>,
         node: &'exec FetchNode,
     ) -> Result<(), PlanExecutionError> {
-        match self.execute_fetch_node(node, None).await {
-            Ok(result) => self.process_job_result(ctx, result),
-            Err(err) => {
-                self.log_error(&err);
-                ctx.errors.push(err.into());
-                Ok(())
-            }
-        }
+        let result = self.execute_fetch_node(node, None).await?;
+        self.process_job_result(ctx, result)
     }
 
     async fn execute_sequence_wave(
@@ -333,15 +327,8 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         }
 
         while let Some(result) = scope.next().await {
-            match result {
-                Ok(job) => {
-                    self.process_job_result(ctx, job)?;
-                }
-                Err(err) => {
-                    self.log_error(&err);
-                    ctx.errors.push(err.into())
-                }
-            }
+            let job = result?;
+            self.process_job_result(ctx, job)?;
         }
 
         Ok(())
@@ -353,44 +340,25 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         node: &'exec PlanNode,
     ) -> Result<(), PlanExecutionError> {
         match node {
-            PlanNode::Fetch(fetch_node) => match self.execute_fetch_node(fetch_node, None).await {
-                Ok(job) => {
-                    self.process_job_result(ctx, job)?;
-                }
-                Err(err) => {
-                    self.log_error(&err);
-                    ctx.errors.push(err.into());
-                }
-            },
+            PlanNode::Fetch(fetch_node) => {
+                let job = self.execute_fetch_node(fetch_node, None).await?;
+                self.process_job_result(ctx, job)?;
+            }
             PlanNode::Parallel(parallel_node) => {
                 self.execute_parallel_wave(ctx, parallel_node).await?;
             }
             PlanNode::Flatten(flatten_node) => {
-                match self.prepare_flatten_data(&ctx.final_response, flatten_node) {
-                    Ok(Some(p)) => {
-                        match self
-                            .execute_flatten_fetch_node(
-                                flatten_node,
-                                Some(p.representations),
-                                Some(p.representation_hashes),
-                                Some(p.representation_hash_to_index),
-                            )
-                            .await
-                        {
-                            Ok(job) => {
-                                self.process_job_result(ctx, job)?;
-                            }
-                            Err(err) => {
-                                self.log_error(&err);
-                                ctx.errors.push(err.into());
-                            }
-                        }
-                    }
-                    Ok(None) => { /* do nothing */ }
-                    Err(err) => {
-                        self.log_error(&err);
-                        ctx.errors.push(err.into());
-                    }
+                let p = self.prepare_flatten_data(&ctx.final_response, flatten_node)?;
+                if let Some(p) = p {
+                    let job = self
+                        .execute_flatten_fetch_node(
+                            flatten_node,
+                            Some(p.representations),
+                            Some(p.representation_hashes),
+                            Some(p.representation_hash_to_index),
+                        )
+                        .await?;
+                    self.process_job_result(ctx, job)?;
                 }
             }
             PlanNode::Sequence(sequence_node) => {
@@ -745,14 +713,6 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                     affected_path: || None,
                 })?,
         }))
-    }
-
-    fn log_error(&self, error: &PlanExecutionError) {
-        tracing::error!(
-            subgraph_name = error.subgraph_name(),
-            error = error as &dyn std::error::Error,
-            "Plan execution error"
-        );
     }
 }
 
