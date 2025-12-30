@@ -528,4 +528,61 @@ mod subscription_e2e_tests {
             "Expected Content-Type to be text/event-stream"
         );
     }
+
+    #[ntex::test]
+    async fn subscription_http_accept_multipart_and_sse() {
+        let subgraphs_server = SubgraphsServer::start().await;
+
+        let router = init_router_from_config_inline(&format!(
+            r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            "#
+        ))
+        .await
+        .unwrap();
+
+        wait_for_readiness(&router.app).await;
+
+        let req = init_graphql_request(
+            r#"
+            subscription ($upc: String!) {
+                reviewAddedForProduct(productUpc: $upc, intervalInMs: 0) {
+                    product {
+                        upc
+                        name
+                    }
+                }
+            }
+            "#,
+            Some(json!({
+                "upc": "2"
+            })),
+        )
+        .header(http::header::ACCEPT, "text/event-stream")
+        .to_request();
+
+        let res = test::call_service(&router.app, req).await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        let subgraph_request = subgraphs_server
+            .get_subgraph_requests_log("reviews")
+            .await
+            .expect("expected requests sent to reviews subgraph");
+
+        let Ok(accept_header) = subgraph_request
+            .get(0)
+            .expect("expected at least one request to reviews")
+            .headers
+            .get("accept")
+            .expect("expected accept header to be sent with the subgraph request")
+            .to_str()
+        else {
+            panic!("accept header could not be converted to string")
+        };
+
+        assert_snapshot!(accept_header, @r#"multipart/mixed; boundary="graphql"; subscriptionSpec="1.0", text/event-stream"#);
+    }
 }
