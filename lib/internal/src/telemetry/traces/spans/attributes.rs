@@ -43,6 +43,7 @@ pub const HIVE_ERROR_PATH: &str = "hive.error.path";
 /// Internal Hive attributes
 pub const HIVE_INFLIGHT_ROLE: &str = "hive.inflight.role";
 pub const HIVE_INFLIGHT_KEY: &str = "hive.inflight.key";
+pub const HIVE_INFLIGHT_LINK_RELATIONSHIP: &str = "hive.inflight.relationship";
 
 /// Generic/Common attributes
 pub const CACHE_HIT: &str = "cache.hit";

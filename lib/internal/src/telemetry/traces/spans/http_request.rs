@@ -13,7 +13,11 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::telemetry::traces::{
     disabled_span, is_tracing_enabled,
-    spans::{attributes, kind::HiveSpanKind, TARGET_NAME},
+    spans::{
+        attributes::{self, HIVE_INFLIGHT_LINK_RELATIONSHIP},
+        kind::HiveSpanKind,
+        TARGET_NAME,
+    },
 };
 
 pub struct HttpServerRequestSpan {
@@ -306,10 +310,10 @@ impl HttpInflightRequestSpan {
 
         self.span.add_link_with_attributes(
             leader_span_context.clone(),
-            vec![
-                KeyValue::new("link.type", "deduplication.waits_for"),
-                KeyValue::new("hive.inflight.relationship", "joiner_to_leader"),
-            ],
+            vec![KeyValue::new(
+                HIVE_INFLIGHT_LINK_RELATIONSHIP,
+                "joiner_to_leader",
+            )],
         );
     }
 
