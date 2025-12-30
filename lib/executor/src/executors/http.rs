@@ -22,6 +22,7 @@ use http_body_util::Full;
 use hyper::Version;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use ntex::web;
 use tokio::sync::Semaphore;
 use tracing::debug;
 
@@ -377,6 +378,19 @@ impl Clone for HttpResponse {
             headers: Arc::clone(&self.headers),
             body: Arc::clone(&self.body),
         }
+    }
+}
+
+impl From<HttpResponse> for web::HttpResponse {
+    fn from(response: HttpResponse) -> Self {
+        let mut response_builder = web::HttpResponse::Ok();
+        for (header_name, header_value) in response.headers.iter() {
+            response_builder.header(header_name, header_value);
+        }
+
+        response_builder
+            .status(response.status)
+            .body(response.body.to_vec())
     }
 }
 

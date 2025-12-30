@@ -4,7 +4,6 @@ use hive_router_plan_executor::{
     execution::client_request_details::{
         ClientRequestDetails, JwtRequestDetails, OperationDetails,
     },
-    executors::http::HttpResponse,
     hooks::{
         on_graphql_params::{OnGraphQLParamsEndHookPayload, OnGraphQLParamsStartHookPayload},
         on_supergraph_load::SupergraphData,
@@ -15,7 +14,7 @@ use hive_router_plan_executor::{
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
-use http::{header::CONTENT_TYPE, HeaderValue, Method};
+use http::{HeaderName, HeaderValue, Method, header::CONTENT_TYPE};
 use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
@@ -121,7 +120,7 @@ pub async fn graphql_request_handler(
         });
     }
 
-    let response = execute_pipeline(
+    let mut res = execute_pipeline(
         req,
         body_bytes,
         supergraph,
@@ -132,15 +131,9 @@ pub async fn graphql_request_handler(
     )
     .await?;
 
-    let mut response_builder = web::HttpResponse::Ok();
-    for (header_name, header_value) in response.headers.iter() {
-        response_builder.header(header_name, header_value);
-    }
+    res.headers_mut().insert(http::header::CONTENT_TYPE, response_content_type.into());
 
-    Ok(response_builder
-        .header(http::header::CONTENT_TYPE, response_content_type)
-        .status(response.status)
-        .body(response.body.to_vec()))
+    Ok(res)
 }
 
 #[inline]
@@ -153,7 +146,7 @@ pub async fn execute_pipeline(
     schema_state: &SchemaState,
     jwt_context: Option<JwtRequestContext>,
     plugin_req_state: Option<PluginRequestState<'_>>,
-) -> Result<HttpResponse, PipelineErrorVariant> {
+) -> Result<web::HttpResponse, PipelineErrorVariant> {
     let start = Instant::now();
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
@@ -176,7 +169,7 @@ pub async fn execute_pipeline(
             match result.control_flow {
                 StartControlFlow::Continue => { /* continue to next plugin */ }
                 StartControlFlow::EndResponse(response) => {
-                    return Ok(response);
+                    return Ok(response.into());
                 }
                 StartControlFlow::OnEnd(callback) => {
                     deserialization_end_callbacks.push(callback);
@@ -202,7 +195,7 @@ pub async fn execute_pipeline(
             match result.control_flow {
                 EndControlFlow::Continue => { /* continue to next plugin */ }
                 EndControlFlow::EndResponse(response) => {
-                    return Ok(response);
+                    return Ok(response.into());
                 }
             }
         }
@@ -217,7 +210,7 @@ pub async fn execute_pipeline(
     let parser_payload = match parser_result {
         ParseResult::Payload(payload) => payload,
         ParseResult::Response(response) => {
-            return Ok(response);
+            return Ok(response.into());
         }
     };
 
@@ -324,7 +317,7 @@ pub async fn execute_pipeline(
     let query_plan_payload = match query_plan_result {
         QueryPlanResult::QueryPlan(plan) => plan,
         QueryPlanResult::Response(response) => {
-            return Ok(response);
+            return Ok(response.into());
         }
     };
 
@@ -354,5 +347,5 @@ pub async fn execute_pipeline(
         }
     }
 
-    Ok(execution_result)
+    Ok(execution_result.into())
 }
