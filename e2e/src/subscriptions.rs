@@ -2,9 +2,13 @@
 
 #[cfg(test)]
 mod subscription_e2e_tests {
+    use std::sync::Arc;
+
     use insta::assert_snapshot;
     use ntex::{http, web::test};
+    use reqwest::StatusCode;
     use sonic_rs::json;
+    use subgraphs::InterceptedResponse;
 
     use crate::testkit::{
         init_graphql_request, init_router_from_config_inline, wait_for_readiness, SubgraphsServer,
@@ -584,5 +588,58 @@ mod subscription_e2e_tests {
         };
 
         assert_snapshot!(accept_header, @r#"multipart/mixed; boundary="graphql"; subscriptionSpec="1.0", text/event-stream"#);
+    }
+
+    #[ntex::test]
+    async fn subscription_stream_failed_subgraph_requests() {
+        let _subgraphs_server = SubgraphsServer::start_with_interceptor(Arc::new(|_req| {
+            Some(InterceptedResponse::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                None,
+            ))
+        }))
+        .await;
+
+        let router = init_router_from_config_inline(&format!(
+            r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            "#
+        ))
+        .await
+        .unwrap();
+
+        wait_for_readiness(&router.app).await;
+
+        let req = init_graphql_request(
+            r#"
+            subscription ($upc: String!) {
+                reviewAddedForProduct(productUpc: $upc, intervalInMs: 0) {
+                    product {
+                        upc
+                        name
+                    }
+                }
+            }
+            "#,
+            Some(json!({
+                "upc": "2"
+            })),
+        )
+        .header(http::header::ACCEPT, "text/event-stream")
+        .to_request();
+
+        let res = test::call_service(&router.app, req).await;
+
+        let body = test::read_body(res).await;
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":null,"errors":[{"message":"Failed to execute request to subgraph","extensions":{"code":"SUBGRAPH_REQUEST_FAILURE","serviceName":"reviews"}}]}
+
+        event: complete
+        "#);
     }
 }

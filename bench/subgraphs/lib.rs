@@ -111,7 +111,11 @@ async fn intercept_requests(
         // response intercepted, return it and stop
         let mut response = Response::builder()
             .status(intercepted.status)
-            .body(Body::from(intercepted.body))
+            .body(if let Some(body) = intercepted.body {
+                Body::from(body)
+            } else {
+                Body::empty()
+            })
             .unwrap();
         *response.headers_mut() = intercepted.headers;
         // TODO: should we track intercepted responses?
@@ -131,11 +135,11 @@ pub struct IncomingRequest {
 pub struct InterceptedResponse {
     pub status: StatusCode,
     pub headers: http::HeaderMap,
-    pub body: Bytes,
+    pub body: Option<String>,
 }
 
 impl InterceptedResponse {
-    pub fn new(status: StatusCode, body: Bytes) -> Self {
+    pub fn new(status: StatusCode, body: Option<String>) -> Self {
         Self {
             status,
             headers: http::HeaderMap::new(),
