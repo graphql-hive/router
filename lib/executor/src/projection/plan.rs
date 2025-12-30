@@ -1,5 +1,6 @@
 use ahash::HashSet;
 use indexmap::IndexMap;
+use std::fmt::{Display, Formatter as FmtFormatter, Result as FmtResult};
 use std::sync::Arc;
 use tracing::warn;
 
@@ -10,6 +11,7 @@ use hive_router_query_planner::{
         selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
     },
     state::supergraph_state::OperationKind,
+    utils::pretty_display::{get_indent, PrettyDisplay},
 };
 
 use crate::{introspection::schema::SchemaMetadata, utils::consts::TYPENAME_FIELD_NAME};
@@ -346,5 +348,101 @@ impl FieldProjectionPlan {
             conditions: self.conditions.clone(),
             value: new_value,
         }
+    }
+}
+
+impl Display for TypeCondition {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        match self {
+            TypeCondition::Exact(type_name) => write!(f, "Exact({})", type_name),
+            TypeCondition::OneOf(types) => {
+                write!(f, "OneOf(")?;
+                let types_vec: Vec<_> = types.iter().collect();
+                for (i, type_name) in types_vec.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", type_name)?;
+                }
+                write!(f, ")")
+            }
+        }
+    }
+}
+
+impl Display for FieldProjectionCondition {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        match self {
+            FieldProjectionCondition::IncludeIfVariable(var) => {
+                write!(f, "Include(if: ${})", var)
+            }
+            FieldProjectionCondition::SkipIfVariable(var) => {
+                write!(f, "Skip(if: ${})", var)
+            }
+            FieldProjectionCondition::ParentTypeCondition(tc) => {
+                write!(f, "ParentType({})", tc)
+            }
+            FieldProjectionCondition::FieldTypeCondition(tc) => {
+                write!(f, "FieldType({})", tc)
+            }
+            FieldProjectionCondition::EnumValuesCondition(values) => {
+                write!(f, "EnumValues(")?;
+                let values_vec: Vec<_> = values.iter().collect();
+                for (i, value) in values_vec.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", value)?;
+                }
+                write!(f, ")")
+            }
+            FieldProjectionCondition::Or(left, right) => {
+                write!(f, "({} OR {})", left, right)
+            }
+            FieldProjectionCondition::And(left, right) => {
+                write!(f, "({} AND {})", left, right)
+            }
+        }
+    }
+}
+
+impl Display for FieldProjectionPlan {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        self.pretty_fmt(f, 0)
+    }
+}
+
+impl PrettyDisplay for FieldProjectionPlan {
+    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+        let indent = get_indent(depth);
+
+        if self.response_key == self.field_name {
+            writeln!(f, "{}{}: {} {{", indent, self.response_key, self.field_type)?;
+        } else {
+            writeln!(
+                f,
+                "{}{} (alias for {}): {} {{",
+                indent, self.response_key, self.field_name, self.field_type
+            )?;
+        }
+
+        writeln!(f, "{}  conditions: {}", indent, self.conditions)?;
+
+        match &self.value {
+            ProjectionValueSource::ResponseData { selections } => {
+                if let Some(selections) = selections {
+                    writeln!(f, "{}  selections:", indent)?;
+                    for selection in selections.iter() {
+                        selection.pretty_fmt(f, depth + 2)?;
+                    }
+                }
+            }
+            ProjectionValueSource::Null => {
+                writeln!(f, "{}  value: Null", indent)?;
+            }
+        }
+
+        writeln!(f, "{}}}", indent)?;
+        Ok(())
     }
 }
