@@ -1,6 +1,8 @@
 use std::env;
 use std::process;
 
+use hive_router_plan_executor::introspection::schema::SchemaWithMetadata;
+use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::ast::operation::OperationDefinition;
 use hive_router_query_planner::consumer_schema::ConsumerSchema;
@@ -100,6 +102,26 @@ fn main() {
             let operation = document.executable_operation();
 
             println!("{}", operation);
+        }
+        "projection" => {
+            let supergraph_sdl =
+                std::fs::read_to_string(&args[2]).expect("Unable to read input file");
+            let parsed_schema = parse_schema(&supergraph_sdl);
+            let supergraph = SupergraphState::new(&parsed_schema);
+            let document_text =
+                std::fs::read_to_string(&args[3]).expect("Unable to read input file");
+            let parsed_document = parse_operation(&document_text);
+            let document = normalize_operation(&supergraph, &parsed_document, None).unwrap();
+            let operation = document.executable_operation();
+            let consumer_schema = ConsumerSchema::new_from_supergraph(&parsed_schema);
+            let schema_metadata = consumer_schema.schema_metadata();
+
+            let (_, projection_plan) =
+                FieldProjectionPlan::from_operation(&operation, &schema_metadata);
+
+            for plan in &projection_plan {
+                println!("{}", plan);
+            }
         }
         _ => {
             eprintln!("Unknown command. Available commands: consumer_graph, graph, paths, tree, fetch_graph, plan");
