@@ -8,13 +8,12 @@ use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
 use hive_router_plan_executor::execution::plan::{execute_query_plan, QueryPlanExecutionContext};
-use hive_router_plan_executor::executors::http::HttpResponse;
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
-use ntex::web::HttpRequest;
+use ntex::web::{self, HttpRequest};
 
 static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
 
@@ -39,7 +38,7 @@ pub async fn execute_plan(
     supergraph: &SupergraphData,
     app_state: &RouterSharedState,
     planned_request: &PlannedRequest<'_>,
-) -> Result<(HttpResponse, usize), PipelineErrorVariant> {
+) -> Result<(web::HttpResponse, usize), PipelineErrorVariant> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
     if app_state.router_config.query_planner.allow_expose {

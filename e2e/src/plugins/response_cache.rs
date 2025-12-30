@@ -1,12 +1,10 @@
-use std::sync::Arc;
-
 use dashmap::DashMap;
-use http::{HeaderMap, StatusCode};
+use http::StatusCode;
+use ntex::http::Response;
 use redis::Commands;
 use serde::Deserialize;
 
 use hive_router_plan_executor::{
-    executors::http::HttpResponse,
     hooks::{
         on_execute::{
             OnExecuteEndHookPayload, OnExecuteStartHookPayload, OnExecuteStartHookResult,
@@ -79,14 +77,8 @@ impl RouterPlugin for ResponseCachePlugin {
                             key,
                             String::from_utf8_lossy(&body)
                         );
-                        return payload.end_response(
-                            HttpResponse {
-                                body: Arc::new(body.into()),
-                                headers: HeaderMap::new().into(),
-                                status: StatusCode::OK,
-                            }
-                            .into(),
-                        );
+                        return payload
+                            .end_response(Response::with_body(StatusCode::OK, body.into()));
                     }
                 }
                 Err(err) => {

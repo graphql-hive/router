@@ -5,7 +5,6 @@ use crate::pipeline::parser::GraphQLParserPayload;
 use crate::schema_state::SchemaState;
 use crate::shared_state::RouterSharedState;
 use graphql_tools::validation::validate::validate;
-use hive_router_plan_executor::executors::http::HttpResponse;
 use hive_router_plan_executor::hooks::on_graphql_validation::{
     OnGraphQLValidationEndHookPayload, OnGraphQLValidationStartHookPayload,
 };
@@ -21,7 +20,7 @@ pub async fn validate_operation_with_cache(
     app_state: &RouterSharedState,
     parser_payload: &GraphQLParserPayload,
     plugin_req_state: &Option<PluginRequestState<'_>>,
-) -> Result<Option<HttpResponse>, PipelineErrorVariant> {
+) -> Result<Option<ntex::http::Response>, PipelineErrorVariant> {
     let consumer_schema_ast = &supergraph.planner.consumer_schema.document;
 
     let validation_result = match schema_state

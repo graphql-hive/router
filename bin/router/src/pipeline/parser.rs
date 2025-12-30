@@ -2,7 +2,6 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use graphql_parser::query::Document;
-use hive_router_plan_executor::executors::http::HttpResponse;
 use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
 use hive_router_plan_executor::hooks::on_graphql_parse::{
     OnGraphQLParseEndHookPayload, OnGraphQLParseStartHookPayload,
@@ -25,7 +24,7 @@ pub struct GraphQLParserPayload {
 
 pub enum ParseResult {
     Payload(GraphQLParserPayload),
-    Response(HttpResponse),
+    Response(ntex::http::Response),
 }
 
 #[inline]

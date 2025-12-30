@@ -6,7 +6,6 @@ use hive_router_plan_executor::{
     plugin_trait::{EndControlFlow, StartControlFlow},
 };
 use ntex::{
-    http::ResponseBuilder,
     service::{Service, ServiceCtx},
     web::{self, DefaultError},
     Middleware,
@@ -69,14 +68,7 @@ where
                         on_end_callbacks.push(callback);
                     }
                     StartControlFlow::EndResponse(response) => {
-                        let mut resp_builder = ResponseBuilder::new(response.status);
-                        for (key, value) in response.headers.iter() {
-                            resp_builder.header(key, value);
-                        }
-                        let response = start_payload
-                            .router_http_request
-                            .into_response(resp_builder.body(response.body.to_vec()));
-                        return Ok(response);
+                        return Ok(start_payload.router_http_request.into_response(response));
                     }
                 }
             }
@@ -98,11 +90,6 @@ where
                         // continue to next callback
                     }
                     EndControlFlow::EndResponse(response) => {
-                        let mut resp_builder = ResponseBuilder::new(response.status);
-                        for (key, value) in response.headers.iter() {
-                            resp_builder.header(key, value);
-                        }
-                        let response = resp_builder.body(response.body.to_vec());
                         end_payload.response = end_payload.response.into_response(response);
                         return Ok(end_payload.response);
                     }

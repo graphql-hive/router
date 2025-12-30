@@ -13,6 +13,7 @@ use hive_router_query_planner::{
     },
 };
 use http::HeaderMap;
+use ntex::web;
 use sonic_rs::ValueRef;
 
 use crate::{
@@ -23,7 +24,7 @@ use crate::{
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
     },
-    executors::{common::SubgraphExecutionRequest, http::HttpResponse, map::SubgraphExecutorMap},
+    executors::{common::SubgraphExecutionRequest, map::SubgraphExecutorMap},
     headers::{
         plan::HeaderRulesPlan,
         request::modify_subgraph_request_headers,
@@ -71,7 +72,7 @@ pub struct QueryPlanExecutionContext<'exec, 'req> {
 
 pub async fn execute_query_plan<'exec, 'req>(
     ctx: QueryPlanExecutionContext<'exec, 'req>,
-) -> Result<(HttpResponse, usize), PlanExecutionError> {
+) -> Result<(web::HttpResponse, usize), PlanExecutionError> {
     let mut init_value = if let Some(introspection_query) = ctx.introspection_context.query {
         resolve_introspection(introspection_query, ctx.introspection_context)
     } else if ctx.projection_plan.is_empty() {
@@ -141,13 +142,6 @@ pub async fn execute_query_plan<'exec, 'req>(
             .await?;
     }
 
-    let mut response_headers = HeaderMap::new();
-    modify_client_response_headers(exec_ctx.response_headers_aggregator, &mut response_headers)
-        .with_plan_context(LazyPlanContext {
-            subgraph_name: || None,
-            affected_path: || None,
-        })?;
-
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
 
     let mut data = exec_ctx.final_response;
@@ -167,8 +161,8 @@ pub async fn execute_query_plan<'exec, 'req>(
             end_payload = result.payload;
             match result.control_flow {
                 EndControlFlow::Continue => { /* continue to next callback */ }
-                EndControlFlow::EndResponse(output) => {
-                    return Ok((output, 0));
+                EndControlFlow::EndResponse(response) => {
+                    return Ok((response, 0));
                 }
             }
         }
@@ -193,14 +187,15 @@ pub async fn execute_query_plan<'exec, 'req>(
         affected_path: || None,
     })?;
 
-    Ok((
-        HttpResponse {
-            body: Arc::new(body.into()),
-            headers: response_headers.into(),
-            status: http::StatusCode::OK,
-        },
-        error_count,
-    ))
+    let mut response = web::HttpResponse::Ok().body(body);
+
+    modify_client_response_headers(exec_ctx.response_headers_aggregator, response.headers_mut())
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || None,
+            affected_path: || None,
+        })?;
+
+    Ok((response, error_count))
 }
 
 pub struct Executor<'exec, 'req> {

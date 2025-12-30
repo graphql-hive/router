@@ -22,7 +22,6 @@ use http_body_util::Full;
 use hyper::Version;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
-use ntex::web;
 use tokio::sync::Semaphore;
 use tracing::debug;
 
@@ -184,8 +183,8 @@ async fn send_request<'a>(
             start_payload = result.payload;
             match result.control_flow {
                 StartControlFlow::Continue => { /* continue to next plugin */ }
-                StartControlFlow::EndResponse(response) => {
-                    return Ok(response);
+                StartControlFlow::EndResponse(_response) => {
+                    todo!("Handle early response from plugin");
                 }
                 StartControlFlow::OnEnd(callback) => {
                     on_end_callbacks.push(callback);
@@ -272,8 +271,8 @@ async fn send_request<'a>(
             end_payload = result.payload;
             match result.control_flow {
                 EndControlFlow::Continue => { /* continue to next callback */ }
-                EndControlFlow::EndResponse(response) => {
-                    return Ok(response);
+                EndControlFlow::EndResponse(_response) => {
+                    todo!("Handle early response from plugin");
                 }
             }
         }
@@ -378,19 +377,6 @@ impl Clone for HttpResponse {
             headers: Arc::clone(&self.headers),
             body: Arc::clone(&self.body),
         }
-    }
-}
-
-impl From<HttpResponse> for web::HttpResponse {
-    fn from(response: HttpResponse) -> Self {
-        let mut response_builder = web::HttpResponse::Ok();
-        for (header_name, header_value) in response.headers.iter() {
-            response_builder.header(header_name, header_value);
-        }
-
-        response_builder
-            .status(response.status)
-            .body(response.body.to_vec())
     }
 }
 

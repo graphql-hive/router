@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 
-use bytes::Bytes;
 use hive_router_plan_executor::{
-    executors::http::HttpResponse,
     hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
     plugin_trait::{RouterPlugin, StartHookPayload},
 };
-use http::HeaderMap;
+use http::{header::CONTENT_TYPE, HeaderValue};
+use ntex::http::ResponseBuilder;
 use reqwest::StatusCode;
 pub(crate) use sonic_rs::{Deserialize, Serialize};
 
@@ -118,7 +117,7 @@ pub struct ApolloSandboxInitialStateOptions {
 }
 
 pub struct ApolloSandboxPlugin {
-    http_response: HttpResponse,
+    html: String,
 }
 
 impl RouterPlugin for ApolloSandboxPlugin {
@@ -142,16 +141,7 @@ impl RouterPlugin for ApolloSandboxPlugin {
                 "#,
                 serialized_options
             );
-            let html_bytes = Bytes::from(html);
-            let mut headers = HeaderMap::new();
-            headers.insert("Content-Type", "text/html".parse().unwrap());
-            let http_response = HttpResponse {
-                body: html_bytes.into(),
-                headers: headers.into(),
-                status: StatusCode::OK,
-            }
-            .into();
-            Some(ApolloSandboxPlugin { http_response })
+            Some(ApolloSandboxPlugin { html })
         } else {
             None
         }
@@ -161,7 +151,14 @@ impl RouterPlugin for ApolloSandboxPlugin {
         payload: OnHttpRequestHookPayload<'req>,
     ) -> OnHttpRequestHookResult<'req> {
         if payload.router_http_request.path() == "/apollo-sandbox" {
-            return payload.end_response(self.http_response.clone());
+            return payload.end_response(
+                ResponseBuilder::new(StatusCode::OK)
+                    .header(
+                        CONTENT_TYPE,
+                        HeaderValue::from_static("text/html; charset=utf-8"),
+                    )
+                    .body(self.html.clone()),
+            );
         }
         payload.cont()
     }

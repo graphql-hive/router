@@ -1,11 +1,9 @@
-use std::sync::Arc;
-
 use http::StatusCode;
+use ntex::{http::Response, web};
 use serde::{de::DeserializeOwned, Serialize};
 use sonic_rs::json;
 
 use crate::{
-    executors::http::HttpResponse,
     hooks::{
         on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
         on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
@@ -33,7 +31,7 @@ pub struct StartHookResult<'exec, TStartPayload, TEndPayload> {
 
 pub enum StartControlFlow<'exec, TEndPayload> {
     Continue,
-    EndResponse(HttpResponse),
+    EndResponse(web::HttpResponse),
     OnEnd(Box<dyn FnOnce(TEndPayload) -> EndHookResult<TEndPayload> + Send + 'exec>),
 }
 
@@ -55,7 +53,7 @@ where
 
     fn end_response<'exec>(
         self,
-        output: HttpResponse,
+        output: web::HttpResponse,
     ) -> StartHookResult<'exec, Self, TEndPayload> {
         StartHookResult {
             payload: self,
@@ -67,11 +65,7 @@ where
         self,
         body: T,
     ) -> StartHookResult<'exec, Self, TEndPayload> {
-        let http_response = HttpResponse {
-            status: StatusCode::BAD_REQUEST,
-            headers: Default::default(),
-            body: Arc::new(sonic_rs::to_vec(&body).unwrap().into()),
-        };
+        let http_response = Response::Ok().body(sonic_rs::to_vec(&body).unwrap());
         StartHookResult {
             payload: self,
             control_flow: StartControlFlow::EndResponse(http_response),
@@ -86,11 +80,9 @@ where
         let body = json!({
             "errors": [error]
         });
-        let http_response = HttpResponse {
-            status,
-            headers: Default::default(),
-            body: Arc::new(sonic_rs::to_vec(&body).unwrap().into()),
-        };
+        let http_response = Response::BadRequest()
+            .status(status)
+            .body(sonic_rs::to_vec(&body).unwrap());
         StartHookResult {
             payload: self,
             control_flow: StartControlFlow::EndResponse(http_response),
@@ -115,7 +107,7 @@ pub struct EndHookResult<TEndPayload> {
 
 pub enum EndControlFlow {
     Continue,
-    EndResponse(HttpResponse),
+    EndResponse(web::HttpResponse),
 }
 
 pub trait EndHookPayload
@@ -129,7 +121,7 @@ where
         }
     }
 
-    fn end_response(self, output: HttpResponse) -> EndHookResult<Self> {
+    fn end_response(self, output: web::HttpResponse) -> EndHookResult<Self> {
         EndHookResult {
             payload: self,
             control_flow: EndControlFlow::EndResponse(output),
@@ -137,11 +129,7 @@ where
     }
 
     fn end_response_body<T: Serialize>(self, body: T) -> EndHookResult<Self> {
-        let http_response = HttpResponse {
-            status: StatusCode::OK,
-            headers: Default::default(),
-            body: Arc::new(sonic_rs::to_vec(&body).unwrap().into()),
-        };
+        let http_response = Response::Ok().body(sonic_rs::to_vec(&body).unwrap());
         EndHookResult {
             payload: self,
             control_flow: EndControlFlow::EndResponse(http_response),
@@ -152,11 +140,7 @@ where
         let body = json!({
             "errors": [error]
         });
-        let http_response = HttpResponse {
-            status: StatusCode::BAD_REQUEST,
-            headers: Default::default(),
-            body: Arc::new(sonic_rs::to_vec(&body).unwrap().into()),
-        };
+        let http_response = Response::BadRequest().body(sonic_rs::to_vec(&body).unwrap());
         EndHookResult {
             payload: self,
             control_flow: EndControlFlow::EndResponse(http_response),
