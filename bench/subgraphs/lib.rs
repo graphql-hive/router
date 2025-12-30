@@ -6,7 +6,7 @@ pub mod reviews;
 
 use async_graphql_axum::GraphQL;
 use axum::{
-    body::{to_bytes, Bytes},
+    body::{to_bytes, Body, Bytes},
     extract::{Request, State},
     http::{self, request::Parts, StatusCode},
     middleware::{self, Next},
@@ -93,6 +93,67 @@ pub struct RequestLog {
     pub request_body: Value,
 }
 
+async fn intercept_requests(
+    State(interceptor): State<RequestInterceptor>,
+    request: Request,
+    next: Next,
+) -> impl IntoResponse {
+    let path = request.uri().path().to_string();
+    let (parts, body) = request.into_parts();
+
+    let incoming = IncomingRequest {
+        path: path.clone(),
+        headers: parts.headers.clone(),
+        // TODO: do we really care about the body?
+    };
+
+    if let Some(intercepted) = interceptor(incoming) {
+        // response intercepted, return it and stop
+        let mut response = Response::builder()
+            .status(intercepted.status)
+            .body(Body::from(intercepted.body))
+            .unwrap();
+        *response.headers_mut() = intercepted.headers;
+        // TODO: should we track intercepted responses?
+        return response;
+    }
+
+    let request = Request::from_parts(parts, body);
+    next.run(request).await
+}
+
+#[derive(Debug, Clone)]
+pub struct IncomingRequest {
+    pub path: String,
+    pub headers: http::HeaderMap,
+}
+
+pub struct InterceptedResponse {
+    pub status: StatusCode,
+    pub headers: http::HeaderMap,
+    pub body: Bytes,
+}
+
+impl InterceptedResponse {
+    pub fn new(status: StatusCode, body: Bytes) -> Self {
+        Self {
+            status,
+            headers: http::HeaderMap::new(),
+            body,
+        }
+    }
+
+    pub fn with_header(mut self, name: &str, value: &str) -> Self {
+        let header_name: http::HeaderName = name.parse().unwrap();
+        let header_value: http::HeaderValue = value.parse().unwrap();
+        self.headers.insert(header_name, header_value);
+        self
+    }
+}
+
+pub type RequestInterceptor =
+    Arc<dyn Fn(IncomingRequest) -> Option<InterceptedResponse> + Send + Sync>;
+
 #[derive(Clone)]
 pub struct SubgraphsServiceState {
     pub request_log: Arc<Mutex<HashMap<String, Vec<RequestLog>>>>,
@@ -109,6 +170,7 @@ pub enum SubscriptionProtocol {
 pub fn start_subgraphs_server(
     port: Option<u16>,
     subscriptions_protocol: SubscriptionProtocol,
+    request_interceptor: Option<RequestInterceptor>,
 ) -> (JoinHandle<()>, Sender<()>, SubgraphsServiceState) {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let host = var("HOST").unwrap_or("0.0.0.0".to_owned());
@@ -121,7 +183,7 @@ pub fn start_subgraphs_server(
         health_check_url: format!("http://{}:{}/health", host, port),
     };
 
-    let app = Router::new()
+    let mut app = Router::new()
         .route(
             "/accounts",
             post_service(GraphQL::new(accounts::get_subgraph())),
@@ -144,7 +206,17 @@ pub fn start_subgraphs_server(
         .layer(middleware::from_fn_with_state(
             shared_state.clone(),
             track_requests,
-        ))
+        ));
+
+    // only intercept if intercepting
+    if let Some(interceptor) = request_interceptor.clone() {
+        app = app.layer(middleware::from_fn_with_state(
+            interceptor,
+            intercept_requests,
+        ));
+    }
+
+    let app = app
         .route("/health", get(health_check_handler))
         .route_layer(middleware::from_fn(add_subgraph_header))
         .route_layer(middleware::from_fn(delay_middleware));
