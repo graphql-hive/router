@@ -58,7 +58,7 @@ impl<'a> ExecutionContext<'a> {
                 let mut processed_error = response_error.add_subgraph_name(subgraph_name);
 
                 if let Some(path) = &affected_path {
-                    processed_error = processed_error.add_affected_path(path.clone());
+                    processed_error = processed_error.add_affected_path(path);
                 }
 
                 if let Some(entity_index_error_map) = &entity_index_error_map {

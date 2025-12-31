@@ -539,10 +539,10 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                 } else if let Some(errors) = job.response.errors {
                     // No entities were returned, but there are errors to handle.
                     // We associate them with the flattened path and subgraph.
-                    let affected_path = job.flatten_node_path.to_string();
                     ctx.errors.extend(errors.into_iter().map(|e| {
+                        let affected_path = job.flatten_node_path.to_string();
                         e.add_subgraph_name(&job.subgraph_name)
-                            .add_affected_path(affected_path.clone())
+                            .add_affected_path(affected_path)
                     }));
                 }
             }

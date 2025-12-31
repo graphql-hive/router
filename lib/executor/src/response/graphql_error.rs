@@ -168,10 +168,10 @@ impl GraphQLError {
     ///     }
     /// }));
     /// ```
-    pub fn add_subgraph_name(mut self, subgraph_name: &str) -> Self {
+    pub fn add_subgraph_name<TStr: Into<String>>(mut self, subgraph_name: TStr) -> Self {
         self.extensions
             .service_name
-            .get_or_insert(subgraph_name.to_string());
+            .get_or_insert(subgraph_name.into());
         self.extensions
             .code
             .get_or_insert("DOWNSTREAM_SERVICE_ERROR".to_string());
@@ -185,7 +185,7 @@ impl GraphQLError {
     /// use sonic_rs::json;
     ///
     /// let error = GraphQLError::from("An error occurred")
-    ///     .add_affected_path("user.friends[0].name".to_string());
+    ///     .add_affected_path("user.friends[0].name");
     ///
     /// assert_eq!(json!(error), json!({
     ///     "message": "An error occurred",
@@ -194,8 +194,8 @@ impl GraphQLError {
     ///     }
     /// }));
     /// ```
-    pub fn add_affected_path(mut self, affected_path: String) -> Self {
-        self.extensions.affected_path = Some(affected_path);
+    pub fn add_affected_path<TStr: Into<String>>(mut self, affected_path: TStr) -> Self {
+        self.extensions.affected_path = Some(affected_path.into());
         self
     }
 }

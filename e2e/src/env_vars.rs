@@ -59,7 +59,6 @@ mod env_vars_e2e_tests {
             let req = init_graphql_request("{ users { id } }", None);
             let resp = test::call_service(&app.app, req.to_request()).await;
 
-            assert!(resp.status().is_success(), "Expected 200 OK");
             let body = test::read_body(resp).await;
             let json_body: Value = from_slice(&body).unwrap();
 

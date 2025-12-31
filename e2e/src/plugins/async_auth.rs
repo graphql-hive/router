@@ -101,7 +101,7 @@ mod tests {
     use serde_json::Value;
     #[ntex::test]
     async fn should_allow_only_allowed_client_ids() -> Result<(), Box<dyn std::error::Error>> {
-        SubgraphsServer::start().await;
+        let subgraphs_server = SubgraphsServer::start().await;
 
         let app = init_router_from_config_inline(
             r#"
@@ -168,6 +168,16 @@ mod tests {
                 ]
             }),
             "Expected error message for missing client id"
+        );
+
+        let subgraph_requests = subgraphs_server
+            .get_subgraph_requests_log("accounts")
+            .await
+            .expect("expected requests sent to accounts subgraph");
+        assert_eq!(
+            subgraph_requests.len(),
+            1,
+            "expected 1 request to accounts subgraph"
         );
 
         Ok(())

@@ -1,4 +1,3 @@
-use hive_router_internal::expressions::vrl::prelude::ExpressionError;
 use strum::IntoStaticStr;
 
 #[derive(thiserror::Error, Debug, Clone, IntoStaticStr)]
@@ -39,13 +38,4 @@ pub enum SubgraphExecutorError {
     #[error("Failed to deserialize subgraph response: {0}")]
     #[strum(serialize = "SUBGRAPH_RESPONSE_DESERIALIZATION_FAILURE")]
     ResponseDeserializationFailure(String),
-}
-
-impl SubgraphExecutorError {
-    pub fn new_endpoint_expression_resolution_failure(
-        subgraph_name: String,
-        error: ExpressionError,
-    ) -> Self {
-        SubgraphExecutorError::EndpointExpressionResolutionFailure(subgraph_name, error.to_string())
-    }
 }

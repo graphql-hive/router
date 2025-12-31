@@ -65,7 +65,7 @@ pub enum PipelineErrorVariant {
     ValidationErrors(Arc<Vec<ValidationError>>),
     #[error("Authorization failed")]
     AuthorizationFailed(Vec<AuthorizationError>),
-    #[error("Failed to execute a plan: {0}")]
+    #[error(transparent)]
     PlanExecutionError(PlanExecutionError),
     #[error("Failed to produce a plan: {0}")]
     PlannerError(PlannerError),
@@ -88,7 +88,7 @@ impl PipelineErrorVariant {
         match self {
             Self::UnsupportedHttpMethod(_) => "METHOD_NOT_ALLOWED",
             Self::PlannerError(_) => "QUERY_PLAN_BUILD_FAILED",
-            Self::PlanExecutionError(_) => "QUERY_PLAN_EXECUTION_FAILED",
+            Self::PlanExecutionError(err) => err.error_code(),
             Self::LabelEvaluationError(_) => "OVERRIDE_LABEL_EVALUATION_FAILED",
             Self::FailedToParseOperation(_) => "GRAPHQL_PARSE_FAILED",
             Self::ValidationErrors(_) => "GRAPHQL_VALIDATION_FAILED",
@@ -180,7 +180,16 @@ impl From<PipelineError> for Response {
         let code = val.error.graphql_error_code();
         let message = val.error.graphql_error_message();
 
-        let graphql_error = GraphQLError::from_message_and_code(message, code);
+        let mut graphql_error = GraphQLError::from_message_and_code(message, code);
+
+        if let PipelineErrorVariant::PlanExecutionError(plan_execution_error) = &val.error {
+            if let Some(subgraph_name) = plan_execution_error.subgraph_name() {
+                graphql_error = graphql_error.add_subgraph_name(subgraph_name);
+            }
+            if let Some(affected_path) = plan_execution_error.affected_path() {
+                graphql_error = graphql_error.add_affected_path(affected_path);
+            }
+        }
 
         let result = FailedExecutionResult {
             errors: Some(vec![graphql_error]),

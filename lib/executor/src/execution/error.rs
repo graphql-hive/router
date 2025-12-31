@@ -62,7 +62,10 @@ impl PlanExecutionError {
     }
 
     pub fn error_code(&self) -> &'static str {
-        (&self.kind).into()
+        match &self.kind {
+            PlanExecutionErrorKind::SubgraphExecution(err) => err.into(),
+            other => other.into(),
+        }
     }
 
     pub fn subgraph_name(&self) -> &Option<String> {

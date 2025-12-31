@@ -93,11 +93,12 @@ mod tests {
     use crate::testkit::{init_router_from_config_inline, wait_for_readiness, SubgraphsServer};
 
     use hive_router::PluginRegistry;
+    use http::StatusCode;
     use ntex::web::test;
     use serde_json::json;
     #[ntex::test]
     async fn sends_not_found_error_if_query_missing() {
-        SubgraphsServer::start().await;
+        let _ = SubgraphsServer::start().await;
         let app = init_router_from_config_inline(
             r#"
                 plugins:
@@ -144,7 +145,7 @@ mod tests {
     }
     #[ntex::test]
     async fn saves_persisted_query() {
-        SubgraphsServer::start().await;
+        let subgraphs_server = SubgraphsServer::start().await;
         let app = init_router_from_config_inline(
             r#"
                 plugins:
@@ -174,8 +175,14 @@ mod tests {
             .header("content-type", "application/json")
             .set_payload(body.to_string());
         let resp = test::call_service(&app.app, req.to_request()).await;
-        assert!(
-            resp.status().is_success(),
+        let resp_status = resp.status();
+        let body = test::read_body(resp).await;
+        let body_json: serde_json::Value =
+            serde_json::from_slice(&body).expect("Response body should be valid JSON");
+        println!("Response body: {}", body_json);
+        assert_eq!(
+            resp_status,
+            StatusCode::OK,
             "Expected 200 OK when sending full query"
         );
 
@@ -198,6 +205,16 @@ mod tests {
         assert!(
             resp.status().is_success(),
             "Expected 200 OK when sending persisted query hash"
+        );
+
+        let subgraph_requests = subgraphs_server
+            .get_subgraph_requests_log("accounts")
+            .await
+            .expect("expected requests sent to accounts subgraph");
+        assert_eq!(
+            subgraph_requests.len(),
+            2,
+            "expected 2 requests to accounts subgraph"
         );
     }
 }
