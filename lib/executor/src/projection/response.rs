@@ -11,13 +11,35 @@ use std::collections::HashMap;
 
 use tracing::{instrument, warn};
 
+use crate::introspection::schema::SchemaMetadata;
 use crate::json_writer::{write_and_escape_string, write_f64, write_i64, write_u64};
 use crate::utils::consts::{
     CLOSE_BRACE, CLOSE_BRACKET, COLON, COMMA, EMPTY_OBJECT, FALSE, NULL, OPEN_BRACE, OPEN_BRACKET,
     QUOTE, TRUE, TYPENAME_FIELD_NAME,
 };
 
+/// Computes the type name for a field by looking up the field's return type in the schema metadata.
+fn compute_type_name_from_schema<'a>(
+    parent_type_name: &'a str,
+    field_name: &str,
+    schema_metadata: &'a SchemaMetadata,
+) -> Result<&'a str, ProjectionError> {
+    let fields = schema_metadata
+        .get_type_fields(parent_type_name)
+        .ok_or_else(|| ProjectionError::MissingType(parent_type_name.to_string()))?;
+
+    fields
+        .get(field_name)
+        .map(|field_info| field_info.output_type_name.as_str())
+        .ok_or_else(|| ProjectionError::MissingField {
+            field_name: field_name.to_string(),
+            type_name: parent_type_name.to_string(),
+        })
+}
+
 #[instrument(level = "trace", skip_all)]
+// TODO: simplfy args
+#[allow(clippy::too_many_arguments)]
 pub fn project_by_operation(
     data: &Value,
     errors: Vec<GraphQLError>,
@@ -26,6 +48,7 @@ pub fn project_by_operation(
     selections: &Vec<FieldProjectionPlan>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     response_size_estimate: usize,
+    schema_metadata: &SchemaMetadata,
 ) -> Result<Vec<u8>, ProjectionError> {
     let mut buffer = Vec::with_capacity(response_size_estimate);
     buffer.put(OPEN_BRACE);
@@ -47,7 +70,8 @@ pub fn project_by_operation(
             operation_type_name,
             &mut buffer,
             &mut first,
-        );
+            schema_metadata,
+        )?;
         if !first {
             buffer.put(CLOSE_BRACE);
         } else {
@@ -131,7 +155,9 @@ fn project_selection_set(
     selection: &FieldProjectionPlan,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
     buffer: &mut Vec<u8>,
-) {
+    parent_type_name: &str,
+    schema_metadata: &SchemaMetadata,
+) -> Result<(), ProjectionError> {
     match data {
         Value::Array(arr) => {
             buffer.put(OPEN_BRACKET);
@@ -140,7 +166,15 @@ fn project_selection_set(
                 if !first {
                     buffer.put(COMMA);
                 }
-                project_selection_set(item, errors, selection, variable_values, buffer);
+                project_selection_set(
+                    item,
+                    errors,
+                    selection,
+                    variable_values,
+                    buffer,
+                    parent_type_name,
+                    schema_metadata,
+                )?;
                 first = false;
             }
             buffer.put(CLOSE_BRACKET);
@@ -151,11 +185,19 @@ fn project_selection_set(
                     selections: Some(selections),
                 } => {
                     let mut first = true;
-                    let type_name = obj
+                    let typename_from_response = obj
                         .iter()
                         .position(|(k, _)| k == &TYPENAME_FIELD_NAME)
-                        .and_then(|idx| obj[idx].1.as_str())
-                        .unwrap_or(selection.field_type.as_str());
+                        .and_then(|idx| obj[idx].1.as_str());
+
+                    let type_name = match typename_from_response {
+                        Some(name) => name,
+                        None => compute_type_name_from_schema(
+                            parent_type_name,
+                            &selection.field_name,
+                            schema_metadata,
+                        )?,
+                    };
                     project_selection_set_with_map(
                         obj,
                         errors,
@@ -164,7 +206,8 @@ fn project_selection_set(
                         type_name,
                         buffer,
                         &mut first,
-                    );
+                        schema_metadata,
+                    )?;
                     if !first {
                         buffer.put(CLOSE_BRACE);
                     } else {
@@ -187,6 +230,7 @@ fn project_selection_set(
             project_without_selection_set(data, buffer);
         }
     };
+    Ok(())
 }
 
 // TODO: simplfy args
@@ -199,25 +243,33 @@ fn project_selection_set_with_map(
     parent_type_name: &str,
     buffer: &mut Vec<u8>,
     first: &mut bool,
-) {
+    schema_metadata: &SchemaMetadata,
+) -> Result<(), ProjectionError> {
     for plan in plans {
         let field_val = obj
             .iter()
             .position(|(k, _)| k == &plan.response_key.as_str())
             .map(|idx| &obj[idx].1);
+
         let typename_field = field_val
             .and_then(|value| value.as_object())
             .and_then(|obj| {
                 obj.iter()
                     .position(|(k, _)| k == &TYPENAME_FIELD_NAME)
                     .and_then(|idx| obj[idx].1.as_str())
-            })
-            .unwrap_or(&plan.field_type);
+            });
+
+        let typename_field_ref = match typename_field {
+            Some(name) => name,
+            None => {
+                compute_type_name_from_schema(parent_type_name, &plan.field_name, schema_metadata)?
+            }
+        };
 
         let res = check(
             &plan.conditions,
             parent_type_name,
-            typename_field,
+            typename_field_ref,
             field_val,
             variable_values,
         );
@@ -243,7 +295,15 @@ fn project_selection_set_with_map(
                     }
                     ProjectionValueSource::ResponseData { .. } => {
                         if let Some(field_val) = field_val {
-                            project_selection_set(field_val, errors, plan, variable_values, buffer);
+                            project_selection_set(
+                                field_val,
+                                errors,
+                                plan,
+                                variable_values,
+                                buffer,
+                                parent_type_name,
+                                schema_metadata,
+                            )?;
                         } else if plan.field_name == TYPENAME_FIELD_NAME {
                             // If the field is TYPENAME_FIELD, we should set it to the parent type name
                             buffer.put(QUOTE);
@@ -301,6 +361,7 @@ fn project_selection_set_with_map(
             }
         }
     }
+    Ok(())
 }
 
 fn check(
@@ -488,6 +549,7 @@ mod tests {
             &selections,
             &None,
             1000,
+            &schema_metadata,
         );
         let projected_bytes = projection.unwrap();
         let projected_str = String::from_utf8(projected_bytes).unwrap();

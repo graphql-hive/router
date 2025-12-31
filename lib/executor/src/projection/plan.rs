@@ -102,7 +102,6 @@ pub enum ProjectionValueSource {
 #[derive(Debug, Clone)]
 pub struct FieldProjectionPlan {
     pub field_name: String,
-    pub field_type: String,
     pub response_key: String,
     pub conditions: FieldProjectionCondition,
     pub value: ProjectionValueSource,
@@ -376,7 +375,6 @@ impl FieldProjectionPlan {
 
         let new_plan = FieldProjectionPlan {
             field_name: field_name.to_string(),
-            field_type: field_type.clone(),
             response_key,
             conditions: condition_for_field,
             value: ProjectionValueSource::ResponseData {
@@ -435,7 +433,6 @@ impl FieldProjectionPlan {
     pub fn with_new_value(&self, new_value: ProjectionValueSource) -> FieldProjectionPlan {
         FieldProjectionPlan {
             field_name: self.field_name.clone(),
-            field_type: self.field_type.clone(),
             response_key: self.response_key.clone(),
             conditions: self.conditions.clone(),
             value: new_value,
@@ -509,12 +506,12 @@ impl PrettyDisplay for FieldProjectionPlan {
         let indent = get_indent(depth);
 
         if self.response_key == self.field_name {
-            writeln!(f, "{}{}: {} {{", indent, self.response_key, self.field_type)?;
+            writeln!(f, "{}{}: {{", indent, self.response_key)?;
         } else {
             writeln!(
                 f,
-                "{}{} (alias for {}): {} {{",
-                indent, self.response_key, self.field_name, self.field_type
+                "{}{} (alias for {}) {{",
+                indent, self.response_key, self.field_name
             )?;
         }
 

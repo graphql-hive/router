@@ -24,10 +24,9 @@ fn project_data_by_operation_test(c: &mut Criterion) {
     let normalized_document = normalize_operation(&planner.supergraph, &parsed_document, None)
         .expect("Failed to normalize operation");
     let normalized_operation = normalized_document.executable_operation();
-    let (root_type_name, projection_plan) = FieldProjectionPlan::from_operation(
-        normalized_operation,
-        &planner.consumer_schema.schema_metadata(),
-    );
+    let schema_metadata = &planner.consumer_schema.schema_metadata();
+    let (root_type_name, projection_plan) =
+        FieldProjectionPlan::from_operation(normalized_operation, schema_metadata);
     let result_as_string = raw_result::get_result_as_string();
     let projected_data_as_json: sonic_rs::Value =
         sonic_rs::from_slice(result_as_string.as_bytes()).unwrap();
@@ -48,6 +47,7 @@ fn project_data_by_operation_test(c: &mut Criterion) {
                     &bb_projection_plan,
                     &None,
                     result_as_string.len(),
+                    schema_metadata,
                 )
                 .unwrap();
                 black_box(result);

@@ -114,6 +114,7 @@ pub async fn execute_query_plan<'exec, 'req>(
         ctx.projection_plan,
         ctx.variable_values,
         exec_ctx.response_storage.estimate_final_response_size(),
+        ctx.introspection_context.metadata,
     )
     .with_plan_context(LazyPlanContext {
         subgraph_name: || None,
