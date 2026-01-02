@@ -31,6 +31,7 @@ use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use hive_router_query_planner::ast::operation::OperationDefinition;
 
+use indexmap::IndexMap;
 pub use metadata::{
     AuthorizationMetadata, AuthorizationMetadataError, ScopeId, ScopeInterner, UserAuthContext,
 };
@@ -53,7 +54,7 @@ pub enum AuthorizationDecision {
     /// The operation was modified to remove unauthorized parts. Continue with the new operation.
     Modified {
         new_operation_definition: OperationDefinition,
-        new_projection_plan: Vec<FieldProjectionPlan>,
+        new_projection_plan: IndexMap<String, FieldProjectionPlan>,
         errors: Vec<AuthorizationError>,
     },
     /// The operation should be aborted due to unauthorized access and reject mode being enabled.

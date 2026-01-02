@@ -5,6 +5,7 @@ use hive_router_plan_executor::introspection::partition::partition_operation;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::ast::operation::OperationDefinition;
+use indexmap::IndexMap;
 use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
 
@@ -20,7 +21,7 @@ pub struct GraphQLNormalizationPayload {
     pub operation_for_plan: Arc<OperationDefinition>,
     pub operation_for_introspection: Option<Arc<OperationDefinition>>,
     pub root_type_name: &'static str,
-    pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
+    pub projection_plan: Arc<IndexMap<String, FieldProjectionPlan>>,
 }
 
 #[inline]

@@ -2053,6 +2053,7 @@ dependencies = [
  "http",
  "http-body-util",
  "hyper",
+ "indexmap 2.12.0",
  "insta",
  "jsonwebtoken",
  "lasso2",
