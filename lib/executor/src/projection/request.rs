@@ -12,18 +12,8 @@ use crate::{
     },
 };
 
-pub struct RequestProjectionContext<'a> {
-    pub possible_types: &'a PossibleTypes,
-}
-
-impl<'a> RequestProjectionContext<'a> {
-    pub fn new(possible_types: &'a PossibleTypes) -> Self {
-        Self { possible_types }
-    }
-}
-
 pub fn project_requires(
-    ctx: &RequestProjectionContext,
+    possible_types: &PossibleTypes,
     requires_selections: &Vec<SelectionItem>,
     entity: &Value,
     buffer: &mut Vec<u8>,
@@ -31,7 +21,7 @@ pub fn project_requires(
     response_key: Option<&str>,
 ) -> Result<bool, ProjectionError> {
     project_requires_internal(
-        ctx,
+        possible_types,
         requires_selections,
         entity,
         buffer,
@@ -41,7 +31,7 @@ pub fn project_requires(
 }
 
 fn project_requires_internal(
-    ctx: &RequestProjectionContext,
+    possible_types: &PossibleTypes,
     requires_selections: &Vec<SelectionItem>,
     entity: &Value,
     buffer: &mut Vec<u8>,
@@ -129,7 +119,7 @@ fn project_requires_internal(
             let mut first = true;
             for entity_item in entity_array {
                 let projected = project_requires_internal(
-                    ctx,
+                    possible_types,
                     requires_selections,
                     entity_item,
                     buffer,
@@ -159,7 +149,7 @@ fn project_requires_internal(
             let parent_first = first;
             let mut first = true;
             project_requires_map_mut(
-                ctx,
+                possible_types,
                 requires_selections,
                 entity_obj,
                 buffer,
@@ -180,7 +170,7 @@ fn project_requires_internal(
 }
 
 fn project_requires_map_mut(
-    ctx: &RequestProjectionContext,
+    possible_types: &PossibleTypes,
     requires_selections: &Vec<SelectionItem>,
     entity_obj: &Vec<(&str, Value<'_>)>,
     buffer: &mut Vec<u8>,
@@ -246,7 +236,7 @@ fn project_requires_map_mut(
                 }
 
                 let projected = project_requires_internal(
-                    ctx,
+                    possible_types,
                     &requires_selection.selections.items,
                     original,
                     buffer,
@@ -269,15 +259,11 @@ fn project_requires_map_mut(
                     _ => type_condition,
                 };
                 // For projection, both sides of the condition are valid
-                if ctx
-                    .possible_types
-                    .entity_satisfies_type_condition(type_name, type_condition)
-                    || ctx
-                        .possible_types
-                        .entity_satisfies_type_condition(type_condition, type_name)
+                if possible_types.entity_satisfies_type_condition(type_name, type_condition)
+                    || possible_types.entity_satisfies_type_condition(type_condition, type_name)
                 {
                     project_requires_map_mut(
-                        ctx,
+                        possible_types,
                         &requires_selection.selections.items,
                         entity_obj,
                         buffer,

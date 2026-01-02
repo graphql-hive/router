@@ -8,8 +8,7 @@ use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use hive_router_query_planner::{
     ast::operation::OperationDefinition,
     planner::plan_nodes::{
-        ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode,
-        PlanNode, QueryPlan, SequenceNode,
+        ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, PlanNode, QueryPlan,
     },
 };
 use http::HeaderMap;
@@ -38,9 +37,7 @@ use crate::{
     plugin_context::PluginRequestState,
     plugin_trait::{EndControlFlow, StartControlFlow},
     projection::{
-        plan::FieldProjectionPlan,
-        request::{project_requires, RequestProjectionContext},
-        response::project_by_operation,
+        plan::FieldProjectionPlan, request::project_requires, response::project_by_operation,
     },
     response::{
         graphql_error::{GraphQLError, GraphQLErrorPath},
@@ -136,10 +133,8 @@ pub async fn execute_query_plan<'exec, 'req>(
         ctx.plugin_req_state,
     );
 
-    if query_plan.node.is_some() {
-        executor
-            .execute(&mut exec_ctx, query_plan.node.as_ref())
-            .await?;
+    if let Some(node) = &query_plan.node {
+        executor.execute(&mut exec_ctx, node).await?;
     }
 
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
@@ -276,76 +271,28 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         }
     }
 
-    pub async fn execute(
-        &self,
-        ctx: &mut ExecutionContext<'exec>,
-        plan: Option<&'exec PlanNode>,
-    ) -> Result<(), PlanExecutionError> {
-        match plan {
-            Some(PlanNode::Fetch(node)) => self.execute_fetch_wave(ctx, node).await,
-            Some(PlanNode::Parallel(node)) => self.execute_parallel_wave(ctx, node).await,
-            Some(PlanNode::Sequence(node)) => self.execute_sequence_wave(ctx, node).await,
-            // Plans produced by our Query Planner can only start with: Fetch, Sequence or Parallel.
-            // Any other node type at the root is not supported, do nothing
-            Some(_) => Ok(()),
-            // An empty plan is valid, just do nothing
-            None => Ok(()),
-        }
-    }
-
-    async fn execute_fetch_wave(
-        &self,
-        ctx: &mut ExecutionContext<'exec>,
-        node: &'exec FetchNode,
-    ) -> Result<(), PlanExecutionError> {
-        let result = self.execute_fetch_node(node, None).await?;
-        self.process_job_result(ctx, result)
-    }
-
-    async fn execute_sequence_wave(
-        &self,
-        ctx: &mut ExecutionContext<'exec>,
-        node: &'exec SequenceNode,
-    ) -> Result<(), PlanExecutionError> {
-        for child in &node.nodes {
-            Box::pin(self.execute_plan_node(ctx, child)).await?;
-        }
-
-        Ok(())
-    }
-
-    async fn execute_parallel_wave(
-        &self,
-        ctx: &mut ExecutionContext<'exec>,
-        node: &'exec ParallelNode,
-    ) -> Result<(), PlanExecutionError> {
-        let mut scope = FuturesUnordered::new();
-
-        for child in &node.nodes {
-            let fut = self.prepare_job_future(child, &ctx.final_response);
-            scope.push(fut);
-        }
-
-        while let Some(result) = scope.next().await {
-            let job = result?;
-            self.process_job_result(ctx, job)?;
-        }
-
-        Ok(())
-    }
-
-    async fn execute_plan_node(
+    async fn execute(
         &self,
         ctx: &mut ExecutionContext<'exec>,
         node: &'exec PlanNode,
     ) -> Result<(), PlanExecutionError> {
         match node {
             PlanNode::Fetch(fetch_node) => {
-                let job = self.execute_fetch_node(fetch_node, None).await?;
+                let job = self.execute_fetch_node(fetch_node, None, None).await?;
                 self.process_job_result(ctx, job)?;
             }
             PlanNode::Parallel(parallel_node) => {
-                self.execute_parallel_wave(ctx, parallel_node).await?;
+                let mut scope = FuturesUnordered::new();
+
+                for child in &parallel_node.nodes {
+                    let fut = self.prepare_job_future(child, &ctx.final_response);
+                    scope.push(fut);
+                }
+
+                while let Some(result) = scope.next().await {
+                    let job = result?;
+                    self.process_job_result(ctx, job)?;
+                }
             }
             PlanNode::Flatten(flatten_node) => {
                 let p = self.prepare_flatten_data(&ctx.final_response, flatten_node)?;
@@ -362,13 +309,15 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                 }
             }
             PlanNode::Sequence(sequence_node) => {
-                self.execute_sequence_wave(ctx, sequence_node).await?;
+                for child in &sequence_node.nodes {
+                    Box::pin(self.execute(ctx, child)).await?;
+                }
             }
             PlanNode::Condition(condition_node) => {
                 if let Some(node) =
                     condition_node_by_variables(condition_node, self.variable_values)
                 {
-                    Box::pin(self.execute_plan_node(ctx, node)).await?;
+                    Box::pin(self.execute(ctx, node)).await?;
                 }
             }
             // An unsupported plan node was found, do nothing.
@@ -384,7 +333,9 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         final_response: &Value<'exec>,
     ) -> BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>> {
         match node {
-            PlanNode::Fetch(fetch_node) => Box::pin(self.execute_fetch_node(fetch_node, None)),
+            PlanNode::Fetch(fetch_node) => {
+                Box::pin(self.execute_fetch_node(fetch_node, None, None))
+            }
             PlanNode::Flatten(flatten_node) => {
                 match self.prepare_flatten_data(final_response, flatten_node) {
                     Ok(Some(p)) => Box::pin(self.execute_flatten_fetch_node(
@@ -432,7 +383,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         ctx: &mut ExecutionContext<'exec>,
         job: ExecutionJob<'exec>,
     ) -> Result<(), PlanExecutionError> {
-        let _: () = match job {
+        match job {
             ExecutionJob::Fetch(mut job) => {
                 if let Some(ref subgraph_headers) = job.response.headers {
                     apply_subgraph_response_headers(
@@ -549,7 +500,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
             ExecutionJob::None => {
                 // nothing to do
             }
-        };
+        }
         Ok(())
     }
 
@@ -571,7 +522,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         let normalized_path = flatten_node.path.as_slice();
         let mut filtered_representations = Vec::new();
         filtered_representations.put(OPEN_BRACKET);
-        let proj_ctx = RequestProjectionContext::new(&self.schema_metadata.possible_types);
+        let possible_types = &self.schema_metadata.possible_types;
         let mut representation_hashes: Vec<u64> = Vec::new();
         let mut filtered_representations_hashes: HashMap<u64, usize> = HashMap::new();
         let arena = bumpalo::Bump::new();
@@ -581,7 +532,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
             normalized_path,
             self.schema_metadata,
             &mut |entity| {
-                let hash = entity.to_hash(&requires_nodes.items, proj_ctx.possible_types);
+                let hash = entity.to_hash(&requires_nodes.items, possible_types);
 
                 if !entity.is_null() {
                     representation_hashes.push(hash);
@@ -602,7 +553,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                 };
 
                 let is_projected = project_requires(
-                    &proj_ctx,
+                    possible_types,
                     &requires_nodes.items,
                     entity,
                     &mut filtered_representations,
@@ -647,7 +598,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
             PlanNode::Fetch(fetch_node) => ExecutionJob::FlattenFetch(FlattenFetchJob {
                 flatten_node_path: node.path.clone(),
                 response: self
-                    .execute_fetch_node(fetch_node, representations)
+                    .execute_fetch_node(fetch_node, representations, Some(&node.path))
                     .await?
                     .response(),
                 fetch_node_id: fetch_node.id,
@@ -663,6 +614,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         &self,
         node: &'exec FetchNode,
         representations: Option<Vec<u8>>,
+        affected_path: Option<&FlattenNodePath>,
     ) -> Result<ExecutionJob<'exec>, PlanExecutionError> {
         // TODO: We could optimize header map creation by caching them per service name
         let mut headers_map = HeaderMap::new();
@@ -674,7 +626,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         )
         .with_plan_context(LazyPlanContext {
             subgraph_name: || Some(node.service_name.clone()),
-            affected_path: || None,
+            affected_path: || affected_path.map(|p| p.to_string()),
         })?;
         let variable_refs =
             select_fetch_variables(self.variable_values, node.variable_usages.as_ref());

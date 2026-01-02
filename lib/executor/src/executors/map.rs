@@ -133,7 +133,7 @@ impl SubgraphExecutorMap {
     pub async fn execute<'exec, 'req>(
         &self,
         subgraph_name: &'exec str,
-        execution_request: SubgraphExecutionRequest<'exec>,
+        mut execution_request: SubgraphExecutionRequest<'exec>,
         client_request: &ClientRequestDetails<'exec, 'req>,
         plugin_req_state: &'exec Option<PluginRequestState<'req>>,
     ) -> Result<SubgraphResponse<'exec>, SubgraphExecutorError> {
@@ -156,7 +156,6 @@ impl SubgraphExecutorMap {
 
         let mut on_end_callbacks = vec![];
 
-        let mut execution_request = execution_request;
         let mut execution_result: Option<SubgraphResponse<'exec>> = None;
         if let Some(plugin_req_state) = plugin_req_state.as_ref() {
             let mut start_payload = OnSubgraphExecuteStartHookPayload {
@@ -242,9 +241,7 @@ impl SubgraphExecutorMap {
             })
             .unwrap_or_else(|| {
                 self.get_executor_from_static_endpoint(subgraph_name)
-                    .ok_or_else(|| {
-                        SubgraphExecutorError::StaticEndpointNotFound(subgraph_name.to_string())
-                    })
+                    .ok_or({ SubgraphExecutorError::StaticEndpointNotFound })
             })
     }
 
@@ -262,9 +259,7 @@ impl SubgraphExecutorMap {
             self.static_endpoints_by_subgraph
                 .get(subgraph_name)
                 .map(|endpoint| endpoint.value().clone())
-                .ok_or_else(|| {
-                    SubgraphExecutorError::StaticEndpointNotFound(subgraph_name.to_string())
-                })?
+                .ok_or({ SubgraphExecutorError::StaticEndpointNotFound })?
                 .into(),
         );
 
@@ -275,10 +270,7 @@ impl SubgraphExecutorMap {
 
         // Resolve the expression to get an endpoint URL.
         let endpoint_result = expression.execute(value).map_err(|err| {
-            SubgraphExecutorError::EndpointExpressionResolutionFailure(
-                subgraph_name.to_string(),
-                err.to_string(),
-            )
+            SubgraphExecutorError::EndpointExpressionResolutionFailure(err.to_string())
         })?;
 
         let endpoint_str = match endpoint_result.as_str() {
@@ -326,12 +318,9 @@ impl SubgraphExecutorMap {
         subgraph_name: &str,
         expression: &str,
     ) -> Result<(), SubgraphExecutorError> {
-        let program = expression.compile_expression(None).map_err(|err| {
-            SubgraphExecutorError::EndpointExpressionBuild(
-                subgraph_name.to_string(),
-                err.diagnostics,
-            )
-        })?;
+        let program = expression
+            .compile_expression(None)
+            .map_err(|err| SubgraphExecutorError::EndpointExpressionBuild(err.diagnostics))?;
         self.expression_endpoints_by_subgraph
             .insert(subgraph_name.to_string(), program);
 

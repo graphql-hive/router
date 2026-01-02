@@ -205,26 +205,21 @@ async fn send_request<'a>(
                 .uri(endpoint)
                 .version(Version::HTTP_11)
                 .body(Full::new(Bytes::from(body)))
-                .map_err(|e| {
-                    SubgraphExecutorError::RequestBuildFailure(endpoint.to_string(), e.to_string())
-                })?;
+                .map_err(|e| SubgraphExecutorError::RequestBuildFailure(e.to_string()))?;
 
             *req.headers_mut() = execution_request.headers;
 
             debug!("making http request to {}", endpoint.to_string());
 
-            let res_fut = http_client.request(req).map_err(|e| {
-                SubgraphExecutorError::RequestFailure(endpoint.to_string(), e.to_string())
-            });
+            let res_fut = http_client
+                .request(req)
+                .map_err(|e| SubgraphExecutorError::RequestFailure(e.to_string()));
 
             let res = if let Some(timeout_duration) = timeout {
                 tokio::time::timeout(timeout_duration, res_fut)
                     .await
                     .map_err(|_| {
-                        SubgraphExecutorError::RequestTimeout(
-                            endpoint.to_string(),
-                            timeout_duration.as_millis(),
-                        )
+                        SubgraphExecutorError::RequestTimeout(timeout_duration.as_millis())
                     })?
             } else {
                 res_fut.await
@@ -240,14 +235,11 @@ async fn send_request<'a>(
             let body = body
                 .collect()
                 .await
-                .map_err(|e| {
-                    SubgraphExecutorError::RequestFailure(endpoint.to_string(), e.to_string())
-                })?
+                .map_err(|e| SubgraphExecutorError::ResponseFailure(e.to_string()))?
                 .to_bytes();
 
             if body.is_empty() {
-                return Err(SubgraphExecutorError::RequestFailure(
-                    endpoint.to_string(),
+                return Err(SubgraphExecutorError::ResponseFailure(
                     "Empty response body".to_string(),
                 ));
             }
@@ -327,15 +319,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
         // Clone the cell from the map, dropping the lock from the DashMap immediately.
         // Prevents any deadlocks.
-        let cell = self
-            .in_flight_requests
-            .entry(fingerprint)
-            .or_default()
-            .clone();
+        let cell = self.in_flight_requests.entry(fingerprint).or_default();
 
         let http_response = cell
             .get_or_try_init(|| async {
-                let res: Result<HttpResponse, SubgraphExecutorError> = {
+                let res = {
                     // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
                     // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
                     let _permit = self.semaphore.acquire().await.unwrap();
