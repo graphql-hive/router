@@ -550,26 +550,23 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         representation_hashes: Option<Vec<u64>>,
         filtered_representations_hashes: Option<HashMap<u64, usize>>,
     ) -> Result<Option<ExecutionJob<'exec>>, PlanExecutionError> {
-        Ok(match node.node.as_ref() {
-            PlanNode::Fetch(fetch_node) => {
-                match self
-                    .execute_fetch_node(fetch_node, representations, Some(&node.path))
-                    .await?
-                {
-                    Some(fetch_job) => Some(ExecutionJob::FlattenFetch {
-                        flatten_node_path: &node.path,
-                        response: fetch_job.response(),
-                        fetch_node_id: fetch_node.id,
-                        subgraph_name: fetch_node.service_name.as_str(),
-                        representation_hashes: representation_hashes.unwrap_or_default(),
-                        representation_hash_to_index: filtered_representations_hashes
-                            .unwrap_or_default(),
-                    }),
-                    None => return Ok(None),
-                }
+        if let PlanNode::Fetch(fetch_node) = node.node.as_ref() {
+            if let Some(fetch_job) = self
+                .execute_fetch_node(fetch_node, representations, Some(&node.path))
+                .await?
+            {
+                return Ok(Some(ExecutionJob::FlattenFetch {
+                    flatten_node_path: &node.path,
+                    response: fetch_job.response(),
+                    fetch_node_id: fetch_node.id,
+                    subgraph_name: fetch_node.service_name.as_str(),
+                    representation_hashes: representation_hashes.unwrap_or_default(),
+                    representation_hash_to_index: filtered_representations_hashes
+                        .unwrap_or_default(),
+                }));
             }
-            _ => None,
-        })
+        }
+        Ok(None)
     }
 
     async fn execute_fetch_node(

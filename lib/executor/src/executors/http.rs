@@ -319,7 +319,11 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
 
         // Clone the cell from the map, dropping the lock from the DashMap immediately.
         // Prevents any deadlocks.
-        let cell = self.in_flight_requests.entry(fingerprint).or_default();
+        let cell = self
+            .in_flight_requests
+            .entry(fingerprint)
+            .or_default()
+            .clone();
 
         let http_response = cell
             .get_or_try_init(|| async {
