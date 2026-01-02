@@ -19,7 +19,7 @@ use crate::{
         authorization::{enforce_operation_authorization, AuthorizationDecision},
         coerce_variables::coerce_request_variables,
         csrf_prevention::perform_csrf_prevention,
-        error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant},
+        error::PipelineError,
         execution::{execute_plan, PlannedRequest},
         execution_request::get_execution_request,
         header::{
@@ -115,7 +115,10 @@ pub async fn graphql_request_handler(
                 .header(http::header::CONTENT_TYPE, response_content_type)
                 .body(response_bytes)
         }
-        Err(err) => err.into_response(),
+        Err(error) => {
+            let accept_ok = !req.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
+            error.into_response(accept_ok)
+        }
     }
 }
 
@@ -156,7 +159,7 @@ pub async fn execute_pipeline(
             scopes: jwt_context.extract_scopes(),
             claims: jwt_context
                 .get_claims_value()
-                .map_err(|e| req.new_pipeline_error(PipelineErrorVariant::JwtForwardingError(e)))?,
+                .map_err(PipelineError::JwtForwardingError)?,
             token: jwt_context.token_raw,
             prefix: jwt_context.token_prefix,
         },
@@ -184,7 +187,7 @@ pub async fn execute_pipeline(
         &shared_state.override_labels_evaluator,
         &client_request_details,
     )
-    .map_err(|error| req.new_pipeline_error(PipelineErrorVariant::LabelEvaluationError(error)))?;
+    .map_err(PipelineError::LabelEvaluationError)?;
 
     let decision = enforce_operation_authorization(
         &shared_state.router_config,
@@ -216,11 +219,9 @@ pub async fn execute_pipeline(
             )
         }
         AuthorizationDecision::Reject { errors } => {
-            return Err(
-                req.new_pipeline_error(PipelineErrorVariant::AuthorizationFailed(
-                    errors.iter().map(|e| e.into()).collect(),
-                )),
-            )
+            return Err(PipelineError::AuthorizationFailed(
+                errors.iter().map(|e| e.into()).collect(),
+            ))
         }
     };
 
