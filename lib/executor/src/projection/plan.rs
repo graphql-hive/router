@@ -23,6 +23,13 @@ pub enum TypeCondition {
 }
 
 impl TypeCondition {
+    pub fn matches(&self, type_name: &str) -> bool {
+        match self {
+            TypeCondition::Exact(expected) => type_name == expected,
+            TypeCondition::OneOf(possible) => possible.contains(type_name),
+        }
+    }
+
     pub fn union(self, other: TypeCondition) -> TypeCondition {
         use TypeCondition::*;
         match (self, other) {
