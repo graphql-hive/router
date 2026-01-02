@@ -48,7 +48,7 @@ use crate::{
     },
 };
 
-pub struct QueryPlanExecutionContext<'exec, 'req> {
+pub struct QueryPlanExecutionOpts<'exec, 'req> {
     pub plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
     pub query_plan: &'exec QueryPlan,
     pub operation_for_plan: &'exec OperationDefinition,
@@ -64,36 +64,41 @@ pub struct QueryPlanExecutionContext<'exec, 'req> {
     pub initial_errors: Vec<GraphQLError>,
 }
 
+pub struct QueryPlanExecutionResult {
+    pub response: web::HttpResponse,
+    pub error_count: usize,
+}
+
 pub async fn execute_query_plan<'exec, 'req>(
-    ctx: QueryPlanExecutionContext<'exec, 'req>,
-) -> Result<(web::HttpResponse, usize), PlanExecutionError> {
-    let mut init_value = if let Some(introspection_query) = ctx.introspection_context.query {
-        resolve_introspection(introspection_query, ctx.introspection_context)
-    } else if ctx.projection_plan.is_empty() {
+    opts: QueryPlanExecutionOpts<'exec, 'req>,
+) -> Result<QueryPlanExecutionResult, PlanExecutionError> {
+    let mut data = if let Some(introspection_query) = opts.introspection_context.query {
+        resolve_introspection(introspection_query, opts.introspection_context)
+    } else if opts.projection_plan.is_empty() {
         Value::Null
     } else {
         Value::Object(Vec::new())
     };
 
-    let mut initial_errors = ctx.initial_errors;
+    let mut errors = opts.initial_errors;
 
-    let mut query_plan = ctx.query_plan;
+    let mut query_plan = opts.query_plan;
 
-    let dedupe_subgraph_requests = ctx.operation_type_name == "Query";
-    let mut extensions = ctx.extensions;
+    let dedupe_subgraph_requests = opts.operation_type_name == "Query";
+    let mut extensions = opts.extensions;
 
     let mut on_end_callbacks = vec![];
 
-    if let Some(plugin_req_state) = ctx.plugin_req_state.as_ref() {
+    if let Some(plugin_req_state) = opts.plugin_req_state.as_ref() {
         let mut start_payload = OnExecuteStartHookPayload {
             router_http_request: &plugin_req_state.router_http_request,
             context: &plugin_req_state.context,
             query_plan,
-            operation_for_plan: ctx.operation_for_plan,
-            data: init_value,
-            errors: initial_errors,
+            operation_for_plan: opts.operation_for_plan,
+            data,
+            errors,
             extensions,
-            variable_values: ctx.variable_values,
+            variable_values: opts.variable_values,
             dedupe_subgraph_requests,
         };
 
@@ -103,7 +108,10 @@ pub async fn execute_query_plan<'exec, 'req>(
             match result.control_flow {
                 StartControlFlow::Continue => { /* continue to next plugin */ }
                 StartControlFlow::EndResponse(response) => {
-                    return Ok((response, 0));
+                    return Ok(QueryPlanExecutionResult {
+                        response,
+                        error_count: start_payload.errors.len(),
+                    });
                 }
                 StartControlFlow::OnEnd(callback) => {
                     on_end_callbacks.push(callback);
@@ -112,22 +120,22 @@ pub async fn execute_query_plan<'exec, 'req>(
         }
 
         query_plan = start_payload.query_plan;
-        init_value = start_payload.data;
-        initial_errors = start_payload.errors;
+        data = start_payload.data;
+        errors = start_payload.errors;
         extensions = start_payload.extensions;
     }
 
-    let mut exec_ctx = ExecutionContext::new(query_plan, init_value, initial_errors);
+    let mut exec_ctx = ExecutionContext::new(query_plan, data, errors);
     let executor = Executor::new(
-        ctx.variable_values,
-        ctx.executors,
-        ctx.introspection_context.metadata,
-        ctx.client_request,
-        ctx.headers_plan,
-        ctx.jwt_auth_forwarding,
+        opts.variable_values,
+        opts.executors,
+        opts.introspection_context.metadata,
+        opts.client_request,
+        opts.headers_plan,
+        opts.jwt_auth_forwarding,
         // Deduplicate subgraph requests only if the operation type is a query
-        ctx.operation_type_name == "Query",
-        ctx.plugin_req_state,
+        opts.operation_type_name == "Query",
+        opts.plugin_req_state,
     );
 
     if let Some(node) = &query_plan.node {
@@ -136,7 +144,7 @@ pub async fn execute_query_plan<'exec, 'req>(
 
     let error_count = exec_ctx.errors.len(); // Added for usage reporting
 
-    let mut data = exec_ctx.final_response;
+    let mut data = exec_ctx.data;
     let mut errors = exec_ctx.errors;
     let mut response_size_estimate = exec_ctx.response_storage.estimate_final_response_size();
 
@@ -154,7 +162,10 @@ pub async fn execute_query_plan<'exec, 'req>(
             match result.control_flow {
                 EndControlFlow::Continue => { /* continue to next callback */ }
                 EndControlFlow::EndResponse(response) => {
-                    return Ok((response, 0));
+                    return Ok(QueryPlanExecutionResult {
+                        response,
+                        error_count,
+                    });
                 }
             }
         }
@@ -169,9 +180,9 @@ pub async fn execute_query_plan<'exec, 'req>(
         &data,
         errors,
         &extensions,
-        ctx.operation_type_name,
-        ctx.projection_plan,
-        ctx.variable_values,
+        opts.operation_type_name,
+        opts.projection_plan,
+        opts.variable_values,
         response_size_estimate,
     )
     .with_plan_context(LazyPlanContext {
@@ -187,7 +198,10 @@ pub async fn execute_query_plan<'exec, 'req>(
             affected_path: || None,
         })?;
 
-    Ok((response, error_count))
+    Ok(QueryPlanExecutionResult {
+        response,
+        error_count,
+    })
 }
 
 pub struct Executor<'exec, 'req> {
@@ -292,7 +306,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                 let mut scope = FuturesUnordered::new();
 
                 for child in &parallel_node.nodes {
-                    let fut = self.prepare_job_future(child, &ctx.final_response);
+                    let fut = self.prepare_job_future(child, &ctx.data);
                     scope.push(fut);
                 }
 
@@ -308,7 +322,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                 }
             }
             node => {
-                if let Some(job) = self.prepare_job_future(node, &ctx.final_response).await? {
+                if let Some(job) = self.prepare_job_future(node, &ctx.data).await? {
                     self.process_job_result(ctx, job)?;
                 }
             }
@@ -320,14 +334,14 @@ impl<'exec, 'req> Executor<'exec, 'req> {
     fn prepare_job_future<'wave>(
         &'wave self,
         node: &'exec PlanNode,
-        final_response: &Value<'exec>,
+        data: &Value<'exec>,
     ) -> BoxFuture<'wave, Result<Option<ExecutionJob<'exec>>, PlanExecutionError>> {
         match node {
             PlanNode::Fetch(fetch_node) => {
                 Box::pin(self.execute_fetch_node(fetch_node, None, None))
             }
             PlanNode::Flatten(flatten_node) => {
-                match self.prepare_flatten_data(final_response, flatten_node) {
+                match self.prepare_flatten_data(data, flatten_node) {
                     Ok(Some(p)) => Box::pin(self.execute_flatten_fetch_node(
                         flatten_node,
                         Some(p.representations),
@@ -340,7 +354,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
             }
             PlanNode::Condition(node) => {
                 match condition_node_by_variables(node, self.variable_values) {
-                    Some(node) => Box::pin(self.prepare_job_future(node, final_response)), // This is already clean.
+                    Some(node) => Box::pin(self.prepare_job_future(node, data)), // This is already clean.
                     None => Box::pin(async { Ok(None) }),
                 }
             }
@@ -388,7 +402,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                             .rewrite(&self.schema_metadata.possible_types, &mut response.data);
                     }
                 }
-                deep_merge(&mut ctx.final_response, response.data);
+                deep_merge(&mut ctx.data, response.data);
 
                 (response.errors, None)
             }
@@ -421,7 +435,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                         .as_ref()
                         .map(|_| HashMap::with_capacity(entities.len()));
                     traverse_and_callback_mut(
-                        &mut ctx.final_response,
+                        &mut ctx.data,
                         normalized_path,
                         self.schema_metadata,
                         initial_error_path,
@@ -462,7 +476,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
 
     fn prepare_flatten_data(
         &self,
-        final_response: &Value<'exec>,
+        data: &Value<'exec>,
         flatten_node: &FlattenNode,
     ) -> Result<Option<PreparedFlattenData>, PlanExecutionError> {
         let fetch_node = match flatten_node.node.as_ref() {
@@ -483,53 +497,48 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         let mut filtered_representations_hashes: HashMap<u64, usize> = HashMap::new();
         let arena = bumpalo::Bump::new();
 
-        traverse_and_callback(
-            final_response,
-            normalized_path,
-            self.schema_metadata,
-            &mut |entity| {
-                let hash = entity.to_hash(&requires_nodes.items, possible_types);
+        traverse_and_callback(data, normalized_path, self.schema_metadata, &mut |entity| {
+            let hash = entity.to_hash(&requires_nodes.items, possible_types);
 
-                if !entity.is_null() {
-                    representation_hashes.push(hash);
+            if !entity.is_null() {
+                representation_hashes.push(hash);
+            }
+
+            if filtered_representations_hashes.contains_key(&hash) {
+                return Ok::<(), PlanExecutionError>(());
+            }
+
+            let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
+                let new_entity = arena.alloc(entity.clone());
+                for input_rewrite in input_rewrites {
+                    input_rewrite.rewrite(&self.schema_metadata.possible_types, new_entity);
                 }
+                new_entity
+            } else {
+                entity
+            };
 
-                if filtered_representations_hashes.contains_key(&hash) {
-                    return Ok::<(), PlanExecutionError>(());
-                }
+            let is_projected = project_requires(
+                possible_types,
+                &requires_nodes.items,
+                entity,
+                &mut filtered_representations,
+                filtered_representations_hashes.is_empty(),
+                None,
+            )
+            .with_plan_context(LazyPlanContext {
+                subgraph_name: || Some(fetch_node.service_name.clone()),
+                affected_path: || Some(flatten_node.path.to_string()),
+            })?;
 
-                let entity = if let Some(input_rewrites) = &fetch_node.input_rewrites {
-                    let new_entity = arena.alloc(entity.clone());
-                    for input_rewrite in input_rewrites {
-                        input_rewrite.rewrite(&self.schema_metadata.possible_types, new_entity);
-                    }
-                    new_entity
-                } else {
-                    entity
-                };
+            if is_projected {
+                filtered_representations_hashes.insert(hash, index);
+            }
 
-                let is_projected = project_requires(
-                    possible_types,
-                    &requires_nodes.items,
-                    entity,
-                    &mut filtered_representations,
-                    filtered_representations_hashes.is_empty(),
-                    None,
-                )
-                .with_plan_context(LazyPlanContext {
-                    subgraph_name: || Some(fetch_node.service_name.clone()),
-                    affected_path: || Some(flatten_node.path.to_string()),
-                })?;
+            index += 1;
 
-                if is_projected {
-                    filtered_representations_hashes.insert(hash, index);
-                }
-
-                index += 1;
-
-                Ok(())
-            },
-        )?;
+            Ok(())
+        })?;
         filtered_representations.put(CLOSE_BRACKET);
 
         if filtered_representations_hashes.is_empty() {

@@ -15,7 +15,7 @@ use crate::{
 
 pub struct ExecutionContext<'a> {
     pub response_storage: ResponsesStorage,
-    pub final_response: Value<'a>,
+    pub data: Value<'a>,
     pub errors: Vec<GraphQLError>,
     pub output_rewrites: OutputRewritesStorage,
     pub response_headers_aggregator: ResponseHeaderAggregator,
@@ -27,7 +27,7 @@ impl<'a> Default for ExecutionContext<'a> {
             response_storage: Default::default(),
             output_rewrites: Default::default(),
             errors: Vec::new(),
-            final_response: Value::Null,
+            data: Value::Null,
             response_headers_aggregator: Default::default(),
         }
     }
@@ -43,7 +43,7 @@ impl<'a> ExecutionContext<'a> {
             response_storage: ResponsesStorage::new(),
             output_rewrites: OutputRewritesStorage::from_query_plan(query_plan),
             errors: init_errors,
-            final_response: init_final_response,
+            data: init_final_response,
             response_headers_aggregator: Default::default(),
         }
     }

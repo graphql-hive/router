@@ -325,7 +325,7 @@ pub async fn execute_pipeline(
         plugin_req_state: &plugin_req_state,
     };
 
-    let (execution_result, error_count) =
+    let plan_execution_result =
         execute_plan(req, supergraph, shared_state, &planned_request).await?;
 
     if shared_state.router_config.usage_reporting.enabled {
@@ -337,10 +337,10 @@ pub async fn execute_pipeline(
                 &client_request_details,
                 hive_usage_agent,
                 &shared_state.router_config.usage_reporting,
-                error_count,
+                plan_execution_result.error_count,
             );
         }
     }
 
-    Ok(execution_result)
+    Ok(plan_execution_result.response)
 }

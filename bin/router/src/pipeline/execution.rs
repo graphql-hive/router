@@ -7,13 +7,15 @@ use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
-use hive_router_plan_executor::execution::plan::{execute_query_plan, QueryPlanExecutionContext};
+use hive_router_plan_executor::execution::plan::{
+    execute_query_plan, QueryPlanExecutionOpts, QueryPlanExecutionResult,
+};
 use hive_router_plan_executor::hooks::on_supergraph_load::SupergraphData;
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_plan_executor::plugin_context::PluginRequestState;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
-use ntex::web::{self, HttpRequest};
+use ntex::web::HttpRequest;
 
 static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
 
@@ -38,7 +40,7 @@ pub async fn execute_plan(
     supergraph: &SupergraphData,
     app_state: &RouterSharedState,
     planned_request: &PlannedRequest<'_>,
-) -> Result<(web::HttpResponse, usize), PipelineErrorVariant> {
+) -> Result<QueryPlanExecutionResult, PipelineErrorVariant> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
     if app_state.router_config.query_planner.allow_expose {
@@ -93,7 +95,7 @@ pub async fn execute_plan(
         None
     };
 
-    execute_query_plan(QueryPlanExecutionContext {
+    execute_query_plan(QueryPlanExecutionOpts {
         plugin_req_state: planned_request.plugin_req_state,
         query_plan: planned_request.query_plan_payload,
         operation_for_plan: &planned_request.normalized_payload.operation_for_plan,
@@ -113,8 +115,5 @@ pub async fn execute_plan(
             .collect(),
     })
     .await
-    .map_err(|err| {
-        tracing::error!("Failed to execute query plan: {}", err);
-        PipelineErrorVariant::PlanExecutionError(err)
-    })
+    .map_err(PipelineErrorVariant::PlanExecutionError)
 }
