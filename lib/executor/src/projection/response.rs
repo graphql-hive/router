@@ -572,4 +572,131 @@ mod tests {
         let expected_response = r#"{"data":{"metadatas":[{"id":"meta1","data":{"float":41.5,"int":-42,"str":"value1","unsigned":123}},{"id":"meta2","data":null}]}}"#;
         assert_eq!(projected_str, expected_response);
     }
+
+    #[test]
+    fn test_duplicate_selections_in_merged_plans() {
+        let supergraph = hive_router_query_planner::utils::parsing::parse_schema(
+            r#"
+              interface Node {
+                id: ID!
+              }
+
+              type A implements Node {
+                id: ID
+                children: [AChild]
+              }
+              type B implements Node {
+                id: ID!
+                children: [BChild]
+              }
+
+              type AChild {
+                id: ID
+              }
+              type BChild {
+                id: ID
+              }
+
+              type Container {
+                node: Node
+              }
+              type Query {
+                nodes: [Container]
+              }
+        "#,
+        );
+        let consumer_schema = ConsumerSchema::new_from_supergraph(&supergraph);
+        let schema_metadata = consumer_schema.schema_metadata();
+
+        let mut operation = parse_operation(
+            r#"
+              query {
+                nodes {
+                  node {
+                    ... on A {
+                      children {
+                        id
+                      }
+                    }
+                    ...on B {
+                      children {
+                        id
+                      }
+                    }
+                  }
+                }
+              }
+            "#,
+        );
+
+        let operation_ast = operation
+            .definitions
+            .iter_mut()
+            .find_map(|def| match def {
+                Definition::Operation(op) => Some(op),
+                _ => None,
+            })
+            .unwrap();
+
+        let normalized_operation: NormalizedDocument =
+            create_normalized_document(operation_ast.clone(), Some("SearchQuery"));
+        let (operation_type_name, selections) =
+            FieldProjectionPlan::from_operation(&normalized_operation.operation, &schema_metadata);
+
+        let data_json = json!({
+            "__typename": "Query",
+            "nodes": [
+                {
+                    "node": {
+                        "__typename": "A",
+                        "children": []
+                    }
+                },
+                {
+                    "node": {
+                        "__typename": "B",
+                        "children": [
+                            { "id": "b_child_1" }
+                        ]
+                    }
+                }
+            ]
+        });
+        let data = Value::from(data_json.as_ref());
+        let projection = project_by_operation(
+            &data,
+            vec![],
+            &None,
+            operation_type_name,
+            &selections,
+            &None,
+            1000,
+            &schema_metadata,
+        );
+        let projected_bytes = projection.unwrap();
+        let projected_value: sonic_rs::Value = sonic_rs::from_slice(&projected_bytes).unwrap();
+        let projected_str = sonic_rs::to_string_pretty(&projected_value).unwrap();
+        insta::assert_snapshot!(projected_str, @r#"
+        {
+          "data": {
+            "nodes": [
+              {
+                "node": {
+                  "children": []
+                }
+              },
+              {
+                "node": {
+                  "children": [
+                    {
+                      "id": "b_child_1"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+        "#);
+    }
 }
