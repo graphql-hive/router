@@ -78,9 +78,9 @@ impl SupergraphTestData {
 
         let jwt = if let Some(scopes) = scopes {
             JwtRequestDetails::Authenticated {
-                token: "asd",
+                token: "asd".into(),
                 prefix: None,
-                claims: &Default::default(),
+                claims: Default::default(),
                 scopes: Some(scopes.iter().map(|s| s.to_string()).collect()),
             }
         } else {

@@ -8,7 +8,7 @@ pub struct JwtAuthForwardingPlan {
     pub extension_field_value: Value,
 }
 
-impl JwtRequestDetails<'_> {
+impl JwtRequestDetails {
     pub fn build_forwarding_plan(
         &self,
         extension_field_name: &str,

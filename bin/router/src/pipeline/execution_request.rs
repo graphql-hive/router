@@ -83,7 +83,7 @@ impl TryInto<ExecutionRequest> for GETQueryParams {
 
 #[inline]
 pub async fn get_execution_request(
-    req: &mut HttpRequest,
+    req: &HttpRequest,
     body_bytes: Bytes,
 ) -> Result<ExecutionRequest, PipelineError> {
     let http_method = req.method();

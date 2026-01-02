@@ -16,14 +16,14 @@ pub struct ClientRequestDetails<'exec, 'req> {
     pub url: &'req http::Uri,
     pub headers: &'req NtexHeaderMap,
     pub operation: OperationDetails<'exec>,
-    pub jwt: &'exec JwtRequestDetails<'req>,
+    pub jwt: &'exec JwtRequestDetails,
 }
 
-pub enum JwtRequestDetails<'exec> {
+pub enum JwtRequestDetails {
     Authenticated {
-        token: &'exec str,
-        prefix: Option<&'exec str>,
-        claims: &'exec sonic_rs::Value,
+        token: String,
+        prefix: Option<String>,
+        claims: sonic_rs::Value,
         scopes: Option<Vec<String>>,
     },
     Unauthenticated,
@@ -74,10 +74,7 @@ impl From<&ClientRequestDetails<'_, '_>> for Value {
             } => Self::Object(BTreeMap::from([
                 ("authenticated".into(), Value::Boolean(true)),
                 ("token".into(), token.to_string().into()),
-                (
-                    "prefix".into(),
-                    prefix.unwrap_or_default().to_string().into(),
-                ),
+                ("prefix".into(), prefix.clone().unwrap_or_default().into()),
                 ("claims".into(), claims.to_vrl_value()),
                 (
                     "scopes".into(),
