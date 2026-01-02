@@ -74,7 +74,10 @@ impl From<&ClientRequestDetails<'_, '_>> for Value {
             } => Self::Object(BTreeMap::from([
                 ("authenticated".into(), Value::Boolean(true)),
                 ("token".into(), token.to_string().into()),
-                ("prefix".into(), prefix.clone().unwrap_or_default().into()),
+                (
+                    "prefix".into(),
+                    prefix.as_deref().unwrap_or_default().into(),
+                ),
                 ("claims".into(), claims.to_vrl_value()),
                 (
                     "scopes".into(),
