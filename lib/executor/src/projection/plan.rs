@@ -292,37 +292,23 @@ impl FieldProjectionPlan {
         match (&mut existing_plan.value, plan_to_merge.value) {
             (
                 ProjectionValueSource::ResponseData {
-                    selections: existing_selections_opt,
+                    selections: existing_selections,
                 },
                 ProjectionValueSource::ResponseData {
-                    selections: new_selections_opt,
+                    selections: new_selections,
                 },
             ) => {
-                let Some(new_selections) = new_selections_opt else {
-                    return;
-                };
-
-                let Some(existing_selections) = existing_selections_opt else {
-                    // If the existing plan did not have any selections,
-                    // adopt the new selections, without merging.
-                    *existing_selections_opt = Some(new_selections);
-                    return;
-                };
-
-                // Deduplicate nested selections
-                let mut merged_selections: IndexMap<String, FieldProjectionPlan> =
-                    Arc::make_mut(existing_selections)
-                        .drain(..)
-                        .map(|plan| (plan.response_key.clone(), plan))
-                        .collect();
-
-                for new_plan in Arc::try_unwrap(new_selections).unwrap_or_else(|arc| (*arc).clone())
-                {
-                    Self::merge_plan(&mut merged_selections, new_plan);
+                if let Some(new_selections) = new_selections {
+                    match existing_selections {
+                        Some(selections) => {
+                            Arc::make_mut(selections).extend(
+                                Arc::try_unwrap(new_selections)
+                                    .unwrap_or_else(|arc| (*arc).clone()),
+                            );
+                        }
+                        None => *existing_selections = Some(new_selections),
+                    }
                 }
-
-                // Replace with the deduplicated selections
-                *existing_selections = Arc::new(merged_selections.into_values().collect());
             }
             (ProjectionValueSource::Null, ProjectionValueSource::Null) => {
                 // Both plans have `Null` value source, so nothing to merge
