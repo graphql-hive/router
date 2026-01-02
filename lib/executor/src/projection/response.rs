@@ -28,6 +28,11 @@ fn compute_type_name_from_schema<'a>(
     field_name: &str,
     schema_metadata: &'a SchemaMetadata,
 ) -> Result<&'a str, ProjectionError> {
+    if field_name == TYPENAME_FIELD_NAME {
+        // it's always String
+        return Ok("String");
+    }
+
     let fields = schema_metadata
         .get_type_fields(parent_type_name)
         .ok_or_else(|| ProjectionError::MissingType(parent_type_name.to_string()))?;
