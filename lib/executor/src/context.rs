@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use hive_router_query_planner::planner::plan_nodes::{FetchNode, FetchRewrite, QueryPlan};
+use hive_router_query_planner::planner::plan_nodes::{
+    FetchNode, FetchRewrite, FlattenNodePath, QueryPlan,
+};
 
 use crate::{
     headers::plan::ResponseHeaderAggregator,
@@ -49,7 +51,7 @@ impl<'a> ExecutionContext<'a> {
     pub fn handle_errors(
         &mut self,
         subgraph_name: &str,
-        affected_path: Option<String>,
+        affected_path: Option<&FlattenNodePath>,
         errors: Option<Vec<GraphQLError>>,
         entity_index_error_map: Option<HashMap<&usize, Vec<GraphQLErrorPath>>>,
     ) {
@@ -57,8 +59,8 @@ impl<'a> ExecutionContext<'a> {
             for response_error in response_errors {
                 let mut processed_error = response_error.add_subgraph_name(subgraph_name);
 
-                if let Some(path) = &affected_path {
-                    processed_error = processed_error.add_affected_path(path);
+                if let Some(path) = affected_path {
+                    processed_error = processed_error.add_affected_path(path.to_string());
                 }
 
                 if let Some(entity_index_error_map) = &entity_index_error_map {

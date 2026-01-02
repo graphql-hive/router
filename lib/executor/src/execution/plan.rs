@@ -1,9 +1,6 @@
-use std::{
-    collections::{BTreeSet, HashMap},
-    sync::Arc,
-};
+use std::collections::{BTreeSet, HashMap};
 
-use bytes::{BufMut, Bytes};
+use bytes::BufMut;
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
 use hive_router_query_planner::{
     ast::operation::OperationDefinition,
@@ -204,39 +201,53 @@ pub struct Executor<'exec, 'req> {
     plugin_req_state: &'exec Option<PluginRequestState<'exec>>,
 }
 
-struct FetchJob<'exec> {
-    fetch_node_id: i64,
-    subgraph_name: String,
-    response: SubgraphResponse<'exec>,
-}
-
-struct FlattenFetchJob<'exec> {
-    flatten_node_path: FlattenNodePath,
-    response: SubgraphResponse<'exec>,
-    fetch_node_id: i64,
-    subgraph_name: String,
-    representation_hashes: Vec<u64>,
-    representation_hash_to_index: HashMap<u64, usize>,
-}
-
 enum ExecutionJob<'exec> {
-    Fetch(FetchJob<'exec>),
-    FlattenFetch(FlattenFetchJob<'exec>),
-    None,
+    Fetch {
+        fetch_node_id: i64,
+        subgraph_name: &'exec str,
+        response: SubgraphResponse<'exec>,
+    },
+    FlattenFetch {
+        flatten_node_path: &'exec FlattenNodePath,
+        response: SubgraphResponse<'exec>,
+        fetch_node_id: i64,
+        subgraph_name: &'exec str,
+        representation_hashes: Vec<u64>,
+        representation_hash_to_index: HashMap<u64, usize>,
+    },
 }
 
 impl<'exec> ExecutionJob<'exec> {
     fn response(self) -> SubgraphResponse<'exec> {
         match self {
-            ExecutionJob::Fetch(j) => j.response,
-            ExecutionJob::FlattenFetch(j) => j.response,
-            ExecutionJob::None => SubgraphResponse {
-                data: Value::Null,
-                errors: None,
-                extensions: None,
-                headers: None,
-                bytes: None,
-            },
+            ExecutionJob::Fetch { response, .. } => response,
+            ExecutionJob::FlattenFetch { response, .. } => response,
+        }
+    }
+    fn response_ref(&self) -> &SubgraphResponse<'exec> {
+        match self {
+            ExecutionJob::Fetch { response, .. } => response,
+            ExecutionJob::FlattenFetch { response, .. } => response,
+        }
+    }
+    fn fetch_node_id(&self) -> i64 {
+        match self {
+            ExecutionJob::Fetch { fetch_node_id, .. } => *fetch_node_id,
+            ExecutionJob::FlattenFetch { fetch_node_id, .. } => *fetch_node_id,
+        }
+    }
+    fn subgraph_name(&self) -> &'exec str {
+        match self {
+            ExecutionJob::Fetch { subgraph_name, .. } => subgraph_name,
+            ExecutionJob::FlattenFetch { subgraph_name, .. } => subgraph_name,
+        }
+    }
+    fn affected_path(&self) -> Option<&'exec FlattenNodePath> {
+        match self {
+            ExecutionJob::Fetch { .. } => None,
+            ExecutionJob::FlattenFetch {
+                flatten_node_path, ..
+            } => Some(flatten_node_path),
         }
     }
 }
@@ -277,10 +288,6 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         node: &'exec PlanNode,
     ) -> Result<(), PlanExecutionError> {
         match node {
-            PlanNode::Fetch(fetch_node) => {
-                let job = self.execute_fetch_node(fetch_node, None, None).await?;
-                self.process_job_result(ctx, job)?;
-            }
             PlanNode::Parallel(parallel_node) => {
                 let mut scope = FuturesUnordered::new();
 
@@ -290,22 +297,9 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                 }
 
                 while let Some(result) = scope.next().await {
-                    let job = result?;
-                    self.process_job_result(ctx, job)?;
-                }
-            }
-            PlanNode::Flatten(flatten_node) => {
-                let p = self.prepare_flatten_data(&ctx.final_response, flatten_node)?;
-                if let Some(p) = p {
-                    let job = self
-                        .execute_flatten_fetch_node(
-                            flatten_node,
-                            Some(p.representations),
-                            Some(p.representation_hashes),
-                            Some(p.representation_hash_to_index),
-                        )
-                        .await?;
-                    self.process_job_result(ctx, job)?;
+                    if let Some(job) = result? {
+                        self.process_job_result(ctx, job)?;
+                    }
                 }
             }
             PlanNode::Sequence(sequence_node) => {
@@ -313,15 +307,11 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                     Box::pin(self.execute(ctx, child)).await?;
                 }
             }
-            PlanNode::Condition(condition_node) => {
-                if let Some(node) =
-                    condition_node_by_variables(condition_node, self.variable_values)
-                {
-                    Box::pin(self.execute(ctx, node)).await?;
+            node => {
+                if let Some(job) = self.prepare_job_future(node, &ctx.final_response).await? {
+                    self.process_job_result(ctx, job)?;
                 }
             }
-            // An unsupported plan node was found, do nothing.
-            _ => {}
         }
 
         Ok(())
@@ -331,7 +321,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         &'wave self,
         node: &'exec PlanNode,
         final_response: &Value<'exec>,
-    ) -> BoxFuture<'wave, Result<ExecutionJob<'exec>, PlanExecutionError>> {
+    ) -> BoxFuture<'wave, Result<Option<ExecutionJob<'exec>>, PlanExecutionError>> {
         match node {
             PlanNode::Fetch(fetch_node) => {
                 Box::pin(self.execute_fetch_node(fetch_node, None, None))
@@ -344,38 +334,19 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                         Some(p.representation_hashes),
                         Some(p.representation_hash_to_index),
                     )),
-                    Ok(None) => Box::pin(async { Ok(ExecutionJob::None) }),
+                    Ok(None) => Box::pin(async { Ok(None) }),
                     Err(e) => Box::pin(async move { Err(e) }),
                 }
             }
             PlanNode::Condition(node) => {
                 match condition_node_by_variables(node, self.variable_values) {
                     Some(node) => Box::pin(self.prepare_job_future(node, final_response)), // This is already clean.
-                    None => Box::pin(async { Ok(ExecutionJob::None) }),
+                    None => Box::pin(async { Ok(None) }),
                 }
             }
             // Our Query Planner does not produce any other plan node types in ParallelNode
-            _ => Box::pin(async { Ok(ExecutionJob::None) }),
+            _ => Box::pin(async { Ok(None) }),
         }
-    }
-
-    fn process_subgraph_response(
-        &self,
-        ctx: &mut ExecutionContext<'exec>,
-        response_bytes: Option<Arc<Bytes>>,
-        fetch_node_id: i64,
-    ) -> Option<&'exec Vec<FetchRewrite>> {
-        if let Some(response_bytes) = response_bytes {
-            ctx.response_storage.add_response(response_bytes);
-        }
-
-        // SAFETY: The `output_rewrites` are transmuted to the lifetime `'a`. This is safe
-        // because `output_rewrites` is part of `OutputRewritesStorage` which is owned by
-        // `ExecutionContext` and lives for `'a`.
-        let output_rewrites: Option<&'exec Vec<FetchRewrite>> =
-            unsafe { std::mem::transmute(ctx.output_rewrites.get(fetch_node_id)) };
-
-        output_rewrites
     }
 
     fn process_job_result(
@@ -383,53 +354,52 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         ctx: &mut ExecutionContext<'exec>,
         job: ExecutionJob<'exec>,
     ) -> Result<(), PlanExecutionError> {
-        match job {
-            ExecutionJob::Fetch(mut job) => {
-                if let Some(ref subgraph_headers) = job.response.headers {
-                    apply_subgraph_response_headers(
-                        self.headers_plan,
-                        &job.subgraph_name,
-                        subgraph_headers,
-                        self.client_request,
-                        &mut ctx.response_headers_aggregator,
-                    )
-                    .with_plan_context(LazyPlanContext {
-                        subgraph_name: || Some(job.subgraph_name.clone()),
-                        affected_path: || None,
-                    })?;
-                }
-                if let Some(output_rewrites) =
-                    self.process_subgraph_response(ctx, job.response.bytes, job.fetch_node_id)
-                {
+        let subgraph_name = job.subgraph_name();
+        let affected_path = job.affected_path();
+        if let Some(ref subgraph_headers) = &job.response_ref().headers {
+            apply_subgraph_response_headers(
+                self.headers_plan,
+                job.subgraph_name(),
+                subgraph_headers,
+                self.client_request,
+                &mut ctx.response_headers_aggregator,
+            )
+            .with_plan_context(LazyPlanContext {
+                subgraph_name: || Some(subgraph_name.to_string()),
+                affected_path: || affected_path.map(|p| p.to_string()),
+            })?;
+        }
+
+        if let Some(response_bytes) = &job.response_ref().bytes {
+            ctx.response_storage.add_response(response_bytes.clone());
+        }
+
+        // SAFETY: The `output_rewrites` are transmuted to the lifetime `'a`. This is safe
+        // because `output_rewrites` is part of `OutputRewritesStorage` which is owned by
+        // `ExecutionContext` and lives for `'a`.
+        let output_rewrites: Option<&'exec Vec<FetchRewrite>> =
+            unsafe { std::mem::transmute(ctx.output_rewrites.get(job.fetch_node_id())) };
+
+        let (errors, entity_index_error_map) = match job {
+            ExecutionJob::Fetch { mut response, .. } => {
+                if let Some(output_rewrites) = output_rewrites {
                     for output_rewrite in output_rewrites {
                         output_rewrite
-                            .rewrite(&self.schema_metadata.possible_types, &mut job.response.data);
+                            .rewrite(&self.schema_metadata.possible_types, &mut response.data);
                     }
                 }
+                deep_merge(&mut ctx.final_response, response.data);
 
-                ctx.handle_errors(&job.subgraph_name, None, job.response.errors, None);
-
-                deep_merge(&mut ctx.final_response, job.response.data);
+                (response.errors, None)
             }
-            ExecutionJob::FlattenFetch(mut job) => {
-                if let Some(ref subgraph_headers) = job.response.headers {
-                    apply_subgraph_response_headers(
-                        self.headers_plan,
-                        &job.subgraph_name,
-                        subgraph_headers,
-                        self.client_request,
-                        &mut ctx.response_headers_aggregator,
-                    )
-                    .with_plan_context(LazyPlanContext {
-                        subgraph_name: || Some(job.subgraph_name.clone()),
-                        affected_path: || Some(job.flatten_node_path.to_string()),
-                    })?;
-                }
-
-                let output_rewrites =
-                    self.process_subgraph_response(ctx, job.response.bytes, job.fetch_node_id);
-
-                if let Some(mut entities) = job.response.data.take_entities() {
+            ExecutionJob::FlattenFetch {
+                mut response,
+                flatten_node_path,
+                representation_hashes,
+                ref representation_hash_to_index,
+                ..
+            } => {
+                if let Some(mut entities) = response.data.take_entities() {
                     if let Some(output_rewrites) = output_rewrites {
                         for output_rewrite in output_rewrites {
                             for entity in &mut entities {
@@ -440,15 +410,13 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                     }
 
                     let mut index = 0;
-                    let normalized_path = job.flatten_node_path.as_slice();
+                    let normalized_path = flatten_node_path.as_slice();
                     // If there is an error in the response, then collect the paths for normalizing the error
-                    let initial_error_path = job
-                        .response
+                    let initial_error_path = response
                         .errors
                         .as_ref()
                         .map(|_| GraphQLErrorPath::with_capacity(normalized_path.len() + 2));
-                    let mut entity_index_error_map = job
-                        .response
+                    let mut entity_index_error_map = response
                         .errors
                         .as_ref()
                         .map(|_| HashMap::with_capacity(entities.len()));
@@ -458,9 +426,8 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                         self.schema_metadata,
                         initial_error_path,
                         &mut |target, error_path| {
-                            let hash = job.representation_hashes[index];
-                            if let Some(entity_index) = job.representation_hash_to_index.get(&hash)
-                            {
+                            let hash = representation_hashes[index];
+                            if let Some(entity_index) = representation_hash_to_index.get(&hash) {
                                 if let (Some(error_path), Some(entity_index_error_map)) =
                                     (error_path, entity_index_error_map.as_mut())
                                 {
@@ -481,26 +448,15 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                             index += 1;
                         },
                     );
-                    ctx.handle_errors(
-                        &job.subgraph_name,
-                        Some(job.flatten_node_path.to_string()),
-                        job.response.errors,
-                        entity_index_error_map,
-                    );
-                } else if let Some(errors) = job.response.errors {
-                    // No entities were returned, but there are errors to handle.
-                    // We associate them with the flattened path and subgraph.
-                    ctx.errors.extend(errors.into_iter().map(|e| {
-                        let affected_path = job.flatten_node_path.to_string();
-                        e.add_subgraph_name(&job.subgraph_name)
-                            .add_affected_path(affected_path)
-                    }));
+                    (response.errors, entity_index_error_map)
+                } else {
+                    (response.errors, None)
                 }
             }
-            ExecutionJob::None => {
-                // nothing to do
-            }
-        }
+        };
+
+        ctx.handle_errors(subgraph_name, affected_path, errors, entity_index_error_map);
+
         Ok(())
     }
 
@@ -593,20 +549,26 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         representations: Option<Vec<u8>>,
         representation_hashes: Option<Vec<u64>>,
         filtered_representations_hashes: Option<HashMap<u64, usize>>,
-    ) -> Result<ExecutionJob<'exec>, PlanExecutionError> {
+    ) -> Result<Option<ExecutionJob<'exec>>, PlanExecutionError> {
         Ok(match node.node.as_ref() {
-            PlanNode::Fetch(fetch_node) => ExecutionJob::FlattenFetch(FlattenFetchJob {
-                flatten_node_path: node.path.clone(),
-                response: self
+            PlanNode::Fetch(fetch_node) => {
+                match self
                     .execute_fetch_node(fetch_node, representations, Some(&node.path))
                     .await?
-                    .response(),
-                fetch_node_id: fetch_node.id,
-                subgraph_name: fetch_node.service_name.clone(),
-                representation_hashes: representation_hashes.unwrap_or_default(),
-                representation_hash_to_index: filtered_representations_hashes.unwrap_or_default(),
-            }),
-            _ => ExecutionJob::None,
+                {
+                    Some(fetch_job) => Some(ExecutionJob::FlattenFetch {
+                        flatten_node_path: &node.path,
+                        response: fetch_job.response(),
+                        fetch_node_id: fetch_node.id,
+                        subgraph_name: fetch_node.service_name.as_str(),
+                        representation_hashes: representation_hashes.unwrap_or_default(),
+                        representation_hash_to_index: filtered_representations_hashes
+                            .unwrap_or_default(),
+                    }),
+                    None => return Ok(None),
+                }
+            }
+            _ => None,
         })
     }
 
@@ -615,7 +577,7 @@ impl<'exec, 'req> Executor<'exec, 'req> {
         node: &'exec FetchNode,
         representations: Option<Vec<u8>>,
         affected_path: Option<&FlattenNodePath>,
-    ) -> Result<ExecutionJob<'exec>, PlanExecutionError> {
+    ) -> Result<Option<ExecutionJob<'exec>>, PlanExecutionError> {
         // TODO: We could optimize header map creation by caching them per service name
         let mut headers_map = HeaderMap::new();
         let subgraph_name_factory = || Some(node.service_name.clone());
@@ -650,9 +612,9 @@ impl<'exec, 'req> Executor<'exec, 'req> {
             );
         }
 
-        Ok(ExecutionJob::Fetch(FetchJob {
+        Ok(Some(ExecutionJob::Fetch {
             fetch_node_id: node.id,
-            subgraph_name: node.service_name.clone(),
+            subgraph_name: &node.service_name,
             response: self
                 .executors
                 .execute(
