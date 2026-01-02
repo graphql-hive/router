@@ -65,7 +65,7 @@ impl QueryPlan {
                 Self::fetch_nodes_from_node(&node.node, list);
             }
             PlanNode::Subscription(node) => {
-                Self::fetch_nodes_from_node(node.primary.as_ref(), list);
+                list.push(&node.primary);
             }
             PlanNode::Defer(_) => {
                 unreachable!("DeferNode is not supported yet");
@@ -258,7 +258,8 @@ pub struct ValueSetter {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscriptionNode {
-    pub primary: Box<PlanNode>, // Use Box to prevent size issues
+    // A subscription node can only really have a primary fetch node.
+    pub primary: FetchNode,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -486,6 +487,12 @@ impl Display for FlattenNode {
     }
 }
 
+impl Display for SubscriptionNode {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        self.pretty_fmt(f, 0)
+    }
+}
+
 impl PrettyDisplay for QueryPlan {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         let indent = get_indent(depth);
@@ -576,6 +583,16 @@ impl PrettyDisplay for ConditionNode {
     }
 }
 
+impl PrettyDisplay for SubscriptionNode {
+    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+        let indent = get_indent(depth);
+        writeln!(f, "{indent}Subscription {{")?;
+        self.primary.pretty_fmt(f, depth + 1)?;
+        writeln!(f, "{indent}}},")?;
+        Ok(())
+    }
+}
+
 impl PrettyDisplay for PlanNode {
     fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
         match self {
@@ -584,6 +601,7 @@ impl PrettyDisplay for PlanNode {
             PlanNode::Sequence(node) => node.pretty_fmt(f, depth),
             PlanNode::Parallel(node) => node.pretty_fmt(f, depth),
             PlanNode::Condition(node) => node.pretty_fmt(f, depth),
+            PlanNode::Subscription(node) => node.pretty_fmt(f, depth),
             _ => Ok(()),
         }
     }

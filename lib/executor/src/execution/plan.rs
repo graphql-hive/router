@@ -1,12 +1,16 @@
-use std::collections::{BTreeSet, HashMap};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use bytes::{BufMut, Bytes};
-use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+use futures::{future::BoxFuture, stream::BoxStream, stream::FuturesUnordered, StreamExt};
 use hive_router_query_planner::planner::plan_nodes::{
     ConditionNode, FetchNode, FetchRewrite, FlattenNode, FlattenNodePath, ParallelNode, PlanNode,
     QueryPlan, SequenceNode,
 };
 use http::HeaderMap;
+use ntex::http::HeaderMap as NtexHeaderMap;
 use serde::Deserialize;
 use sonic_rs::ValueRef;
 
@@ -50,16 +54,21 @@ use crate::{
 
 pub struct QueryPlanExecutionContext<'exec, 'req> {
     pub query_plan: &'exec QueryPlan,
-    pub projection_plan: &'exec Vec<FieldProjectionPlan>,
-    pub headers_plan: &'exec HeaderRulesPlan,
-    pub variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
+    /// Projection plan - Arc because subscriptions need to own it
+    pub projection_plan: Arc<Vec<FieldProjectionPlan>>,
+    /// Headers plan - Arc because subscriptions need to own it
+    pub headers_plan: Arc<HeaderRulesPlan>,
+    pub variable_values: Option<HashMap<String, sonic_rs::Value>>,
     pub extensions: Option<HashMap<String, sonic_rs::Value>>,
     pub client_request: &'exec ClientRequestDetails<'exec, 'req>,
     pub introspection_context: &'exec IntrospectionContext<'exec, 'static>,
     pub operation_type_name: &'exec str,
-    pub executors: &'exec SubgraphExecutorMap,
+    /// Executors - Arc because subscriptions need to own it
+    pub executors: Arc<SubgraphExecutorMap>,
     pub jwt_auth_forwarding: &'exec Option<JwtAuthForwardingPlan>,
     pub initial_errors: Vec<GraphQLError>,
+    /// Schema metadata - Arc because subscriptions need to own it
+    pub schema_metadata: Arc<SchemaMetadata>,
 }
 
 pub struct PlanExecutionOutput {
@@ -68,9 +77,239 @@ pub struct PlanExecutionOutput {
     pub error_count: usize,
 }
 
+pub struct PlanSubscriptionOutput {
+    pub body: BoxStream<'static, Vec<u8>>,
+    pub headers: HeaderMap,
+    pub error_count: usize,
+}
+
+/// Result of executing a query plan - either a single response or a subscription stream
+pub enum QueryPlanExecutionResult {
+    Single(PlanExecutionOutput),
+    Stream(PlanSubscriptionOutput),
+}
+
+/// Owned context for subscription stream processing.
+/// Contains all data needed to execute entity resolution for each subscription event.
+/// Derived from QueryPlanExecutionContext by cloning Arc fields and owning String data.
+struct OwnedQueryPlanExecutionContext {
+    /// The query plan for entity resolution (remaining nodes after subscription)
+    query_plan: Arc<QueryPlan>,
+    projection_plan: Arc<Vec<FieldProjectionPlan>>,
+    headers_plan: Arc<HeaderRulesPlan>,
+    variable_values: Option<HashMap<String, sonic_rs::Value>>,
+    extensions: Option<HashMap<String, sonic_rs::Value>>,
+    operation_type_name: String,
+    executors: Arc<SubgraphExecutorMap>,
+    schema_metadata: Arc<SchemaMetadata>,
+    initial_errors: Vec<GraphQLError>,
+}
+
+impl OwnedQueryPlanExecutionContext {
+    /// Create owned context from QueryPlanExecutionContext for subscription processing.
+    /// The `remaining_plan_nodes` become the query plan for entity resolution.
+    fn from_ctx(
+        ctx: &QueryPlanExecutionContext<'_, '_>,
+        remaining_plan_nodes: Option<Vec<PlanNode>>,
+    ) -> Self {
+        // Create a synthetic query plan for entity resolution from remaining nodes
+        let query_plan = Arc::new(QueryPlan {
+            kind: "QueryPlan".to_string(),
+            node: remaining_plan_nodes.map(|nodes| {
+                if nodes.len() == 1 {
+                    nodes.into_iter().next().unwrap()
+                } else {
+                    PlanNode::Sequence(SequenceNode { nodes })
+                }
+            }),
+        });
+
+        Self {
+            query_plan,
+            projection_plan: ctx.projection_plan.clone(),
+            headers_plan: ctx.headers_plan.clone(),
+            variable_values: ctx.variable_values.clone(),
+            extensions: ctx.extensions.clone(),
+            operation_type_name: ctx.operation_type_name.to_string(),
+            executors: ctx.executors.clone(),
+            schema_metadata: ctx.schema_metadata.clone(),
+            initial_errors: ctx.initial_errors.clone(),
+        }
+    }
+}
+
 pub async fn execute_query_plan<'exec, 'req>(
     ctx: QueryPlanExecutionContext<'exec, 'req>,
-) -> Result<PlanExecutionOutput, PlanExecutionError> {
+) -> Result<QueryPlanExecutionResult, PlanExecutionError> {
+    let (subscription_node, remaining_nodes) = match &ctx.query_plan.node {
+        // a subscription to a subgraph that contains all data and doesn't need entity resolution
+        Some(PlanNode::Subscription(sub)) => (Some(sub), None),
+        // a subscription that needs entity resolution. after emitting, it needs to execute the
+        // remaining plan nodes in the sequence
+        Some(PlanNode::Sequence(seq)) => match seq.nodes.first() {
+            Some(PlanNode::Subscription(sub)) => {
+                let remaining = if seq.nodes.len() > 1 {
+                    Some(seq.nodes[1..].to_vec())
+                } else {
+                    None
+                };
+                (Some(sub), remaining)
+            }
+            _ => (None, None),
+        },
+        _ => (None, None),
+    };
+
+    if let Some(sub) = subscription_node {
+        // subscription
+
+        let fetch_node = sub.primary.clone();
+
+        let variables = ctx.variable_values.as_ref().map(|vars| {
+            vars.iter()
+                .map(|(k, v)| (k.as_str(), v))
+                .collect::<HashMap<_, _>>()
+        });
+
+        let request = SubgraphExecutionRequest {
+            query: fetch_node.operation.document_str.as_str(),
+            dedupe: false,
+            operation_name: fetch_node.operation_name.as_deref(),
+            variables,
+            representations: None,
+            headers: HeaderMap::new(),
+            extensions: None,
+        };
+
+        let response_stream = ctx
+            .executors
+            .subscribe(&fetch_node.service_name, request, ctx.client_request)
+            .await;
+
+        // subscription needs owned context for the stream
+        let owned_ctx = Box::new(OwnedQueryPlanExecutionContext::from_ctx(
+            &ctx,
+            remaining_nodes,
+        ));
+
+        // Create a stream of serialized subscription events
+        let body_stream = Box::pin(async_stream::stream! {
+            use crate::execution::client_request_details::{
+                ClientRequestDetails, JwtRequestDetails, OperationDetails,
+            };
+
+            let mut response_stream = response_stream;
+
+            while let Some(response) = response_stream.next().await {
+                let response_body = &response.body;
+
+                // Parse the subgraph response
+                let subgraph_response: Result<SubgraphResponse, _> = sonic_rs::from_slice(response_body);
+
+                let output = match subgraph_response {
+                    Ok(parsed_response) => {
+                        let initial_data = parsed_response.data;
+                        let mut initial_errors: Vec<GraphQLError> = owned_ctx.initial_errors.clone();
+                        if let Some(resp_errors) = parsed_response.errors {
+                            initial_errors.extend(resp_errors);
+                        }
+
+                        if owned_ctx.query_plan.node.is_some() {
+                            // entity resolution
+
+                            // Build a dummy client request details for entity resolution
+                            // TODO: it cant be a dummy, it needs to make sense
+                            let method = http::Method::POST;
+                            let uri: http::Uri = "/graphql".parse().unwrap();
+                            let headers = NtexHeaderMap::new();
+                            let jwt = JwtRequestDetails::Unauthenticated;
+                            let operation = OperationDetails {
+                                name: None,
+                                query: "",
+                                kind: "subscription",
+                            };
+                            let client_request = ClientRequestDetails {
+                                method: &method,
+                                url: &uri,
+                                headers: &headers,
+                                operation,
+                                jwt: &jwt,
+                            };
+
+                            match execute_plan_with_initial_data(
+                                &owned_ctx.query_plan,
+                                &owned_ctx.projection_plan,
+                                &owned_ctx.headers_plan,
+                                &owned_ctx.variable_values,
+                                &owned_ctx.extensions,
+                                &owned_ctx.operation_type_name,
+                                &owned_ctx.executors,
+                                &owned_ctx.schema_metadata,
+                                &client_request,
+                                &None, // no jwt forwarding for entity resolution. TODO: or?
+                                initial_data,
+                                initial_errors,
+                                response_body.len() + 256,
+                            )
+                            .await
+                            {
+                                Ok(output) => output.body,
+                                Err(e) => {
+                                    // TODO: leaking?
+                                    let error = GraphQLError::from_message_and_extensions(
+                                        format!("Entity resolution error: {}", e),
+                                        Default::default(),
+                                    );
+                                    format_error_response(&[error])
+                                }
+                            }
+                        } else {
+                            // no entity resolution, just project the response
+                            match project_by_operation(
+                                &initial_data,
+                                initial_errors,
+                                &owned_ctx.extensions,
+                                &owned_ctx.operation_type_name,
+                                &owned_ctx.projection_plan,
+                                &owned_ctx.variable_values,
+                                response_body.len() + 256,
+                            ) {
+                                Ok(body) => body,
+                                Err(e) => {
+                                    let error = GraphQLError::from_message_and_extensions(
+                                        format!("Projection error: {}", e),
+                                        Default::default(),
+                                    );
+                                    format_error_response(&[error])
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let error = GraphQLError::from_message_and_extensions(
+                            format!("Failed to parse subgraph response: {}", e),
+                            Default::default(),
+                        );
+                        format_error_response(&[error])
+                    }
+                };
+
+                yield output;
+            }
+        });
+
+        // TODO: Extract headers from first response or aggregate them
+        let headers = HeaderMap::new();
+
+        return Ok(QueryPlanExecutionResult::Stream(PlanSubscriptionOutput {
+            body: body_stream,
+            headers,
+            error_count: 0, // TODO: Track errors across subscription events
+        }));
+    }
+
+    // query/mutation
+
     let init_value = if let Some(introspection_query) = ctx.introspection_context.query {
         resolve_introspection(introspection_query, ctx.introspection_context)
     } else if ctx.projection_plan.is_empty() {
@@ -79,21 +318,64 @@ pub async fn execute_query_plan<'exec, 'req>(
         Value::Object(Vec::new())
     };
 
-    let mut exec_ctx = ExecutionContext::new(ctx.query_plan, init_value, ctx.initial_errors);
-    let executor = Executor::new(
-        ctx.variable_values,
-        ctx.executors,
+    execute_plan_with_initial_data(
+        ctx.query_plan,
+        &ctx.projection_plan,
+        &ctx.headers_plan,
+        &ctx.variable_values,
+        &ctx.extensions,
+        ctx.operation_type_name,
+        &ctx.executors,
         ctx.introspection_context.metadata,
         ctx.client_request,
-        ctx.headers_plan,
         ctx.jwt_auth_forwarding,
-        // Deduplicate subgraph requests only if the operation type is a query
-        ctx.operation_type_name == "Query",
+        init_value,
+        ctx.initial_errors,
+        0, // Size estimated from response storage
+    )
+    .await
+    .map(QueryPlanExecutionResult::Single)
+}
+
+#[allow(clippy::too_many_arguments)]
+/// Core execution logic shared between regular plan execution and subscription event processing.
+/// Executes the plan nodes and projects the final response.
+async fn execute_plan_with_initial_data<'exec, 'req>(
+    query_plan: &'exec QueryPlan,
+    projection_plan: &Arc<Vec<FieldProjectionPlan>>,
+    headers_plan: &'exec HeaderRulesPlan,
+    variable_values: &'exec Option<HashMap<String, sonic_rs::Value>>,
+    extensions: &Option<HashMap<String, sonic_rs::Value>>,
+    operation_type_name: &str,
+    executors: &'exec SubgraphExecutorMap,
+    schema_metadata: &'exec SchemaMetadata,
+    client_request: &'exec ClientRequestDetails<'exec, 'req>,
+    jwt_auth_forwarding: &'exec Option<JwtAuthForwardingPlan>,
+    initial_data: Value<'_>,
+    initial_errors: Vec<GraphQLError>,
+    estimated_response_size: usize,
+) -> Result<PlanExecutionOutput, PlanExecutionError> {
+    // Clone initial_data to make it 'static for ExecutionContext
+    // TODO: is this wasteful if initial data is null?
+    // SAFETY: We're creating a new owned value that will be used within this function
+    let owned_data: Value<'exec> = unsafe { std::mem::transmute(initial_data.clone()) };
+
+    let mut exec_ctx = ExecutionContext::new(query_plan, owned_data, initial_errors);
+
+    let executor = Executor::new(
+        variable_values,
+        executors,
+        schema_metadata,
+        client_request,
+        headers_plan,
+        jwt_auth_forwarding,
+        // Subscriptions never dedupe (operation_type_name != "Query")
+        operation_type_name == "Query",
     );
 
-    if ctx.query_plan.node.is_some() {
+    if query_plan.node.is_some() {
         executor
-            .execute(&mut exec_ctx, ctx.query_plan.node.as_ref())
+            .execute(&mut exec_ctx, query_plan.node.as_ref())
             .await?;
     }
 
@@ -105,15 +387,15 @@ pub async fn execute_query_plan<'exec, 'req>(
         })?;
 
     let final_response = &exec_ctx.final_response;
-    let error_count = exec_ctx.errors.len(); // Added for usage reporting
+    let error_count = exec_ctx.errors.len();
     let body = project_by_operation(
         final_response,
         exec_ctx.errors,
-        &ctx.extensions,
-        ctx.operation_type_name,
-        ctx.projection_plan,
-        ctx.variable_values,
-        exec_ctx.response_storage.estimate_final_response_size(),
+        extensions,
+        operation_type_name,
+        projection_plan,
+        variable_values,
+        estimated_response_size.max(exec_ctx.response_storage.estimate_final_response_size()),
     )
     .with_plan_context(LazyPlanContext {
         subgraph_name: || None,
@@ -125,6 +407,16 @@ pub async fn execute_query_plan<'exec, 'req>(
         headers: response_headers,
         error_count,
     })
+}
+
+/// Format an error response as JSON bytes
+fn format_error_response(errors: &[GraphQLError]) -> Vec<u8> {
+    let errors_json: Vec<String> = errors
+        .iter()
+        .map(|e| format!(r#"{{"message":"{}"}}"#, e.message.replace('"', "\\\"")))
+        .collect();
+
+    format!(r#"{{"data":null,"errors":[{}]}}"#, errors_json.join(",")).into_bytes()
 }
 
 pub struct Executor<'exec, 'req> {
@@ -251,6 +543,12 @@ impl<'exec, 'req> Executor<'exec, 'req> {
             Some(PlanNode::Fetch(node)) => self.execute_fetch_wave(ctx, node).await,
             Some(PlanNode::Parallel(node)) => self.execute_parallel_wave(ctx, node).await,
             Some(PlanNode::Sequence(node)) => self.execute_sequence_wave(ctx, node).await,
+            // When doing subscription entity resolution, we execute a query plan with the
+            // remainder of the nodes after the SubscriptionNode. In that case, the root
+            // can be a Flatten node and we need to start executing from there.
+            // NOTE: this wont work `Some(PlanNode::Flatten(node)) => self.execute_plan_node(ctx, &node.node).await`
+            // TODO: is there a nicer way to do this?
+            Some(PlanNode::Flatten(_)) => self.execute_plan_node(ctx, plan.unwrap()).await,
             // Plans produced by our Query Planner can only start with: Fetch, Sequence or Parallel.
             // Any other node type at the root is not supported, do nothing
             Some(_) => Ok(()),
@@ -783,7 +1081,7 @@ mod tests {
         response::graphql_error::{GraphQLErrorExtensions, GraphQLErrorPath},
     };
 
-    use super::select_fetch_variables;
+    use super::{format_error_response, select_fetch_variables, GraphQLError};
     use sonic_rs::Value;
     use std::collections::{BTreeSet, HashMap};
 
@@ -902,5 +1200,19 @@ mod tests {
                 GraphQLErrorPathSegment::String("field1".to_string())
             ]
         );
+    }
+
+    #[test]
+    fn format_error_response_correctly() {
+        let error1 = GraphQLError::from_message_and_extensions(
+            format!("Entity resolution error: {}", "Oops!"),
+            Default::default(),
+        );
+        let error2 = GraphQLError::from_message_and_extensions(
+            "Hello World".to_string(),
+            Default::default(),
+        );
+
+        insta::assert_snapshot!(String::from_utf8(format_error_response(&[error1, error2])).unwrap(), @r#"{"data":null,"errors":[{"message":"Entity resolution error: Oops!"},{"message":"Hello World"}]}"#);
     }
 }
