@@ -22,6 +22,73 @@ pub enum TypeCondition {
     OneOf(HashSet<String>),
 }
 
+impl TypeCondition {
+    pub fn union(self, other: TypeCondition) -> TypeCondition {
+        use TypeCondition::*;
+        match (self, other) {
+            (Exact(left), Exact(right)) => {
+                if left == right {
+                    // Or(Exact(A), Exact(A)) -> Exact(A)
+                    Exact(left)
+                } else {
+                    // Or(Exact(A), Exact(B)) -> OneOf(A, B)
+                    OneOf(HashSet::from_iter(vec![left, right]))
+                }
+            }
+            (OneOf(mut types), Exact(exact)) | (Exact(exact), OneOf(mut types)) => {
+                // Or(OneOf(A, B), Exact(C)) -> OneOf(A, B, C)
+                // Or(Exact(A), OneOf(A, B)) -> OneOf(A, B)
+                types.insert(exact);
+                OneOf(types)
+            }
+            (OneOf(mut left), OneOf(right)) => {
+                // Or(OneOf(A, B), OneOf(C, D)) -> OneOf(A, B, C, D)
+                left.extend(right);
+                OneOf(left)
+            }
+        }
+    }
+
+    pub fn intersect(self, other: TypeCondition) -> TypeCondition {
+        use TypeCondition::*;
+        match (self, other) {
+            (Exact(left), Exact(right)) => {
+                if left == right {
+                    // And(Exact(A), Exact(A)) -> Exact(A)
+                    Exact(left)
+                } else {
+                    // And(Exact(A), Exact(B)) is impossible,
+                    // so we return an empty OneOf
+                    // to represent a condition that can never be true.
+                    OneOf(HashSet::default())
+                }
+            }
+            (OneOf(types), Exact(exact)) | (Exact(exact), OneOf(types)) => {
+                if types.contains(&exact) {
+                    // And(OneOf(A, B), Exact(A)) -> Exact(A)
+                    Exact(exact)
+                } else {
+                    // And(Exact(A), OneOf(B, C)) is impossible,
+                    // so we return an empty OneOf
+                    // to represent a condition that can never be true.
+                    OneOf(HashSet::default())
+                }
+            }
+            (OneOf(mut left), OneOf(right)) => {
+                left.retain(|t| right.contains(t));
+                if left.len() == 1 {
+                    // And(OneOf(A, B), OneOf(A, C)) -> Exact(A)
+                    Exact(left.into_iter().next().expect("Set has one element"))
+                } else {
+                    // And(OneOf(A, B, C), OneOf(B, C)) -> OneOf(B, C)
+                    // And(OneOf(A, B), OneOf(C, D)) -> OneOf()
+                    OneOf(left)
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ProjectionValueSource {
     /// Represents the entire response data from subgraphs.
@@ -66,10 +133,10 @@ impl FieldProjectionCondition {
 
         match (self, right) {
             (ParentTypeCondition(left), ParentTypeCondition(right)) => {
-                ParentTypeCondition(Self::intersect_type_conditions(left.clone(), right))
+                ParentTypeCondition(left.clone().intersect(right))
             }
             (FieldTypeCondition(left), FieldTypeCondition(right)) => {
-                FieldTypeCondition(Self::intersect_type_conditions(left.clone(), right))
+                FieldTypeCondition(left.clone().intersect(right))
             }
             (EnumValuesCondition(left), EnumValuesCondition(right)) => {
                 let mut left = left.clone();
@@ -86,10 +153,10 @@ impl FieldProjectionCondition {
 
         match (self, right) {
             (ParentTypeCondition(left), ParentTypeCondition(right)) => {
-                ParentTypeCondition(Self::union_type_conditions(left.clone(), right))
+                ParentTypeCondition(left.clone().union(right))
             }
             (FieldTypeCondition(left), FieldTypeCondition(right)) => {
-                FieldTypeCondition(Self::union_type_conditions(left.clone(), right))
+                FieldTypeCondition(left.clone().union(right))
             }
             (EnumValuesCondition(left), EnumValuesCondition(right)) => {
                 let mut result = left.clone();
@@ -97,75 +164,6 @@ impl FieldProjectionCondition {
                 EnumValuesCondition(result)
             }
             (left, right) => Or(Box::new(left.clone()), Box::new(right)),
-        }
-    }
-
-    fn intersect_type_conditions(left: TypeCondition, right: TypeCondition) -> TypeCondition {
-        match (left, right) {
-            (TypeCondition::Exact(left), TypeCondition::Exact(right)) => {
-                if left == right {
-                    // And(Exact(A), Exact(A)) -> Exact(A)
-                    TypeCondition::Exact(left)
-                } else {
-                    // And(Exact(A), Exact(B)) is impossible,
-                    // so we return an empty OneOf
-                    // to represent a condition that can never be true.
-                    TypeCondition::OneOf(HashSet::default())
-                }
-            }
-
-            (TypeCondition::OneOf(types), TypeCondition::Exact(exact_type))
-            | (TypeCondition::Exact(exact_type), TypeCondition::OneOf(types)) => {
-                if types.contains(&exact_type) {
-                    // And(OneOf(A, B), Exact(A)) -> Exact(A)
-                    TypeCondition::Exact(exact_type)
-                } else {
-                    // And(Exact(A), OneOf(B, C)) is impossible,
-                    // so we return an empty OneOf
-                    // to represent a condition that can never be true.
-                    TypeCondition::OneOf(HashSet::default())
-                }
-            }
-
-            (TypeCondition::OneOf(mut left), TypeCondition::OneOf(right)) => {
-                left.retain(|t| right.contains(t));
-                // If the intersection has only one element, use Exact
-                if left.len() == 1 {
-                    // And(OneOf(A, B), OneOf(A, C)) -> Exact(A)
-                    TypeCondition::Exact(left.into_iter().next().expect("Set has one element"))
-                } else {
-                    // And(OneOf(A, B, C), OneOf(B, C)) -> OneOf(B, C)
-                    TypeCondition::OneOf(left)
-                }
-            }
-        }
-    }
-
-    fn union_type_conditions(left: TypeCondition, right: TypeCondition) -> TypeCondition {
-        match (left, right) {
-            (TypeCondition::Exact(left), TypeCondition::Exact(right)) => {
-                if left == right {
-                    // Or(Exact(A), Exact(A)) -> Exact(A)
-                    TypeCondition::Exact(left)
-                } else {
-                    // Or(Exact(A), Exact(B)) -> OneOf(A, B)
-                    TypeCondition::OneOf(HashSet::from_iter(vec![left, right]))
-                }
-            }
-
-            (TypeCondition::OneOf(mut types), TypeCondition::Exact(exact_type))
-            | (TypeCondition::Exact(exact_type), TypeCondition::OneOf(mut types)) => {
-                // Or(OneOf(A, B), Exact(C)) -> OneOf(A, B, C)
-                // Or(OneOf(A, B), Exact(A)) -> OneOf(A, B)
-                types.insert(exact_type);
-                TypeCondition::OneOf(types)
-            }
-
-            (TypeCondition::OneOf(mut left), TypeCondition::OneOf(right)) => {
-                // Or(OneOf(A, B), OneOf(C, D)) -> OneOf(A, B, C, D)
-                left.extend(right);
-                TypeCondition::OneOf(left)
-            }
         }
     }
 }

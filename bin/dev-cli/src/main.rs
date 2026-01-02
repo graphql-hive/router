@@ -117,7 +117,7 @@ fn main() {
             let schema_metadata = consumer_schema.schema_metadata();
 
             let (_, projection_plan) =
-                FieldProjectionPlan::from_operation(&operation, &schema_metadata);
+                FieldProjectionPlan::from_operation(operation, &schema_metadata);
 
             for plan in &projection_plan {
                 println!("{}", plan);
