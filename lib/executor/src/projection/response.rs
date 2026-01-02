@@ -19,6 +19,10 @@ use crate::utils::consts::{
 };
 
 /// Computes the type name for a field by looking up the field's return type in the schema metadata.
+/// When an error is returned, it means a broken logic or state.
+/// A scenario when a type is missing or a type is missing a field,
+/// can only happen when field's projection rule lack a proper type guard,
+/// or the type guard was not correctly enforced, resulting in applying a plan for a different parent type.
 fn compute_type_name_from_schema<'a>(
     parent_type_name: &'a str,
     field_name: &str,
@@ -246,6 +250,18 @@ fn project_selection_set_with_map(
     schema_metadata: &SchemaMetadata,
 ) -> Result<(), ProjectionError> {
     for plan in plans {
+        if let Some(type_guard) = &plan.parent_type_guard {
+            let is_plan_applicable = match type_guard {
+                TypeCondition::Exact(expected_type) => parent_type_name == expected_type,
+                TypeCondition::OneOf(possible_types) => possible_types.contains(parent_type_name),
+            };
+
+            // Seems like the field projection plan applies to other types, so move to the next one
+            if !is_plan_applicable {
+                continue;
+            }
+        }
+
         let field_val = obj
             .iter()
             .position(|(k, _)| k == &plan.response_key.as_str())
