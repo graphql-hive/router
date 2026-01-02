@@ -135,9 +135,9 @@ fn authorization_benchmark(c: &mut Criterion) {
     c.bench_function("complex partially unauth", |b| {
         b.iter(|| {
             let jwt_req_details = JwtRequestDetails::Authenticated {
-                token: "123",
-                prefix: Some("Bearer"),
-                claims: &sonic_rs::Value::new(),
+                token: "123".into(),
+                prefix: Some("Bearer".into()),
+                claims: sonic_rs::Value::new(),
                 scopes: Some(vec!["read:shipping".to_string()]),
             };
 
@@ -212,9 +212,9 @@ fn authorization_benchmark(c: &mut Criterion) {
     c.bench_function("large mostly authorized", |b| {
         b.iter(|| {
             let jwt_req_details = JwtRequestDetails::Authenticated {
-                token: "123",
-                prefix: Some("Bearer"),
-                claims: &sonic_rs::Value::new(),
+                token: "123".into(),
+                prefix: Some("Bearer".into()),
+                claims: sonic_rs::Value::new(),
                 scopes: Some(vec![
                     "read:price".to_string(),
                     "read:shipping".to_string(),
@@ -284,9 +284,9 @@ fn authorization_benchmark(c: &mut Criterion) {
         b.iter(|| {
             // Authenticated but with no scopes
             let jwt_req_details = JwtRequestDetails::Authenticated {
-                token: "123",
-                prefix: Some("Bearer"),
-                claims: &sonic_rs::Value::new(),
+                token: "123".into(),
+                prefix: Some("Bearer".into()),
+                claims: sonic_rs::Value::new(),
                 scopes: Some(vec![]),
             };
 
@@ -363,9 +363,9 @@ fn authorization_benchmark(c: &mut Criterion) {
     c.bench_function("deep nested scattered", |b| {
         b.iter(|| {
             let jwt_req_details = JwtRequestDetails::Authenticated {
-                token: "123",
-                prefix: Some("Bearer"),
-                claims: &sonic_rs::Value::new(),
+                token: "123".into(),
+                prefix: Some("Bearer".into()),
+                claims: sonic_rs::Value::new(),
                 scopes: Some(vec!["read:price".to_string(), "read:shipping".to_string()]),
             };
 
@@ -512,9 +512,9 @@ fn authorization_benchmark(c: &mut Criterion) {
     c.bench_function("interface auth inline fragments auth", |b| {
         b.iter(|| {
             let jwt_req_details = JwtRequestDetails::Authenticated {
-                token: "123",
-                prefix: Some("Bearer"),
-                claims: &sonic_rs::Value::new(),
+                token: "123".into(),
+                prefix: Some("Bearer".into()),
+                claims: sonic_rs::Value::new(),
                 scopes: Some(vec![]),
             };
 

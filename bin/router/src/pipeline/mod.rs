@@ -55,7 +55,7 @@ static GRAPHIQL_HTML: &str = include_str!("../../static/graphiql.html");
 
 #[inline]
 pub async fn graphql_request_handler(
-    req: &mut HttpRequest,
+    req: &HttpRequest,
     body_bytes: Bytes,
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
@@ -71,17 +71,28 @@ pub async fn graphql_request_handler(
         }
     }
 
-    if let Some(jwt) = &shared_state.jwt_auth_runtime {
+    let jwt_context = if let Some(jwt) = &shared_state.jwt_auth_runtime {
         match jwt
             .validate_request(req, &shared_state.jwt_claims_cache)
             .await
         {
-            Ok(_) => (),
+            Ok(jwt_context) => jwt_context,
             Err(err) => return err.make_response(),
         }
-    }
+    } else {
+        None
+    };
 
-    match execute_pipeline(req, body_bytes, supergraph, shared_state, schema_state).await {
+    match execute_pipeline(
+        req,
+        body_bytes,
+        supergraph,
+        shared_state,
+        schema_state,
+        jwt_context,
+    )
+    .await
+    {
         Ok(response) => {
             let response_bytes = Bytes::from(response.body);
             let response_headers = response.headers;
@@ -111,11 +122,12 @@ pub async fn graphql_request_handler(
 #[inline]
 #[allow(clippy::await_holding_refcell_ref)]
 pub async fn execute_pipeline(
-    req: &mut HttpRequest,
+    req: &HttpRequest,
     body_bytes: Bytes,
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
+    jwt_context: Option<JwtRequestContext>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
     let start = Instant::now();
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
@@ -139,16 +151,14 @@ pub async fn execute_pipeline(
     let query_plan_cancellation_token =
         CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
 
-    let req_extensions = req.extensions();
-    let jwt_context = req_extensions.get::<JwtRequestContext>();
     let jwt_request_details = match jwt_context {
         Some(jwt_context) => JwtRequestDetails::Authenticated {
-            token: jwt_context.token_raw.as_str(),
-            prefix: jwt_context.token_prefix.as_deref(),
             scopes: jwt_context.extract_scopes(),
-            claims: &jwt_context
+            claims: jwt_context
                 .get_claims_value()
                 .map_err(|e| req.new_pipeline_error(PipelineErrorVariant::JwtForwardingError(e)))?,
+            token: jwt_context.token_raw,
+            prefix: jwt_context.token_prefix,
         },
         None => JwtRequestDetails::Unauthenticated,
     };
