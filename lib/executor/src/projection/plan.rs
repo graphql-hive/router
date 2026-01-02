@@ -574,6 +574,10 @@ impl PrettyDisplay for FieldProjectionPlan {
             )?;
         }
 
+        if let Some(parent_type_guard) = self.parent_type_guard.as_ref() {
+            writeln!(f, "{}  type guard: {}", indent, parent_type_guard)?;
+        }
+
         writeln!(f, "{}  conditions: {}", indent, self.conditions)?;
 
         match &self.value {
