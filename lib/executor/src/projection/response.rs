@@ -275,7 +275,7 @@ fn project_selection_set_with_map(
                     .and_then(|idx| obj[idx].1.as_str())
             });
 
-        let typename_field_ref = match typename_field {
+        let type_name = match typename_field {
             Some(name) => name,
             None => {
                 compute_type_name_from_schema(parent_type_name, &plan.field_name, schema_metadata)?
@@ -285,7 +285,7 @@ fn project_selection_set_with_map(
         let res = check(
             &plan.conditions,
             parent_type_name,
-            typename_field_ref,
+            type_name,
             field_val,
             variable_values,
         );
