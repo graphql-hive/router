@@ -587,7 +587,7 @@ mod subscription_e2e_tests {
             panic!("accept header could not be converted to string")
         };
 
-        assert_snapshot!(accept_header, @r#"multipart/mixed; boundary="graphql"; subscriptionSpec="1.0", text/event-stream"#);
+        assert_snapshot!(accept_header, @r#"multipart/mixed;subscriptionSpec="1.0", text/event-stream"#);
     }
 
     #[ntex::test]
