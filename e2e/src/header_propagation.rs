@@ -10,7 +10,7 @@ mod header_propagation_e2e_tests {
     #[ntex::test]
     async fn should_propagate_headers_to_subgraphs() {
         let subgraphs_server = SubgraphsServer::start().await;
-        let app = init_router_from_config_file("configs/header_propagation.router.yaml")
+        let app = init_router_from_config_file("configs/header_propagation.router.yaml", None)
             .await
             .expect("Failed to initialize router from config file");
         wait_for_readiness(&app.app).await;

@@ -2,12 +2,17 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use graphql_parser::query::Document;
+use hive_router_plan_executor::hooks::on_graphql_params::GraphQLParams;
+use hive_router_plan_executor::hooks::on_graphql_parse::{
+    OnGraphQLParseEndHookPayload, OnGraphQLParseStartHookPayload,
+};
+use hive_router_plan_executor::plugin_context::PluginRequestState;
+use hive_router_plan_executor::plugin_trait::{EndControlFlow, StartControlFlow};
 use hive_router_query_planner::utils::parsing::safe_parse_operation;
-use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
 
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
-use crate::pipeline::execution_request::ExecutionRequest;
+use crate::pipeline::error::PipelineErrorVariant;
+use crate::pipeline::execution_request::GetQueryStr;
 use crate::shared_state::RouterSharedState;
 use tracing::{error, trace};
 
@@ -17,15 +22,20 @@ pub struct GraphQLParserPayload {
     pub cache_key: u64,
 }
 
+pub enum ParseResult {
+    Payload(GraphQLParserPayload),
+    Response(ntex::http::Response),
+}
+
 #[inline]
 pub async fn parse_operation_with_cache(
-    req: &HttpRequest,
-    app_state: &Arc<RouterSharedState>,
-    execution_params: &ExecutionRequest,
-) -> Result<GraphQLParserPayload, PipelineError> {
+    app_state: &RouterSharedState,
+    graphql_params: &GraphQLParams,
+    plugin_req_state: &Option<PluginRequestState<'_>>,
+) -> Result<ParseResult, PipelineErrorVariant> {
     let cache_key = {
         let mut hasher = Xxh3::new();
-        execution_params.query.hash(&mut hasher);
+        graphql_params.query.hash(&mut hasher);
         hasher.finish()
     };
 
@@ -33,12 +43,64 @@ pub async fn parse_operation_with_cache(
         trace!("Found cached parsed operation for query");
         cached
     } else {
-        let parsed = safe_parse_operation(&execution_params.query).map_err(|err| {
-            error!("Failed to parse GraphQL operation: {}", err);
-            req.new_pipeline_error(PipelineErrorVariant::FailedToParseOperation(err))
-        })?;
-        trace!("sucessfully parsed GraphQL operation");
-        let parsed_arc = Arc::new(parsed);
+        let mut document = None;
+        let mut on_end_callbacks = vec![];
+        if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+            /* Handle on_graphql_parse hook in the plugins - START */
+            let mut start_payload = OnGraphQLParseStartHookPayload {
+                router_http_request: &plugin_req_state.router_http_request,
+                context: &plugin_req_state.context,
+                graphql_params,
+                document,
+            };
+            for plugin in plugin_req_state.plugins.as_ref() {
+                let result = plugin.on_graphql_parse(start_payload).await;
+                start_payload = result.payload;
+                match result.control_flow {
+                    StartControlFlow::Continue => {
+                        // continue to next plugin
+                    }
+                    StartControlFlow::EndResponse(response) => {
+                        return Ok(ParseResult::Response(response));
+                    }
+                    StartControlFlow::OnEnd(callback) => {
+                        // store the callback to be called later
+                        on_end_callbacks.push(callback);
+                    }
+                }
+            }
+            document = start_payload.document;
+        }
+
+        let document = match document {
+            Some(parsed) => parsed,
+            None => {
+                let query_str = graphql_params.get_query()?;
+                let parsed = safe_parse_operation(query_str).map_err(|err| {
+                    error!("Failed to parse GraphQL operation: {}", err);
+                    PipelineErrorVariant::FailedToParseOperation(err)
+                })?;
+                trace!("successfully parsed GraphQL operation");
+                parsed
+            }
+        };
+        let mut end_payload = OnGraphQLParseEndHookPayload { document };
+        for callback in on_end_callbacks {
+            let result = callback(end_payload);
+            end_payload = result.payload;
+            match result.control_flow {
+                EndControlFlow::Continue => {
+                    // continue to next callback
+                }
+                EndControlFlow::EndResponse(response) => {
+                    return Ok(ParseResult::Response(response));
+                }
+            }
+        }
+        let document = end_payload.document;
+        /* Handle on_graphql_parse hook in the plugins - END */
+
+        let parsed_arc = Arc::new(document);
         app_state
             .parse_cache
             .insert(cache_key, parsed_arc.clone())
@@ -46,8 +108,8 @@ pub async fn parse_operation_with_cache(
         parsed_arc
     };
 
-    Ok(GraphQLParserPayload {
+    Ok(ParseResult::Payload(GraphQLParserPayload {
         parsed_operation,
         cache_key,
-    })
+    }))
 }

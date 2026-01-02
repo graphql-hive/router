@@ -1,20 +1,22 @@
 use strum::IntoStaticStr;
 
 use crate::{
-    headers::errors::HeaderRuleRuntimeError,
+    executors::error::SubgraphExecutorError, headers::errors::HeaderRuleRuntimeError,
     projection::error::ProjectionError,
-    response::graphql_error::{GraphQLError, GraphQLErrorExtensions},
 };
 
 #[derive(thiserror::Error, Debug, Clone, IntoStaticStr)]
 pub enum PlanExecutionErrorKind {
-    #[error("Projection faiure: {0}")]
+    #[error("Projection failure: {0}")]
     #[strum(serialize = "PROJECTION_FAILURE")]
     ProjectionFailure(#[from] ProjectionError),
 
     #[error(transparent)]
     #[strum(serialize = "HEADER_PROPAGATION_FAILURE")]
     HeaderPropagation(#[from] HeaderRuleRuntimeError),
+
+    #[error(transparent)]
+    SubgraphExecution(#[from] SubgraphExecutorError),
 }
 
 /// The central error type for all query plan execution failures.
@@ -60,7 +62,10 @@ impl PlanExecutionError {
     }
 
     pub fn error_code(&self) -> &'static str {
-        (&self.kind).into()
+        match &self.kind {
+            PlanExecutionErrorKind::SubgraphExecution(err) => err.into(),
+            other => other.into(),
+        }
     }
 
     pub fn subgraph_name(&self) -> &Option<String> {
@@ -69,23 +74,6 @@ impl PlanExecutionError {
 
     pub fn affected_path(&self) -> &Option<String> {
         &self.context.affected_path
-    }
-}
-
-impl From<PlanExecutionError> for GraphQLError {
-    fn from(val: PlanExecutionError) -> Self {
-        let message = val.to_string();
-        GraphQLError {
-            extensions: GraphQLErrorExtensions {
-                code: Some(val.error_code().into()),
-                service_name: val.context.subgraph_name,
-                affected_path: val.context.affected_path,
-                extensions: Default::default(),
-            },
-            message,
-            locations: None,
-            path: None,
-        }
     }
 }
 
@@ -130,6 +118,22 @@ impl<T> IntoPlanExecutionError<T> for Result<T, HeaderRuleRuntimeError> {
     {
         self.map_err(|source| {
             let kind = PlanExecutionErrorKind::HeaderPropagation(source);
+            PlanExecutionError::new(kind, context)
+        })
+    }
+}
+
+impl<T> IntoPlanExecutionError<T> for Result<T, SubgraphExecutorError> {
+    fn with_plan_context<SN, AP>(
+        self,
+        context: LazyPlanContext<SN, AP>,
+    ) -> Result<T, PlanExecutionError>
+    where
+        SN: FnOnce() -> Option<String>,
+        AP: FnOnce() -> Option<String>,
+    {
+        self.map_err(|source| {
+            let kind = PlanExecutionErrorKind::SubgraphExecution(source);
             PlanExecutionError::new(kind, context)
         })
     }

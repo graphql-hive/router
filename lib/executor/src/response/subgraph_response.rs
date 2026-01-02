@@ -1,12 +1,17 @@
 use core::fmt;
+use std::sync::Arc;
 
 use crate::response::{graphql_error::GraphQLError, value::Value};
+use bytes::Bytes;
+use http::HeaderMap;
 use serde::de::{self, Deserializer, MapAccess, Visitor};
 
 pub struct SubgraphResponse<'a> {
     pub data: Value<'a>,
     pub errors: Option<Vec<GraphQLError>>,
     pub extensions: Option<Value<'a>>,
+    pub headers: Option<Arc<HeaderMap>>,
+    pub bytes: Option<Arc<Bytes>>,
 }
 
 impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
@@ -71,6 +76,8 @@ impl<'de> de::Deserialize<'de> for SubgraphResponse<'de> {
                     data,
                     errors,
                     extensions,
+                    headers: None,
+                    bytes: None,
                 })
             }
         }
