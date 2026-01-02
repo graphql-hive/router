@@ -241,7 +241,7 @@ impl SubgraphExecutorMap {
             })
             .unwrap_or_else(|| {
                 self.get_executor_from_static_endpoint(subgraph_name)
-                    .ok_or({ SubgraphExecutorError::StaticEndpointNotFound })
+                    .ok_or(SubgraphExecutorError::StaticEndpointNotFound)
             })
     }
 
@@ -259,7 +259,7 @@ impl SubgraphExecutorMap {
             self.static_endpoints_by_subgraph
                 .get(subgraph_name)
                 .map(|endpoint| endpoint.value().clone())
-                .ok_or({ SubgraphExecutorError::StaticEndpointNotFound })?
+                .ok_or(SubgraphExecutorError::StaticEndpointNotFound)?
                 .into(),
         );
 
