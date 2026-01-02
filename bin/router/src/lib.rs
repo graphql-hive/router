@@ -34,7 +34,7 @@ use ntex::{
 use tracing::{info, warn};
 
 async fn graphql_endpoint_handler(
-    mut request: HttpRequest,
+    request: HttpRequest,
     body_bytes: Bytes,
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
@@ -52,7 +52,7 @@ async fn graphql_endpoint_handler(
         }
 
         let mut res = graphql_request_handler(
-            &mut request,
+            &request,
             body_bytes,
             supergraph,
             app_state.get_ref(),

@@ -86,7 +86,7 @@ pub fn enforce_operation_authorization(
     auth_metadata: &AuthorizationMetadata,
     schema_metadata: &SchemaMetadata,
     variable_payload: &CoerceVariablesPayload,
-    jwt_request_details: &JwtRequestDetails<'_>,
+    jwt_request_details: &JwtRequestDetails,
 ) -> AuthorizationDecision {
     if !router_config.authorization.directives.enabled {
         return AuthorizationDecision::NoChange;
@@ -114,7 +114,7 @@ pub fn apply_authorization_to_operation(
     auth_metadata: &AuthorizationMetadata,
     schema_metadata: &SchemaMetadata,
     variable_payload: &CoerceVariablesPayload,
-    jwt_request_details: &JwtRequestDetails<'_>,
+    jwt_request_details: &JwtRequestDetails,
     reject_mode: bool,
 ) -> AuthorizationDecision {
     if auth_metadata.is_empty() {
@@ -183,7 +183,7 @@ pub fn apply_authorization_to_operation(
 
 /// Creates user authorization context from JWT details.
 fn create_user_auth_context(
-    jwt_request_details: &JwtRequestDetails<'_>,
+    jwt_request_details: &JwtRequestDetails,
     auth_metadata: &AuthorizationMetadata,
 ) -> UserAuthContext {
     match jwt_request_details {
