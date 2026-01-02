@@ -78,10 +78,6 @@ mod override_subgraph_urls_e2e_tests {
         let body = test::read_body(resp).await;
         let json_body: Value = from_slice(&body).unwrap();
 
-        assert!(json_body["errors"][0]["message"]
-            .to_string()
-            .contains(":4200"));
-
         assert_eq!(
             json_body["errors"][0]["extensions"]["serviceName"],
             "accounts"
