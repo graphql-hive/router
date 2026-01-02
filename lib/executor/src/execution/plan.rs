@@ -618,6 +618,8 @@ impl<'exec, 'req> Executor<'exec, 'req> {
     ) -> Result<ExecutionJob<'exec>, PlanExecutionError> {
         // TODO: We could optimize header map creation by caching them per service name
         let mut headers_map = HeaderMap::new();
+        let subgraph_name_factory = || Some(node.service_name.clone());
+        let affected_path_factory = || affected_path.map(|p| p.to_string());
         modify_subgraph_request_headers(
             self.headers_plan,
             &node.service_name,
@@ -625,8 +627,8 @@ impl<'exec, 'req> Executor<'exec, 'req> {
             &mut headers_map,
         )
         .with_plan_context(LazyPlanContext {
-            subgraph_name: || Some(node.service_name.clone()),
-            affected_path: || affected_path.map(|p| p.to_string()),
+            subgraph_name: subgraph_name_factory,
+            affected_path: affected_path_factory,
         })?;
         let variable_refs =
             select_fetch_variables(self.variable_values, node.variable_usages.as_ref());
@@ -661,8 +663,8 @@ impl<'exec, 'req> Executor<'exec, 'req> {
                 )
                 .await
                 .with_plan_context(LazyPlanContext {
-                    subgraph_name: || Some(node.service_name.clone()),
-                    affected_path: || None,
+                    subgraph_name: subgraph_name_factory,
+                    affected_path: affected_path_factory,
                 })?,
         }))
     }
