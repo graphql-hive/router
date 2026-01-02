@@ -1,5 +1,6 @@
 use ahash::HashSet;
 use indexmap::IndexMap;
+use std::fmt::{Display, Formatter as FmtFormatter, Result as FmtResult};
 use std::sync::Arc;
 use tracing::warn;
 
@@ -10,6 +11,7 @@ use hive_router_query_planner::{
         selection_set::{FieldSelection, InlineFragmentSelection, SelectionSet},
     },
     state::supergraph_state::OperationKind,
+    utils::pretty_display::{get_indent, PrettyDisplay},
 };
 
 use crate::{introspection::schema::SchemaMetadata, utils::consts::TYPENAME_FIELD_NAME};
@@ -18,6 +20,73 @@ use crate::{introspection::schema::SchemaMetadata, utils::consts::TYPENAME_FIELD
 pub enum TypeCondition {
     Exact(String),
     OneOf(HashSet<String>),
+}
+
+impl TypeCondition {
+    pub fn union(self, other: TypeCondition) -> TypeCondition {
+        use TypeCondition::*;
+        match (self, other) {
+            (Exact(left), Exact(right)) => {
+                if left == right {
+                    // Or(Exact(A), Exact(A)) -> Exact(A)
+                    Exact(left)
+                } else {
+                    // Or(Exact(A), Exact(B)) -> OneOf(A, B)
+                    OneOf(HashSet::from_iter(vec![left, right]))
+                }
+            }
+            (OneOf(mut types), Exact(exact)) | (Exact(exact), OneOf(mut types)) => {
+                // Or(OneOf(A, B), Exact(C)) -> OneOf(A, B, C)
+                // Or(Exact(A), OneOf(A, B)) -> OneOf(A, B)
+                types.insert(exact);
+                OneOf(types)
+            }
+            (OneOf(mut left), OneOf(right)) => {
+                // Or(OneOf(A, B), OneOf(C, D)) -> OneOf(A, B, C, D)
+                left.extend(right);
+                OneOf(left)
+            }
+        }
+    }
+
+    pub fn intersect(self, other: TypeCondition) -> TypeCondition {
+        use TypeCondition::*;
+        match (self, other) {
+            (Exact(left), Exact(right)) => {
+                if left == right {
+                    // And(Exact(A), Exact(A)) -> Exact(A)
+                    Exact(left)
+                } else {
+                    // And(Exact(A), Exact(B)) is impossible,
+                    // so we return an empty OneOf
+                    // to represent a condition that can never be true.
+                    OneOf(HashSet::default())
+                }
+            }
+            (OneOf(types), Exact(exact)) | (Exact(exact), OneOf(types)) => {
+                if types.contains(&exact) {
+                    // And(OneOf(A, B), Exact(A)) -> Exact(A)
+                    Exact(exact)
+                } else {
+                    // And(Exact(A), OneOf(B, C)) is impossible,
+                    // so we return an empty OneOf
+                    // to represent a condition that can never be true.
+                    OneOf(HashSet::default())
+                }
+            }
+            (OneOf(mut left), OneOf(right)) => {
+                left.retain(|t| right.contains(t));
+                if left.len() == 1 {
+                    // And(OneOf(A, B), OneOf(A, C)) -> Exact(A)
+                    Exact(left.into_iter().next().expect("Set has one element"))
+                } else {
+                    // And(OneOf(A, B, C), OneOf(B, C)) -> OneOf(B, C)
+                    // And(OneOf(A, B), OneOf(C, D)) -> OneOf()
+                    OneOf(left)
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -55,6 +124,48 @@ pub enum FieldProjectionConditionError {
     InvalidFieldType,
     Skip,
     InvalidEnumValue,
+}
+
+impl FieldProjectionCondition {
+    /// Combines two conditions with AND logic, reducing them to their minimum form
+    pub fn and(&self, right: FieldProjectionCondition) -> FieldProjectionCondition {
+        use FieldProjectionCondition::*;
+
+        match (self, right) {
+            (ParentTypeCondition(left), ParentTypeCondition(right)) => {
+                ParentTypeCondition(left.clone().intersect(right))
+            }
+            (FieldTypeCondition(left), FieldTypeCondition(right)) => {
+                FieldTypeCondition(left.clone().intersect(right))
+            }
+            (EnumValuesCondition(left), EnumValuesCondition(right)) => {
+                let mut left = left.clone();
+                left.retain(|v| right.contains(v));
+                EnumValuesCondition(left)
+            }
+            (left, right) => And(Box::new(left.clone()), Box::new(right)),
+        }
+    }
+
+    /// Combines two conditions with OR logic, reducing them to their minimum form
+    pub fn or(&self, right: FieldProjectionCondition) -> FieldProjectionCondition {
+        use FieldProjectionCondition::*;
+
+        match (self, right) {
+            (ParentTypeCondition(left), ParentTypeCondition(right)) => {
+                ParentTypeCondition(left.clone().union(right))
+            }
+            (FieldTypeCondition(left), FieldTypeCondition(right)) => {
+                FieldTypeCondition(left.clone().union(right))
+            }
+            (EnumValuesCondition(left), EnumValuesCondition(right)) => {
+                let mut result = left.clone();
+                result.extend(right);
+                EnumValuesCondition(result)
+            }
+            (left, right) => Or(Box::new(left.clone()), Box::new(right)),
+        }
+    }
 }
 
 impl FieldProjectionPlan {
@@ -141,20 +252,14 @@ impl FieldProjectionPlan {
         skip_if: &Option<String>,
     ) -> FieldProjectionCondition {
         if let Some(include_if_var) = include_if {
-            condition = FieldProjectionCondition::And(
-                Box::new(condition),
-                Box::new(FieldProjectionCondition::IncludeIfVariable(
-                    include_if_var.clone(),
-                )),
-            );
+            condition = condition.and(FieldProjectionCondition::IncludeIfVariable(
+                include_if_var.clone(),
+            ));
         }
         if let Some(skip_if_var) = skip_if {
-            condition = FieldProjectionCondition::And(
-                Box::new(condition),
-                Box::new(FieldProjectionCondition::SkipIfVariable(
-                    skip_if_var.clone(),
-                )),
-            );
+            condition = condition.and(FieldProjectionCondition::SkipIfVariable(
+                skip_if_var.clone(),
+            ));
         }
         condition
     }
@@ -164,10 +269,7 @@ impl FieldProjectionPlan {
         plan_to_merge: FieldProjectionPlan,
     ) {
         if let Some(existing_plan) = field_selections.get_mut(&plan_to_merge.response_key) {
-            existing_plan.conditions = FieldProjectionCondition::Or(
-                Box::new(existing_plan.conditions.clone()),
-                Box::new(plan_to_merge.conditions),
-            );
+            existing_plan.conditions = existing_plan.conditions.or(plan_to_merge.conditions);
 
             match (&mut existing_plan.value, plan_to_merge.value) {
                 (
@@ -258,10 +360,8 @@ impl FieldProjectionPlan {
             &field.skip_if,
         );
 
-        let mut condition_for_field = FieldProjectionCondition::And(
-            Box::new(parent_condition.clone()),
-            Box::new(FieldProjectionCondition::FieldTypeCondition(type_condition)),
-        );
+        let mut condition_for_field =
+            parent_condition.and(FieldProjectionCondition::FieldTypeCondition(type_condition));
         condition_for_field = Self::apply_directive_conditions(
             condition_for_field,
             &field.include_if,
@@ -269,11 +369,8 @@ impl FieldProjectionPlan {
         );
 
         if let Some(enum_values) = schema_metadata.enum_values.get(&field_type) {
-            condition_for_field = FieldProjectionCondition::And(
-                Box::new(condition_for_field),
-                Box::new(FieldProjectionCondition::EnumValuesCondition(
-                    enum_values.clone(),
-                )),
+            condition_for_field = condition_for_field.and(
+                FieldProjectionCondition::EnumValuesCondition(enum_values.clone()),
             );
         }
 
@@ -313,11 +410,8 @@ impl FieldProjectionPlan {
             )
         };
 
-        let mut condition_for_fragment = FieldProjectionCondition::And(
-            Box::new(parent_condition.clone()),
-            Box::new(FieldProjectionCondition::ParentTypeCondition(
-                type_condition,
-            )),
+        let mut condition_for_fragment = parent_condition.and(
+            FieldProjectionCondition::ParentTypeCondition(type_condition),
         );
 
         condition_for_fragment = Self::apply_directive_conditions(
@@ -346,5 +440,101 @@ impl FieldProjectionPlan {
             conditions: self.conditions.clone(),
             value: new_value,
         }
+    }
+}
+
+impl Display for TypeCondition {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        match self {
+            TypeCondition::Exact(type_name) => write!(f, "Exact({})", type_name),
+            TypeCondition::OneOf(types) => {
+                write!(f, "OneOf(")?;
+                let types_vec: Vec<_> = types.iter().collect();
+                for (i, type_name) in types_vec.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", type_name)?;
+                }
+                write!(f, ")")
+            }
+        }
+    }
+}
+
+impl Display for FieldProjectionCondition {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        match self {
+            FieldProjectionCondition::IncludeIfVariable(var) => {
+                write!(f, "Include(if: ${})", var)
+            }
+            FieldProjectionCondition::SkipIfVariable(var) => {
+                write!(f, "Skip(if: ${})", var)
+            }
+            FieldProjectionCondition::ParentTypeCondition(tc) => {
+                write!(f, "ParentType({})", tc)
+            }
+            FieldProjectionCondition::FieldTypeCondition(tc) => {
+                write!(f, "FieldType({})", tc)
+            }
+            FieldProjectionCondition::EnumValuesCondition(values) => {
+                write!(f, "EnumValues(")?;
+                let values_vec: Vec<_> = values.iter().collect();
+                for (i, value) in values_vec.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", value)?;
+                }
+                write!(f, ")")
+            }
+            FieldProjectionCondition::Or(left, right) => {
+                write!(f, "({} OR {})", left, right)
+            }
+            FieldProjectionCondition::And(left, right) => {
+                write!(f, "({} AND {})", left, right)
+            }
+        }
+    }
+}
+
+impl Display for FieldProjectionPlan {
+    fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
+        self.pretty_fmt(f, 0)
+    }
+}
+
+impl PrettyDisplay for FieldProjectionPlan {
+    fn pretty_fmt(&self, f: &mut FmtFormatter<'_>, depth: usize) -> FmtResult {
+        let indent = get_indent(depth);
+
+        if self.response_key == self.field_name {
+            writeln!(f, "{}{}: {} {{", indent, self.response_key, self.field_type)?;
+        } else {
+            writeln!(
+                f,
+                "{}{} (alias for {}): {} {{",
+                indent, self.response_key, self.field_name, self.field_type
+            )?;
+        }
+
+        writeln!(f, "{}  conditions: {}", indent, self.conditions)?;
+
+        match &self.value {
+            ProjectionValueSource::ResponseData { selections } => {
+                if let Some(selections) = selections {
+                    writeln!(f, "{}  selections:", indent)?;
+                    for selection in selections.iter() {
+                        selection.pretty_fmt(f, depth + 2)?;
+                    }
+                }
+            }
+            ProjectionValueSource::Null => {
+                writeln!(f, "{}  value: Null", indent)?;
+            }
+        }
+
+        writeln!(f, "{}}}", indent)?;
+        Ok(())
     }
 }
