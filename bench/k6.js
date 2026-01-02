@@ -23,7 +23,7 @@ export default function () {
 }
 
 export function handleSummary(data) {
-  if (__ENV.GITHUB_TOKEN) {
+  if (__ENV.GITHUB_TOKEN && !__ENV.NO_GITHUB_COMMENT) {
     githubComment(data, {
       token: __ENV.GITHUB_TOKEN,
       commit: __ENV.GITHUB_SHA,
@@ -49,7 +49,7 @@ export function handleSummary(data) {
 
         if (!passes) {
           result.push(
-            `> If the performance regression is expected, please increase the failing threshold.`,
+            `> If the performance regression is expected, please increase the failing threshold.`
           );
         }
 
