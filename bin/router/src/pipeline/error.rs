@@ -11,35 +11,14 @@ use hive_router_query_planner::{
 use http::{HeaderName, Method, StatusCode};
 use ntex::{
     http::ResponseBuilder,
-    web::{self, error::QueryPayloadError, HttpRequest},
+    web::{self, error::QueryPayloadError},
 };
 use serde::{Deserialize, Serialize};
 
-use crate::pipeline::{
-    header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR},
-    progressive_override::LabelEvaluationError,
-};
-
-#[derive(Debug)]
-pub struct PipelineError {
-    pub accept_ok: bool,
-    pub error: PipelineErrorVariant,
-}
-
-pub trait PipelineErrorFromAcceptHeader {
-    fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError;
-}
-
-impl PipelineErrorFromAcceptHeader for HttpRequest {
-    #[inline]
-    fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError {
-        let accept_ok = !self.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
-        PipelineError { accept_ok, error }
-    }
-}
+use crate::pipeline::progressive_override::LabelEvaluationError;
 
 #[derive(Debug, thiserror::Error)]
-pub enum PipelineErrorVariant {
+pub enum PipelineError {
     // HTTP-related errors
     #[error("Unsupported HTTP method: {0}")]
     UnsupportedHttpMethod(Method),
@@ -93,7 +72,7 @@ pub enum PipelineErrorVariant {
     JwtForwardingError(JwtForwardingError),
 }
 
-impl PipelineErrorVariant {
+impl PipelineError {
     pub fn graphql_error_code(&self) -> &'static str {
         match self {
             Self::UnsupportedHttpMethod(_) => "METHOD_NOT_ALLOWED",
@@ -161,10 +140,10 @@ pub struct FailedExecutionResult {
 }
 
 impl PipelineError {
-    pub fn into_response(self) -> web::HttpResponse {
-        let status = self.error.default_status_code(self.accept_ok);
+    pub fn into_response(self, accept_ok: bool) -> web::HttpResponse {
+        let status = self.default_status_code(accept_ok);
 
-        if let PipelineErrorVariant::ValidationErrors(validation_errors) = self.error {
+        if let PipelineError::ValidationErrors(validation_errors) = self {
             let validation_error_result = FailedExecutionResult {
                 errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
             };
@@ -172,7 +151,7 @@ impl PipelineError {
             return ResponseBuilder::new(status).json(&validation_error_result);
         }
 
-        if let PipelineErrorVariant::AuthorizationFailed(authorization_errors) = self.error {
+        if let PipelineError::AuthorizationFailed(authorization_errors) = self {
             let authorization_error_result = FailedExecutionResult {
                 errors: Some(authorization_errors),
             };
@@ -180,8 +159,8 @@ impl PipelineError {
             return ResponseBuilder::new(status).json(&authorization_error_result);
         }
 
-        let code = self.error.graphql_error_code();
-        let message = self.error.graphql_error_message();
+        let code = self.graphql_error_code();
+        let message = self.graphql_error_message();
 
         let graphql_error = GraphQLError::from_message_and_extensions(
             message,

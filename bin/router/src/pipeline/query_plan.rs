@@ -1,7 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
 use crate::schema_state::{SchemaState, SupergraphData};
@@ -12,7 +12,7 @@ use xxhash_rust::xxh3::Xxh3;
 
 #[inline]
 pub async fn plan_operation_with_cache(
-    req: &HttpRequest,
+    _req: &HttpRequest,
     supergraph: &SupergraphData,
     schema_state: &Arc<SchemaState>,
     normalized_operation: &GraphQLNormalizationPayload,
@@ -72,7 +72,7 @@ pub async fn plan_operation_with_cache(
 
     match plan_result {
         Ok(plan) => Ok(plan),
-        Err(e) => Err(req.new_pipeline_error(PipelineErrorVariant::PlannerError(e.clone()))),
+        Err(e) => Err(PipelineError::PlannerError(e.clone())),
     }
 }
 

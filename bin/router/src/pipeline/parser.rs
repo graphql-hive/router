@@ -6,7 +6,7 @@ use hive_router_query_planner::utils::parsing::safe_parse_operation;
 use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
 
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::execution_request::ExecutionRequest;
 use crate::shared_state::RouterSharedState;
 use tracing::{error, trace};
@@ -19,7 +19,7 @@ pub struct GraphQLParserPayload {
 
 #[inline]
 pub async fn parse_operation_with_cache(
-    req: &HttpRequest,
+    _req: &HttpRequest,
     app_state: &Arc<RouterSharedState>,
     execution_params: &ExecutionRequest,
 ) -> Result<GraphQLParserPayload, PipelineError> {
@@ -35,7 +35,7 @@ pub async fn parse_operation_with_cache(
     } else {
         let parsed = safe_parse_operation(&execution_params.query).map_err(|err| {
             error!("Failed to parse GraphQL operation: {}", err);
-            req.new_pipeline_error(PipelineErrorVariant::FailedToParseOperation(err))
+            PipelineError::FailedToParseOperation(err)
         })?;
         trace!("sucessfully parsed GraphQL operation");
         let parsed_arc = Arc::new(parsed);
