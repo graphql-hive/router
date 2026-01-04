@@ -2,10 +2,11 @@
 
 #[cfg(test)]
 mod subscription_e2e_tests {
+    use futures::{future, Stream};
     use std::sync::Arc;
 
     use insta::assert_snapshot;
-    use ntex::{http, web::test};
+    use ntex::{http, util::Bytes, web::test};
     use reqwest::StatusCode;
     use sonic_rs::json;
     use subgraphs::InterceptedResponse;
@@ -711,5 +712,68 @@ mod subscription_e2e_tests {
 
         event: complete
         "#);
+    }
+
+    #[ntex::test]
+    async fn subscription_stream_client_cancelled() {
+        let _subgraphs_server = SubgraphsServer::start().await;
+
+        let router = init_router_from_config_inline(&format!(
+            r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            "#
+        ))
+        .await
+        .unwrap();
+
+        wait_for_readiness(&router.app).await;
+
+        // Use a longer interval so we have time to cancel
+        let req = init_graphql_request(
+            r#"
+            subscription {
+                reviewAdded(intervalInMs: 100) {
+                    id
+                }
+            }
+            "#,
+            None,
+        )
+        .header(http::header::ACCEPT, "text/event-stream")
+        .to_request();
+
+        let mut res = test::call_service(&router.app, req).await;
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        // consume body by chunks
+        let mut body = Box::pin(res.take_body().into_body::<Bytes>());
+
+        // read first chunk
+        let chunk = future::poll_fn(|cx| body.as_mut().poll_next(cx)).await;
+        let chunk_bytes = chunk.unwrap().unwrap();
+        let chunk_str = std::str::from_utf8(&chunk_bytes).unwrap();
+
+        assert_snapshot!(chunk_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"id":"1"}}}
+        "#);
+
+        // read second chunk to ensure stream is flowing
+        let chunk = future::poll_fn(|cx| body.as_mut().poll_next(cx)).await;
+        let chunk_bytes = chunk.unwrap().unwrap();
+        let chunk_str = std::str::from_utf8(&chunk_bytes).unwrap();
+
+        assert_snapshot!(chunk_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"id":"2"}}}
+        "#);
+
+        // cancel
+        drop(body);
+        drop(res);
+
+        // TODO: check if propagated?
     }
 }
