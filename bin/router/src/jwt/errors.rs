@@ -31,8 +31,6 @@ pub enum JwtError {
     InvalidDecodingKey(jsonwebtoken::errors::Error),
     #[error("token is not supported by any of the configured providers")]
     FailedToLocateProvider,
-    #[error("failed to locate algorithm in jwk")]
-    JwkMissingAlgorithm,
     #[error("jwk algorithm is not supported: {0}")]
     JwkAlgorithmNotSupported(jsonwebtoken::errors::Error),
     #[error("failed to decode token: {0}")]
@@ -61,7 +59,6 @@ impl JwtError {
             JwtError::InvalidJwtHeader(_) => "INVALID_JWT_HEADER",
             JwtError::InvalidDecodingKey(_) => "INTERNAL_SERVER_ERROR",
             JwtError::JwkAlgorithmNotSupported(_) => "JWK_ALGORITHM_NOT_SUPPORTED",
-            JwtError::JwkMissingAlgorithm => "JWK_MISSING_ALGORITHM",
             JwtError::LookupFailed(_) => "JWT_LOOKUP_FAILED",
         }
     }
@@ -76,7 +73,6 @@ impl From<&JwtError> for StatusCode {
             }
             JwtError::AllProvidersFailedToDecode(_)
             | JwtError::InvalidJwtHeader(_)
-            | JwtError::JwkMissingAlgorithm
             | JwtError::InvalidDecodingKey(_)
             | JwtError::FailedToLocateProvider
             | JwtError::FailedToDecodeToken(_) => StatusCode::FORBIDDEN,
