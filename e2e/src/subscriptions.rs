@@ -12,7 +12,8 @@ mod subscription_e2e_tests {
     use subgraphs::InterceptedResponse;
 
     use crate::testkit::{
-        init_graphql_request, init_router_from_config_inline, wait_for_readiness, SubgraphsServer,
+        init_graphql_request, init_router_from_config_file, init_router_from_config_inline,
+        wait_for_readiness, SubgraphsServer,
     };
 
     fn get_content_type_header(res: &ntex::web::WebResponse) -> String {
@@ -775,5 +776,58 @@ mod subscription_e2e_tests {
         drop(res);
 
         // TODO: check if propagated?
+    }
+
+    #[ntex::test]
+    async fn subscription_header_propagation_for_entity_resolution() {
+        let subgraphs_server = SubgraphsServer::start().await;
+
+        let router = init_router_from_config_file("configs/header_propagation.router.yaml")
+            .await
+            .unwrap();
+
+        wait_for_readiness(&router.app).await;
+
+        let req = init_graphql_request(
+            r#"
+            subscription {
+                reviewAdded(intervalInMs: 0) {
+                    product {
+                        name
+                    }
+                }
+            }
+            "#,
+            None,
+        )
+        .header(http::header::ACCEPT, "text/event-stream")
+        .header("x-context", "maybe-propagate")
+        .to_request();
+
+        let res = test::call_service(&router.app, req).await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        // we have to consume the body to ensure all entity resolutions were made
+        let body = test::read_body(res).await;
+        std::str::from_utf8(&body).unwrap();
+
+        let subgraph_requests = subgraphs_server
+            .get_subgraph_requests_log("products")
+            .await
+            .expect("expected requests sent to products subgraph");
+
+        // every entity resolution request must have the propagated header
+        for subgraph_request in subgraph_requests {
+            let context_header = subgraph_request
+                .headers
+                .get("x-context")
+                .expect("expected x-context header to be present");
+
+            assert_eq!(
+                context_header, "maybe-propagate",
+                "expected x-context header to be propagated to subgraph"
+            );
+        }
     }
 }

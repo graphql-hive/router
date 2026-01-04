@@ -10,14 +10,13 @@ use hive_router_query_planner::planner::plan_nodes::{
     QueryPlan, SequenceNode,
 };
 use http::HeaderMap;
-use ntex::http::HeaderMap as NtexHeaderMap;
 use serde::Deserialize;
 use sonic_rs::ValueRef;
 
 use crate::{
     context::ExecutionContext,
     execution::{
-        client_request_details::ClientRequestDetails,
+        client_request_details::{ClientRequestDetails, JwtRequestDetails},
         error::{IntoPlanExecutionError, LazyPlanContext, PlanExecutionError},
         jwt_forward::JwtAuthForwardingPlan,
         rewrites::FetchRewriteExt,
@@ -192,6 +191,41 @@ pub async fn execute_query_plan<'exec, 'req>(
             remaining_nodes,
         ));
 
+        // clone client request data for use inside the stream
+        // TODO: is there a better way of doing this?
+        let owned_method = ctx.client_request.method.clone();
+        let owned_uri = ctx.client_request.url.clone();
+        let owned_headers = ctx.client_request.headers.clone();
+        let owned_operation_name: Option<String> =
+            ctx.client_request.operation.name.map(|s| s.to_string());
+        let owned_operation_kind = ctx.client_request.operation.kind;
+        let owned_operation_query = ctx.client_request.operation.query.to_string();
+        let (jwt_authenticated, jwt_token, jwt_prefix, jwt_claims, jwt_scopes): (
+            bool,
+            String,
+            Option<String>,
+            sonic_rs::Value,
+            Option<Vec<String>>,
+        ) = match ctx.client_request.jwt {
+            JwtRequestDetails::Authenticated {
+                token,
+                prefix,
+                claims,
+                scopes,
+            } => (
+                true,
+                token.to_string(),
+                prefix.map(|s| s.to_string()),
+                (*claims).clone(),
+                scopes.clone(),
+            ),
+            JwtRequestDetails::Unauthenticated => {
+                (false, String::new(), None, sonic_rs::Value::default(), None)
+            }
+        };
+        let owned_jwt_auth_forwarding: Option<JwtAuthForwardingPlan> =
+            ctx.jwt_auth_forwarding.clone();
+
         // Create a stream of serialized subscription events
         let body_stream = Box::pin(async_stream::stream! {
             use crate::execution::client_request_details::{
@@ -217,21 +251,25 @@ pub async fn execute_query_plan<'exec, 'req>(
                         if owned_ctx.query_plan.node.is_some() {
                             // entity resolution
 
-                            // Build a dummy client request details for entity resolution
-                            // TODO: it cant be a dummy, it needs to make sense
-                            let method = http::Method::POST;
-                            let uri: http::Uri = "/graphql".parse().unwrap();
-                            let headers = NtexHeaderMap::new();
-                            let jwt = JwtRequestDetails::Unauthenticated;
+                            let jwt = if jwt_authenticated {
+                                JwtRequestDetails::Authenticated {
+                                    token: &jwt_token,
+                                    prefix: jwt_prefix.as_deref(),
+                                    claims: &jwt_claims,
+                                    scopes: jwt_scopes.clone(),
+                                }
+                            } else {
+                                JwtRequestDetails::Unauthenticated
+                            };
                             let operation = OperationDetails {
-                                name: None,
-                                query: "",
-                                kind: "subscription",
+                                name: owned_operation_name.as_deref(),
+                                query: &owned_operation_query,
+                                kind: owned_operation_kind,
                             };
                             let client_request = ClientRequestDetails {
-                                method: &method,
-                                url: &uri,
-                                headers: &headers,
+                                method: &owned_method,
+                                url: &owned_uri,
+                                headers: &owned_headers,
                                 operation,
                                 jwt: &jwt,
                             };
@@ -246,7 +284,7 @@ pub async fn execute_query_plan<'exec, 'req>(
                                 &owned_ctx.executors,
                                 &owned_ctx.schema_metadata,
                                 &client_request,
-                                &None, // no jwt forwarding for entity resolution. TODO: or?
+                                &owned_jwt_auth_forwarding,
                                 initial_data,
                                 initial_errors,
                                 response_body.len() + 256,
