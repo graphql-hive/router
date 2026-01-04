@@ -169,7 +169,7 @@ impl JwtAuthRuntime {
                 let header = decode_header(&token).map_err(JwtError::InvalidJwtHeader)?;
                 let jwk = self.find_matching_jwks(&header, jwks)?;
 
-                self.decode_and_validate_token(&token, &jwk.keys)
+                self.decode_and_validate_token(&header, &token, &jwk.keys)
                     .map(|token_data| (token_data, maybe_prefix, token))
             }
             Err(e) => {
@@ -182,10 +182,13 @@ impl JwtAuthRuntime {
 
     fn decode_and_validate_token(
         &self,
+        header: &Header,
         token: &str,
         jwks: &[Jwk],
     ) -> Result<JwtTokenPayload, JwtError> {
-        let decode_attempts = jwks.iter().map(|jwk| self.try_decode_from_jwk(token, jwk));
+        let decode_attempts = jwks
+            .iter()
+            .map(|jwk| self.try_decode_from_jwk(header, token, jwk));
 
         if let Some(success) = decode_attempts.clone().find(|result| result.is_ok()) {
             return success;
@@ -199,19 +202,18 @@ impl JwtAuthRuntime {
         ))
     }
 
-    fn try_decode_from_jwk(&self, token: &str, jwk: &Jwk) -> Result<JwtTokenPayload, JwtError> {
+    fn try_decode_from_jwk(
+        &self,
+        header: &Header,
+        token: &str,
+        jwk: &Jwk,
+    ) -> Result<JwtTokenPayload, JwtError> {
         let decoding_key = DecodingKey::from_jwk(jwk).map_err(JwtError::InvalidDecodingKey)?;
 
         let alg = match jwk.common.key_algorithm {
             Some(key_alg) => Algorithm::from_str(&key_alg.to_string())
                 .map_err(JwtError::JwkAlgorithmNotSupported)?,
-            None => {
-                // Fallback to algorithm from JWT header if JWK doesn't specify one, we must validate the value below
-                // to protect from user modified tokens with invalid algorithms.
-                jsonwebtoken::decode_header(token)
-                    .map_err(JwtError::InvalidJwtHeader)?
-                    .alg
-            }
+            None => header.alg,
         };
 
         // Make sure the algorithm is in the allowed algorithms before proceeding
