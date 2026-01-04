@@ -779,6 +779,54 @@ mod subscription_e2e_tests {
     }
 
     #[ntex::test]
+    async fn subscription_header_propagation_for_subscription() {
+        let subgraphs_server = SubgraphsServer::start().await;
+
+        let router = init_router_from_config_file("configs/header_propagation.router.yaml")
+            .await
+            .unwrap();
+
+        wait_for_readiness(&router.app).await;
+
+        let req = init_graphql_request(
+            r#"
+            subscription {
+                reviewAdded(intervalInMs: 0) {
+                    id
+                }
+            }
+            "#,
+            None,
+        )
+        .header(http::header::ACCEPT, "text/event-stream")
+        .header("x-context", "maybe-propagate")
+        .to_request();
+
+        let res = test::call_service(&router.app, req).await;
+
+        assert!(res.status().is_success(), "Expected 200 OK");
+
+        // we have to consume the body to ensure the subscription is fully processed
+        let body = test::read_body(res).await;
+        std::str::from_utf8(&body).unwrap();
+
+        let subgraph_requests = subgraphs_server
+            .get_subgraph_requests_log("reviews")
+            .await
+            .expect("expected requests sent to reviews subgraph");
+
+        let context_header = subgraph_requests[0]
+            .headers
+            .get("x-context")
+            .expect("expected x-context header to be present");
+
+        assert_eq!(
+            context_header, "maybe-propagate",
+            "expected x-context header to be propagated to subgraph"
+        );
+    }
+
+    #[ntex::test]
     async fn subscription_header_propagation_for_entity_resolution() {
         let subgraphs_server = SubgraphsServer::start().await;
 
