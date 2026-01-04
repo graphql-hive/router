@@ -255,7 +255,7 @@ pub async fn execute_query_plan<'exec, 'req>(
                             {
                                 Ok(output) => output.body,
                                 Err(e) => {
-                                    // TODO: leaking?
+                                    // TODO: error details leaking? should this be masked?
                                     let error = GraphQLError::from_message_and_extensions(
                                         format!("Entity resolution error: {}", e),
                                         Default::default(),
