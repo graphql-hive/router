@@ -71,28 +71,7 @@ pub async fn graphql_request_handler(
         }
     }
 
-    let jwt_context = if let Some(jwt) = &shared_state.jwt_auth_runtime {
-        match jwt
-            .validate_request(req, &shared_state.jwt_claims_cache)
-            .await
-        {
-            Ok(jwt_context) => jwt_context,
-            Err(err) => return err.make_response(),
-        }
-    } else {
-        None
-    };
-
-    match execute_pipeline(
-        req,
-        body_bytes,
-        supergraph,
-        shared_state,
-        schema_state,
-        jwt_context,
-    )
-    .await
-    {
+    match execute_pipeline(req, body_bytes, supergraph, shared_state, schema_state).await {
         Ok(response) => {
             let response_bytes = Bytes::from(response.body);
             let response_headers = response.headers;
@@ -132,6 +111,12 @@ pub async fn execute_pipeline(
     schema_state: &Arc<SchemaState>,
     jwt_context: Option<JwtRequestContext>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
+    if let Some(jwt) = &shared_state.jwt_auth_runtime {
+        jwt.validate_request(req, &shared_state.jwt_claims_cache)
+            .await
+            .map_err(PipelineError::JwtError)?;
+    }
+
     let start = Instant::now();
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
