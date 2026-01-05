@@ -15,7 +15,7 @@ use ntex::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::pipeline::progressive_override::LabelEvaluationError;
+use crate::{jwt::errors::JwtError, pipeline::progressive_override::LabelEvaluationError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PipelineError {
@@ -68,6 +68,8 @@ pub enum PipelineError {
     CsrfPreventionFailed,
 
     // JWT-auth plugin errors
+    #[error(transparent)]
+    JwtError(JwtError),
     #[error("Failed to forward jwt: {0}")]
     JwtForwardingError(JwtForwardingError),
 }
@@ -92,6 +94,7 @@ impl PipelineError {
             Self::NormalizationError(NormalizationError::MultipleMatchingOperationsFound) => {
                 "OPERATION_RESOLUTION_FAILURE"
             }
+            Self::JwtError(err) => err.error_code(),
             _ => "BAD_REQUEST",
         }
     }
@@ -129,6 +132,7 @@ impl PipelineError {
             (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
+            (Self::JwtError(err), _) => err.status_code(),
         }
     }
 }

@@ -1,13 +1,5 @@
-use crate::pipeline::error::FailedExecutionResult;
-use hive_router_plan_executor::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use http::StatusCode;
-use ntex::{
-    http::{
-        header::{InvalidHeaderValue, ToStrError},
-        ResponseBuilder,
-    },
-    web,
-};
+use ntex::http::header::{InvalidHeaderValue, ToStrError};
 
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum LookupError {
@@ -42,31 +34,8 @@ pub enum JwtError {
 }
 
 impl JwtError {
-    pub fn make_response(&self) -> web::HttpResponse {
-        let validation_error_result = FailedExecutionResult {
-            errors: Some(vec![self.into()]),
-        };
-
-        ResponseBuilder::new(self.into()).json(&validation_error_result)
-    }
-
-    pub fn error_code(&self) -> &'static str {
+    pub fn status_code(&self) -> StatusCode {
         match self {
-            JwtError::AllProvidersFailedToDecode(_) => "MISSING_JWT",
-            JwtError::FailedToDecodeToken(_) => "INVALID_JWT",
-            JwtError::FailedToLocateProvider => "JWT_NOT_SUPPORTED",
-            JwtError::HTTPRequestParsingError(_) => "FAILED_TO_PARSE_REQUEST",
-            JwtError::InvalidJwtHeader(_) => "INVALID_JWT_HEADER",
-            JwtError::InvalidDecodingKey(_) => "INTERNAL_SERVER_ERROR",
-            JwtError::JwkAlgorithmNotSupported(_) => "JWK_ALGORITHM_NOT_SUPPORTED",
-            JwtError::LookupFailed(_) => "JWT_LOOKUP_FAILED",
-        }
-    }
-}
-
-impl From<&JwtError> for StatusCode {
-    fn from(val: &JwtError) -> Self {
-        match val {
             JwtError::LookupFailed(_) => StatusCode::UNAUTHORIZED,
             JwtError::JwkAlgorithmNotSupported(_) | JwtError::HTTPRequestParsingError(_) => {
                 StatusCode::BAD_REQUEST
@@ -78,15 +47,16 @@ impl From<&JwtError> for StatusCode {
             | JwtError::FailedToDecodeToken(_) => StatusCode::FORBIDDEN,
         }
     }
-}
-
-impl From<&JwtError> for GraphQLError {
-    fn from(val: &JwtError) -> Self {
-        GraphQLError {
-            extensions: GraphQLErrorExtensions::new_from_code(val.error_code()),
-            message: val.to_string(),
-            locations: None,
-            path: None,
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            JwtError::AllProvidersFailedToDecode(_) => "MISSING_JWT",
+            JwtError::FailedToDecodeToken(_) => "INVALID_JWT",
+            JwtError::FailedToLocateProvider => "JWT_NOT_SUPPORTED",
+            JwtError::HTTPRequestParsingError(_) => "FAILED_TO_PARSE_REQUEST",
+            JwtError::InvalidJwtHeader(_) => "INVALID_JWT_HEADER",
+            JwtError::InvalidDecodingKey(_) => "INTERNAL_SERVER_ERROR",
+            JwtError::JwkAlgorithmNotSupported(_) => "JWK_ALGORITHM_NOT_SUPPORTED",
+            JwtError::LookupFailed(_) => "JWT_LOOKUP_FAILED",
         }
     }
 }
