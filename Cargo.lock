@@ -2147,6 +2147,7 @@ dependencies = [
  "ryu",
  "serde",
  "sonic-rs",
+ "sonic-simd",
  "strum 0.27.2",
  "subgraphs",
  "thiserror 2.0.17",
@@ -5303,9 +5304,9 @@ dependencies = [
 
 [[package]]
 name = "sonic-simd"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b421f7b6aa4a5de8f685aaf398dfaa828346ee639d2b1c1061ab43d40baa6223"
+checksum = "5707edbfb34a40c9f2a55fa09a49101d9fec4e0cc171ce386086bd9616f34257"
 dependencies = [
  "cfg-if",
 ]
