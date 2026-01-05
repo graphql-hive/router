@@ -900,10 +900,11 @@ mod subscription_e2e_tests {
 
         wait_for_readiness(&router.app).await;
 
+        // NOTE: we add a 10ms interval because providing 0 will end the connection while the buffer is still being written to leading to a different error
         let req = init_graphql_request(
             r#"
             subscription {
-                reviewAdded(intervalInMs: 0) {
+                reviewAdded(intervalInMs: 10) {
                     id
                 }
             }
@@ -927,6 +928,11 @@ mod subscription_e2e_tests {
 
         event: next
         data: {"data":{"reviewAdded":{"id":"3"}}}
+
+        event: next
+        data: {"data":null,"errors":[{"message":"Internal server error","extensions":{"code":"SUBGRAPH_SUBSCRIPTION_STREAM_ERROR","serviceName":"reviews"}}]}
+
+        event: complete
         "#);
     }
 }
