@@ -1,6 +1,7 @@
 use std::time::Duration;
 use std::{
     convert::Infallible,
+    io,
     task::{Context, Poll},
 };
 
@@ -68,6 +69,13 @@ where
             .and_then(|value| value.to_str().ok())
             .is_some_and(|accept| accept.contains("text/event-stream"));
 
+        // for testing purposes. abruptly terminate the stream after N messages
+        let break_after_count = req
+            .headers()
+            .get("x-break-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<usize>().ok());
+
         let sub_prot = self.subscriptions_protocol.clone();
 
         let executor = self.executor.clone();
@@ -99,9 +107,13 @@ where
             };
 
             if use_sse {
-                let body = Body::from_stream(
-                    create_sse_stream(stream, Duration::from_secs(10)).map(Ok::<_, std::io::Error>),
-                );
+                let byte_stream =
+                    create_sse_stream(stream, Duration::from_secs(10)).map(Ok::<_, io::Error>);
+                let body = if let Some(count) = break_after_count {
+                    Body::from_stream(abrupt_terminate_after(byte_stream, count))
+                } else {
+                    Body::from_stream(byte_stream)
+                };
                 Ok(HttpResponse::builder()
                     .header(http::header::CONTENT_TYPE, "text/event-stream")
                     .header(http::header::CACHE_CONTROL, "no-cache")
@@ -109,10 +121,14 @@ where
                     .body(body)
                     .unwrap())
             } else {
-                let body = Body::from_stream(
+                let byte_stream =
                     create_multipart_subscribe_stream(stream, Duration::from_secs(30))
-                        .map(Ok::<_, std::io::Error>),
-                );
+                        .map(Ok::<_, io::Error>);
+                let body = if let Some(count) = break_after_count {
+                    Body::from_stream(abrupt_terminate_after(byte_stream, count))
+                } else {
+                    Body::from_stream(byte_stream)
+                };
                 Ok(HttpResponse::builder()
                     .header(
                         http::header::CONTENT_TYPE,
@@ -124,6 +140,29 @@ where
                     .unwrap())
             }
         })
+    }
+}
+
+fn abrupt_terminate_after<S>(
+    stream: S,
+    count: usize,
+) -> impl Stream<Item = Result<Bytes, io::Error>>
+where
+    S: Stream<Item = Result<Bytes, io::Error>> + Send + 'static,
+{
+    async_stream::stream! {
+        let mut stream = std::pin::pin!(stream);
+        let mut emitted = 0;
+
+        while let Some(item) = stream.next().await {
+            yield item;
+            emitted += 1;
+            if emitted > count {
+                // error abruptly killing the connection
+                yield Err(io::Error::new(io::ErrorKind::ConnectionReset, "connection abruptly terminated"));
+                break;
+            }
+        }
     }
 }
 

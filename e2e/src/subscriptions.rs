@@ -878,4 +878,55 @@ mod subscription_e2e_tests {
             );
         }
     }
+
+    #[ntex::test]
+    async fn subscription_propagate_connection_termination_subgraph() {
+        let _subgraphs_server = SubgraphsServer::start().await;
+
+        let router = init_router_from_config_inline(&format!(
+            r#"
+            supergraph:
+                source: file
+                path: supergraph.graphql
+            headers:
+                all:
+                    request:
+                        - propagate:
+                            named: x-break-after
+            "#
+        ))
+        .await
+        .unwrap();
+
+        wait_for_readiness(&router.app).await;
+
+        let req = init_graphql_request(
+            r#"
+            subscription {
+                reviewAdded(intervalInMs: 0) {
+                    id
+                }
+            }
+            "#,
+            None,
+        )
+        .header(http::header::ACCEPT, "text/event-stream")
+        .header("x-break-after", "3")
+        .to_request();
+
+        let res = test::call_service(&router.app, req).await;
+        let body = test::read_body(res).await;
+        let body_str = std::str::from_utf8(&body).unwrap();
+
+        assert_snapshot!(body_str, @r#"
+        event: next
+        data: {"data":{"reviewAdded":{"id":"1"}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"2"}}}
+
+        event: next
+        data: {"data":{"reviewAdded":{"id":"3"}}}
+        "#);
+    }
 }
