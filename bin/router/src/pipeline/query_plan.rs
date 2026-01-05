@@ -7,14 +7,12 @@ use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverri
 use crate::schema_state::{SchemaState, SupergraphData};
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
-use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
 
 #[inline]
 pub async fn plan_operation_with_cache(
-    _req: &HttpRequest,
     supergraph: &SupergraphData,
-    schema_state: &Arc<SchemaState>,
+    schema_state: &SchemaState,
     normalized_operation: &GraphQLNormalizationPayload,
     request_override_context: &RequestOverrideContext,
     cancellation_token: &CancellationToken,

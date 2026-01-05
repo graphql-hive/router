@@ -136,12 +136,10 @@ pub async fn execute_pipeline(
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
 
     let mut execution_request = get_execution_request(req, body_bytes).await?;
-    let parser_payload = parse_operation_with_cache(req, shared_state, &execution_request).await?;
-    validate_operation_with_cache(req, supergraph, schema_state, shared_state, &parser_payload)
-        .await?;
+    let parser_payload = parse_operation_with_cache(shared_state, &execution_request).await?;
+    validate_operation_with_cache(supergraph, schema_state, shared_state, &parser_payload).await?;
 
     let normalize_payload = normalize_request_with_cache(
-        req,
         supergraph,
         schema_state,
         &execution_request,
@@ -226,7 +224,6 @@ pub async fn execute_pipeline(
     };
 
     let query_plan_payload = plan_operation_with_cache(
-        req,
         supergraph,
         schema_state,
         &normalize_payload,
