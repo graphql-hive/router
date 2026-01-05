@@ -384,8 +384,16 @@ impl FieldProjectionPlan {
             &field.include_if,
             &field.skip_if,
         );
-        let mut condition_for_field =
-            parent_condition.and(FieldProjectionCondition::FieldTypeCondition(type_condition));
+
+        let mut condition_for_field = if schema_metadata.is_union_type(&field_type)
+            || schema_metadata.is_interface_type(&field_type)
+        {
+            parent_condition.and(FieldProjectionCondition::FieldTypeCondition(type_condition))
+        } else {
+            // It makes no sense to have a field type condition for concrete types
+            // as they'd always evaluate to true.
+            parent_condition.clone()
+        };
         condition_for_field = Self::apply_directive_conditions(
             condition_for_field,
             &field.include_if,

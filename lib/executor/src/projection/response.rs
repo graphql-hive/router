@@ -7,6 +7,7 @@ use crate::response::graphql_error::{GraphQLError, GraphQLErrorExtensions};
 use crate::response::value::Value;
 use bytes::BufMut;
 use sonic_rs::JsonValueTrait;
+use std::cell::OnceCell;
 use std::collections::HashMap;
 
 use tracing::{instrument, warn};
@@ -234,12 +235,21 @@ fn project_selection_set_with_map(
             .position(|(k, _)| k == &plan.response_key.as_str())
             .map(|idx| &obj[idx].1);
 
-        let type_name = resolve_type_name(plan, field_val, parent_type_name, schema_metadata)?;
+        let field_type_name_cell = OnceCell::new();
+        let field_type_name_fn = || {
+            *field_type_name_cell.get_or_init(|| {
+                resolve_type_name(plan, field_val, parent_type_name, schema_metadata)
+                    .unwrap_or("Unknown")
+            })
+        };
+
+        // TODO: drop redundant `ParentTypeCondition` checks from plans during planning phase
+        //       when the condition of the parent field guarantees `ParentTypeCondition` is met
 
         let res = check(
             &plan.conditions,
             parent_type_name,
-            type_name,
+            &field_type_name_fn,
             field_val,
             variable_values,
         );
@@ -335,13 +345,16 @@ fn project_selection_set_with_map(
 }
 
 #[inline]
-fn check(
+fn check<'a, F>(
     cond: &FieldProjectionCondition,
     parent_type_name: &str,
-    field_type_name: &str,
+    field_type_name: &F,
     field_value: Option<&Value>,
     variable_values: &Option<HashMap<String, sonic_rs::Value>>,
-) -> Result<(), FieldProjectionConditionError> {
+) -> Result<(), FieldProjectionConditionError>
+where
+    F: Fn() -> &'a str,
+{
     match cond {
         FieldProjectionCondition::And(condition_a, condition_b) => check(
             condition_a,
@@ -408,7 +421,7 @@ fn check(
             }
         }
         FieldProjectionCondition::FieldTypeCondition(type_condition) => {
-            if type_condition.matches(field_type_name) {
+            if type_condition.matches(field_type_name()) {
                 Ok(())
             } else {
                 Err(FieldProjectionConditionError::InvalidFieldType)
