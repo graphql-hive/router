@@ -52,7 +52,7 @@ fn project_data_by_operation_test(c: &mut Criterion) {
                 .unwrap();
                 black_box(result);
             },
-            criterion::BatchSize::LargeInput,
+            criterion::BatchSize::SmallInput,
         );
     });
 }
