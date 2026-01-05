@@ -1,14 +1,18 @@
 use std::{sync::Arc, time::Instant};
 
-use hive_router_plan_executor::execution::{
-    client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
-    plan::PlanExecutionOutput,
+use hive_router_plan_executor::{
+    execution::{
+        client_request_details::{ClientRequestDetails, JwtRequestDetails, OperationDetails},
+        plan::PlanExecutionOutput,
+    },
+    response::graphql_error::{GraphQLError, GraphQLErrorExtensions},
 };
 use hive_router_query_planner::{
     state::supergraph_state::OperationKind, utils::cancellation::CancellationToken,
 };
 use http::{header::CONTENT_TYPE, HeaderValue, Method};
 use ntex::{
+    http::ResponseBuilder,
     util::Bytes,
     web::{self, HttpRequest},
 };
@@ -19,7 +23,7 @@ use crate::{
         authorization::{enforce_operation_authorization, AuthorizationDecision},
         coerce_variables::coerce_request_variables,
         csrf_prevention::perform_csrf_prevention,
-        error::PipelineError,
+        error::{FailedExecutionResult, PipelineError},
         execution::{execute_plan, PlannedRequest},
         execution_request::get_execution_request,
         header::{
@@ -96,7 +100,43 @@ pub async fn graphql_request_handler(
         }
         Err(error) => {
             let accept_ok = !req.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
-            error.into_response(accept_ok)
+
+            let status = error.default_status_code(accept_ok);
+
+            if let PipelineError::ValidationErrors(validation_errors) = error {
+                let validation_error_result = FailedExecutionResult {
+                    errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
+                };
+
+                return ResponseBuilder::new(status).json(&validation_error_result);
+            }
+
+            if let PipelineError::AuthorizationFailed(authorization_errors) = error {
+                let authorization_error_result = FailedExecutionResult {
+                    errors: Some(
+                        authorization_errors
+                            .iter()
+                            .map(|error| error.into())
+                            .collect(),
+                    ),
+                };
+
+                return ResponseBuilder::new(status).json(&authorization_error_result);
+            }
+
+            let code = error.graphql_error_code();
+            let message = error.graphql_error_message();
+
+            let graphql_error = GraphQLError::from_message_and_extensions(
+                message,
+                GraphQLErrorExtensions::new_from_code(code),
+            );
+
+            let result = FailedExecutionResult {
+                errors: Some(vec![graphql_error]),
+            };
+
+            ResponseBuilder::new(status).json(&result)
         }
     }
 }
@@ -202,9 +242,7 @@ pub async fn execute_pipeline(
             )
         }
         AuthorizationDecision::Reject { errors } => {
-            return Err(PipelineError::AuthorizationFailed(
-                errors.iter().map(|e| e.into()).collect(),
-            ))
+            return Err(PipelineError::AuthorizationFailed(errors))
         }
     };
 
