@@ -1,4 +1,4 @@
-//! I took it from https://github.com/zotta/json-writer-rs/blob/f45e2f25cede0e06be76a94f6e45608780a835d4/src/lib.rs#L853
+//! I took it from https://github.com/cloudwego/sonic-rs/blob/5ad7f96877fec7d3d33a5971b8bafe5af40fd3ff/src/util/string.rs
 use bytes::BufMut;
 use std::slice::from_raw_parts;
 
