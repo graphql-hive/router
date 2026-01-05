@@ -170,13 +170,25 @@ pub async fn execute_query_plan<'exec, 'req>(
                 .collect::<HashMap<_, _>>()
         });
 
+        let mut headers_map = HeaderMap::new();
+        modify_subgraph_request_headers(
+            &ctx.headers_plan,
+            &fetch_node.service_name,
+            ctx.client_request,
+            &mut headers_map,
+        )
+        .with_plan_context(LazyPlanContext {
+            subgraph_name: || Some(fetch_node.service_name.clone()),
+            affected_path: || None,
+        })?;
+
         let request = SubgraphExecutionRequest {
             query: fetch_node.operation.document_str.as_str(),
             dedupe: false,
             operation_name: fetch_node.operation_name.as_deref(),
             variables,
             representations: None,
-            headers: HeaderMap::new(),
+            headers: headers_map,
             extensions: None,
         };
 
