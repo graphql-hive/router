@@ -50,6 +50,7 @@ itoa = "1.0.15"
 ryu = "1.0.20"
 indexmap = "2.10.0"
 bumpalo = "3.19.0"
+sonic-simd = "0.1.2"
 
 [dev-dependencies]
 subgraphs = { path = "../../bench/subgraphs" }
