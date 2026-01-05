@@ -5,7 +5,6 @@ use hive_router_plan_executor::introspection::partition::partition_operation;
 use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_query_planner::ast::normalization::normalize_operation;
 use hive_router_query_planner::ast::operation::OperationDefinition;
-use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::pipeline::error::PipelineError;
@@ -25,9 +24,8 @@ pub struct GraphQLNormalizationPayload {
 
 #[inline]
 pub async fn normalize_request_with_cache(
-    _req: &HttpRequest,
     supergraph: &SupergraphData,
-    schema_state: &Arc<SchemaState>,
+    schema_state: &SchemaState,
     execution_params: &ExecutionRequest,
     parser_payload: &GraphQLParserPayload,
 ) -> Result<Arc<GraphQLNormalizationPayload>, PipelineError> {

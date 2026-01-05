@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use graphql_tools::parser::query::Document;
 use hive_router_query_planner::utils::parsing::safe_parse_operation;
-use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::pipeline::error::PipelineError;
@@ -19,8 +18,7 @@ pub struct GraphQLParserPayload {
 
 #[inline]
 pub async fn parse_operation_with_cache(
-    _req: &HttpRequest,
-    app_state: &Arc<RouterSharedState>,
+    app_state: &RouterSharedState,
     execution_params: &ExecutionRequest,
 ) -> Result<GraphQLParserPayload, PipelineError> {
     let cache_key = {
