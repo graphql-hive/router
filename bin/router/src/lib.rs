@@ -42,9 +42,7 @@ async fn graphql_endpoint_handler(
     schema_state: web::types::State<Arc<SchemaState>>,
     app_state: web::types::State<Arc<RouterSharedState>>,
 ) -> impl web::Responder {
-    let maybe_supergraph = schema_state.current_supergraph();
-
-    if let Some(supergraph) = maybe_supergraph.as_ref() {
+    if let Some(supergraph) = schema_state.current_supergraph().as_ref() {
         // If an early CORS response is needed, return it immediately.
         if let Some(early_response) = app_state
             .cors_runtime
