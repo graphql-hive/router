@@ -1,5 +1,4 @@
 use crate::{
-    executors::http::HttpResponse,
     hooks::{
         on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
         on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
@@ -17,9 +16,8 @@ use crate::{
         },
         on_supergraph_load::{OnSupergraphLoadStartHookPayload, OnSupergraphLoadStartHookResult},
     },
-    response::{graphql_error::GraphQLError, subgraph_response::SubgraphResponse},
+    response::graphql_error::GraphQLError,
 };
-use bytes::Bytes;
 use hive_router_internal::BoxError;
 use serde::{de::DeserializeOwned, Serialize};
 use sonic_rs::json;
@@ -149,29 +147,6 @@ impl FromGraphQLErrorToResponse for ntex::http::Response {
             "errors": [error]
         });
         from_json_to_http_response(body, status_code)
-    }
-}
-
-impl FromGraphQLErrorToResponse for SubgraphResponse<'_> {
-    fn from_graphql_error_to_response(error: GraphQLError, _status_code: http::StatusCode) -> Self {
-        SubgraphResponse {
-            errors: Some(vec![error]),
-            ..Default::default()
-        }
-    }
-}
-
-impl FromGraphQLErrorToResponse for HttpResponse {
-    fn from_graphql_error_to_response(error: GraphQLError, status: http::StatusCode) -> Self {
-        let body = json!({
-            "errors": [error]
-        });
-        let body_bytes = sonic_rs::to_vec(&body).unwrap_or_default();
-        HttpResponse {
-            body: Bytes::from(body_bytes).into(),
-            status,
-            ..Default::default()
-        }
     }
 }
 
