@@ -18,7 +18,6 @@ use ntex::{
 };
 
 use crate::{
-    jwt::context::JwtRequestContext,
     pipeline::{
         authorization::{enforce_operation_authorization, AuthorizationDecision},
         coerce_variables::coerce_request_variables,
@@ -149,13 +148,25 @@ pub async fn execute_pipeline(
     supergraph: &SupergraphData,
     shared_state: &Arc<RouterSharedState>,
     schema_state: &Arc<SchemaState>,
-    jwt_context: Option<JwtRequestContext>,
 ) -> Result<PlanExecutionOutput, PipelineError> {
-    if let Some(jwt) = &shared_state.jwt_auth_runtime {
-        jwt.validate_request(req, &shared_state.jwt_claims_cache)
+    let jwt_request_details = match &shared_state.jwt_auth_runtime {
+        Some(jwt_auth_runtime) => match jwt_auth_runtime
+            .validate_request(req, &shared_state.jwt_claims_cache)
             .await
-            .map_err(PipelineError::JwtError)?;
-    }
+            .map_err(PipelineError::JwtError)?
+        {
+            Some(jwt_context) => JwtRequestDetails::Authenticated {
+                scopes: jwt_context.extract_scopes(),
+                claims: jwt_context
+                    .get_claims_value()
+                    .map_err(PipelineError::JwtForwardingError)?,
+                token: jwt_context.token_raw,
+                prefix: jwt_context.token_prefix,
+            },
+            None => JwtRequestDetails::Unauthenticated,
+        },
+        None => JwtRequestDetails::Unauthenticated,
+    };
 
     let start = Instant::now();
     perform_csrf_prevention(req, &shared_state.router_config.csrf)?;
@@ -176,18 +187,6 @@ pub async fn execute_pipeline(
 
     let query_plan_cancellation_token =
         CancellationToken::with_timeout(shared_state.router_config.query_planner.timeout);
-
-    let jwt_request_details = match jwt_context {
-        Some(jwt_context) => JwtRequestDetails::Authenticated {
-            scopes: jwt_context.extract_scopes(),
-            claims: jwt_context
-                .get_claims_value()
-                .map_err(PipelineError::JwtForwardingError)?,
-            token: jwt_context.token_raw,
-            prefix: jwt_context.token_prefix,
-        },
-        None => JwtRequestDetails::Unauthenticated,
-    };
 
     let client_request_details = ClientRequestDetails {
         method: req.method(),
