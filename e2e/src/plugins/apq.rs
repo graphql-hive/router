@@ -1,4 +1,5 @@
 use dashmap::DashMap;
+use http::StatusCode;
 use serde::Deserialize;
 use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 
@@ -47,10 +48,13 @@ impl RouterPlugin for APQPlugin {
                 match persisted_query_ext.get(&"version").and_then(|v| v.as_i64()) {
                     Some(1) => {}
                     _ => {
-                        return payload.end_graphql_error(GraphQLError::from_message_and_code(
-                            "Unsupported persisted query version".into(),
-                            "UNSUPPORTED_PERSISTED_QUERY_VERSION",
-                        ));
+                        return payload.end_graphql_error(
+                            GraphQLError::from_message_and_code(
+                                "Unsupported persisted query version".into(),
+                                "UNSUPPORTED_PERSISTED_QUERY_VERSION",
+                            ),
+                            StatusCode::BAD_REQUEST,
+                        );
                     }
                 }
                 let sha256_hash = match persisted_query_ext
@@ -59,10 +63,13 @@ impl RouterPlugin for APQPlugin {
                 {
                     Some(h) => h,
                     None => {
-                        return payload.end_graphql_error(GraphQLError::from_message_and_code(
-                            "Missing sha256Hash in persisted query".into(),
-                            "MISSING_PERSISTED_QUERY_HASH",
-                        ));
+                        return payload.end_graphql_error(
+                            GraphQLError::from_message_and_code(
+                                "Missing sha256Hash in persisted query".into(),
+                                "MISSING_PERSISTED_QUERY_HASH",
+                            ),
+                            StatusCode::BAD_REQUEST,
+                        );
                     }
                 };
                 if let Some(query_param) = &payload.graphql_params.query {
@@ -75,10 +82,13 @@ impl RouterPlugin for APQPlugin {
                         // Update the graphql_params with the cached query
                         payload.graphql_params.query = Some(cached_query.value().to_string());
                     } else {
-                        return payload.end_graphql_error(GraphQLError::from_message_and_code(
-                            "PersistedQueryNotFound".into(),
-                            "PERSISTED_QUERY_NOT_FOUND",
-                        ));
+                        return payload.end_graphql_error(
+                            GraphQLError::from_message_and_code(
+                                "PersistedQueryNotFound".into(),
+                                "PERSISTED_QUERY_NOT_FOUND",
+                            ),
+                            StatusCode::BAD_REQUEST,
+                        );
                     }
                 }
             }
