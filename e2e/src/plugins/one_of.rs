@@ -93,7 +93,7 @@ impl RouterPlugin for OneOfPlugin {
     fn from_config(config: OneOfPluginConfig) -> Option<Self> {
         if config.enabled {
             Some(OneOfPlugin {
-                one_of_types: ArcSwap::from(Arc::new(vec![])),
+                one_of_types: Default::default(),
             })
         } else {
             None
@@ -166,7 +166,7 @@ impl RouterPlugin for OneOfPlugin {
                 }
             }
         }
-        self.one_of_types.store(Arc::new(one_of_types));
+        self.one_of_types.store(one_of_types.into());
         start_payload.cont()
     }
 }
