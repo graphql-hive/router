@@ -65,11 +65,7 @@ where
         self,
         body: T,
     ) -> StartHookResult<'exec, Self, TEndPayload> {
-        let http_response = Response::Ok().body(sonic_rs::to_vec(&body).unwrap());
-        StartHookResult {
-            payload: self,
-            control_flow: StartControlFlow::EndResponse(http_response),
-        }
+        self.end_response(Response::Ok().body(sonic_rs::to_vec(&body).unwrap()))
     }
 
     fn end_graphql_error<'exec>(
@@ -80,13 +76,9 @@ where
         let body = json!({
             "errors": [error]
         });
-        let http_response = Response::BadRequest()
+        self.end_response(Response::BadRequest()
             .status(status)
-            .body(sonic_rs::to_vec(&body).unwrap());
-        StartHookResult {
-            payload: self,
-            control_flow: StartControlFlow::EndResponse(http_response),
-        }
+            .body(sonic_rs::to_vec(&body).unwrap()))
     }
 
     fn on_end<'exec, F>(self, f: F) -> StartHookResult<'exec, Self, TEndPayload>
