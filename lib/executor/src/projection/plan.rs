@@ -316,10 +316,25 @@ impl FieldProjectionPlan {
                 if let Some(new_selections) = new_selections {
                     match existing_selections {
                         Some(selections) => {
-                            Arc::make_mut(selections).extend(
-                                Arc::try_unwrap(new_selections)
-                                    .unwrap_or_else(|arc| (*arc).clone()),
-                            );
+                            // Recursively merge child selections instead of just extending
+                            let selections_mut = Arc::make_mut(selections);
+                            let new_selections_vec = Arc::try_unwrap(new_selections)
+                                .unwrap_or_else(|arc| (*arc).clone());
+
+                            // Convert existing selections to a map for efficient lookup
+                            let mut selections_map: IndexMap<String, FieldProjectionPlan> =
+                                selections_mut
+                                    .drain(..)
+                                    .map(|plan| (plan.response_key.clone(), plan))
+                                    .collect();
+
+                            // Merge each new selection
+                            for new_plan in new_selections_vec {
+                                Self::merge_plan(&mut selections_map, new_plan);
+                            }
+
+                            // Convert back to Vec
+                            selections_mut.extend(selections_map.into_values());
                         }
                         None => *existing_selections = Some(new_selections),
                     }
@@ -424,21 +439,10 @@ impl FieldProjectionPlan {
 
         let parent_type_guard =
             if let Some(guard) = Self::extract_type_guard_from_condition(parent_condition) {
-                match guard {
-                    TypeCondition::Exact(guard_type) if guard_type == parent_type_name => {
-                        // Guard matches the parent type - redundant, drop it
-                        None
-                    }
-                    TypeCondition::OneOf(_) => {
-                        // Abstract type - guard is meaningful
-                        Some(guard)
-                    }
-                    TypeCondition::Exact(_) => {
-                        // Guard is different from parent type - this happens with
-                        // inline fragments that narrow abstract types to concrete
-                        Some(guard)
-                    }
-                }
+                // Keep the guard even if it matches parent_type_name, because after merging
+                // selections from different fragments, we need to distinguish between different
+                // concrete types (e.g., ContentAChild vs ContentBChild)
+                Some(guard)
             } else {
                 None
             };
