@@ -126,7 +126,6 @@ pub enum FieldProjectionCondition {
     IncludeIfVariable(String),
     SkipIfVariable(String),
     ParentTypeCondition(TypeCondition),
-    True,
     FieldTypeCondition(TypeCondition),
     EnumValuesCondition(HashSet<String>),
     Or(Box<FieldProjectionCondition>, Box<FieldProjectionCondition>),
@@ -153,8 +152,6 @@ impl FieldProjectionCondition {
         use FieldProjectionCondition::*;
 
         match (self, right) {
-            (True, other) => other.clone(),
-            (other, True) => other.clone(),
             (ParentTypeCondition(left), ParentTypeCondition(right)) => {
                 ParentTypeCondition(left.clone().intersect(right))
             }
@@ -175,7 +172,6 @@ impl FieldProjectionCondition {
         use FieldProjectionCondition::*;
 
         match (self, right) {
-            (True, _) | (_, True) => True,
             (ParentTypeCondition(left), ParentTypeCondition(right)) => {
                 ParentTypeCondition(left.clone().union(right))
             }
@@ -204,12 +200,11 @@ impl FieldProjectionPlan {
             None => "Query",
         };
 
-        let conditions = FieldProjectionCondition::True;
         let mut plans = Self::from_selection_set(
             &operation.selection_set,
             schema_metadata,
             root_type_name,
-            &conditions,
+            &None,
         )
         .unwrap_or_default();
 
@@ -224,7 +219,7 @@ impl FieldProjectionPlan {
         selection_set: &SelectionSet,
         schema_metadata: &SchemaMetadata,
         parent_type_name: &str,
-        parent_condition: &FieldProjectionCondition,
+        parent_condition: &Option<FieldProjectionCondition>,
     ) -> Option<Vec<FieldProjectionPlan>> {
         let mut field_selections: IndexMap<String, FieldProjectionPlan> = IndexMap::new();
 
@@ -273,10 +268,12 @@ impl FieldProjectionPlan {
 
     /// Recursively removes redundant type guards from child selections.
     ///
-    /// A type guard is redundant when it covers exactly all possible types that can appear
-    /// in that position. For example, if a field `children` can only return types A or B
-    /// (based on the parent's type guard), and a child selection has guard `OneOf(A, B)`,
-    /// then that guard is redundant since it will always match.
+    /// A type guard is redundant when it covers exactly all possible types that can appear in that position.
+    /// For example, if a field `children` can only return types A or B (based on the parent's type guard),
+    /// and a child selection has guard `OneOf(A, B)`, then that guard is redundant since it will always match.
+    ///
+    /// Every guard has a cost during execution (computes field's output type or name of its parent),
+    /// so removing redundant guards helps optimize the response projection.
     ///
     /// This optimization must run after all fragment merging is complete to correctly
     /// determine the full set of possible types.
@@ -299,17 +296,13 @@ impl FieldProjectionPlan {
             let parent_types = Self::type_names_from(parent_guard);
 
             // For each parent type, lookup what type this field returns
-            let mut types = std::collections::HashSet::new();
-            for parent_type in parent_types {
-                if let Some(field_info) = schema_metadata
+            HashSet::from_iter(parent_types.iter().filter_map(|parent_type| {
+                schema_metadata
                     .type_fields
-                    .get(parent_type)
+                    .get(*parent_type)
                     .and_then(|fields| fields.get(&parent_field.field_name))
-                {
-                    types.insert(field_info.output_type_name.as_str());
-                }
-            }
-            types
+                    .map(|field_info| field_info.output_type_name.as_str())
+            }))
         });
 
         for child in selections_mut {
@@ -317,10 +310,20 @@ impl FieldProjectionPlan {
             if let (Some(child_guard), Some(possible_types)) =
                 (&child.parent_type_guard, &possible_child_types)
             {
-                let guard_types = Self::type_names_from(child_guard);
-                let guard_set: std::collections::HashSet<_> = guard_types.into_iter().collect();
+                // Check if guard covers exactly all possible types by comparing as sets
+                let is_redundant = match child_guard {
+                    TypeCondition::Exact(ty) => {
+                        possible_types.len() == 1 && possible_types.contains(ty.as_str())
+                    }
+                    TypeCondition::OneOf(guard_types) => {
+                        guard_types.len() == possible_types.len()
+                            && guard_types
+                                .iter()
+                                .all(|t| possible_types.contains(t.as_str()))
+                    }
+                };
 
-                if &guard_set == possible_types {
+                if is_redundant {
                     child.parent_type_guard = None;
                 }
             }
@@ -330,19 +333,26 @@ impl FieldProjectionPlan {
     }
 
     fn apply_directive_conditions(
-        mut condition: FieldProjectionCondition,
+        condition: Option<FieldProjectionCondition>,
         include_if: &Option<String>,
         skip_if: &Option<String>,
-    ) -> FieldProjectionCondition {
+    ) -> Option<FieldProjectionCondition> {
+        let mut condition = condition;
         if let Some(include_if_var) = include_if {
-            condition = condition.and(FieldProjectionCondition::IncludeIfVariable(
-                include_if_var.clone(),
-            ));
+            condition = Self::optional_and(
+                condition,
+                Some(FieldProjectionCondition::IncludeIfVariable(
+                    include_if_var.clone(),
+                )),
+            );
         }
         if let Some(skip_if_var) = skip_if {
-            condition = condition.and(FieldProjectionCondition::SkipIfVariable(
-                skip_if_var.clone(),
-            ));
+            condition = Self::optional_and(
+                condition,
+                Some(FieldProjectionCondition::SkipIfVariable(
+                    skip_if_var.clone(),
+                )),
+            );
         }
         condition
     }
@@ -385,12 +395,10 @@ impl FieldProjectionPlan {
                 if let Some(new_selections) = new_selections {
                     match existing_selections {
                         Some(selections) => {
-                            // Recursively merge child selections instead of just extending
                             let selections_mut = Arc::make_mut(selections);
                             let new_selections_vec = Arc::try_unwrap(new_selections)
                                 .unwrap_or_else(|arc| (*arc).clone());
 
-                            // Convert existing selections to a map for efficient lookup
                             let mut selections_map: IndexMap<String, FieldProjectionPlan> =
                                 selections_mut
                                     .drain(..)
@@ -402,7 +410,8 @@ impl FieldProjectionPlan {
                                 Self::merge_plan(&mut selections_map, new_plan);
                             }
 
-                            // Convert back to Vec
+                            // Convert back to Vec, so the response projection plan
+                            // is in the correct format and easy to iterate.
                             selections_mut.extend(selections_map.into_values());
                         }
                         None => *existing_selections = Some(new_selections),
@@ -422,11 +431,6 @@ impl FieldProjectionPlan {
         }
     }
 
-    /// Simplifies a condition by removing redundant parent type conditions.
-    ///
-    /// A condition is redundant if it matches the parent_type_guard (since the guard
-    /// already ensures that constraint). Also removes bare `True` conditions which
-    /// add no value.
     fn simplify_condition(
         condition: FieldProjectionCondition,
         parent_type_guard: &Option<TypeCondition>,
@@ -436,9 +440,6 @@ impl FieldProjectionPlan {
         };
 
         match condition {
-            // Remove bare True conditions
-            FieldProjectionCondition::True => None,
-
             // Remove redundant ParentTypeCondition that matches the guard
             FieldProjectionCondition::ParentTypeCondition(TypeCondition::Exact(cond_type))
                 if &cond_type == guard_type =>
@@ -446,7 +447,7 @@ impl FieldProjectionPlan {
                 None
             }
 
-            // Recursively simplify And expressions
+            // Recursively simplify AND expressions
             FieldProjectionCondition::And(left, right) => {
                 let left_simplified = Self::simplify_condition(*left, parent_type_guard);
                 let right_simplified = Self::simplify_condition(*right, parent_type_guard);
@@ -468,7 +469,7 @@ impl FieldProjectionPlan {
         field_selections: &mut IndexMap<String, FieldProjectionPlan>,
         schema_metadata: &SchemaMetadata,
         parent_type_name: &str,
-        parent_condition: &FieldProjectionCondition,
+        parent_condition: &Option<FieldProjectionCondition>,
     ) {
         let field_name = &field.name;
         let response_key = field.alias.as_ref().unwrap_or(field_name).clone();
@@ -510,12 +511,13 @@ impl FieldProjectionPlan {
             )
         };
 
-        let parent_type_guard = Self::get_type_guard(parent_condition);
+        let parent_type_guard = parent_condition
+            .as_ref()
+            .and_then(|c| Self::get_type_guard(c));
         let conditions_for_selections = Self::apply_directive_conditions(
-            match &parent_type_guard {
-                None => FieldProjectionCondition::True,
-                _ => FieldProjectionCondition::ParentTypeCondition(type_condition.clone()),
-            },
+            parent_type_guard
+                .as_ref()
+                .map(|_| FieldProjectionCondition::ParentTypeCondition(type_condition.clone())),
             &field.include_if,
             &field.skip_if,
         );
@@ -523,7 +525,10 @@ impl FieldProjectionPlan {
         let mut condition_for_field = if schema_metadata.is_union_type(&field_type)
             || schema_metadata.is_interface_type(&field_type)
         {
-            parent_condition.and(FieldProjectionCondition::FieldTypeCondition(type_condition))
+            Self::optional_and(
+                parent_condition.clone(),
+                Some(FieldProjectionCondition::FieldTypeCondition(type_condition)),
+            )
         } else {
             // It makes no sense to have a field type condition for concrete types
             // as they'd always evaluate to true.
@@ -536,19 +541,21 @@ impl FieldProjectionPlan {
         );
 
         if let Some(enum_values) = schema_metadata.enum_values.get(&field_type) {
-            condition_for_field = condition_for_field.and(
-                FieldProjectionCondition::EnumValuesCondition(enum_values.clone()),
+            condition_for_field = Self::optional_and(
+                condition_for_field,
+                Some(FieldProjectionCondition::EnumValuesCondition(
+                    enum_values.clone(),
+                )),
             );
         }
-
-        let final_conditions = Self::simplify_condition(condition_for_field, &parent_type_guard);
 
         let new_plan = FieldProjectionPlan {
             field_name: field_name.to_string(),
             response_key,
             parent_type_guard,
             is_typename: field_name == TYPENAME_FIELD_NAME,
-            conditions: final_conditions,
+            conditions: condition_for_field
+                .and_then(|cond| Self::simplify_condition(cond, &parent_type_guard)),
             value: ProjectionValueSource::ResponseData {
                 selections: Self::from_selection_set(
                     &field.selections,
@@ -567,7 +574,7 @@ impl FieldProjectionPlan {
         inline_fragment: &InlineFragmentSelection,
         field_selections: &mut IndexMap<String, FieldProjectionPlan>,
         schema_metadata: &SchemaMetadata,
-        parent_condition: &FieldProjectionCondition,
+        parent_condition: &Option<FieldProjectionCondition>,
     ) {
         let inline_fragment_type = &inline_fragment.type_condition;
         let type_condition = if schema_metadata.is_object_type(inline_fragment_type) {
@@ -580,8 +587,11 @@ impl FieldProjectionPlan {
             )
         };
 
-        let mut condition_for_fragment = parent_condition.and(
-            FieldProjectionCondition::ParentTypeCondition(type_condition.clone()),
+        let mut condition_for_fragment = Self::optional_and(
+            parent_condition.clone(),
+            Some(FieldProjectionCondition::ParentTypeCondition(
+                type_condition.clone(),
+            )),
         );
 
         condition_for_fragment = Self::apply_directive_conditions(
@@ -618,9 +628,20 @@ impl FieldProjectionPlan {
         }
     }
 
+    /// Combines optional conditions with AND logic
+    fn optional_and(
+        left: Option<FieldProjectionCondition>,
+        right: Option<FieldProjectionCondition>,
+    ) -> Option<FieldProjectionCondition> {
+        match (left, right) {
+            (None, None) => None,
+            (Some(c), None) | (None, Some(c)) => Some(c),
+            (Some(l), Some(r)) => Some(l.and(r)),
+        }
+    }
+
     fn get_type_guard(condition: &FieldProjectionCondition) -> Option<TypeCondition> {
         match condition {
-            FieldProjectionCondition::True => None,
             FieldProjectionCondition::ParentTypeCondition(tc) => Some(tc.clone()),
             FieldProjectionCondition::And(a, b) => {
                 Self::get_type_guard(a).or_else(|| Self::get_type_guard(b))
@@ -659,7 +680,6 @@ impl Display for TypeCondition {
 impl Display for FieldProjectionCondition {
     fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
         match self {
-            FieldProjectionCondition::True => write!(f, "True"),
             FieldProjectionCondition::IncludeIfVariable(var) => {
                 write!(f, "Include(if: ${})", var)
             }

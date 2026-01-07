@@ -416,7 +416,6 @@ where
     T: Fn() -> Result<&'a str, ProjectionError>,
 {
     match cond {
-        FieldProjectionCondition::True => Ok(()),
         FieldProjectionCondition::And(condition_a, condition_b) => check(
             condition_a,
             parent_type_name,
