@@ -23,6 +23,13 @@ pub enum TypeCondition {
 }
 
 impl TypeCondition {
+    pub fn matches(&self, type_name: &str) -> bool {
+        match self {
+            TypeCondition::Exact(expected) => type_name == expected,
+            TypeCondition::OneOf(possible) => possible.contains(type_name),
+        }
+    }
+
     pub fn union(self, other: TypeCondition) -> TypeCondition {
         use TypeCondition::*;
         match (self, other) {
@@ -102,8 +109,13 @@ pub enum ProjectionValueSource {
 #[derive(Debug, Clone)]
 pub struct FieldProjectionPlan {
     pub field_name: String,
-    pub field_type: String,
     pub response_key: String,
+    pub is_typename: bool,
+    /// A condition that checks the name of the parent object.
+    /// This is used to ensure that fields inside a fragment (e.g., `... on User`)
+    /// are only applied when the parent object's type matches the fragment's type condition.
+    /// If `None`, the plan applies to any parent type.
+    pub parent_type_guard: Option<TypeCondition>,
     pub conditions: FieldProjectionCondition,
     pub value: ProjectionValueSource,
 }
@@ -268,43 +280,54 @@ impl FieldProjectionPlan {
         field_selections: &mut IndexMap<String, FieldProjectionPlan>,
         plan_to_merge: FieldProjectionPlan,
     ) {
-        if let Some(existing_plan) = field_selections.get_mut(&plan_to_merge.response_key) {
-            existing_plan.conditions = existing_plan.conditions.or(plan_to_merge.conditions);
+        let Some(existing_plan) = field_selections.get_mut(&plan_to_merge.response_key) else {
+            field_selections.insert(plan_to_merge.response_key.clone(), plan_to_merge);
+            return;
+        };
 
-            match (&mut existing_plan.value, plan_to_merge.value) {
-                (
-                    ProjectionValueSource::ResponseData {
-                        selections: existing_selections,
-                    },
-                    ProjectionValueSource::ResponseData {
-                        selections: new_selections,
-                    },
-                ) => {
-                    if let Some(new_selections) = new_selections {
-                        match existing_selections {
-                            Some(selections) => {
-                                Arc::make_mut(selections).extend(
-                                    Arc::try_unwrap(new_selections)
-                                        .unwrap_or_else(|arc| (*arc).clone()),
-                                );
-                            }
-                            None => *existing_selections = Some(new_selections),
+        // Merge type guards with OR semantics
+        existing_plan.parent_type_guard = match (
+            existing_plan.parent_type_guard.take(),
+            plan_to_merge.parent_type_guard,
+        ) {
+            (Some(left), Some(right)) => Some(left.union(right)),
+            (Some(guard), None) | (None, Some(guard)) => Some(guard),
+            (None, None) => None,
+        };
+
+        existing_plan.conditions = existing_plan.conditions.or(plan_to_merge.conditions);
+
+        match (&mut existing_plan.value, plan_to_merge.value) {
+            (
+                ProjectionValueSource::ResponseData {
+                    selections: existing_selections,
+                },
+                ProjectionValueSource::ResponseData {
+                    selections: new_selections,
+                },
+            ) => {
+                if let Some(new_selections) = new_selections {
+                    match existing_selections {
+                        Some(selections) => {
+                            Arc::make_mut(selections).extend(
+                                Arc::try_unwrap(new_selections)
+                                    .unwrap_or_else(|arc| (*arc).clone()),
+                            );
                         }
+                        None => *existing_selections = Some(new_selections),
                     }
                 }
-                (ProjectionValueSource::Null, ProjectionValueSource::Null) => {
-                    // Both plans have `Null` value source, so nothing to merge
-                }
-                _ => {
-                    // This case should not be reached during initial plan construction,
-                    // as `Null` is only introduced during the authorization step.
-                    // If we merge a plan, it's always to combine selections.
-                    warn!("Merging plans with `Null` value source is not supported during initial plan construction.");
-                    existing_plan.value = ProjectionValueSource::Null;
-                }
             }
-        } else {
-            field_selections.insert(plan_to_merge.response_key.clone(), plan_to_merge);
+            (ProjectionValueSource::Null, ProjectionValueSource::Null) => {
+                // Both plans have `Null` value source, so nothing to merge
+            }
+            _ => {
+                // This case should not be reached during initial plan construction,
+                // as `Null` is only introduced during the authorization step.
+                // If we merge a plan, it's always to combine selections.
+                warn!("Merging plans with `Null` value source is not supported during initial plan construction.");
+                existing_plan.value = ProjectionValueSource::Null;
+            }
         }
     }
 
@@ -354,12 +377,13 @@ impl FieldProjectionPlan {
                     .get_possible_types(&field_type),
             )
         };
+
+        let parent_type_guard = Self::extract_type_guard_from_condition(parent_condition);
         let conditions_for_selections = Self::apply_directive_conditions(
             FieldProjectionCondition::ParentTypeCondition(type_condition.clone()),
             &field.include_if,
             &field.skip_if,
         );
-
         let mut condition_for_field =
             parent_condition.and(FieldProjectionCondition::FieldTypeCondition(type_condition));
         condition_for_field = Self::apply_directive_conditions(
@@ -373,11 +397,11 @@ impl FieldProjectionPlan {
                 FieldProjectionCondition::EnumValuesCondition(enum_values.clone()),
             );
         }
-
         let new_plan = FieldProjectionPlan {
             field_name: field_name.to_string(),
-            field_type: field_type.clone(),
             response_key,
+            parent_type_guard,
+            is_typename: field_name == TYPENAME_FIELD_NAME,
             conditions: condition_for_field,
             value: ProjectionValueSource::ResponseData {
                 selections: Self::from_selection_set(
@@ -411,7 +435,7 @@ impl FieldProjectionPlan {
         };
 
         let mut condition_for_fragment = parent_condition.and(
-            FieldProjectionCondition::ParentTypeCondition(type_condition),
+            FieldProjectionCondition::ParentTypeCondition(type_condition.clone()),
         );
 
         condition_for_fragment = Self::apply_directive_conditions(
@@ -420,12 +444,17 @@ impl FieldProjectionPlan {
             &inline_fragment.skip_if,
         );
 
-        if let Some(inline_fragment_selections) = Self::from_selection_set(
+        if let Some(mut inline_fragment_selections) = Self::from_selection_set(
             &inline_fragment.selections,
             schema_metadata,
             inline_fragment_type,
             &condition_for_fragment,
         ) {
+            // Update the type guard for all selections from this fragment
+            for selection in &mut inline_fragment_selections {
+                selection.parent_type_guard = Some(type_condition.clone());
+            }
+
             for selection in inline_fragment_selections {
                 Self::merge_plan(field_selections, selection);
             }
@@ -435,10 +464,32 @@ impl FieldProjectionPlan {
     pub fn with_new_value(&self, new_value: ProjectionValueSource) -> FieldProjectionPlan {
         FieldProjectionPlan {
             field_name: self.field_name.clone(),
-            field_type: self.field_type.clone(),
             response_key: self.response_key.clone(),
+            parent_type_guard: self.parent_type_guard.clone(),
             conditions: self.conditions.clone(),
+            is_typename: self.is_typename,
             value: new_value,
+        }
+    }
+
+    fn extract_type_guard_from_condition(
+        condition: &FieldProjectionCondition,
+    ) -> Option<TypeCondition> {
+        match condition {
+            FieldProjectionCondition::ParentTypeCondition(tc) => Some(tc.clone()),
+            FieldProjectionCondition::And(a, b) => Self::extract_type_guard_from_condition(a)
+                .or_else(|| Self::extract_type_guard_from_condition(b)),
+            FieldProjectionCondition::Or(a, b) => {
+                match (
+                    Self::extract_type_guard_from_condition(a),
+                    Self::extract_type_guard_from_condition(b),
+                ) {
+                    (Some(ga), Some(gb)) => Some(ga.union(gb)),
+                    (Some(guard), None) | (None, Some(guard)) => Some(guard),
+                    (None, None) => None,
+                }
+            }
+            _ => None,
         }
     }
 }
@@ -509,13 +560,17 @@ impl PrettyDisplay for FieldProjectionPlan {
         let indent = get_indent(depth);
 
         if self.response_key == self.field_name {
-            writeln!(f, "{}{}: {} {{", indent, self.response_key, self.field_type)?;
+            writeln!(f, "{}{}: {{", indent, self.response_key)?;
         } else {
             writeln!(
                 f,
-                "{}{} (alias for {}): {} {{",
-                indent, self.response_key, self.field_name, self.field_type
+                "{}{} (alias for {}) {{",
+                indent, self.response_key, self.field_name
             )?;
+        }
+
+        if let Some(parent_type_guard) = self.parent_type_guard.as_ref() {
+            writeln!(f, "{}  type guard: {}", indent, parent_type_guard)?;
         }
 
         writeln!(f, "{}  conditions: {}", indent, self.conditions)?;
