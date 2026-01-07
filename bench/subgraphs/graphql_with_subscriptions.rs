@@ -189,7 +189,7 @@ pub fn create_multipart_subscribe_stream(
     // GraphQLResponse stream to Vec<u8> stream
     let byte_stream =
         input.map(|resp| serde_json::to_vec(&resp).expect("Failed to serialize GraphQLResponse"));
-    multipart_subscribe::create_stream(byte_stream, heartbeat_interval)
+    multipart_subscribe::create_apollo_multipart_http_stream(byte_stream, heartbeat_interval)
         .map(|result| {
             // Convert Result<ntex::util::Bytes, std::io::Error> to bytes::Bytes
             // Unwrap is safe here as we control the serialization above

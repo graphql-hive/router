@@ -126,13 +126,22 @@ pub async fn graphql_request_handler(
                         std::time::Duration::from_secs(10),
                     )),
                 )
-            } else {
-                // NOTE: client accept headers should have been validated earlier
+            } else if req.accepts_content_type(*MULTIPART_MIXED)
+                && req.accepts_content_type(r#"subscriptionSpec="1.0""#)
+            {
                 (
                     http::HeaderValue::from_static("multipart/mixed;boundary=graphql"),
-                    Box::pin(multipart_subscribe::create_stream(
+                    Box::pin(multipart_subscribe::create_apollo_multipart_http_stream(
                         response.body,
                         std::time::Duration::from_secs(10),
+                    )),
+                )
+            } else {
+                // NOTE: client accept headers have been validated before. it's safe to default here.
+                (
+                    http::HeaderValue::from_static("multipart/mixed;boundary=-"),
+                    Box::pin(multipart_subscribe::create_incremental_delivery_stream(
+                        response.body,
                     )),
                 )
             };

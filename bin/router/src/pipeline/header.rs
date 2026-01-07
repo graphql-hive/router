@@ -17,7 +17,7 @@ lazy_static! {
     pub static ref APPLICATION_GRAPHQL_RESPONSE_JSON: HeaderValue =
         HeaderValue::from_static(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
     pub static ref TEXT_EVENT_STREAM: &'static str = "text/event-stream";
-    pub static ref MULTIPART_MIXED: &'static str = r#"multipart/mixed;subscriptionSpec="1.0""#;
+    pub static ref MULTIPART_MIXED: &'static str = "multipart/mixed";
 }
 
 pub trait RequestAccepts {
