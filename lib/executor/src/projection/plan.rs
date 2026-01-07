@@ -14,6 +14,7 @@ use hive_router_query_planner::{
     utils::pretty_display::{get_indent, PrettyDisplay},
 };
 
+use crate::projection::error::ProjectionError;
 use crate::{introspection::schema::SchemaMetadata, utils::consts::TYPENAME_FIELD_NAME};
 
 #[derive(Debug, Clone)]
@@ -116,7 +117,7 @@ pub struct FieldProjectionPlan {
     /// are only applied when the parent object's type matches the fragment's type condition.
     /// If `None`, the plan applies to any parent type.
     pub parent_type_guard: Option<TypeCondition>,
-    pub conditions: FieldProjectionCondition,
+    pub conditions: Option<FieldProjectionCondition>,
     pub value: ProjectionValueSource,
 }
 
@@ -125,6 +126,7 @@ pub enum FieldProjectionCondition {
     IncludeIfVariable(String),
     SkipIfVariable(String),
     ParentTypeCondition(TypeCondition),
+    True,
     FieldTypeCondition(TypeCondition),
     EnumValuesCondition(HashSet<String>),
     Or(Box<FieldProjectionCondition>, Box<FieldProjectionCondition>),
@@ -136,6 +138,13 @@ pub enum FieldProjectionConditionError {
     InvalidFieldType,
     Skip,
     InvalidEnumValue,
+    Fatal(ProjectionError),
+}
+
+impl From<ProjectionError> for FieldProjectionConditionError {
+    fn from(err: ProjectionError) -> Self {
+        FieldProjectionConditionError::Fatal(err)
+    }
 }
 
 impl FieldProjectionCondition {
@@ -144,6 +153,8 @@ impl FieldProjectionCondition {
         use FieldProjectionCondition::*;
 
         match (self, right) {
+            (True, other) => other.clone(),
+            (other, True) => other.clone(),
             (ParentTypeCondition(left), ParentTypeCondition(right)) => {
                 ParentTypeCondition(left.clone().intersect(right))
             }
@@ -164,6 +175,7 @@ impl FieldProjectionCondition {
         use FieldProjectionCondition::*;
 
         match (self, right) {
+            (True, _) | (_, True) => True,
             (ParentTypeCondition(left), ParentTypeCondition(right)) => {
                 ParentTypeCondition(left.clone().union(right))
             }
@@ -192,17 +204,7 @@ impl FieldProjectionPlan {
             None => "Query",
         };
 
-        let root_type_condition = if schema_metadata.is_object_type(root_type_name) {
-            TypeCondition::Exact(root_type_name.to_string())
-        } else {
-            TypeCondition::OneOf(
-                schema_metadata
-                    .possible_types
-                    .get_possible_types(root_type_name),
-            )
-        };
-
-        let conditions = FieldProjectionCondition::ParentTypeCondition(root_type_condition);
+        let conditions = FieldProjectionCondition::True;
         (
             root_type_name,
             Self::from_selection_set(
@@ -295,7 +297,12 @@ impl FieldProjectionPlan {
             (None, None) => None,
         };
 
-        existing_plan.conditions = existing_plan.conditions.or(plan_to_merge.conditions);
+        existing_plan.conditions = match (existing_plan.conditions.take(), plan_to_merge.conditions)
+        {
+            (Some(left), Some(right)) => Some(left.or(right)),
+            (Some(cond), None) | (None, Some(cond)) => Some(cond),
+            (None, None) => None,
+        };
 
         match (&mut existing_plan.value, plan_to_merge.value) {
             (
@@ -328,6 +335,43 @@ impl FieldProjectionPlan {
                 warn!("Merging plans with `Null` value source is not supported during initial plan construction.");
                 existing_plan.value = ProjectionValueSource::Null;
             }
+        }
+    }
+
+    fn remove_redundant_parent_type_condition(
+        condition: FieldProjectionCondition,
+        parent_type_guard: &Option<TypeCondition>,
+    ) -> Option<FieldProjectionCondition> {
+        let Some(TypeCondition::Exact(guard_type)) = parent_type_guard else {
+            return Some(condition);
+        };
+
+        match condition {
+            FieldProjectionCondition::True => None,
+
+            // Simple case: the entire condition is the redundant ParentTypeCondition
+            FieldProjectionCondition::ParentTypeCondition(TypeCondition::Exact(cond_type))
+                if &cond_type == guard_type =>
+            {
+                None
+            }
+
+            // Complex case: it's an AND expression, try to simplify
+            FieldProjectionCondition::And(left, right) => {
+                let left_simplified =
+                    Self::remove_redundant_parent_type_condition(*left, parent_type_guard);
+                let right_simplified =
+                    Self::remove_redundant_parent_type_condition(*right, parent_type_guard);
+
+                match (left_simplified, right_simplified) {
+                    (None, None) => None,
+                    (Some(cond), None) | (None, Some(cond)) => Some(cond),
+                    (Some(l), Some(r)) => Some(l.and(r)),
+                }
+            }
+
+            // Other cases: keep the condition as-is
+            other => Some(other),
         }
     }
 
@@ -378,9 +422,31 @@ impl FieldProjectionPlan {
             )
         };
 
-        let parent_type_guard = Self::extract_type_guard_from_condition(parent_condition);
+        let parent_type_guard =
+            if let Some(guard) = Self::extract_type_guard_from_condition(parent_condition) {
+                match guard {
+                    TypeCondition::Exact(guard_type) if guard_type == parent_type_name => {
+                        // Guard matches the parent type - redundant, drop it
+                        None
+                    }
+                    TypeCondition::OneOf(_) => {
+                        // Abstract type - guard is meaningful
+                        Some(guard)
+                    }
+                    TypeCondition::Exact(_) => {
+                        // Guard is different from parent type - this happens with
+                        // inline fragments that narrow abstract types to concrete
+                        Some(guard)
+                    }
+                }
+            } else {
+                None
+            };
         let conditions_for_selections = Self::apply_directive_conditions(
-            FieldProjectionCondition::ParentTypeCondition(type_condition.clone()),
+            match &parent_type_guard {
+                None => FieldProjectionCondition::True,
+                _ => FieldProjectionCondition::ParentTypeCondition(type_condition.clone()),
+            },
             &field.include_if,
             &field.skip_if,
         );
@@ -405,12 +471,21 @@ impl FieldProjectionPlan {
                 FieldProjectionCondition::EnumValuesCondition(enum_values.clone()),
             );
         }
+
+        let simplified_conditions = Self::simplify_and_remove_parent_type_condition(
+            &condition_for_field,
+            &parent_type_guard,
+        );
+        let final_conditions = simplified_conditions.and_then(|cond| {
+            Self::remove_redundant_parent_type_condition(cond, &parent_type_guard)
+        });
+
         let new_plan = FieldProjectionPlan {
             field_name: field_name.to_string(),
             response_key,
             parent_type_guard,
             is_typename: field_name == TYPENAME_FIELD_NAME,
-            conditions: condition_for_field,
+            conditions: final_conditions,
             value: ProjectionValueSource::ResponseData {
                 selections: Self::from_selection_set(
                     &field.selections,
@@ -484,6 +559,7 @@ impl FieldProjectionPlan {
         condition: &FieldProjectionCondition,
     ) -> Option<TypeCondition> {
         match condition {
+            FieldProjectionCondition::True => None,
             FieldProjectionCondition::ParentTypeCondition(tc) => Some(tc.clone()),
             FieldProjectionCondition::And(a, b) => Self::extract_type_guard_from_condition(a)
                 .or_else(|| Self::extract_type_guard_from_condition(b)),
@@ -498,6 +574,39 @@ impl FieldProjectionPlan {
                 }
             }
             _ => None,
+        }
+    }
+
+    fn simplify_and_remove_parent_type_condition(
+        condition: &FieldProjectionCondition,
+        parent_type_guard: &Option<TypeCondition>,
+    ) -> Option<FieldProjectionCondition> {
+        let Some(TypeCondition::Exact(guard_type)) = parent_type_guard else {
+            return Some(condition.clone());
+        };
+
+        match condition {
+            FieldProjectionCondition::ParentTypeCondition(TypeCondition::Exact(cond_type))
+                if cond_type == guard_type =>
+            {
+                // Redundant! Return None
+                None
+            }
+            FieldProjectionCondition::And(left, right) => {
+                // Check if left or right is the redundant condition
+                let left_simplified =
+                    Self::simplify_and_remove_parent_type_condition(left, parent_type_guard);
+                let right_simplified =
+                    Self::simplify_and_remove_parent_type_condition(right, parent_type_guard);
+
+                match (left_simplified, right_simplified) {
+                    (None, None) => None,
+                    (Some(cond), None) | (None, Some(cond)) => Some(cond),
+                    (Some(l), Some(r)) => Some(l.and(r)),
+                }
+            }
+            // For other condition types, keep them as-is
+            _ => Some(condition.clone()),
         }
     }
 }
@@ -524,6 +633,7 @@ impl Display for TypeCondition {
 impl Display for FieldProjectionCondition {
     fn fmt(&self, f: &mut FmtFormatter<'_>) -> FmtResult {
         match self {
+            FieldProjectionCondition::True => write!(f, "True"),
             FieldProjectionCondition::IncludeIfVariable(var) => {
                 write!(f, "Include(if: ${})", var)
             }
@@ -581,7 +691,9 @@ impl PrettyDisplay for FieldProjectionPlan {
             writeln!(f, "{}  type guard: {}", indent, parent_type_guard)?;
         }
 
-        writeln!(f, "{}  conditions: {}", indent, self.conditions)?;
+        if let Some(conditions) = self.conditions.as_ref() {
+            writeln!(f, "{}  conditions: {}", indent, conditions)?;
+        }
 
         match &self.value {
             ProjectionValueSource::ResponseData { selections } => {
