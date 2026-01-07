@@ -76,9 +76,11 @@ where
         let body = json!({
             "errors": [error]
         });
-        self.end_response(Response::BadRequest()
-            .status(status)
-            .body(sonic_rs::to_vec(&body).unwrap()))
+        self.end_response(
+            Response::BadRequest()
+                .status(status)
+                .body(sonic_rs::to_vec(&body).unwrap()),
+        )
     }
 
     fn on_end<'exec, F>(self, f: F) -> StartHookResult<'exec, Self, TEndPayload>
@@ -120,23 +122,25 @@ where
         }
     }
 
-    fn end_response_body<T: Serialize>(self, body: T) -> EndHookResult<Self> {
-        let http_response = Response::Ok().body(sonic_rs::to_vec(&body).unwrap());
-        EndHookResult {
-            payload: self,
-            control_flow: EndControlFlow::EndResponse(http_response),
-        }
+    fn end_response_body<T: Serialize>(
+        self,
+        body: T,
+        status_code: StatusCode,
+    ) -> EndHookResult<Self> {
+        let http_response =
+            Response::with_body(status_code, sonic_rs::to_vec(&body).unwrap().into());
+        self.end_response(http_response)
     }
 
-    fn end_graphql_error(self, error: GraphQLError) -> EndHookResult<Self> {
+    fn end_graphql_error(
+        self,
+        error: GraphQLError,
+        status_code: StatusCode,
+    ) -> EndHookResult<Self> {
         let body = json!({
             "errors": [error]
         });
-        let http_response = Response::BadRequest().body(sonic_rs::to_vec(&body).unwrap());
-        EndHookResult {
-            payload: self,
-            control_flow: EndControlFlow::EndResponse(http_response),
-        }
+        self.end_response_body(body, status_code)
     }
 }
 
