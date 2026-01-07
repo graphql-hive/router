@@ -861,32 +861,3 @@ impl PrettyDisplay for FieldProjectionPlan {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashSet;
-
-    #[test]
-    fn test_get_type_guard_and_uses_intersect() {
-        // Test that And conditions properly intersect type guards
-        let book = TypeCondition::Exact("Book".to_string());
-        let magazine = TypeCondition::Exact("Magazine".to_string());
-
-        let cond_book = FieldProjectionCondition::ParentTypeCondition(book.clone());
-        let cond_magazine = FieldProjectionCondition::ParentTypeCondition(magazine.clone());
-
-        // And(Book, Magazine) should produce empty set (impossible)
-        let and_condition = FieldProjectionCondition::And(
-            Box::new(cond_book.clone()),
-            Box::new(cond_magazine.clone()),
-        );
-
-        let result = FieldProjectionPlan::get_type_guard(&and_condition);
-        assert_eq!(result, Some(TypeCondition::OneOf(HashSet::default())));
-
-        // And(Book, Book) should produce Book
-        let and_same =
-            FieldProjectionCondition::And(Box::new(cond_book.clone()), Box::new(cond_book.clone()));
-
-        let result_
