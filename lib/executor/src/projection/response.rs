@@ -69,7 +69,7 @@ impl<'a> TypeName<'a> {
                 schema,
                 cached,
             } => cached
-                .get_or_init(|| resolve_type_name(selection, *data, &parent, schema))
+                .get_or_init(|| resolve_type_name(selection, *data, parent, schema))
                 .clone(),
         }
     }

@@ -623,9 +623,7 @@ impl FieldProjectionPlan {
             )
         };
 
-        let parent_type_guard = parent_condition
-            .as_ref()
-            .and_then(|c| Self::get_type_guard(c));
+        let parent_type_guard = parent_condition.as_ref().and_then(Self::get_type_guard);
         let conditions_for_selections = Self::apply_directive_conditions(
             parent_type_guard
                 .as_ref()
