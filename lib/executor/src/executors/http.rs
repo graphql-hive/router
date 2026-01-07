@@ -22,8 +22,6 @@ use http_body_util::Full;
 use hyper::Version;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
-use ntex::http::body::Body;
-use ntex::http::Response;
 use tokio::sync::Semaphore;
 use tracing::debug;
 
@@ -185,8 +183,8 @@ async fn send_request<'a>(
             start_payload = result.payload;
             match result.control_flow {
                 StartControlFlow::Proceed => { /* continue to next plugin */ }
-                StartControlFlow::EndWithResponse(response) => {
-                    return Ok(response.into());
+                StartControlFlow::EndWithResponse(_response) => {
+                    // TODO: Short-circuit the request and return the response immediately
                 }
                 StartControlFlow::OnEnd(callback) => {
                     on_end_callbacks.push(callback);
@@ -266,8 +264,8 @@ async fn send_request<'a>(
                 end_payload = result.payload;
                 match result.control_flow {
                     EndControlFlow::Proceed => { /* continue to next callback */ }
-                    EndControlFlow::EndWithResponse(response) => {
-                        return Ok(response.into());
+                    EndControlFlow::EndWithResponse(_response) => {
+                        // TODO: Short-circuit the request and return the response immediately
                     }
                 }
             }
@@ -395,28 +393,5 @@ impl HttpResponse {
                 resp.bytes = Some(self.body.clone());
                 resp
             })
-    }
-}
-
-impl From<Response> for HttpResponse {
-    fn from(response: Response<Body>) -> Self {
-        let (response, body) = response.into_parts();
-        let body: Body = body.into();
-        let body = match body {
-            Body::Bytes(bytes) => bytes::Bytes::from(bytes.to_vec()),
-            _ => bytes::Bytes::new(),
-        }
-        .into();
-        let headers = HeaderMap::from_iter(
-            response
-                .headers()
-                .iter()
-                .map(|(name, value)| (name.into(), value.into())),
-        );
-        HttpResponse {
-            status: response.status(),
-            headers: headers.into(),
-            body,
-        }
     }
 }
