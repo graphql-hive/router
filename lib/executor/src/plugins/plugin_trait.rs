@@ -1,10 +1,5 @@
-use hive_router_internal::BoxError;
-use http::StatusCode;
-use ntex::{http::Response, web};
-use serde::{de::DeserializeOwned, Serialize};
-use sonic_rs::json;
-
 use crate::{
+    executors::http::HttpResponse,
     hooks::{
         on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
         on_graphql_params::{OnGraphQLParamsStartHookPayload, OnGraphQLParamsStartHookResult},
@@ -22,18 +17,22 @@ use crate::{
         },
         on_supergraph_load::{OnSupergraphLoadStartHookPayload, OnSupergraphLoadStartHookResult},
     },
-    response::graphql_error::GraphQLError,
+    response::{graphql_error::GraphQLError, subgraph_response::SubgraphResponse},
 };
+use bytes::Bytes;
+use hive_router_internal::BoxError;
+use serde::{de::DeserializeOwned, Serialize};
+use sonic_rs::json;
 
-pub struct StartHookResult<'exec, TStartPayload, TEndPayload> {
+pub struct StartHookResult<'exec, TStartPayload, TEndPayload, TResponse> {
     pub payload: TStartPayload,
-    pub control_flow: StartControlFlow<'exec, TEndPayload>,
+    pub control_flow: StartControlFlow<'exec, TEndPayload, TResponse>,
 }
 
-pub enum StartControlFlow<'exec, TEndPayload> {
+pub enum StartControlFlow<'exec, TEndPayload, TResponse> {
     Proceed,
-    EndWithResponse(web::HttpResponse),
-    OnEnd(Box<dyn FnOnce(TEndPayload) -> EndHookResult<TEndPayload> + Send + 'exec>),
+    EndWithResponse(TResponse),
+    OnEnd(Box<dyn FnOnce(TEndPayload) -> EndHookResult<TEndPayload, TResponse> + Send + 'exec>),
 }
 
 // Override using methods (Like builder pattern)
@@ -41,11 +40,12 @@ pub enum StartControlFlow<'exec, TEndPayload> {
 // Re-export Plugin related types from router crate (graphql_tools validation stuff, plugin stuff from internal crate)
 // Move Plugin stuff from executor to internal
 
-pub trait StartHookPayload<TEndPayload: EndHookPayload>
+pub trait StartHookPayload<TEndPayload: EndHookPayload<TResponse>, TResponse>
 where
     Self: Sized,
+    TResponse: FromGraphQLErrorToResponse,
 {
-    fn proceed<'exec>(self) -> StartHookResult<'exec, Self, TEndPayload> {
+    fn proceed<'exec>(self) -> StartHookResult<'exec, Self, TEndPayload, TResponse> {
         StartHookResult {
             payload: self,
             control_flow: StartControlFlow::Proceed,
@@ -54,37 +54,31 @@ where
 
     fn end_with_response<'exec>(
         self,
-        output: web::HttpResponse,
-    ) -> StartHookResult<'exec, Self, TEndPayload> {
+        output: TResponse,
+    ) -> StartHookResult<'exec, Self, TEndPayload, TResponse> {
         StartHookResult {
             payload: self,
             control_flow: StartControlFlow::EndWithResponse(output),
         }
     }
 
-    fn end_with_response_json<'exec, T: Serialize>(
-        self,
-        body: T,
-        status: StatusCode,
-    ) -> StartHookResult<'exec, Self, TEndPayload> {
-        let http_response = Response::with_body(status, sonic_rs::to_vec(&body).unwrap().into());
-        self.end_with_response(http_response)
-    }
-
     fn end_with_graphql_error<'exec>(
         self,
         error: GraphQLError,
-        status: StatusCode,
-    ) -> StartHookResult<'exec, Self, TEndPayload> {
-        let body = json!({
-            "errors": [error]
-        });
-        self.end_with_response_json(body, status)
+        status_code: http::StatusCode,
+    ) -> StartHookResult<'exec, Self, TEndPayload, TResponse>
+    where
+        TResponse: FromGraphQLErrorToResponse,
+    {
+        self.end_with_response(TResponse::from_graphql_error_to_response(
+            error,
+            status_code,
+        ))
     }
 
-    fn on_end<'exec, F>(self, f: F) -> StartHookResult<'exec, Self, TEndPayload>
+    fn on_end<'exec, F>(self, f: F) -> StartHookResult<'exec, Self, TEndPayload, TResponse>
     where
-        F: FnOnce(TEndPayload) -> EndHookResult<TEndPayload> + Send + 'exec,
+        F: FnOnce(TEndPayload) -> EndHookResult<TEndPayload, TResponse> + Send + 'exec,
     {
         StartHookResult {
             payload: self,
@@ -93,53 +87,97 @@ where
     }
 }
 
-pub struct EndHookResult<TEndPayload> {
+pub struct EndHookResult<TEndPayload, TResponse> {
     pub payload: TEndPayload,
-    pub control_flow: EndControlFlow,
+    pub control_flow: EndControlFlow<TResponse>,
 }
 
-pub enum EndControlFlow {
+pub enum EndControlFlow<TResponse> {
     Proceed,
-    EndWithResponse(web::HttpResponse),
+    EndWithResponse(TResponse),
 }
 
-pub trait EndHookPayload
+pub trait EndHookPayload<TResponse>
 where
     Self: Sized,
+    TResponse: FromGraphQLErrorToResponse,
 {
-    fn proceed(self) -> EndHookResult<Self> {
+    fn proceed(self) -> EndHookResult<Self, TResponse> {
         EndHookResult {
             payload: self,
             control_flow: EndControlFlow::Proceed,
         }
     }
 
-    fn end_with_response(self, output: web::HttpResponse) -> EndHookResult<Self> {
+    fn end_with_response(self, output: TResponse) -> EndHookResult<Self, TResponse> {
         EndHookResult {
             payload: self,
             control_flow: EndControlFlow::EndWithResponse(output),
         }
     }
 
-    fn end_with_response_json<T: Serialize>(
-        self,
-        body: T,
-        status_code: StatusCode,
-    ) -> EndHookResult<Self> {
-        let http_response =
-            Response::with_body(status_code, sonic_rs::to_vec(&body).unwrap().into());
-        self.end_with_response(http_response)
-    }
-
     fn end_with_graphql_error(
         self,
         error: GraphQLError,
-        status_code: StatusCode,
-    ) -> EndHookResult<Self> {
+        status_code: http::StatusCode,
+    ) -> EndHookResult<Self, TResponse> {
+        self.end_with_response(TResponse::from_graphql_error_to_response(
+            error,
+            status_code,
+        ))
+    }
+}
+
+pub trait FromGraphQLErrorToResponse {
+    fn from_graphql_error_to_response(error: GraphQLError, status_code: http::StatusCode) -> Self;
+}
+
+pub fn from_json_to_http_response<T: Serialize>(
+    body: T,
+    status_code: http::StatusCode,
+) -> ntex::http::Response {
+    let body = sonic_rs::to_vec(&body).unwrap_or_default();
+    ntex::http::Response::build(ntex::http::StatusCode::OK)
+        .content_type("application/json")
+        .status(status_code)
+        .body(body)
+}
+
+impl FromGraphQLErrorToResponse for ntex::http::Response {
+    fn from_graphql_error_to_response(error: GraphQLError, status_code: http::StatusCode) -> Self {
         let body = json!({
             "errors": [error]
         });
-        self.end_with_response_json(body, status_code)
+        from_json_to_http_response(body, status_code)
+    }
+}
+
+impl FromGraphQLErrorToResponse for SubgraphResponse<'_> {
+    fn from_graphql_error_to_response(error: GraphQLError, _status_code: http::StatusCode) -> Self {
+        SubgraphResponse {
+            errors: Some(vec![error]),
+            ..Default::default()
+        }
+    }
+}
+
+impl FromGraphQLErrorToResponse for HttpResponse {
+    fn from_graphql_error_to_response(error: GraphQLError, status: http::StatusCode) -> Self {
+        let body = json!({
+            "errors": [error]
+        });
+        let body_bytes = sonic_rs::to_vec(&body).unwrap_or_default();
+        HttpResponse {
+            body: Bytes::from(body_bytes).into(),
+            status,
+            ..Default::default()
+        }
+    }
+}
+
+impl FromGraphQLErrorToResponse for () {
+    fn from_graphql_error_to_response(error: GraphQLError, _status_code: http::StatusCode) -> Self {
+        panic!("Error: {:?}", error);
     }
 }
 

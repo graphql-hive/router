@@ -176,15 +176,15 @@ async fn send_request<'a>(
             body,
             execution_request,
             context: &plugin_req_state.context,
-            response,
         };
         for plugin in plugin_req_state.plugins.as_ref() {
             let result = plugin.on_subgraph_http_request(start_payload).await;
             start_payload = result.payload;
             match result.control_flow {
                 StartControlFlow::Proceed => { /* continue to next plugin */ }
-                StartControlFlow::EndWithResponse(_response) => {
-                    // TODO: Short-circuit the request and return the response immediately
+                StartControlFlow::EndWithResponse(early_response) => {
+                    response = Some(early_response);
+                    break;
                 }
                 StartControlFlow::OnEnd(callback) => {
                     on_end_callbacks.push(callback);
@@ -194,7 +194,6 @@ async fn send_request<'a>(
         method = start_payload.method;
         body = start_payload.body;
         execution_request = start_payload.execution_request;
-        response = start_payload.response;
     }
 
     let mut response = match response {
@@ -264,8 +263,8 @@ async fn send_request<'a>(
                 end_payload = result.payload;
                 match result.control_flow {
                     EndControlFlow::Proceed => { /* continue to next callback */ }
-                    EndControlFlow::EndWithResponse(_response) => {
-                        // TODO: Short-circuit the request and return the response immediately
+                    EndControlFlow::EndWithResponse(new_response) => {
+                        end_payload.response = new_response;
                     }
                 }
             }
@@ -357,6 +356,7 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
     }
 }
 
+#[derive(Default)]
 pub struct HttpResponse {
     pub status: StatusCode,
     pub headers: Arc<HeaderMap>,

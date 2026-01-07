@@ -13,12 +13,9 @@ pub struct OnSubgraphHttpRequestHookPayload<'exec> {
     pub execution_request: SubgraphExecutionRequest<'exec>,
 
     pub context: &'exec PluginContext,
-
-    // Early response
-    pub response: Option<HttpResponse>,
 }
 
-impl<'exec> StartHookPayload<OnSubgraphHttpResponseHookPayload<'exec>>
+impl<'exec> StartHookPayload<OnSubgraphHttpResponseHookPayload<'exec>, HttpResponse>
     for OnSubgraphHttpRequestHookPayload<'exec>
 {
 }
@@ -27,23 +24,15 @@ pub type OnSubgraphHttpRequestHookResult<'exec> = crate::plugin_trait::StartHook
     'exec,
     OnSubgraphHttpRequestHookPayload<'exec>,
     OnSubgraphHttpResponseHookPayload<'exec>,
+    HttpResponse,
 >;
-
-impl<'exec> OnSubgraphHttpRequestHookPayload<'exec> {
-    /// Sets the subgraph http response earlier
-    /// And this skips the actual subgraph http call
-    pub fn with_response(mut self, response: HttpResponse) -> Self {
-        self.response = Some(response);
-        self
-    }
-}
 
 pub struct OnSubgraphHttpResponseHookPayload<'exec> {
     pub context: &'exec PluginContext,
     pub response: HttpResponse,
 }
 
-impl<'exec> EndHookPayload for OnSubgraphHttpResponseHookPayload<'exec> {}
+impl<'exec> EndHookPayload<HttpResponse> for OnSubgraphHttpResponseHookPayload<'exec> {}
 
 pub type OnSubgraphHttpResponseHookResult<'exec> =
-    crate::plugin_trait::EndHookResult<OnSubgraphHttpResponseHookPayload<'exec>>;
+    crate::plugin_trait::EndHookResult<OnSubgraphHttpResponseHookPayload<'exec>, HttpResponse>;

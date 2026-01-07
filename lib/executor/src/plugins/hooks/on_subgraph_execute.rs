@@ -13,18 +13,9 @@ pub struct OnSubgraphExecuteStartHookPayload<'exec> {
     pub executor: SubgraphExecutorBoxedArc,
 
     pub execution_request: SubgraphExecutionRequest<'exec>,
-    // Override
-    pub execution_result: Option<SubgraphResponse<'exec>>,
 }
 
-impl<'exec> OnSubgraphExecuteStartHookPayload<'exec> {
-    pub fn with_execution_result(mut self, execution_result: SubgraphResponse<'exec>) -> Self {
-        self.execution_result = Some(execution_result);
-        self
-    }
-}
-
-impl<'exec> StartHookPayload<OnSubgraphExecuteEndHookPayload<'exec>>
+impl<'exec> StartHookPayload<OnSubgraphExecuteEndHookPayload<'exec>, SubgraphResponse<'exec>>
     for OnSubgraphExecuteStartHookPayload<'exec>
 {
 }
@@ -33,6 +24,7 @@ pub type OnSubgraphExecuteStartHookResult<'exec> = StartHookResult<
     'exec,
     OnSubgraphExecuteStartHookPayload<'exec>,
     OnSubgraphExecuteEndHookPayload<'exec>,
+    SubgraphResponse<'exec>,
 >;
 
 pub struct OnSubgraphExecuteEndHookPayload<'exec> {
@@ -40,7 +32,7 @@ pub struct OnSubgraphExecuteEndHookPayload<'exec> {
     pub context: &'exec PluginContext,
 }
 
-impl<'exec> EndHookPayload for OnSubgraphExecuteEndHookPayload<'exec> {}
+impl<'exec> EndHookPayload<SubgraphResponse<'exec>> for OnSubgraphExecuteEndHookPayload<'exec> {}
 
 pub type OnSubgraphExecuteEndHookResult<'exec> =
-    EndHookResult<OnSubgraphExecuteEndHookPayload<'exec>>;
+    EndHookResult<OnSubgraphExecuteEndHookPayload<'exec>, SubgraphResponse<'exec>>;

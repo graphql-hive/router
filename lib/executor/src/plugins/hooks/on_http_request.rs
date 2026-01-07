@@ -1,4 +1,7 @@
-use ntex::web::{self, DefaultError, WebRequest};
+use ntex::{
+    http::Response,
+    web::{self, DefaultError, WebRequest},
+};
 
 use crate::{
     plugin_context::PluginContext,
@@ -10,10 +13,17 @@ pub struct OnHttpRequestHookPayload<'req> {
     pub context: &'req PluginContext,
 }
 
-impl<'req> StartHookPayload<OnHttpResponseHookPayload<'req>> for OnHttpRequestHookPayload<'req> {}
+impl<'req> StartHookPayload<OnHttpResponseHookPayload<'req>, Response>
+    for OnHttpRequestHookPayload<'req>
+{
+}
 
-pub type OnHttpRequestHookResult<'req> =
-    StartHookResult<'req, OnHttpRequestHookPayload<'req>, OnHttpResponseHookPayload<'req>>;
+pub type OnHttpRequestHookResult<'req> = StartHookResult<
+    'req,
+    OnHttpRequestHookPayload<'req>,
+    OnHttpResponseHookPayload<'req>,
+    Response,
+>;
 
 pub struct OnHttpResponseHookPayload<'req> {
     pub response: web::WebResponse,
@@ -30,6 +40,6 @@ impl<'req> OnHttpResponseHookPayload<'req> {
     }
 }
 
-impl<'req> EndHookPayload for OnHttpResponseHookPayload<'req> {}
+impl<'req> EndHookPayload<Response> for OnHttpResponseHookPayload<'req> {}
 
-pub type OnHttpResponseHookResult<'req> = EndHookResult<OnHttpResponseHookPayload<'req>>;
+pub type OnHttpResponseHookResult<'req> = EndHookResult<OnHttpResponseHookPayload<'req>, Response>;
