@@ -46,7 +46,7 @@ impl RouterPlugin for SubgraphResponseCachePlugin {
         if let Some(cached_response) = self.cache.get(&key) {
             // Here payload.response is Option
             // So it is bypassing the actual subgraph request
-            return payload.with_response(cached_response.clone()).proceed();
+            return payload.end_with_response(cached_response.clone());
         }
         payload.on_end(move |payload: OnSubgraphHttpResponseHookPayload| {
             // Here payload.response is not Option

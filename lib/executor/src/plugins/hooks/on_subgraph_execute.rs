@@ -1,8 +1,11 @@
 use crate::{
     executors::common::{SubgraphExecutionRequest, SubgraphExecutorBoxedArc},
     plugin_context::{PluginContext, RouterHttpRequest},
-    plugin_trait::{EndHookPayload, EndHookResult, StartHookPayload, StartHookResult},
-    response::subgraph_response::SubgraphResponse,
+    plugin_trait::{
+        EndHookPayload, EndHookResult, FromGraphQLErrorToResponse, StartHookPayload,
+        StartHookResult,
+    },
+    response::{graphql_error::GraphQLError, subgraph_response::SubgraphResponse},
 };
 
 pub struct OnSubgraphExecuteStartHookPayload<'exec> {
@@ -36,3 +39,12 @@ impl<'exec> EndHookPayload<SubgraphResponse<'exec>> for OnSubgraphExecuteEndHook
 
 pub type OnSubgraphExecuteEndHookResult<'exec> =
     EndHookResult<OnSubgraphExecuteEndHookPayload<'exec>, SubgraphResponse<'exec>>;
+
+impl FromGraphQLErrorToResponse for SubgraphResponse<'_> {
+    fn from_graphql_error_to_response(error: GraphQLError, _status_code: http::StatusCode) -> Self {
+        SubgraphResponse {
+            errors: Some(vec![error]),
+            ..Default::default()
+        }
+    }
+}

@@ -67,12 +67,9 @@ use hive_router_plan_executor::{
         on_graphql_validation::{
             OnGraphQLValidationStartHookPayload, OnGraphQLValidationStartHookResult,
         },
-        on_supergraph_load::{
-            OnSupergraphLoadEndHookPayload, OnSupergraphLoadStartHookPayload,
-            OnSupergraphLoadStartHookResult,
-        },
+        on_supergraph_load::{OnSupergraphLoadStartHookPayload, OnSupergraphLoadStartHookResult},
     },
-    plugin_trait::{RouterPlugin, StartHookPayload, StartHookResult},
+    plugin_trait::{RouterPlugin, StartHookPayload},
     response::graphql_error::GraphQLError,
 };
 use serde::Deserialize;
@@ -146,7 +143,9 @@ impl RouterPlugin for OneOfPlugin {
                                     keys_num
                                 ),
                                 "TOO_MANY_FIELDS_SET_IN_ONEOF",
-                            ));
+                            ),
+                            http::StatusCode::PAYLOAD_TOO_LARGE
+                        );
                         }
                     }
                 }
@@ -157,7 +156,7 @@ impl RouterPlugin for OneOfPlugin {
     fn on_supergraph_reload<'exec>(
         &'exec self,
         start_payload: OnSupergraphLoadStartHookPayload,
-    ) -> OnSupergraphLoadStartHookResult {
+    ) -> OnSupergraphLoadStartHookResult<'exec> {
         let mut one_of_types = vec![];
         for def in start_payload.new_ast.definitions.iter() {
             if let Definition::TypeDefinition(TypeDefinition::InputObject(input_obj)) = def {

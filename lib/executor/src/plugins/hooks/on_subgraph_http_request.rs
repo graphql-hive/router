@@ -1,7 +1,11 @@
+use bytes::Bytes;
+use sonic_rs::json;
+
 use crate::{
     executors::{common::SubgraphExecutionRequest, http::HttpResponse},
     plugin_context::PluginContext,
-    plugin_trait::{EndHookPayload, StartHookPayload},
+    plugin_trait::{EndHookPayload, FromGraphQLErrorToResponse, StartHookPayload},
+    response::graphql_error::GraphQLError,
 };
 
 pub struct OnSubgraphHttpRequestHookPayload<'exec> {
@@ -36,3 +40,17 @@ impl<'exec> EndHookPayload<HttpResponse> for OnSubgraphHttpResponseHookPayload<'
 
 pub type OnSubgraphHttpResponseHookResult<'exec> =
     crate::plugin_trait::EndHookResult<OnSubgraphHttpResponseHookPayload<'exec>, HttpResponse>;
+
+impl FromGraphQLErrorToResponse for HttpResponse {
+    fn from_graphql_error_to_response(error: GraphQLError, status: http::StatusCode) -> Self {
+        let body = json!({
+            "errors": [error]
+        });
+        let body_bytes = sonic_rs::to_vec(&body).unwrap_or_default();
+        HttpResponse {
+            body: Bytes::from(body_bytes).into(),
+            status,
+            ..Default::default()
+        }
+    }
+}
