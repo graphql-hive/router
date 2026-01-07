@@ -15,7 +15,7 @@ const NON_PREFLIGHTED_CONTENT_TYPES: [&str; 3] = [
 
 #[inline]
 pub fn perform_csrf_prevention(
-    req: &mut HttpRequest,
+    req: &HttpRequest,
     csrf_config: &CSRFPreventionConfig,
 ) -> Result<(), PipelineError> {
     // If CSRF prevention is not configured or disabled, skip the checks.
