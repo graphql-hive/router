@@ -1357,6 +1357,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 name = "e2e"
 version = "0.0.1"
 dependencies = [
+ "futures",
  "hive-router",
  "hive-router-config",
  "insta",
@@ -2039,10 +2040,13 @@ version = "0.0.26"
 dependencies = [
  "ahash",
  "arc-swap",
+ "async-stream",
  "async-trait",
  "cookie",
  "criterion",
  "futures",
+ "futures-timer",
+ "futures-util",
  "graphql-parser",
  "graphql-tools",
  "hive-console-sdk",
@@ -2123,12 +2127,14 @@ name = "hive-router-plan-executor"
 version = "6.3.0"
 dependencies = [
  "ahash",
+ "async-stream",
  "async-trait",
  "bumpalo",
  "bytes",
  "criterion",
  "dashmap",
  "futures",
+ "futures-util",
  "graphql-parser",
  "graphql-tools",
  "hive-router-config",
@@ -5413,11 +5419,20 @@ version = "0.0.1"
 dependencies = [
  "async-graphql",
  "async-graphql-axum",
+ "async-stream",
  "axum",
+ "bytes",
+ "futures",
+ "futures-timer",
+ "futures-util",
+ "hive-router",
+ "http",
  "lazy_static",
  "rand 0.9.2",
+ "serde_json",
  "sonic-rs",
  "tokio",
+ "tower-service",
 ]
 
 [[package]]

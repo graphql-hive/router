@@ -26,6 +26,10 @@ pub enum SubgraphExecutorError {
     TimeoutExpressionResolution(String, String),
     #[error("Request to subgraph \"{0}\" timed out after {1} milliseconds")]
     RequestTimeout(String, u128),
+    #[error("Unsupported content-type {0} for subgraph '{1}'")]
+    UnsupportedContentTypeError(String, String),
+    #[error("Failed to handle subscription stream from '{0}': {1}")]
+    SubscriptionStreamError(String, String),
 }
 
 impl From<SubgraphExecutorError> for GraphQLError {
@@ -73,6 +77,12 @@ impl SubgraphExecutorError {
             SubgraphExecutorError::RequestTimeout(_, _) => "SUBGRAPH_REQUEST_TIMEOUT",
             SubgraphExecutorError::RequestTimeoutExpressionBuild(_, _) => {
                 "SUBGRAPH_TIMEOUT_EXPRESSION_BUILD_FAILURE"
+            }
+            SubgraphExecutorError::UnsupportedContentTypeError(_, _) => {
+                "SUBGRAPH_UNSUPPORTED_CONTENT_TYPE"
+            }
+            SubgraphExecutorError::SubscriptionStreamError(_, _) => {
+                "SUBGRAPH_SUBSCRIPTION_STREAM_ERROR"
             }
         }
     }

@@ -10,7 +10,9 @@ use crate::shared_state::RouterSharedState;
 use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::jwt_forward::JwtAuthForwardingPlan;
-use hive_router_plan_executor::execution::plan::{PlanExecutionOutput, QueryPlanExecutionContext};
+use hive_router_plan_executor::execution::plan::{
+    QueryPlanExecutionContext, QueryPlanExecutionResult,
+};
 use hive_router_plan_executor::introspection::resolve::IntrospectionContext;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::HeaderName;
@@ -39,7 +41,7 @@ pub async fn execute_plan(
     supergraph: &SupergraphData,
     app_state: &Arc<RouterSharedState>,
     planned_request: &PlannedRequest<'_>,
-) -> Result<PlanExecutionOutput, PipelineError> {
+) -> Result<QueryPlanExecutionResult, PipelineError> {
     let mut expose_query_plan = ExposeQueryPlanMode::No;
 
     if app_state.router_config.query_planner.allow_expose {
@@ -94,26 +96,29 @@ pub async fn execute_plan(
         None
     };
 
-    execute_query_plan(QueryPlanExecutionContext {
+    let result = execute_query_plan(QueryPlanExecutionContext {
         query_plan: planned_request.query_plan_payload,
-        projection_plan: &planned_request.normalized_payload.projection_plan,
-        headers_plan: &app_state.headers_plan,
-        variable_values: &planned_request.variable_payload.variables_map,
+        projection_plan: planned_request.normalized_payload.projection_plan.clone(),
+        headers_plan: Arc::new(app_state.headers_plan.clone()),
+        variable_values: planned_request.variable_payload.variables_map.clone(),
         extensions,
         client_request: planned_request.client_request_details,
         introspection_context: &introspection_context,
         operation_type_name: planned_request.normalized_payload.root_type_name,
         jwt_auth_forwarding: &jwt_forward_plan,
-        executors: &supergraph.subgraph_executor_map,
+        executors: supergraph.subgraph_executor_map.clone(),
         initial_errors: planned_request
             .authorization_errors
             .iter()
             .map(|e| e.into())
             .collect(),
+        schema_metadata: supergraph.metadata.clone(),
     })
     .await
     .map_err(|err| {
         tracing::error!("Failed to execute query plan: {}", err);
         req.new_pipeline_error(PipelineErrorVariant::PlanExecutionError(err))
-    })
+    })?;
+
+    Ok(result)
 }

@@ -91,6 +91,10 @@ pub enum PipelineErrorVariant {
     // JWT-auth plugin errors
     #[error("Failed to forward jwt: {0}")]
     JwtForwardingError(JwtForwardingError),
+
+    // Subscription-related errors
+    #[error("Subscriptions are not supported over this transport")]
+    SubscriptionNotSupportedOverTransport,
 }
 
 impl PipelineErrorVariant {
@@ -113,6 +117,7 @@ impl PipelineErrorVariant {
             Self::NormalizationError(NormalizationError::MultipleMatchingOperationsFound) => {
                 "OPERATION_RESOLUTION_FAILURE"
             }
+            Self::SubscriptionNotSupportedOverTransport => "SUBSCRIPTION_NOT_SUPPORTED",
             _ => "BAD_REQUEST",
         }
     }
@@ -150,6 +155,7 @@ impl PipelineErrorVariant {
             (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
+            (Self::SubscriptionNotSupportedOverTransport, _) => StatusCode::NOT_ACCEPTABLE,
         }
     }
 }
