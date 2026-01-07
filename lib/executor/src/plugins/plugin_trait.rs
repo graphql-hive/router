@@ -1,5 +1,4 @@
-use std::error::Error;
-
+use hive_router_internal::BoxError;
 use http::StatusCode;
 use ntex::{http::Response, web};
 use serde::{de::DeserializeOwned, Serialize};
@@ -150,7 +149,7 @@ pub trait RouterPlugin: Send + Sync + 'static {
 
     type Config: DeserializeOwned + Sync;
 
-    fn from_config(config: Self::Config) -> Result<Option<Self>, Box<dyn Error>>
+    fn from_config(config: Self::Config) -> Result<Option<Self>, BoxError>
     where
         Self: Sized;
 

@@ -29,14 +29,13 @@ pub use crate::{schema_state::SchemaState, shared_state::RouterSharedState};
 
 pub use crate::plugins::registry::PluginRegistry;
 use hive_router_config::{load_config, HiveRouterConfig};
+pub use hive_router_internal::BoxError;
 use http::header::RETRY_AFTER;
 use ntex::{
     util::Bytes,
     web::{self, HttpRequest},
 };
 use tracing::{info, warn};
-
-pub type BoxError = Box<dyn std::error::Error>;
 
 async fn graphql_endpoint_handler(
     request: HttpRequest,

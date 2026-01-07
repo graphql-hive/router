@@ -1,6 +1,7 @@
 use std::{collections::HashMap, error::Error};
 
 use arc_swap::ArcSwap;
+use hive_router::BoxError;
 use http::StatusCode;
 use ntex::http::Response;
 use redis::Commands;
@@ -43,7 +44,7 @@ impl RouterPlugin for ResponseCachePlugin {
     fn plugin_name() -> &'static str {
         "response_cache_plugin"
     }
-    fn from_config(config: ResponseCachePluginOptions) -> Result<Option<Self>, Box<dyn Error>> {
+    fn from_config(config: ResponseCachePluginOptions) -> Result<Option<Self>, BoxError> {
         if !config.enabled {
             return Ok(None);
         }
