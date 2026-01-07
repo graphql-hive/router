@@ -437,15 +437,7 @@ impl FieldProjectionPlan {
             )
         };
 
-        let parent_type_guard =
-            if let Some(guard) = Self::extract_type_guard_from_condition(parent_condition) {
-                // Keep the guard even if it matches parent_type_name, because after merging
-                // selections from different fragments, we need to distinguish between different
-                // concrete types (e.g., ContentAChild vs ContentBChild)
-                Some(guard)
-            } else {
-                None
-            };
+        let parent_type_guard = Self::extract_type_guard_from_condition(parent_condition);
         let conditions_for_selections = Self::apply_directive_conditions(
             match &parent_type_guard {
                 None => FieldProjectionCondition::True,
