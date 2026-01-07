@@ -205,16 +205,19 @@ impl FieldProjectionPlan {
         };
 
         let conditions = FieldProjectionCondition::True;
-        (
+        let mut plans = Self::from_selection_set(
+            &operation.selection_set,
+            schema_metadata,
             root_type_name,
-            Self::from_selection_set(
-                &operation.selection_set,
-                schema_metadata,
-                root_type_name,
-                &conditions,
-            )
-            .unwrap_or_default(),
+            &conditions,
         )
+        .unwrap_or_default();
+
+        for plan in &mut plans {
+            Self::remove_redundant_child_guards(plan, schema_metadata);
+        }
+
+        (root_type_name, plans)
     }
 
     fn from_selection_set(
@@ -257,6 +260,72 @@ impl FieldProjectionPlan {
             None
         } else {
             Some(field_selections.into_values().collect())
+        }
+    }
+
+    /// Extracts type names from a TypeCondition for easier comparison
+    fn type_names_from(condition: &TypeCondition) -> Vec<&str> {
+        match condition {
+            TypeCondition::Exact(ty) => vec![ty.as_str()],
+            TypeCondition::OneOf(types) => types.iter().map(|s| s.as_str()).collect(),
+        }
+    }
+
+    /// Recursively removes redundant type guards from child selections.
+    ///
+    /// A type guard is redundant when it covers exactly all possible types that can appear
+    /// in that position. For example, if a field `children` can only return types A or B
+    /// (based on the parent's type guard), and a child selection has guard `OneOf(A, B)`,
+    /// then that guard is redundant since it will always match.
+    ///
+    /// This optimization must run after all fragment merging is complete to correctly
+    /// determine the full set of possible types.
+    fn remove_redundant_child_guards(
+        parent_field: &mut FieldProjectionPlan,
+        schema_metadata: &SchemaMetadata,
+    ) {
+        let ProjectionValueSource::ResponseData { selections } = &mut parent_field.value else {
+            return;
+        };
+
+        let Some(selections_arc) = selections else {
+            return;
+        };
+
+        let selections_mut = Arc::make_mut(selections_arc);
+
+        // Compute possible child types only if parent has a type guard
+        let possible_child_types = parent_field.parent_type_guard.as_ref().map(|parent_guard| {
+            let parent_types = Self::type_names_from(parent_guard);
+
+            // For each parent type, lookup what type this field returns
+            let mut types = std::collections::HashSet::new();
+            for parent_type in parent_types {
+                if let Some(field_info) = schema_metadata
+                    .type_fields
+                    .get(parent_type)
+                    .and_then(|fields| fields.get(&parent_field.field_name))
+                {
+                    types.insert(field_info.output_type_name.as_str());
+                }
+            }
+            types
+        });
+
+        for child in selections_mut {
+            // Remove redundant guard if this child's guard covers all possible types
+            if let (Some(child_guard), Some(possible_types)) =
+                (&child.parent_type_guard, &possible_child_types)
+            {
+                let guard_types = Self::type_names_from(child_guard);
+                let guard_set: std::collections::HashSet<_> = guard_types.into_iter().collect();
+
+                if &guard_set == possible_types {
+                    child.parent_type_guard = None;
+                }
+            }
+
+            Self::remove_redundant_child_guards(child, schema_metadata);
         }
     }
 
@@ -353,7 +422,12 @@ impl FieldProjectionPlan {
         }
     }
 
-    fn remove_redundant_parent_type_condition(
+    /// Simplifies a condition by removing redundant parent type conditions.
+    ///
+    /// A condition is redundant if it matches the parent_type_guard (since the guard
+    /// already ensures that constraint). Also removes bare `True` conditions which
+    /// add no value.
+    fn simplify_condition(
         condition: FieldProjectionCondition,
         parent_type_guard: &Option<TypeCondition>,
     ) -> Option<FieldProjectionCondition> {
@@ -362,21 +436,20 @@ impl FieldProjectionPlan {
         };
 
         match condition {
+            // Remove bare True conditions
             FieldProjectionCondition::True => None,
 
-            // Simple case: the entire condition is the redundant ParentTypeCondition
+            // Remove redundant ParentTypeCondition that matches the guard
             FieldProjectionCondition::ParentTypeCondition(TypeCondition::Exact(cond_type))
                 if &cond_type == guard_type =>
             {
                 None
             }
 
-            // Complex case: it's an AND expression, try to simplify
+            // Recursively simplify And expressions
             FieldProjectionCondition::And(left, right) => {
-                let left_simplified =
-                    Self::remove_redundant_parent_type_condition(*left, parent_type_guard);
-                let right_simplified =
-                    Self::remove_redundant_parent_type_condition(*right, parent_type_guard);
+                let left_simplified = Self::simplify_condition(*left, parent_type_guard);
+                let right_simplified = Self::simplify_condition(*right, parent_type_guard);
 
                 match (left_simplified, right_simplified) {
                     (None, None) => None,
@@ -385,7 +458,7 @@ impl FieldProjectionPlan {
                 }
             }
 
-            // Other cases: keep the condition as-is
+            // Keep other conditions as-is
             other => Some(other),
         }
     }
@@ -437,7 +510,7 @@ impl FieldProjectionPlan {
             )
         };
 
-        let parent_type_guard = Self::extract_type_guard_from_condition(parent_condition);
+        let parent_type_guard = Self::get_type_guard(parent_condition);
         let conditions_for_selections = Self::apply_directive_conditions(
             match &parent_type_guard {
                 None => FieldProjectionCondition::True,
@@ -468,13 +541,7 @@ impl FieldProjectionPlan {
             );
         }
 
-        let simplified_conditions = Self::simplify_and_remove_parent_type_condition(
-            &condition_for_field,
-            &parent_type_guard,
-        );
-        let final_conditions = simplified_conditions.and_then(|cond| {
-            Self::remove_redundant_parent_type_condition(cond, &parent_type_guard)
-        });
+        let final_conditions = Self::simplify_condition(condition_for_field, &parent_type_guard);
 
         let new_plan = FieldProjectionPlan {
             field_name: field_name.to_string(),
@@ -551,58 +618,21 @@ impl FieldProjectionPlan {
         }
     }
 
-    fn extract_type_guard_from_condition(
-        condition: &FieldProjectionCondition,
-    ) -> Option<TypeCondition> {
+    fn get_type_guard(condition: &FieldProjectionCondition) -> Option<TypeCondition> {
         match condition {
             FieldProjectionCondition::True => None,
             FieldProjectionCondition::ParentTypeCondition(tc) => Some(tc.clone()),
-            FieldProjectionCondition::And(a, b) => Self::extract_type_guard_from_condition(a)
-                .or_else(|| Self::extract_type_guard_from_condition(b)),
+            FieldProjectionCondition::And(a, b) => {
+                Self::get_type_guard(a).or_else(|| Self::get_type_guard(b))
+            }
             FieldProjectionCondition::Or(a, b) => {
-                match (
-                    Self::extract_type_guard_from_condition(a),
-                    Self::extract_type_guard_from_condition(b),
-                ) {
+                match (Self::get_type_guard(a), Self::get_type_guard(b)) {
                     (Some(ga), Some(gb)) => Some(ga.union(gb)),
                     (Some(guard), None) | (None, Some(guard)) => Some(guard),
                     (None, None) => None,
                 }
             }
             _ => None,
-        }
-    }
-
-    fn simplify_and_remove_parent_type_condition(
-        condition: &FieldProjectionCondition,
-        parent_type_guard: &Option<TypeCondition>,
-    ) -> Option<FieldProjectionCondition> {
-        let Some(TypeCondition::Exact(guard_type)) = parent_type_guard else {
-            return Some(condition.clone());
-        };
-
-        match condition {
-            FieldProjectionCondition::ParentTypeCondition(TypeCondition::Exact(cond_type))
-                if cond_type == guard_type =>
-            {
-                // Redundant! Return None
-                None
-            }
-            FieldProjectionCondition::And(left, right) => {
-                // Check if left or right is the redundant condition
-                let left_simplified =
-                    Self::simplify_and_remove_parent_type_condition(left, parent_type_guard);
-                let right_simplified =
-                    Self::simplify_and_remove_parent_type_condition(right, parent_type_guard);
-
-                match (left_simplified, right_simplified) {
-                    (None, None) => None,
-                    (Some(cond), None) | (None, Some(cond)) => Some(cond),
-                    (Some(l), Some(r)) => Some(l.and(r)),
-                }
-            }
-            // For other condition types, keep them as-is
-            _ => Some(condition.clone()),
         }
     }
 }
