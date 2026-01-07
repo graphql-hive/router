@@ -447,6 +447,14 @@ impl FieldProjectionPlan {
                 None
             }
 
+            // OneOf with single type matching guard is redundant
+            FieldProjectionCondition::ParentTypeCondition(TypeCondition::OneOf(types))
+                if types.len() == 1
+                    && types.iter().next().map(|t| t.as_str()) == Some(guard_type) =>
+            {
+                None
+            }
+
             // Recursively simplify AND expressions
             FieldProjectionCondition::And(left, right) => {
                 let left_simplified = Self::simplify_condition(*left, parent_type_guard);
@@ -456,6 +464,18 @@ impl FieldProjectionPlan {
                     (None, None) => None,
                     (Some(cond), None) | (None, Some(cond)) => Some(cond),
                     (Some(l), Some(r)) => Some(l.and(r)),
+                }
+            }
+
+            // Recursively simplify OR expressions
+            FieldProjectionCondition::Or(left, right) => {
+                let left_simplified = Self::simplify_condition(*left, parent_type_guard);
+                let right_simplified = Self::simplify_condition(*right, parent_type_guard);
+
+                match (left_simplified, right_simplified) {
+                    (None, None) => None,
+                    (Some(cond), None) | (None, Some(cond)) => Some(cond),
+                    (Some(l), Some(r)) => Some(l.or(r)),
                 }
             }
 
@@ -549,13 +569,15 @@ impl FieldProjectionPlan {
             );
         }
 
+        let final_conditions =
+            condition_for_field.and_then(|cond| Self::simplify_condition(cond, &parent_type_guard));
+
         let new_plan = FieldProjectionPlan {
             field_name: field_name.to_string(),
             response_key,
             parent_type_guard,
             is_typename: field_name == TYPENAME_FIELD_NAME,
-            conditions: condition_for_field
-                .and_then(|cond| Self::simplify_condition(cond, &parent_type_guard)),
+            conditions: final_conditions,
             value: ProjectionValueSource::ResponseData {
                 selections: Self::from_selection_set(
                     &field.selections,
