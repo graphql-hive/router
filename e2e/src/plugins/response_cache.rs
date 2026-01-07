@@ -1,4 +1,6 @@
-use dashmap::DashMap;
+use std::collections::HashMap;
+
+use arc_swap::ArcSwap;
 use http::StatusCode;
 use ntex::http::Response;
 use redis::Commands;
@@ -31,7 +33,7 @@ fn default_ttl_seconds() -> u64 {
 
 pub struct ResponseCachePlugin {
     redis: r2d2::Pool<redis::Client>,
-    ttl_per_type: DashMap<String, u64>,
+    ttl_per_type: ArcSwap<HashMap<String, u64>>,
     default_ttl_seconds: u64,
 }
 
@@ -52,7 +54,7 @@ impl RouterPlugin for ResponseCachePlugin {
             .unwrap_or_else(|err| panic!("Failed to create Redis connection pool: {}", err));
         Some(Self {
             redis: pool,
-            ttl_per_type: DashMap::new(),
+            ttl_per_type: Default::default(),
             default_ttl_seconds: config.default_ttl_seconds,
         })
     }
@@ -93,6 +95,7 @@ impl RouterPlugin for ResponseCachePlugin {
                 }
 
                 if let Ok(serialized) = sonic_rs::to_vec(&payload.data) {
+                    let ttl_per_type = self.ttl_per_type.load();
                     trace!("Caching response for key: {}", key);
                     // Decide on the ttl somehow
                     // Get the type names
@@ -105,8 +108,8 @@ impl RouterPlugin for ResponseCachePlugin {
                             .position(|(k, _)| k == &TYPENAME_FIELD_NAME)
                             .and_then(|idx| obj[idx].1.as_str())
                         {
-                            if let Some(ttl) = self.ttl_per_type.get(typename).map(|v| *v) {
-                                max_ttl = max_ttl.max(ttl);
+                            if let Some(ttl) = ttl_per_type.get(typename) {
+                                max_ttl = max_ttl.max(*ttl);
                             }
                         }
                     }
@@ -137,6 +140,7 @@ impl RouterPlugin for ResponseCachePlugin {
         &'a self,
         payload: OnSupergraphLoadStartHookPayload,
     ) -> OnSupergraphLoadStartHookResult<'a> {
+        let mut ttl_per_type = HashMap::new();
         // Visit the schema and update ttl_per_type based on some directive
         payload.new_ast.definitions.iter().for_each(|def| {
             if let graphql_parser::schema::Definition::TypeDefinition(type_def) = def {
@@ -147,7 +151,7 @@ impl RouterPlugin for ResponseCachePlugin {
                                 if arg.0 == "maxAge" {
                                     if let graphql_parser::query::Value::Int(max_age) = &arg.1 {
                                         if let Some(max_age) = max_age.as_i64() {
-                                            self.ttl_per_type
+                                            ttl_per_type
                                                 .insert(obj_type.name.clone(), max_age as u64);
                                         }
                                     }
@@ -158,6 +162,8 @@ impl RouterPlugin for ResponseCachePlugin {
                 }
             }
         });
+
+        self.ttl_per_type.store(ttl_per_type.into());
 
         payload.cont()
     }
