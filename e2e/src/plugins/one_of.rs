@@ -105,6 +105,10 @@ impl RouterPlugin for OneOfPlugin {
         payload: OnGraphQLValidationStartHookPayload<'exec>,
     ) -> OnGraphQLValidationStartHookResult<'exec> {
         let one_of_types = self.one_of_types.load();
+        // If there are no oneOf types, skip adding the validation rule
+        if one_of_types.is_empty() {
+            return payload.cont();
+        }
         let rule = OneOfValidationRule {
             one_of_types: one_of_types.clone(),
         };
@@ -115,13 +119,17 @@ impl RouterPlugin for OneOfPlugin {
         &'exec self,
         payload: OnExecuteStartHookPayload<'exec>,
     ) -> OnExecuteStartHookResult<'exec> {
+        let one_of_types = self.one_of_types.load();
+        // If there are no oneOf types, skip checking
+        if one_of_types.is_empty() {
+            return payload.cont();
+        }
         if let (Some(variable_values), Some(variable_defs)) = (
             &payload.variable_values,
             &payload.operation_for_plan.variable_definitions,
         ) {
             for def in variable_defs {
                 let variable_named_type = def.variable_type.inner_type();
-                let one_of_types = self.one_of_types.load();
                 if one_of_types.contains(&variable_named_type.to_string()) {
                     let var_name = &def.name;
                     if let Some(value) = variable_values.get(var_name).and_then(|v| v.as_object()) {
