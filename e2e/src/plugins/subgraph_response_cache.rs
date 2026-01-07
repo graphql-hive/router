@@ -1,4 +1,5 @@
 use dashmap::DashMap;
+use hive_router::BoxError;
 use serde::Deserialize;
 
 use hive_router_plan_executor::{
@@ -25,9 +26,7 @@ impl RouterPlugin for SubgraphResponseCachePlugin {
     fn plugin_name() -> &'static str {
         "subgraph_response_cache"
     }
-    fn from_config(
-        config: SubgraphResponseCachePluginConfig,
-    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+    fn from_config(config: SubgraphResponseCachePluginConfig) -> Result<Option<Self>, BoxError> {
         if config.enabled {
             Ok(Some(SubgraphResponseCachePlugin {
                 cache: DashMap::new(),

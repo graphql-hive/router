@@ -210,8 +210,8 @@ pub async fn execute_pipeline(
             let result = plugin.on_graphql_params(deserialization_payload).await;
             deserialization_payload = result.payload;
             match result.control_flow {
-                StartControlFlow::Continue => { /* continue to next plugin */ }
-                StartControlFlow::EndResponse(response) => {
+                StartControlFlow::Proceed => { /* continue to next plugin */ }
+                StartControlFlow::EndWithResponse(response) => {
                     return Ok(response);
                 }
                 StartControlFlow::OnEnd(callback) => {
@@ -236,8 +236,8 @@ pub async fn execute_pipeline(
             let result = deserialization_end_callback(payload);
             payload = result.payload;
             match result.control_flow {
-                EndControlFlow::Continue => { /* continue to next plugin */ }
-                EndControlFlow::EndResponse(response) => {
+                EndControlFlow::Proceed => { /* continue to next plugin */ }
+                EndControlFlow::EndWithResponse(response) => {
                     return Ok(response);
                 }
             }

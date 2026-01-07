@@ -44,7 +44,7 @@ pub async fn validate_operation_with_cache(
 
             let mut on_end_callbacks = vec![];
             let document = &parser_payload.parsed_operation;
-            let errors = if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+            let mut errors = if let Some(plugin_req_state) = plugin_req_state.as_ref() {
                 /* Handle on_graphql_validate hook in the plugins - START */
                 let mut start_payload = OnGraphQLValidationStartHookPayload::new(
                     plugin_req_state,
@@ -56,10 +56,10 @@ pub async fn validate_operation_with_cache(
                     let result = plugin.on_graphql_validation(start_payload).await;
                     start_payload = result.payload;
                     match result.control_flow {
-                        StartControlFlow::Continue => {
+                        StartControlFlow::Proceed => {
                             // continue to next plugin
                         }
-                        StartControlFlow::EndResponse(response) => {
+                        StartControlFlow::EndWithResponse(response) => {
                             return Ok(Some(response));
                         }
                         StartControlFlow::OnEnd(callback) => {
@@ -79,23 +79,28 @@ pub async fn validate_operation_with_cache(
                 validate(consumer_schema_ast, document, &app_state.validation_plan)
             };
 
-            let mut end_payload = OnGraphQLValidationEndHookPayload { errors };
+            if !on_end_callbacks.is_empty() {
+                let mut end_payload = OnGraphQLValidationEndHookPayload { errors };
 
-            for callback in on_end_callbacks {
-                let result = callback(end_payload);
-                end_payload = result.payload;
-                match result.control_flow {
-                    EndControlFlow::Continue => {
-                        // continue to next callback
-                    }
-                    EndControlFlow::EndResponse(response) => {
-                        return Ok(Some(response));
+                for callback in on_end_callbacks {
+                    let result = callback(end_payload);
+                    end_payload = result.payload;
+                    match result.control_flow {
+                        EndControlFlow::Proceed => {
+                            // continue to next callback
+                        }
+                        EndControlFlow::EndWithResponse(response) => {
+                            return Ok(Some(response));
+                        }
                     }
                 }
+
+                errors = end_payload.errors;
             }
+
             /* Handle on_graphql_validate hook in the plugins - END */
 
-            let arc_res = Arc::new(end_payload.errors);
+            let arc_res = Arc::new(errors);
 
             schema_state
                 .validate_cache

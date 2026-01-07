@@ -1,5 +1,6 @@
 // From https://github.com/apollographql/router/blob/dev/examples/status-code-propagation/rust/src/propagate_status_code.rs
 
+use hive_router::BoxError;
 use http::StatusCode;
 use serde::Deserialize;
 
@@ -33,9 +34,7 @@ impl RouterPlugin for PropagateStatusCodePlugin {
     fn plugin_name() -> &'static str {
         "propagate_status_code"
     }
-    fn from_config(
-        config: PropagateStatusCodePluginConfig,
-    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+    fn from_config(config: PropagateStatusCodePluginConfig) -> Result<Option<Self>, BoxError> {
         if !config.enabled {
             return Ok(None);
         }

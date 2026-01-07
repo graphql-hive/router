@@ -1,4 +1,5 @@
 use dashmap::DashMap;
+use hive_router::BoxError;
 use http::StatusCode;
 use serde::Deserialize;
 use sonic_rs::{JsonContainerTrait, JsonValueTrait};
@@ -24,7 +25,7 @@ impl RouterPlugin for APQPlugin {
     fn plugin_name() -> &'static str {
         "apq"
     }
-    fn from_config(config: Self::Config) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+    fn from_config(config: Self::Config) -> Result<Option<Self>, BoxError> {
         if config.enabled {
             Ok(Some(APQPlugin {
                 cache: DashMap::new(),
@@ -48,7 +49,7 @@ impl RouterPlugin for APQPlugin {
                 match persisted_query_ext.get(&"version").and_then(|v| v.as_i64()) {
                     Some(1) => {}
                     _ => {
-                        return payload.end_graphql_error(
+                        return payload.end_with_graphql_error(
                             GraphQLError::from_message_and_code(
                                 "Unsupported persisted query version".into(),
                                 "UNSUPPORTED_PERSISTED_QUERY_VERSION",
@@ -63,7 +64,7 @@ impl RouterPlugin for APQPlugin {
                 {
                     Some(h) => h,
                     None => {
-                        return payload.end_graphql_error(
+                        return payload.end_with_graphql_error(
                             GraphQLError::from_message_and_code(
                                 "Missing sha256Hash in persisted query".into(),
                                 "MISSING_PERSISTED_QUERY_HASH",
@@ -82,7 +83,7 @@ impl RouterPlugin for APQPlugin {
                         // Update the graphql_params with the cached query
                         payload.graphql_params.query = Some(cached_query.value().to_string());
                     } else {
-                        return payload.end_graphql_error(
+                        return payload.end_with_graphql_error(
                             GraphQLError::from_message_and_code(
                                 "PersistedQueryNotFound".into(),
                                 "PERSISTED_QUERY_NOT_FOUND",

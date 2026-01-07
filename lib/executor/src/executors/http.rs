@@ -22,6 +22,8 @@ use http_body_util::Full;
 use hyper::Version;
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use ntex::http::body::Body;
+use ntex::http::Response;
 use tokio::sync::Semaphore;
 use tracing::debug;
 
@@ -182,9 +184,9 @@ async fn send_request<'a>(
             let result = plugin.on_subgraph_http_request(start_payload).await;
             start_payload = result.payload;
             match result.control_flow {
-                StartControlFlow::Continue => { /* continue to next plugin */ }
-                StartControlFlow::EndResponse(_response) => {
-                    todo!("Handle early response from plugin");
+                StartControlFlow::Proceed => { /* continue to next plugin */ }
+                StartControlFlow::EndWithResponse(response) => {
+                    return Ok(response.into());
                 }
                 StartControlFlow::OnEnd(callback) => {
                     on_end_callbacks.push(callback);
@@ -252,24 +254,26 @@ async fn send_request<'a>(
         }
     };
 
-    if let Some(plugin_req_state) = plugin_req_state.as_ref() {
-        let mut end_payload = OnSubgraphHttpResponseHookPayload {
-            response,
-            context: &plugin_req_state.context,
-        };
+    if !on_end_callbacks.is_empty() {
+        if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+            let mut end_payload = OnSubgraphHttpResponseHookPayload {
+                response,
+                context: &plugin_req_state.context,
+            };
 
-        for callback in on_end_callbacks {
-            let result = callback(end_payload);
-            end_payload = result.payload;
-            match result.control_flow {
-                EndControlFlow::Continue => { /* continue to next callback */ }
-                EndControlFlow::EndResponse(_response) => {
-                    todo!("Handle early response from plugin");
+            for callback in on_end_callbacks {
+                let result = callback(end_payload);
+                end_payload = result.payload;
+                match result.control_flow {
+                    EndControlFlow::Proceed => { /* continue to next callback */ }
+                    EndControlFlow::EndWithResponse(response) => {
+                        return Ok(response.into());
+                    }
                 }
             }
-        }
 
-        response = end_payload.response;
+            response = end_payload.response;
+        }
     }
 
     Ok(response)
@@ -391,5 +395,28 @@ impl HttpResponse {
                 resp.bytes = Some(self.body.clone());
                 resp
             })
+    }
+}
+
+impl From<Response> for HttpResponse {
+    fn from(response: Response<Body>) -> Self {
+        let (response, body) = response.into_parts();
+        let body: Body = body.into();
+        let body = match body {
+            Body::Bytes(bytes) => bytes::Bytes::from(bytes.to_vec()),
+            _ => bytes::Bytes::new(),
+        }
+        .into();
+        let headers = HeaderMap::from_iter(
+            response
+                .headers()
+                .iter()
+                .map(|(name, value)| (name.into(), value.into())),
+        );
+        HttpResponse {
+            status: response.status(),
+            headers: headers.into(),
+            body,
+        }
     }
 }

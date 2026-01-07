@@ -32,8 +32,8 @@ pub struct StartHookResult<'exec, TStartPayload, TEndPayload> {
 }
 
 pub enum StartControlFlow<'exec, TEndPayload> {
-    Continue,
-    EndResponse(web::HttpResponse),
+    Proceed,
+    EndWithResponse(web::HttpResponse),
     OnEnd(Box<dyn FnOnce(TEndPayload) -> EndHookResult<TEndPayload> + Send + 'exec>),
 }
 
@@ -49,7 +49,7 @@ where
     fn proceed<'exec>(self) -> StartHookResult<'exec, Self, TEndPayload> {
         StartHookResult {
             payload: self,
-            control_flow: StartControlFlow::Continue,
+            control_flow: StartControlFlow::Proceed,
         }
     }
 
@@ -59,15 +59,17 @@ where
     ) -> StartHookResult<'exec, Self, TEndPayload> {
         StartHookResult {
             payload: self,
-            control_flow: StartControlFlow::EndResponse(output),
+            control_flow: StartControlFlow::EndWithResponse(output),
         }
     }
 
-    fn end_with_response_body<'exec, T: Serialize>(
+    fn end_with_response_json<'exec, T: Serialize>(
         self,
         body: T,
+        status: StatusCode,
     ) -> StartHookResult<'exec, Self, TEndPayload> {
-        self.end_with_response(Response::Ok().body(sonic_rs::to_vec(&body).unwrap()))
+        let http_response = Response::with_body(status, sonic_rs::to_vec(&body).unwrap().into());
+        self.end_with_response(http_response)
     }
 
     fn end_with_graphql_error<'exec>(
@@ -78,11 +80,7 @@ where
         let body = json!({
             "errors": [error]
         });
-        self.end_with_response(
-            Response::BadRequest()
-                .status(status)
-                .body(sonic_rs::to_vec(&body).unwrap()),
-        )
+        self.end_with_response_json(body, status)
     }
 
     fn on_end<'exec, F>(self, f: F) -> StartHookResult<'exec, Self, TEndPayload>
@@ -102,8 +100,8 @@ pub struct EndHookResult<TEndPayload> {
 }
 
 pub enum EndControlFlow {
-    Continue,
-    EndResponse(web::HttpResponse),
+    Proceed,
+    EndWithResponse(web::HttpResponse),
 }
 
 pub trait EndHookPayload
@@ -113,28 +111,28 @@ where
     fn proceed(self) -> EndHookResult<Self> {
         EndHookResult {
             payload: self,
-            control_flow: EndControlFlow::Continue,
+            control_flow: EndControlFlow::Proceed,
         }
     }
 
-    fn end_response(self, output: web::HttpResponse) -> EndHookResult<Self> {
+    fn end_with_response(self, output: web::HttpResponse) -> EndHookResult<Self> {
         EndHookResult {
             payload: self,
-            control_flow: EndControlFlow::EndResponse(output),
+            control_flow: EndControlFlow::EndWithResponse(output),
         }
     }
 
-    fn end_response_body<T: Serialize>(
+    fn end_with_response_json<T: Serialize>(
         self,
         body: T,
         status_code: StatusCode,
     ) -> EndHookResult<Self> {
         let http_response =
             Response::with_body(status_code, sonic_rs::to_vec(&body).unwrap().into());
-        self.end_response(http_response)
+        self.end_with_response(http_response)
     }
 
-    fn end_graphql_error(
+    fn end_with_graphql_error(
         self,
         error: GraphQLError,
         status_code: StatusCode,
@@ -142,7 +140,7 @@ where
         let body = json!({
             "errors": [error]
         });
-        self.end_response_body(body, status_code)
+        self.end_with_response_json(body, status_code)
     }
 }
 

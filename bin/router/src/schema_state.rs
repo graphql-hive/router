@@ -102,10 +102,10 @@ impl SchemaState {
                         let result = plugin.on_supergraph_reload(start_payload);
                         start_payload = result.payload;
                         match result.control_flow {
-                            StartControlFlow::Continue => {
+                            StartControlFlow::Proceed => {
                                 // continue to next plugin
                             }
-                            StartControlFlow::EndResponse(_) => {
+                            StartControlFlow::EndWithResponse(_) => {
                                 unreachable!("Plugins should not end supergraph reload processing");
                             }
                             StartControlFlow::OnEnd(callback) => {
@@ -117,27 +117,29 @@ impl SchemaState {
                 }
 
                 match Self::build_data(router_config.clone(), new_ast) {
-                    Ok(new_supergraph_data) => {
-                        let mut end_payload = OnSupergraphLoadEndHookPayload {
-                            new_supergraph_data,
-                        };
+                    Ok(mut new_supergraph_data) => {
+                        if !on_end_callbacks.is_empty() {
+                            let mut end_payload = OnSupergraphLoadEndHookPayload {
+                                new_supergraph_data,
+                            };
 
-                        for callback in on_end_callbacks {
-                            let result = callback(end_payload);
-                            end_payload = result.payload;
-                            match result.control_flow {
-                                EndControlFlow::Continue => {
-                                    // continue to next callback
-                                }
-                                EndControlFlow::EndResponse(_) => {
-                                    unreachable!(
-                                        "Plugins should not end supergraph reload processing"
-                                    );
+                            for callback in on_end_callbacks {
+                                let result = callback(end_payload);
+                                end_payload = result.payload;
+                                match result.control_flow {
+                                    EndControlFlow::Proceed => {
+                                        // continue to next callback
+                                    }
+                                    EndControlFlow::EndWithResponse(_) => {
+                                        unreachable!(
+                                            "Plugins should not end supergraph reload processing"
+                                        );
+                                    }
                                 }
                             }
-                        }
 
-                        let new_supergraph_data = end_payload.new_supergraph_data;
+                            new_supergraph_data = end_payload.new_supergraph_data;
+                        }
 
                         swappable_data_spawn_clone.store(Arc::new(Some(new_supergraph_data)));
                         debug!("Supergraph updated successfully");

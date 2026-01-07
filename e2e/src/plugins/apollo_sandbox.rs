@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use hive_router::BoxError;
 use hive_router_plan_executor::{
     hooks::on_http_request::{OnHttpRequestHookPayload, OnHttpRequestHookResult},
     plugin_trait::{RouterPlugin, StartHookPayload},
@@ -125,9 +126,7 @@ impl RouterPlugin for ApolloSandboxPlugin {
     fn plugin_name() -> &'static str {
         "apollo_sandbox"
     }
-    fn from_config(
-        config: ApolloSandboxOptions,
-    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+    fn from_config(config: ApolloSandboxOptions) -> Result<Option<Self>, BoxError> {
         if config.enabled {
             let serialized_options =
                 sonic_rs::to_string(&config).unwrap_or_else(|_| "{}".to_string());

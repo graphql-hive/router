@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use hive_router_config::HiveRouterConfig;
 use hive_router_plan_executor::plugin_trait::{RouterPlugin, RouterPluginBoxed};
 
+use crate::BoxError;
+
 type PluginFactory =
     Box<dyn Fn(serde_json::Value) -> Result<Option<RouterPluginBoxed>, PluginRegistryError>>;
 
@@ -21,7 +23,7 @@ pub enum PluginRegistryError {
     #[error("Failed to parse the configuration for the plugin '{0}': {1}")]
     Config(&'static str, serde_json::Error),
     #[error("Failed to initialize the plugin '{0}': {1}")]
-    Initialization(&'static str, Box<dyn std::error::Error>),
+    Initialization(&'static str, BoxError),
     #[error(
         "Plugin '{0}' is not registered in the registry but is specified in the configuration"
     )]

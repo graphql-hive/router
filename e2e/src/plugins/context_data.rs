@@ -1,5 +1,6 @@
 // From https://github.com/apollographql/router/blob/dev/examples/context/rust/src/context_data.rs
 
+use hive_router::BoxError;
 use serde::Deserialize;
 
 use hive_router_plan_executor::{
@@ -31,9 +32,7 @@ impl RouterPlugin for ContextDataPlugin {
     fn plugin_name() -> &'static str {
         "context_data"
     }
-    fn from_config(
-        config: ContextDataPluginConfig,
-    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+    fn from_config(config: ContextDataPluginConfig) -> Result<Option<Self>, BoxError> {
         if config.enabled {
             Ok(Some(ContextDataPlugin {}))
         } else {

@@ -57,10 +57,10 @@ pub async fn parse_operation_with_cache(
                 let result = plugin.on_graphql_parse(start_payload).await;
                 start_payload = result.payload;
                 match result.control_flow {
-                    StartControlFlow::Continue => {
+                    StartControlFlow::Proceed => {
                         // continue to next plugin
                     }
-                    StartControlFlow::EndResponse(response) => {
+                    StartControlFlow::EndWithResponse(response) => {
                         return Ok(ParseResult::Response(response));
                     }
                     StartControlFlow::OnEnd(callback) => {
@@ -72,7 +72,7 @@ pub async fn parse_operation_with_cache(
             document = start_payload.document;
         }
 
-        let document = match document {
+        let mut document = match document {
             Some(parsed) => parsed,
             None => {
                 let query_str = graphql_params.get_query()?;
@@ -84,20 +84,22 @@ pub async fn parse_operation_with_cache(
                 parsed
             }
         };
-        let mut end_payload = OnGraphQLParseEndHookPayload { document };
-        for callback in on_end_callbacks {
-            let result = callback(end_payload);
-            end_payload = result.payload;
-            match result.control_flow {
-                EndControlFlow::Continue => {
-                    // continue to next callback
-                }
-                EndControlFlow::EndResponse(response) => {
-                    return Ok(ParseResult::Response(response));
+        if !on_end_callbacks.is_empty() {
+            let mut end_payload = OnGraphQLParseEndHookPayload { document };
+            for callback in on_end_callbacks {
+                let result = callback(end_payload);
+                end_payload = result.payload;
+                match result.control_flow {
+                    EndControlFlow::Proceed => {
+                        // continue to next callback
+                    }
+                    EndControlFlow::EndWithResponse(response) => {
+                        return Ok(ParseResult::Response(response));
+                    }
                 }
             }
+            document = end_payload.document;
         }
-        let document = end_payload.document;
         /* Handle on_graphql_parse hook in the plugins - END */
 
         let parsed_arc = Arc::new(document);

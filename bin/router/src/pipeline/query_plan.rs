@@ -86,10 +86,10 @@ async fn get_query_plan(
             let result = plugin.on_query_plan(start_payload).await;
             start_payload = result.payload;
             match result.control_flow {
-                StartControlFlow::Continue => {
+                StartControlFlow::Proceed => {
                     // continue to next plugin
                 }
-                StartControlFlow::EndResponse(response) => {
+                StartControlFlow::EndWithResponse(response) => {
                     return Err(QueryPlanError::Response(response));
                 }
                 StartControlFlow::OnEnd(callback) => {
@@ -101,7 +101,7 @@ async fn get_query_plan(
         query_plan = start_payload.query_plan;
     }
 
-    let query_plan = match query_plan {
+    let mut query_plan = match query_plan {
         Some(plan) => plan,
         None => supergraph
             .planner
@@ -113,22 +113,26 @@ async fn get_query_plan(
             .map_err(QueryPlanError::Planner)?,
     };
 
-    let mut end_payload = OnQueryPlanEndHookPayload { query_plan };
+    if !on_end_callbacks.is_empty() {
+        let mut end_payload = OnQueryPlanEndHookPayload { query_plan };
 
-    for callback in on_end_callbacks {
-        let result = callback(end_payload);
-        end_payload = result.payload;
-        match result.control_flow {
-            EndControlFlow::Continue => {
-                // continue to next callback
-            }
-            EndControlFlow::EndResponse(response) => {
-                return Err(QueryPlanError::Response(response));
+        for callback in on_end_callbacks {
+            let result = callback(end_payload);
+            end_payload = result.payload;
+            match result.control_flow {
+                EndControlFlow::Proceed => {
+                    // continue to next callback
+                }
+                EndControlFlow::EndWithResponse(response) => {
+                    return Err(QueryPlanError::Response(response));
+                }
             }
         }
+
+        query_plan = end_payload.query_plan;
     }
 
-    Ok(Arc::new(end_payload.query_plan))
+    Ok(Arc::new(query_plan))
 }
 
 #[inline]

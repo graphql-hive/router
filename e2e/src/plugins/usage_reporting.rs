@@ -1,3 +1,4 @@
+use hive_router::BoxError;
 use hive_router_plan_executor::{
     hooks::on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
     plugin_trait::{RouterPlugin, StartHookPayload},
@@ -31,9 +32,7 @@ impl RouterPlugin for UsageReportingPlugin {
     fn plugin_name() -> &'static str {
         "usage_reporting"
     }
-    fn from_config(
-        config: UsageReportingPluginConfig,
-    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+    fn from_config(config: UsageReportingPluginConfig) -> Result<Option<Self>, BoxError> {
         if config.enabled {
             Ok(Some(UsageReportingPlugin {
                 endpoint: config.endpoint,
@@ -82,11 +81,11 @@ mod tests {
     use crate::testkit::{
         init_graphql_request, init_router_from_config_inline, wait_for_readiness, SubgraphsServer,
     };
-    use hive_router::PluginRegistry;
+    use hive_router::{BoxError, PluginRegistry};
     use ntex::web::test;
     use serde_json::json;
     #[ntex::test]
-    async fn test_usage_reporting_plugin() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_usage_reporting_plugin() -> Result<(), BoxError> {
         let query = "query Test {me{name}}";
         let operation_name = "Test";
         let mut server = mockito::Server::new_async().await;

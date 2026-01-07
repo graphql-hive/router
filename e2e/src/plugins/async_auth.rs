@@ -1,3 +1,4 @@
+use hive_router::BoxError;
 use http::StatusCode;
 // From https://github.com/apollographql/router/blob/dev/examples/async-auth/rust/src/allow_client_id_from_file.rs
 use serde::Deserialize;
@@ -27,9 +28,7 @@ impl RouterPlugin for AllowClientIdFromFilePlugin {
     fn plugin_name() -> &'static str {
         "allow_client_id_from_file"
     }
-    fn from_config(
-        config: AllowClientIdConfig,
-    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+    fn from_config(config: AllowClientIdConfig) -> Result<Option<Self>, BoxError> {
         if config.enabled {
             Ok(Some(AllowClientIdFromFilePlugin {
                 header_key: config.header,
@@ -98,11 +97,11 @@ mod tests {
         init_graphql_request, init_router_from_config_inline, wait_for_readiness, SubgraphsServer,
     };
 
-    use hive_router::PluginRegistry;
+    use hive_router::{BoxError, PluginRegistry};
     use ntex::web::test;
     use serde_json::Value;
     #[ntex::test]
-    async fn should_allow_only_allowed_client_ids() -> Result<(), Box<dyn std::error::Error>> {
+    async fn should_allow_only_allowed_client_ids() -> Result<(), BoxError> {
         let subgraphs_server = SubgraphsServer::start().await;
 
         let app = init_router_from_config_inline(

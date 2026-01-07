@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use bytes::Bytes;
+use hive_router::BoxError;
 use hive_router_plan_executor::{
     executors::http::HttpResponse,
     hooks::{
@@ -42,9 +43,7 @@ impl RouterPlugin for MultipartPlugin {
     fn plugin_name() -> &'static str {
         "multipart"
     }
-    fn from_config(
-        config: MultipartPluginConfig,
-    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+    fn from_config(config: MultipartPluginConfig) -> Result<Option<Self>, BoxError> {
         if config.enabled {
             Ok(Some(MultipartPlugin {
                 client: reqwest::Client::new(),
