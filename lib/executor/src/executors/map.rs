@@ -170,10 +170,10 @@ impl SubgraphExecutorMap {
                 let result = plugin.on_subgraph_execute(start_payload).await;
                 start_payload = result.payload;
                 match result.control_flow {
-                    StartControlFlow::Continue => {
+                    StartControlFlow::Proceed => {
                         // continue to next plugin
                     }
-                    StartControlFlow::EndResponse(_response) => {
+                    StartControlFlow::EndWithResponse(_response) => {
                         // TODO: FFIX
                         todo!()
                     }
@@ -196,27 +196,29 @@ impl SubgraphExecutorMap {
             }
         };
 
-        if let Some(plugin_req_state) = plugin_req_state.as_ref() {
-            let mut end_payload = OnSubgraphExecuteEndHookPayload {
-                context: &plugin_req_state.context,
-                execution_result,
-            };
+        if !on_end_callbacks.is_empty() {
+            if let Some(plugin_req_state) = plugin_req_state.as_ref() {
+                let mut end_payload = OnSubgraphExecuteEndHookPayload {
+                    context: &plugin_req_state.context,
+                    execution_result,
+                };
 
-            for callback in on_end_callbacks {
-                let result = callback(end_payload);
-                end_payload = result.payload;
-                match result.control_flow {
-                    EndControlFlow::Continue => {
-                        // continue to next callback
-                    }
-                    EndControlFlow::EndResponse(_response) => {
-                        // TODO: FFIX
-                        todo!("Handle EndResponse in end hooks");
+                for callback in on_end_callbacks {
+                    let result = callback(end_payload);
+                    end_payload = result.payload;
+                    match result.control_flow {
+                        EndControlFlow::Proceed => {
+                            // continue to next callback
+                        }
+                        EndControlFlow::EndWithResponse(_response) => {
+                            // TODO: FFIX
+                            todo!("Handle EndResponse in end hooks");
+                        }
                     }
                 }
-            }
 
-            execution_result = end_payload.execution_result;
+                execution_result = end_payload.execution_result;
+            }
         }
 
         Ok(execution_result)

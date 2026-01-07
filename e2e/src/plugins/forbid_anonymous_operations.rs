@@ -1,5 +1,6 @@
 // Same with https://github.com/apollographql/router/blob/dev/examples/forbid-anonymous-operations/rust/src/forbid_anonymous_operations.rs
 
+use hive_router::BoxError;
 use http::StatusCode;
 use serde::Deserialize;
 
@@ -21,7 +22,7 @@ impl RouterPlugin for ForbidAnonymousOperationsPlugin {
     fn plugin_name() -> &'static str {
         "forbid_anonymous_operations"
     }
-    fn from_config(config: Self::Config) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+    fn from_config(config: Self::Config) -> Result<Option<Self>, BoxError> {
         if config.enabled {
             Ok(Some(ForbidAnonymousOperationsPlugin {}))
         } else {
@@ -42,7 +43,7 @@ impl RouterPlugin for ForbidAnonymousOperationsPlugin {
                 tracing::error!("Operation is not allowed!");
 
                 // Prepare an HTTP 400 response with a GraphQL error message
-                return payload.end_graphql_error(
+                return payload.end_with_graphql_error(
                     GraphQLError::from_message_and_code(
                         "Anonymous operations are not allowed".into(),
                         "ANONYMOUS_OPERATION",

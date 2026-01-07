@@ -36,6 +36,8 @@ use ntex::{
 };
 use tracing::{info, warn};
 
+pub type BoxError = Box<dyn std::error::Error>;
+
 async fn graphql_endpoint_handler(
     request: HttpRequest,
     body_bytes: Bytes,
@@ -76,9 +78,7 @@ async fn graphql_endpoint_handler(
     }
 }
 
-pub async fn router_entrypoint(
-    plugin_registry: Option<PluginRegistry>,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn router_entrypoint(plugin_registry: Option<PluginRegistry>) -> Result<(), BoxError> {
     let config_path = std::env::var("ROUTER_CONFIG_FILE_PATH").ok();
     let router_config = load_config(config_path)?;
     configure_logging(&router_config.log);
@@ -126,7 +126,7 @@ pub async fn configure_app_from_config(
     router_config: HiveRouterConfig,
     bg_tasks_manager: &mut BackgroundTasksManager,
     plugin_registry: Option<PluginRegistry>,
-) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), Box<dyn std::error::Error>> {
+) -> Result<(Arc<RouterSharedState>, Arc<SchemaState>), BoxError> {
     let jwt_runtime = match router_config.jwt.is_jwt_auth_enabled() {
         true => Some(JwtAuthRuntime::init(bg_tasks_manager, &router_config.jwt).await?),
         false => None,

@@ -107,8 +107,8 @@ pub async fn execute_query_plan<'exec, 'req>(
             let result = plugin.on_execute(start_payload).await;
             start_payload = result.payload;
             match result.control_flow {
-                StartControlFlow::Continue => { /* continue to next plugin */ }
-                StartControlFlow::EndResponse(response) => {
+                StartControlFlow::Proceed => { /* continue to next plugin */ }
+                StartControlFlow::EndWithResponse(response) => {
                     return Ok(QueryPlanExecutionResult {
                         response,
                         error_count: start_payload.errors.len(),
@@ -162,8 +162,8 @@ pub async fn execute_query_plan<'exec, 'req>(
             let result = callback(end_payload);
             end_payload = result.payload;
             match result.control_flow {
-                EndControlFlow::Continue => { /* continue to next callback */ }
-                EndControlFlow::EndResponse(response) => {
+                EndControlFlow::Proceed => { /* continue to next callback */ }
+                EndControlFlow::EndWithResponse(response) => {
                     return Ok(QueryPlanExecutionResult {
                         response,
                         error_count,

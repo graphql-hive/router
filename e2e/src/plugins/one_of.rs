@@ -60,6 +60,7 @@ use graphql_tools::{
         utils::{ValidationError, ValidationErrorContext},
     },
 };
+use hive_router::BoxError;
 use hive_router_plan_executor::{
     hooks::{
         on_execute::{OnExecuteStartHookPayload, OnExecuteStartHookResult},
@@ -90,7 +91,7 @@ impl RouterPlugin for OneOfPlugin {
     fn plugin_name() -> &'static str {
         "oneof"
     }
-    fn from_config(config: OneOfPluginConfig) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+    fn from_config(config: OneOfPluginConfig) -> Result<Option<Self>, BoxError> {
         if config.enabled {
             Ok(Some(OneOfPlugin {
                 one_of_types: Default::default(),

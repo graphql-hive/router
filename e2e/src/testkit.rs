@@ -9,7 +9,7 @@ use bollard::{
 use futures_util::TryStreamExt;
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    invoke_shutdown_hooks, plugins::plugins_service::PluginService, PluginRegistry,
+    invoke_shutdown_hooks, plugins::plugins_service::PluginService, BoxError, PluginRegistry,
     RouterSharedState, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
@@ -138,7 +138,7 @@ pub async fn init_router_from_config_file(
     TestRouterApp<
         impl ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
     >,
-    Box<dyn std::error::Error>,
+    BoxError,
 > {
     let supergraph_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(config_path);
     let router_config = load_config(Some(supergraph_path.to_str().unwrap().to_string()))?;
@@ -153,7 +153,7 @@ pub async fn init_router_from_config_inline(
     TestRouterApp<
         impl ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
     >,
-    Box<dyn std::error::Error>,
+    BoxError,
 > {
     let router_config = parse_yaml_config(config_yaml.to_string())?;
     init_router_from_config(router_config, plugin_registry).await
@@ -190,7 +190,7 @@ pub async fn init_router_from_config(
     TestRouterApp<
         impl ntex::Service<ntex::http::Request, Response = WebResponse, Error = ntex::web::Error>,
     >,
-    Box<dyn std::error::Error>,
+    BoxError,
 > {
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let http_config = router_config.http.clone();

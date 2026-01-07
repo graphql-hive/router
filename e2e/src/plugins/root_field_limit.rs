@@ -6,6 +6,7 @@ use graphql_tools::{
         utils::{ValidationError, ValidationErrorContext},
     },
 };
+use hive_router::BoxError;
 use hive_router_query_planner::ast::selection_item::SelectionItem;
 use http::StatusCode;
 use serde::Deserialize;
@@ -31,7 +32,7 @@ impl RouterPlugin for RootFieldLimitPlugin {
     fn plugin_name() -> &'static str {
         "root_field_limit"
     }
-    fn from_config(config: Self::Config) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+    fn from_config(config: Self::Config) -> Result<Option<Self>, BoxError> {
         if !config.enabled {
             return Ok(None);
         }

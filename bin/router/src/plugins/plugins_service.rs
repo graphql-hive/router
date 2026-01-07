@@ -55,19 +55,19 @@ where
                 context: &plugin_context,
             };
 
-            let mut on_end_callbacks = vec![];
+            let mut on_end_callbacks = Vec::with_capacity(plugins.len());
 
             for plugin in plugins.iter() {
                 let result = plugin.on_http_request(start_payload);
                 start_payload = result.payload;
                 match result.control_flow {
-                    StartControlFlow::Continue => {
+                    StartControlFlow::Proceed => {
                         // continue to next plugin
                     }
                     StartControlFlow::OnEnd(callback) => {
                         on_end_callbacks.push(callback);
                     }
-                    StartControlFlow::EndResponse(response) => {
+                    StartControlFlow::EndWithResponse(response) => {
                         return Ok(start_payload.router_http_request.into_response(response));
                     }
                 }
@@ -75,28 +75,31 @@ where
 
             let req = start_payload.router_http_request;
 
-            let response = ctx.call(&self.service, req).await?;
+            let mut response = ctx.call(&self.service, req).await?;
 
-            let mut end_payload = OnHttpResponseHookPayload {
-                response,
-                context: &plugin_context,
-            };
+            if !on_end_callbacks.is_empty() {
+                let mut end_payload = OnHttpResponseHookPayload {
+                    response,
+                    context: &plugin_context,
+                };
 
-            for callback in on_end_callbacks.into_iter().rev() {
-                let result = callback(end_payload);
-                end_payload = result.payload;
-                match result.control_flow {
-                    EndControlFlow::Continue => {
-                        // continue to next callback
-                    }
-                    EndControlFlow::EndResponse(response) => {
-                        end_payload.response = end_payload.response.into_response(response);
-                        return Ok(end_payload.response);
+                for callback in on_end_callbacks.into_iter().rev() {
+                    let result = callback(end_payload);
+                    end_payload = result.payload;
+                    match result.control_flow {
+                        EndControlFlow::Proceed => {
+                            // continue to next callback
+                        }
+                        EndControlFlow::EndWithResponse(response) => {
+                            end_payload.response = end_payload.response.into_response(response);
+                            return Ok(end_payload.response);
+                        }
                     }
                 }
-            }
 
-            return Ok(end_payload.response);
+                response = end_payload.response;
+            }
+            return Ok(response);
         }
 
         ctx.call(&self.service, req).await
