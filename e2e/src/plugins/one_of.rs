@@ -90,13 +90,13 @@ impl RouterPlugin for OneOfPlugin {
     fn plugin_name() -> &'static str {
         "oneof"
     }
-    fn from_config(config: OneOfPluginConfig) -> Option<Self> {
+    fn from_config(config: OneOfPluginConfig) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         if config.enabled {
-            Some(OneOfPlugin {
+            Ok(Some(OneOfPlugin {
                 one_of_types: Default::default(),
-            })
+            }))
         } else {
-            None
+            Ok(None)
         }
     }
     // 1. During validation step
@@ -107,12 +107,12 @@ impl RouterPlugin for OneOfPlugin {
         let one_of_types = self.one_of_types.load();
         // If there are no oneOf types, skip adding the validation rule
         if one_of_types.is_empty() {
-            return payload.cont();
+            return payload.proceed();
         }
         let rule = OneOfValidationRule {
             one_of_types: one_of_types.clone(),
         };
-        payload.with_validation_rule(rule).cont()
+        payload.with_validation_rule(rule).proceed()
     }
     // 2. During execution step
     async fn on_execute<'exec>(
@@ -122,7 +122,7 @@ impl RouterPlugin for OneOfPlugin {
         let one_of_types = self.one_of_types.load();
         // If there are no oneOf types, skip checking
         if one_of_types.is_empty() {
-            return payload.cont();
+            return payload.proceed();
         }
         if let (Some(variable_values), Some(variable_defs)) = (
             &payload.variable_values,
@@ -135,7 +135,7 @@ impl RouterPlugin for OneOfPlugin {
                     if let Some(value) = variable_values.get(var_name).and_then(|v| v.as_object()) {
                         let keys_num = value.len();
                         if keys_num > 1 {
-                            return payload.end_graphql_error(GraphQLError::from_message_and_code(
+                            return payload.end_with_graphql_error(GraphQLError::from_message_and_code(
                                 format!(
                                     "Variable '${}' of input object type '{}' with @oneOf directive has multiple fields set: {:?}. Only one field must be set.",
                                     var_name,
@@ -149,7 +149,7 @@ impl RouterPlugin for OneOfPlugin {
                 }
             }
         }
-        payload.cont()
+        payload.proceed()
     }
     fn on_supergraph_reload<'exec>(
         &'exec self,
@@ -167,7 +167,7 @@ impl RouterPlugin for OneOfPlugin {
             }
         }
         self.one_of_types.store(one_of_types.into());
-        start_payload.cont()
+        start_payload.proceed()
     }
 }
 

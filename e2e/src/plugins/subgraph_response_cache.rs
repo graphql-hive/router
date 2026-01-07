@@ -25,13 +25,15 @@ impl RouterPlugin for SubgraphResponseCachePlugin {
     fn plugin_name() -> &'static str {
         "subgraph_response_cache"
     }
-    fn from_config(config: SubgraphResponseCachePluginConfig) -> Option<Self> {
+    fn from_config(
+        config: SubgraphResponseCachePluginConfig,
+    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         if config.enabled {
-            Some(SubgraphResponseCachePlugin {
+            Ok(Some(SubgraphResponseCachePlugin {
                 cache: DashMap::new(),
-            })
+            }))
         } else {
-            None
+            Ok(None)
         }
     }
     async fn on_subgraph_http_request<'exec>(
@@ -45,12 +47,12 @@ impl RouterPlugin for SubgraphResponseCachePlugin {
         if let Some(cached_response) = self.cache.get(&key) {
             // Here payload.response is Option
             // So it is bypassing the actual subgraph request
-            return payload.with_response(cached_response.clone()).cont();
+            return payload.with_response(cached_response.clone()).proceed();
         }
         payload.on_end(move |payload: OnSubgraphHttpResponseHookPayload| {
             // Here payload.response is not Option
             self.cache.insert(key, payload.response.clone());
-            payload.cont()
+            payload.proceed()
         })
     }
 }

@@ -31,14 +31,16 @@ impl RouterPlugin for UsageReportingPlugin {
     fn plugin_name() -> &'static str {
         "usage_reporting"
     }
-    fn from_config(config: UsageReportingPluginConfig) -> Option<Self> {
+    fn from_config(
+        config: UsageReportingPluginConfig,
+    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         if config.enabled {
-            Some(UsageReportingPlugin {
+            Ok(Some(UsageReportingPlugin {
                 endpoint: config.endpoint,
                 reports: Default::default(),
-            })
+            }))
         } else {
-            None
+            Ok(None)
         }
     }
     async fn on_execute<'exec>(
@@ -53,7 +55,7 @@ impl RouterPlugin for UsageReportingPlugin {
             "Pushed usage report for operation: {:?}",
             payload.operation_for_plan.name
         );
-        payload.cont()
+        payload.proceed()
     }
     async fn on_shutdown<'exec>(&'exec self) {
         println!("Disposing UsageReportingPlugin and sending usage report");

@@ -125,7 +125,9 @@ impl RouterPlugin for ApolloSandboxPlugin {
     fn plugin_name() -> &'static str {
         "apollo_sandbox"
     }
-    fn from_config(config: ApolloSandboxOptions) -> Option<Self> {
+    fn from_config(
+        config: ApolloSandboxOptions,
+    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         if config.enabled {
             let serialized_options =
                 sonic_rs::to_string(&config).unwrap_or_else(|_| "{}".to_string());
@@ -141,9 +143,9 @@ impl RouterPlugin for ApolloSandboxPlugin {
                 "#,
                 serialized_options
             );
-            Some(ApolloSandboxPlugin { html })
+            Ok(Some(ApolloSandboxPlugin { html }))
         } else {
-            None
+            Ok(None)
         }
     }
     fn on_http_request<'req>(
@@ -151,7 +153,7 @@ impl RouterPlugin for ApolloSandboxPlugin {
         payload: OnHttpRequestHookPayload<'req>,
     ) -> OnHttpRequestHookResult<'req> {
         if payload.router_http_request.path() == "/apollo-sandbox" {
-            return payload.end_response(
+            return payload.end_with_response(
                 ResponseBuilder::new(StatusCode::OK)
                     .header(
                         CONTENT_TYPE,
@@ -160,7 +162,7 @@ impl RouterPlugin for ApolloSandboxPlugin {
                     .body(self.html.clone()),
             );
         }
-        payload.cont()
+        payload.proceed()
     }
 }
 

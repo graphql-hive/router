@@ -31,13 +31,13 @@ impl RouterPlugin for RootFieldLimitPlugin {
     fn plugin_name() -> &'static str {
         "root_field_limit"
     }
-    fn from_config(config: Self::Config) -> Option<Self> {
+    fn from_config(config: Self::Config) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         if !config.enabled {
-            return None;
+            return Ok(None);
         }
-        Some(RootFieldLimitPlugin {
+        Ok(Some(RootFieldLimitPlugin {
             max_root_fields: config.max_root_fields,
-        })
+        }))
     }
     // Using validation step
     async fn on_graphql_validation<'exec>(
@@ -48,7 +48,7 @@ impl RouterPlugin for RootFieldLimitPlugin {
             max_root_fields: self.max_root_fields,
         };
 
-        payload.with_validation_rule(rule).cont()
+        payload.with_validation_rule(rule).proceed()
     }
     // Or during query planning
     async fn on_query_plan<'exec>(
@@ -72,7 +72,7 @@ impl RouterPlugin for RootFieldLimitPlugin {
                         );
                         tracing::warn!("{}", err_msg);
                         // Return error
-                        return payload.end_graphql_error(
+                        return payload.end_with_graphql_error(
                             GraphQLError::from_message_and_code(err_msg, "TOO_MANY_ROOT_FIELD"),
                             StatusCode::PAYLOAD_TOO_LARGE,
                         );
@@ -86,7 +86,7 @@ impl RouterPlugin for RootFieldLimitPlugin {
                 }
             }
         }
-        payload.cont()
+        payload.proceed()
     }
 }
 

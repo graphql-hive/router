@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, error::Error};
 
 use arc_swap::ArcSwap;
 use http::StatusCode;
@@ -43,20 +43,17 @@ impl RouterPlugin for ResponseCachePlugin {
     fn plugin_name() -> &'static str {
         "response_cache_plugin"
     }
-    fn from_config(config: ResponseCachePluginOptions) -> Option<Self> {
+    fn from_config(config: ResponseCachePluginOptions) -> Result<Option<Self>, Box<dyn Error>> {
         if !config.enabled {
-            return None;
+            return Ok(None);
         }
-        let redis_client =
-            redis::Client::open(config.redis_url).expect("Failed to create Redis client");
-        let pool = r2d2::Pool::builder()
-            .build(redis_client)
-            .unwrap_or_else(|err| panic!("Failed to create Redis connection pool: {}", err));
-        Some(Self {
+        let redis_client = redis::Client::open(config.redis_url)?;
+        let pool = r2d2::Pool::builder().build(redis_client)?;
+        Ok(Some(Self {
             redis: pool,
             ttl_per_type: Default::default(),
             default_ttl_seconds: config.default_ttl_seconds,
-        })
+        }))
     }
     async fn on_execute<'exec>(
         &'exec self,
@@ -80,7 +77,7 @@ impl RouterPlugin for ResponseCachePlugin {
                             String::from_utf8_lossy(&body)
                         );
                         return payload
-                            .end_response(Response::with_body(StatusCode::OK, body.into()));
+                            .end_with_response(Response::with_body(StatusCode::OK, body.into()));
                     }
                 }
                 Err(err) => {
@@ -91,7 +88,7 @@ impl RouterPlugin for ResponseCachePlugin {
                 // Do not cache if there are errors
                 if !payload.errors.is_empty() {
                     trace!("Not caching response due to errors");
-                    return payload.cont();
+                    return payload.proceed();
                 }
 
                 if let Ok(serialized) = sonic_rs::to_vec(&payload.data) {
@@ -131,10 +128,10 @@ impl RouterPlugin for ResponseCachePlugin {
                         trace!("Cached response for key: {} with TTL: {}", key, max_ttl);
                     }
                 }
-                payload.cont()
+                payload.proceed()
             });
         }
-        payload.cont()
+        payload.proceed()
     }
     fn on_supergraph_reload<'a>(
         &'a self,
@@ -165,7 +162,7 @@ impl RouterPlugin for ResponseCachePlugin {
 
         self.ttl_per_type.store(ttl_per_type.into());
 
-        payload.cont()
+        payload.proceed()
     }
 }
 

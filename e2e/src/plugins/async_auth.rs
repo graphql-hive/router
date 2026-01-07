@@ -27,14 +27,16 @@ impl RouterPlugin for AllowClientIdFromFilePlugin {
     fn plugin_name() -> &'static str {
         "allow_client_id_from_file"
     }
-    fn from_config(config: AllowClientIdConfig) -> Option<Self> {
+    fn from_config(
+        config: AllowClientIdConfig,
+    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         if config.enabled {
-            Some(AllowClientIdFromFilePlugin {
+            Ok(Some(AllowClientIdFromFilePlugin {
                 header_key: config.header,
                 allowed_ids_path: PathBuf::from(config.path),
-            })
+            }))
         } else {
-            None
+            Ok(None)
         }
     }
     // Whenever it is a GraphQL request,
@@ -58,7 +60,7 @@ impl RouterPlugin for AllowClientIdFromFilePlugin {
 
                         if !allowed_clients.contains(&client_id.to_string()) {
                             // Prepare an HTTP 403 response with a GraphQL error message
-                            return payload.end_graphql_error(
+                            return payload.end_with_graphql_error(
                                 GraphQLError::from_message_and_code(
                                     "client-id is not allowed".into(),
                                     "UNAUTHORIZED_CLIENT_ID",
@@ -70,7 +72,7 @@ impl RouterPlugin for AllowClientIdFromFilePlugin {
                     Err(_not_a_string_error) => {
                         let message = format!("'{}' value is not a string", &self.header_key);
                         tracing::error!(message);
-                        return payload.end_graphql_error(
+                        return payload.end_with_graphql_error(
                             GraphQLError::from_message_and_code(message, "BAD_CLIENT_ID"),
                             StatusCode::BAD_REQUEST,
                         );
@@ -80,13 +82,13 @@ impl RouterPlugin for AllowClientIdFromFilePlugin {
             None => {
                 let message = format!("Missing '{}' header", &self.header_key);
                 tracing::error!(message);
-                return payload.end_graphql_error(
+                return payload.end_with_graphql_error(
                     GraphQLError::from_message_and_code(message, "AUTH_ERROR"),
                     StatusCode::UNAUTHORIZED,
                 );
             }
         }
-        payload.cont()
+        payload.proceed()
     }
 }
 
