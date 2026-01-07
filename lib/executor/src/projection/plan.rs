@@ -17,7 +17,7 @@ use hive_router_query_planner::{
 use crate::projection::error::ProjectionError;
 use crate::{introspection::schema::SchemaMetadata, utils::consts::TYPENAME_FIELD_NAME};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeCondition {
     Exact(String),
     OneOf(HashSet<String>),
@@ -121,7 +121,7 @@ pub struct FieldProjectionPlan {
     pub value: ProjectionValueSource,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldProjectionCondition {
     IncludeIfVariable(String),
     SkipIfVariable(String),
@@ -167,9 +167,17 @@ impl FieldProjectionCondition {
         }
     }
 
-    /// Combines two conditions with OR logic, reducing them to their minimum form
+    /// Combines two conditions with OR logic, reducing them to their minimum form.
+    ///
+    /// This method automatically deduplicates identical conditions to avoid creating
+    /// redundant expressions like `X OR X`.
     pub fn or(&self, right: FieldProjectionCondition) -> FieldProjectionCondition {
         use FieldProjectionCondition::*;
+
+        // Avoid creating duplicate OR expressions
+        if self == &right {
+            return self.clone();
+        }
 
         match (self, right) {
             (ParentTypeCondition(left), ParentTypeCondition(right)) => {
@@ -339,7 +347,7 @@ impl FieldProjectionPlan {
     ) -> Option<FieldProjectionCondition> {
         let mut condition = condition;
         if let Some(include_if_var) = include_if {
-            condition = Self::optional_and(
+            condition = Self::and_optional(
                 condition,
                 Some(FieldProjectionCondition::IncludeIfVariable(
                     include_if_var.clone(),
@@ -347,7 +355,7 @@ impl FieldProjectionPlan {
             );
         }
         if let Some(skip_if_var) = skip_if {
-            condition = Self::optional_and(
+            condition = Self::and_optional(
                 condition,
                 Some(FieldProjectionCondition::SkipIfVariable(
                     skip_if_var.clone(),
@@ -357,31 +365,115 @@ impl FieldProjectionPlan {
         condition
     }
 
+    fn combine_optional<T, F>(left: Option<T>, right: Option<T>, combiner: F) -> Option<T>
+    where
+        F: FnOnce(T, T) -> T,
+    {
+        match (left, right) {
+            (None, None) => None,
+            (Some(c), None) | (None, Some(c)) => Some(c),
+            (Some(l), Some(r)) => Some(combiner(l, r)),
+        }
+    }
+
+    /// Combines two optional conditions with OR logic
+    fn or_optional(
+        left: Option<FieldProjectionCondition>,
+        right: Option<FieldProjectionCondition>,
+    ) -> Option<FieldProjectionCondition> {
+        Self::combine_optional(left, right, |l, r| l.or(r))
+    }
+
+    /// Combines two optional conditions with AND logic
+    fn and_optional(
+        left: Option<FieldProjectionCondition>,
+        right: Option<FieldProjectionCondition>,
+    ) -> Option<FieldProjectionCondition> {
+        Self::combine_optional(left, right, |l, r| l.and(r))
+    }
+
+    /// When merging selections from different type fragments (e.g., Book and Magazine),
+    /// each condition must remain associated with its original type guard to ensure
+    /// correct runtime evaluation.
+    fn merge_conditions(
+        left_guard: &Option<TypeCondition>,
+        left_condition: Option<FieldProjectionCondition>,
+        right_guard: &Option<TypeCondition>,
+        right_condition: Option<FieldProjectionCondition>,
+    ) -> Option<FieldProjectionCondition> {
+        match (left_guard, right_guard, left_condition, right_condition) {
+            // No conditions to merge - return None
+            (_, _, None, None) => None,
+
+            // Both have guards AND guards differ - must preserve guard associations
+            // This happens when merging fragments on different types (e.g., Book + Magazine)
+            (Some(lg), Some(rg), lc, rc) if lg != rg => {
+                Some(Self::condition_with_guard(lg, lc).or(Self::condition_with_guard(rg, rc)))
+            }
+
+            // Catch-all for remaining cases - simple OR merge
+            // These cases are safe to merge without guard wrapping because:
+            // - Both guards are identical (l == r), so conditions apply to same type
+            // - One or both guards are None, meaning selections apply to all types
+            //   (merge_plan treats None as "all types", so if either
+            //   is None, the merged guard is None, making simple OR safe)
+            (_, _, lc, rc) => Self::or_optional(lc, rc),
+        }
+    }
+
+    /// Wraps a condition with a ParentType guard, or returns just the guard if no condition.
+    /// This creates
+    ///   `ParentType(guard) AND condition`,
+    /// or just
+    ///   `ParentType(guard)`
+    /// if condition is None.
+    fn condition_with_guard(
+        guard: &TypeCondition,
+        condition: Option<FieldProjectionCondition>,
+    ) -> FieldProjectionCondition {
+        let parent_check = FieldProjectionCondition::ParentTypeCondition(guard.clone());
+        match condition {
+            Some(cond) => parent_check.and(cond),
+            None => parent_check,
+        }
+    }
+
+    /// When the same field appears in multiple fragments,
+    /// this function combines them into a single plan by:
+    /// - Unioning type guards (e.g., Book + Magazine = OneOf(Book, Magazine))
+    /// - OR-ing conditions while preserving guard associations
+    /// - Recursively merging child selections
     fn merge_plan(
         field_selections: &mut IndexMap<String, FieldProjectionPlan>,
         plan_to_merge: FieldProjectionPlan,
     ) {
         let Some(existing_plan) = field_selections.get_mut(&plan_to_merge.response_key) else {
+            // First time seeing this field - just insert it
             field_selections.insert(plan_to_merge.response_key.clone(), plan_to_merge);
             return;
         };
 
-        // Merge type guards with OR semantics
+        // Capture guards before merging, needed for condition association
+        let existing_guard = existing_plan.parent_type_guard.clone();
+        let new_guard = plan_to_merge.parent_type_guard.clone();
+
+        // Merge type guards using OR semantics (union of when to include the field)
+        // - None means "applies to all types" (no type restriction)
+        // - Some(guard) means "applies only to specific types"
         existing_plan.parent_type_guard = match (
             existing_plan.parent_type_guard.take(),
             plan_to_merge.parent_type_guard,
         ) {
+            (None, _) | (_, None) => None, // None (all types) subsumes any specific guard
             (Some(left), Some(right)) => Some(left.union(right)),
-            (Some(guard), None) | (None, Some(guard)) => Some(guard),
-            (None, None) => None,
         };
 
-        existing_plan.conditions = match (existing_plan.conditions.take(), plan_to_merge.conditions)
-        {
-            (Some(left), Some(right)) => Some(left.or(right)),
-            (Some(cond), None) | (None, Some(cond)) => Some(cond),
-            (None, None) => None,
-        };
+        existing_plan.conditions = Self::merge_conditions(
+            &existing_guard,
+            existing_plan.conditions.take(),
+            &new_guard,
+            plan_to_merge.conditions,
+        );
 
         match (&mut existing_plan.value, plan_to_merge.value) {
             (
@@ -399,19 +491,19 @@ impl FieldProjectionPlan {
                             let new_selections_vec = Arc::try_unwrap(new_selections)
                                 .unwrap_or_else(|arc| (*arc).clone());
 
+                            // Convert Vec to Map for efficient merging by response_key
                             let mut selections_map: IndexMap<String, FieldProjectionPlan> =
                                 selections_mut
                                     .drain(..)
                                     .map(|plan| (plan.response_key.clone(), plan))
                                     .collect();
 
-                            // Merge each new selection
+                            // Recursively merge each child selection
                             for new_plan in new_selections_vec {
                                 Self::merge_plan(&mut selections_map, new_plan);
                             }
 
-                            // Convert back to Vec, so the response projection plan
-                            // is in the correct format and easy to iterate.
+                            // Convert back to Vec for efficient iteration during projection
                             selections_mut.extend(selections_map.into_values());
                         }
                         None => *existing_selections = Some(new_selections),
@@ -545,7 +637,7 @@ impl FieldProjectionPlan {
         let mut condition_for_field = if schema_metadata.is_union_type(&field_type)
             || schema_metadata.is_interface_type(&field_type)
         {
-            Self::optional_and(
+            Self::and_optional(
                 parent_condition.clone(),
                 Some(FieldProjectionCondition::FieldTypeCondition(type_condition)),
             )
@@ -561,7 +653,7 @@ impl FieldProjectionPlan {
         );
 
         if let Some(enum_values) = schema_metadata.enum_values.get(&field_type) {
-            condition_for_field = Self::optional_and(
+            condition_for_field = Self::and_optional(
                 condition_for_field,
                 Some(FieldProjectionCondition::EnumValuesCondition(
                     enum_values.clone(),
@@ -609,7 +701,7 @@ impl FieldProjectionPlan {
             )
         };
 
-        let mut condition_for_fragment = Self::optional_and(
+        let mut condition_for_fragment = Self::and_optional(
             parent_condition.clone(),
             Some(FieldProjectionCondition::ParentTypeCondition(
                 type_condition.clone(),
@@ -650,31 +742,19 @@ impl FieldProjectionPlan {
         }
     }
 
-    /// Combines optional conditions with AND logic
-    fn optional_and(
-        left: Option<FieldProjectionCondition>,
-        right: Option<FieldProjectionCondition>,
-    ) -> Option<FieldProjectionCondition> {
-        match (left, right) {
-            (None, None) => None,
-            (Some(c), None) | (None, Some(c)) => Some(c),
-            (Some(l), Some(r)) => Some(l.and(r)),
-        }
-    }
-
     fn get_type_guard(condition: &FieldProjectionCondition) -> Option<TypeCondition> {
         match condition {
             FieldProjectionCondition::ParentTypeCondition(tc) => Some(tc.clone()),
-            FieldProjectionCondition::And(a, b) => {
-                Self::get_type_guard(a).or_else(|| Self::get_type_guard(b))
-            }
-            FieldProjectionCondition::Or(a, b) => {
-                match (Self::get_type_guard(a), Self::get_type_guard(b)) {
-                    (Some(ga), Some(gb)) => Some(ga.union(gb)),
-                    (Some(guard), None) | (None, Some(guard)) => Some(guard),
-                    (None, None) => None,
-                }
-            }
+            FieldProjectionCondition::And(a, b) => Self::combine_optional(
+                Self::get_type_guard(a),
+                Self::get_type_guard(b),
+                |ga, gb| ga.intersect(gb),
+            ),
+            FieldProjectionCondition::Or(a, b) => Self::combine_optional(
+                Self::get_type_guard(a),
+                Self::get_type_guard(b),
+                |ga, gb| ga.union(gb),
+            ),
             _ => None,
         }
     }
@@ -781,3 +861,32 @@ impl PrettyDisplay for FieldProjectionPlan {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn test_get_type_guard_and_uses_intersect() {
+        // Test that And conditions properly intersect type guards
+        let book = TypeCondition::Exact("Book".to_string());
+        let magazine = TypeCondition::Exact("Magazine".to_string());
+
+        let cond_book = FieldProjectionCondition::ParentTypeCondition(book.clone());
+        let cond_magazine = FieldProjectionCondition::ParentTypeCondition(magazine.clone());
+
+        // And(Book, Magazine) should produce empty set (impossible)
+        let and_condition = FieldProjectionCondition::And(
+            Box::new(cond_book.clone()),
+            Box::new(cond_magazine.clone()),
+        );
+
+        let result = FieldProjectionPlan::get_type_guard(&and_condition);
+        assert_eq!(result, Some(TypeCondition::OneOf(HashSet::default())));
+
+        // And(Book, Book) should produce Book
+        let and_same =
+            FieldProjectionCondition::And(Box::new(cond_book.clone()), Box::new(cond_book.clone()));
+
+        let result_
