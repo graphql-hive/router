@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error};
+use std::collections::HashMap;
 
 use arc_swap::ArcSwap;
 use hive_router::BoxError;
