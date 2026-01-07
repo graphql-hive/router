@@ -45,8 +45,9 @@
     }
 */
 
-use std::{collections::BTreeMap, sync::RwLock};
+use std::{collections::BTreeMap, sync::Arc};
 
+use arc_swap::ArcSwap;
 use graphql_parser::{
     query::Value,
     schema::{Definition, TypeDefinition},
@@ -80,7 +81,7 @@ pub struct OneOfPluginConfig {
 }
 
 pub struct OneOfPlugin {
-    pub one_of_types: RwLock<Vec<String>>,
+    pub one_of_types: ArcSwap<Vec<String>>,
 }
 
 #[async_trait::async_trait]
@@ -92,7 +93,7 @@ impl RouterPlugin for OneOfPlugin {
     fn from_config(config: OneOfPluginConfig) -> Option<Self> {
         if config.enabled {
             Some(OneOfPlugin {
-                one_of_types: RwLock::new(vec![]),
+                one_of_types: ArcSwap::from(Arc::new(vec![])),
             })
         } else {
             None
@@ -103,8 +104,9 @@ impl RouterPlugin for OneOfPlugin {
         &'exec self,
         payload: OnGraphQLValidationStartHookPayload<'exec>,
     ) -> OnGraphQLValidationStartHookResult<'exec> {
+        let one_of_types = self.one_of_types.load();
         let rule = OneOfValidationRule {
-            one_of_types: self.one_of_types.read().unwrap().clone(),
+            one_of_types: one_of_types.clone(),
         };
         payload.with_validation_rule(rule).cont()
     }
@@ -119,7 +121,7 @@ impl RouterPlugin for OneOfPlugin {
         ) {
             for def in variable_defs {
                 let variable_named_type = def.variable_type.inner_type();
-                let one_of_types = self.one_of_types.read().unwrap();
+                let one_of_types = self.one_of_types.load();
                 if one_of_types.contains(&variable_named_type.to_string()) {
                     let var_name = &def.name;
                     if let Some(value) = variable_values.get(var_name).and_then(|v| v.as_object()) {
@@ -146,24 +148,23 @@ impl RouterPlugin for OneOfPlugin {
         start_payload: OnSupergraphLoadStartHookPayload,
     ) -> StartHookResult<'exec, OnSupergraphLoadStartHookPayload, OnSupergraphLoadEndHookPayload>
     {
+        let mut one_of_types = vec![];
         for def in start_payload.new_ast.definitions.iter() {
             if let Definition::TypeDefinition(TypeDefinition::InputObject(input_obj)) = def {
                 for directive in input_obj.directives.iter() {
                     if directive.name == "oneOf" {
-                        self.one_of_types
-                            .write()
-                            .unwrap()
-                            .push(input_obj.name.clone());
+                        one_of_types.push(input_obj.name.clone());
                     }
                 }
             }
         }
+        self.one_of_types.store(Arc::new(one_of_types));
         start_payload.cont()
     }
 }
 
 struct OneOfValidationRule {
-    one_of_types: Vec<String>,
+    one_of_types: Arc<Vec<String>>,
 }
 
 impl ValidationRule for OneOfValidationRule {
@@ -187,7 +188,7 @@ impl ValidationRule for OneOfValidationRule {
 }
 
 struct OneOfValidation {
-    one_of_types: Vec<String>,
+    one_of_types: Arc<Vec<String>>,
 }
 
 impl<'a> OperationVisitor<'a, ValidationErrorContext> for OneOfValidation {
