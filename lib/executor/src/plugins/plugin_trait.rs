@@ -19,7 +19,7 @@ use crate::{
     response::graphql_error::GraphQLError,
 };
 use hive_router_internal::BoxError;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::de::DeserializeOwned;
 use sonic_rs::json;
 
 pub struct StartHookResult<'exec, TStartPayload, TEndPayload, TResponse> {
@@ -130,23 +130,20 @@ pub trait FromGraphQLErrorToResponse {
     fn from_graphql_error_to_response(error: GraphQLError, status_code: http::StatusCode) -> Self;
 }
 
-pub fn from_json_to_http_response<T: Serialize>(
-    body: T,
-    status_code: http::StatusCode,
-) -> ntex::http::Response {
-    let body = sonic_rs::to_vec(&body).unwrap_or_default();
-    ntex::http::Response::build(ntex::http::StatusCode::OK)
-        .content_type("application/json")
-        .status(status_code)
-        .body(body)
+pub fn from_graphql_error_to_bytes(error: GraphQLError) -> Vec<u8> {
+    let body = json!({
+        "errors": [error]
+    });
+    sonic_rs::to_vec(&body).unwrap_or_default()
 }
 
 impl FromGraphQLErrorToResponse for ntex::http::Response {
     fn from_graphql_error_to_response(error: GraphQLError, status_code: http::StatusCode) -> Self {
-        let body = json!({
-            "errors": [error]
-        });
-        from_json_to_http_response(body, status_code)
+        let body = from_graphql_error_to_bytes(error);
+        ntex::http::Response::build(ntex::http::StatusCode::OK)
+            .content_type("application/json")
+            .status(status_code)
+            .body(body)
     }
 }
 
