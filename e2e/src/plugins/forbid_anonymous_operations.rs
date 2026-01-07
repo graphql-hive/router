@@ -21,11 +21,11 @@ impl RouterPlugin for ForbidAnonymousOperationsPlugin {
     fn plugin_name() -> &'static str {
         "forbid_anonymous_operations"
     }
-    fn from_config(config: Self::Config) -> Option<Self> {
+    fn from_config(config: Self::Config) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         if config.enabled {
-            Some(ForbidAnonymousOperationsPlugin {})
+            Ok(Some(ForbidAnonymousOperationsPlugin {}))
         } else {
-            None
+            Ok(None)
         }
     }
     async fn on_graphql_params<'exec>(
@@ -52,7 +52,7 @@ impl RouterPlugin for ForbidAnonymousOperationsPlugin {
             }
             // we're good to go!
             tracing::info!("operation is allowed!");
-            payload.cont()
+            payload.proceed()
         })
     }
 }

@@ -42,13 +42,15 @@ impl RouterPlugin for MultipartPlugin {
     fn plugin_name() -> &'static str {
         "multipart"
     }
-    fn from_config(config: MultipartPluginConfig) -> Option<Self> {
+    fn from_config(
+        config: MultipartPluginConfig,
+    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         if config.enabled {
-            Some(MultipartPlugin {
+            Ok(Some(MultipartPlugin {
                 client: reqwest::Client::new(),
-            })
+            }))
         } else {
-            None
+            Ok(None)
         }
     }
     async fn on_graphql_params<'exec>(
@@ -100,7 +102,7 @@ impl RouterPlugin for MultipartPlugin {
                 }
             }
         }
-        payload.cont()
+        payload.proceed()
     }
 
     async fn on_subgraph_http_request<'exec>(
@@ -158,10 +160,10 @@ impl RouterPlugin for MultipartPlugin {
                                 headers: resp.headers().clone().into(),
                                 body: resp.bytes().await.unwrap().into(),
                             })
-                            .cont(),
+                            .proceed(),
                         Err(err) => {
                             error!("Failed to send multipart request to subgraph: {}", err);
-                            payload.end_graphql_error(
+                            payload.end_with_graphql_error(
                                 GraphQLError::from("Failed to send multipart request to subgraph"),
                                 StatusCode::BAD_REQUEST,
                             )
@@ -170,7 +172,7 @@ impl RouterPlugin for MultipartPlugin {
                 }
             }
         }
-        payload.cont()
+        payload.proceed()
     }
 }
 

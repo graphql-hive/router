@@ -2,10 +2,9 @@ use std::collections::HashMap;
 
 use hive_router_config::HiveRouterConfig;
 use hive_router_plan_executor::plugin_trait::{RouterPlugin, RouterPluginBoxed};
-use serde_json::Value;
-use tracing::info;
 
-type PluginFactory = Box<dyn Fn(Value) -> serde_json::Result<Option<RouterPluginBoxed>>>;
+type PluginFactory =
+    Box<dyn Fn(serde_json::Value) -> Result<Option<RouterPluginBoxed>, PluginRegistryError>>;
 
 pub struct PluginRegistry {
     map: HashMap<&'static str, PluginFactory>,
@@ -19,8 +18,10 @@ impl Default for PluginRegistry {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PluginRegistryError {
-    #[error("Failed to initialize plugin '{0}': {1}")]
-    Config(String, serde_json::Error),
+    #[error("Failed to parse the configuration for the plugin '{0}': {1}")]
+    Config(&'static str, serde_json::Error),
+    #[error("Failed to initialize the plugin '{0}': {1}")]
+    Initialization(&'static str, Box<dyn std::error::Error>),
     #[error(
         "Plugin '{0}' is not registered in the registry but is specified in the configuration"
     )]
@@ -34,14 +35,15 @@ impl PluginRegistry {
         }
     }
     pub fn register<P: RouterPlugin>(mut self) -> Self {
+        let plugin_name = P::plugin_name();
         self.map.insert(
-            P::plugin_name(),
-            Box::new(|plugin_config: Value| {
-                let config: P::Config = serde_json::from_value(plugin_config)?;
-                match P::from_config(config) {
-                    Some(plugin) => Ok(Some(Box::new(plugin) as RouterPluginBoxed)),
-                    None => Ok(None),
-                }
+            plugin_name,
+            Box::new(|plugin_config: serde_json::Value| {
+                let config: P::Config = serde_json::from_value(plugin_config)
+                    .map_err(|err| PluginRegistryError::Config(plugin_name, err))?;
+                let plugin = P::from_config(config)
+                    .map_err(|err| PluginRegistryError::Initialization(plugin_name, err))?;
+                Ok(Option::map(plugin, |p| Box::new(p) as RouterPluginBoxed))
             }),
         );
         self
@@ -54,20 +56,14 @@ impl PluginRegistry {
 
         for (plugin_name, plugin_config_value) in router_config.plugins.iter() {
             if let Some(factory) = self.map.get(plugin_name.as_str()) {
-                match factory(plugin_config_value.clone()) {
-                    Ok(plugin) => {
-                        info!("Loaded plugin: {}", plugin_name);
-                        match plugin {
-                            Some(plugin) => plugins.push(plugin),
-                            None => info!("Plugin '{}' is disabled, skipping", plugin_name),
-                        }
-                    }
-                    Err(err) => {
-                        return Err(PluginRegistryError::Config(plugin_name.clone(), err));
-                    }
+                let plugin = factory(plugin_config_value.clone())?;
+                if let Some(p) = plugin {
+                    plugins.push(p);
                 }
             } else {
-                return Err(PluginRegistryError::MissingInRegistry(plugin_name.clone()));
+                return Err(PluginRegistryError::MissingInRegistry(
+                    plugin_name.to_string(),
+                ));
             }
         }
 

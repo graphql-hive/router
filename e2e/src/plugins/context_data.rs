@@ -31,11 +31,13 @@ impl RouterPlugin for ContextDataPlugin {
     fn plugin_name() -> &'static str {
         "context_data"
     }
-    fn from_config(config: ContextDataPluginConfig) -> Option<Self> {
+    fn from_config(
+        config: ContextDataPluginConfig,
+    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         if config.enabled {
-            Some(ContextDataPlugin {})
+            Ok(Some(ContextDataPlugin {}))
         } else {
-            None
+            Ok(None)
         }
     }
     async fn on_graphql_params<'exec>(
@@ -55,7 +57,7 @@ impl RouterPlugin for ContextDataPlugin {
                 context_data.response_count += 1;
                 tracing::info!("subrequest count {}", context_data.response_count);
             }
-            payload.cont()
+            payload.proceed()
         })
     }
     async fn on_subgraph_execute<'exec>(
@@ -77,7 +79,7 @@ impl RouterPlugin for ContextDataPlugin {
                 context_data.response_count += 1;
                 tracing::info!("subrequest count {}", context_data.response_count);
             }
-            payload.cont()
+            payload.proceed()
         })
     }
 }

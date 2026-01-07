@@ -24,13 +24,13 @@ impl RouterPlugin for APQPlugin {
     fn plugin_name() -> &'static str {
         "apq"
     }
-    fn from_config(config: Self::Config) -> Option<Self> {
+    fn from_config(config: Self::Config) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         if config.enabled {
-            Some(APQPlugin {
+            Ok(Some(APQPlugin {
                 cache: DashMap::new(),
-            })
+            }))
         } else {
-            None
+            Ok(None)
         }
     }
     async fn on_graphql_params<'exec>(
@@ -93,7 +93,7 @@ impl RouterPlugin for APQPlugin {
                 }
             }
 
-            payload.cont()
+            payload.proceed()
         })
     }
 }

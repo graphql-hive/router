@@ -1,3 +1,5 @@
+use std::error::Error;
+
 use http::StatusCode;
 use ntex::{http::Response, web};
 use serde::{de::DeserializeOwned, Serialize};
@@ -44,14 +46,14 @@ pub trait StartHookPayload<TEndPayload: EndHookPayload>
 where
     Self: Sized,
 {
-    fn cont<'exec>(self) -> StartHookResult<'exec, Self, TEndPayload> {
+    fn proceed<'exec>(self) -> StartHookResult<'exec, Self, TEndPayload> {
         StartHookResult {
             payload: self,
             control_flow: StartControlFlow::Continue,
         }
     }
 
-    fn end_response<'exec>(
+    fn end_with_response<'exec>(
         self,
         output: web::HttpResponse,
     ) -> StartHookResult<'exec, Self, TEndPayload> {
@@ -61,14 +63,14 @@ where
         }
     }
 
-    fn end_response_body<'exec, T: Serialize>(
+    fn end_with_response_body<'exec, T: Serialize>(
         self,
         body: T,
     ) -> StartHookResult<'exec, Self, TEndPayload> {
-        self.end_response(Response::Ok().body(sonic_rs::to_vec(&body).unwrap()))
+        self.end_with_response(Response::Ok().body(sonic_rs::to_vec(&body).unwrap()))
     }
 
-    fn end_graphql_error<'exec>(
+    fn end_with_graphql_error<'exec>(
         self,
         error: GraphQLError,
         status: StatusCode,
@@ -76,7 +78,7 @@ where
         let body = json!({
             "errors": [error]
         });
-        self.end_response(
+        self.end_with_response(
             Response::BadRequest()
                 .status(status)
                 .body(sonic_rs::to_vec(&body).unwrap()),
@@ -108,7 +110,7 @@ pub trait EndHookPayload
 where
     Self: Sized,
 {
-    fn cont(self) -> EndHookResult<Self> {
+    fn proceed(self) -> EndHookResult<Self> {
         EndHookResult {
             payload: self,
             control_flow: EndControlFlow::Continue,
@@ -150,7 +152,7 @@ pub trait RouterPlugin: Send + Sync + 'static {
 
     type Config: DeserializeOwned + Sync;
 
-    fn from_config(config: Self::Config) -> Option<Self>
+    fn from_config(config: Self::Config) -> Result<Option<Self>, Box<dyn Error>>
     where
         Self: Sized;
 
@@ -166,55 +168,55 @@ pub trait RouterPlugin: Send + Sync + 'static {
         &'req self,
         start_payload: OnHttpRequestHookPayload<'req>,
     ) -> OnHttpRequestHookResult<'req> {
-        start_payload.cont()
+        start_payload.proceed()
     }
     async fn on_graphql_params<'exec>(
         &'exec self,
         start_payload: OnGraphQLParamsStartHookPayload<'exec>,
     ) -> OnGraphQLParamsStartHookResult<'exec> {
-        start_payload.cont()
+        start_payload.proceed()
     }
     async fn on_graphql_parse<'exec>(
         &'exec self,
         start_payload: OnGraphQLParseStartHookPayload<'exec>,
     ) -> OnGraphQLParseHookResult<'exec> {
-        start_payload.cont()
+        start_payload.proceed()
     }
     async fn on_graphql_validation<'exec>(
         &'exec self,
         start_payload: OnGraphQLValidationStartHookPayload<'exec>,
     ) -> OnGraphQLValidationStartHookResult<'exec> {
-        start_payload.cont()
+        start_payload.proceed()
     }
     async fn on_query_plan<'exec>(
         &'exec self,
         start_payload: OnQueryPlanStartHookPayload<'exec>,
     ) -> OnQueryPlanStartHookResult<'exec> {
-        start_payload.cont()
+        start_payload.proceed()
     }
     async fn on_execute<'exec>(
         &'exec self,
         start_payload: OnExecuteStartHookPayload<'exec>,
     ) -> OnExecuteStartHookResult<'exec> {
-        start_payload.cont()
+        start_payload.proceed()
     }
     async fn on_subgraph_execute<'exec>(
         &'exec self,
         start_payload: OnSubgraphExecuteStartHookPayload<'exec>,
     ) -> OnSubgraphExecuteStartHookResult<'exec> {
-        start_payload.cont()
+        start_payload.proceed()
     }
     async fn on_subgraph_http_request<'exec>(
         &'exec self,
         start_payload: OnSubgraphHttpRequestHookPayload<'exec>,
     ) -> OnSubgraphHttpRequestHookResult<'exec> {
-        start_payload.cont()
+        start_payload.proceed()
     }
     fn on_supergraph_reload<'exec>(
         &'exec self,
         start_payload: OnSupergraphLoadStartHookPayload,
     ) -> OnSupergraphLoadStartHookResult<'exec> {
-        start_payload.cont()
+        start_payload.proceed()
     }
     async fn on_shutdown<'exec>(&'exec self) {}
 }

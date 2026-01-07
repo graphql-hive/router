@@ -33,16 +33,18 @@ impl RouterPlugin for PropagateStatusCodePlugin {
     fn plugin_name() -> &'static str {
         "propagate_status_code"
     }
-    fn from_config(config: PropagateStatusCodePluginConfig) -> Option<Self> {
+    fn from_config(
+        config: PropagateStatusCodePluginConfig,
+    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         if !config.enabled {
-            return None;
+            return Ok(None);
         }
         let status_codes = config
             .status_codes
             .into_iter()
             .filter_map(|code| StatusCode::from_u16(code as u16).ok())
             .collect();
-        Some(PropagateStatusCodePlugin { status_codes })
+        Ok(Some(PropagateStatusCodePlugin { status_codes }))
     }
     async fn on_subgraph_http_request<'exec>(
         &'exec self,
@@ -65,7 +67,7 @@ impl RouterPlugin for PropagateStatusCodePlugin {
                     payload.context.insert(new_ctx);
                 }
             }
-            payload.cont()
+            payload.proceed()
         })
     }
     fn on_http_request<'exec>(
@@ -82,9 +84,9 @@ impl RouterPlugin for PropagateStatusCodePlugin {
                         *response.response_mut().status_mut() = ctx.status_code;
                         response
                     })
-                    .cont();
+                    .proceed();
             }
-            payload.cont()
+            payload.proceed()
         })
     }
 }
