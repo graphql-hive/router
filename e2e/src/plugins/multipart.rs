@@ -153,14 +153,11 @@ impl RouterPlugin for MultipartPlugin {
                         .await
                     {
                         Ok(resp) => payload
-                            .with_response(
-                                HttpResponse {
-                                    status: resp.status(),
-                                    headers: resp.headers().clone().into(),
-                                    body: resp.bytes().await.unwrap().into(),
-                                }
-                                .into(),
-                            )
+                            .with_response(HttpResponse {
+                                status: resp.status(),
+                                headers: resp.headers().clone().into(),
+                                body: resp.bytes().await.unwrap().into(),
+                            })
                             .cont(),
                         Err(err) => {
                             error!("Failed to send multipart request to subgraph: {}", err);
