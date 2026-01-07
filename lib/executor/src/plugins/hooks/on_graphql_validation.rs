@@ -7,6 +7,7 @@ use graphql_tools::{
     },
 };
 use hive_router_query_planner::state::supergraph_state::SchemaDocument;
+use ntex::http::Response;
 
 use crate::{
     plugin_context::{PluginContext, PluginRequestState, RouterHttpRequest},
@@ -24,7 +25,7 @@ pub struct OnGraphQLValidationStartHookPayload<'exec> {
     pub errors: Option<Vec<ValidationError>>,
 }
 
-impl<'exec> StartHookPayload<OnGraphQLValidationEndHookPayload>
+impl<'exec> StartHookPayload<OnGraphQLValidationEndHookPayload, Response>
     for OnGraphQLValidationStartHookPayload<'exec>
 {
 }
@@ -33,6 +34,7 @@ pub type OnGraphQLValidationStartHookResult<'exec> = StartHookResult<
     'exec,
     OnGraphQLValidationStartHookPayload<'exec>,
     OnGraphQLValidationEndHookPayload,
+    Response,
 >;
 
 impl<'exec> OnGraphQLValidationStartHookPayload<'exec> {
@@ -86,6 +88,7 @@ pub struct OnGraphQLValidationEndHookPayload {
     pub errors: Vec<ValidationError>,
 }
 
-impl EndHookPayload for OnGraphQLValidationEndHookPayload {}
+impl EndHookPayload<Response> for OnGraphQLValidationEndHookPayload {}
 
-pub type OnGraphQLValidationHookEndResult = EndHookResult<OnGraphQLValidationEndHookPayload>;
+pub type OnGraphQLValidationHookEndResult =
+    EndHookResult<OnGraphQLValidationEndHookPayload, Response>;

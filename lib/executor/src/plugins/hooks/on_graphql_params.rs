@@ -12,6 +12,7 @@ use crate::plugin_trait::EndHookPayload;
 use crate::plugin_trait::EndHookResult;
 use crate::plugin_trait::StartHookPayload;
 use crate::plugin_trait::StartHookResult;
+use ntex::http::Response;
 
 #[derive(Debug, Clone, Default)]
 pub struct GraphQLParams {
@@ -109,7 +110,7 @@ impl<'exec> OnGraphQLParamsStartHookPayload<'exec> {
     }
 }
 
-impl<'exec> StartHookPayload<OnGraphQLParamsEndHookPayload<'exec>>
+impl<'exec> StartHookPayload<OnGraphQLParamsEndHookPayload<'exec>, Response>
     for OnGraphQLParamsStartHookPayload<'exec>
 {
 }
@@ -118,6 +119,7 @@ pub type OnGraphQLParamsStartHookResult<'exec> = StartHookResult<
     'exec,
     OnGraphQLParamsStartHookPayload<'exec>,
     OnGraphQLParamsEndHookPayload<'exec>,
+    Response,
 >;
 
 pub struct OnGraphQLParamsEndHookPayload<'exec> {
@@ -125,6 +127,7 @@ pub struct OnGraphQLParamsEndHookPayload<'exec> {
     pub context: &'exec PluginContext,
 }
 
-impl<'exec> EndHookPayload for OnGraphQLParamsEndHookPayload<'exec> {}
+impl<'exec> EndHookPayload<Response> for OnGraphQLParamsEndHookPayload<'exec> {}
 
-pub type OnGraphQLParamsEndHookResult<'exec> = EndHookResult<OnGraphQLParamsEndHookPayload<'exec>>;
+pub type OnGraphQLParamsEndHookResult<'exec> =
+    EndHookResult<OnGraphQLParamsEndHookPayload<'exec>, Response>;

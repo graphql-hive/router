@@ -67,12 +67,14 @@ use hive_router_plan_executor::{
         on_graphql_validation::{
             OnGraphQLValidationStartHookPayload, OnGraphQLValidationStartHookResult,
         },
-        on_supergraph_load::{OnSupergraphLoadEndHookPayload, OnSupergraphLoadStartHookPayload},
+        on_supergraph_load::{
+            OnSupergraphLoadEndHookPayload, OnSupergraphLoadStartHookPayload,
+            OnSupergraphLoadStartHookResult,
+        },
     },
     plugin_trait::{RouterPlugin, StartHookPayload, StartHookResult},
     response::graphql_error::GraphQLError,
 };
-use http::StatusCode;
 use serde::Deserialize;
 use sonic_rs::JsonContainerTrait;
 
@@ -144,7 +146,7 @@ impl RouterPlugin for OneOfPlugin {
                                     keys_num
                                 ),
                                 "TOO_MANY_FIELDS_SET_IN_ONEOF",
-                            ), StatusCode::BAD_REQUEST);
+                            ));
                         }
                     }
                 }
@@ -155,8 +157,7 @@ impl RouterPlugin for OneOfPlugin {
     fn on_supergraph_reload<'exec>(
         &'exec self,
         start_payload: OnSupergraphLoadStartHookPayload,
-    ) -> StartHookResult<'exec, OnSupergraphLoadStartHookPayload, OnSupergraphLoadEndHookPayload>
-    {
+    ) -> OnSupergraphLoadStartHookResult {
         let mut one_of_types = vec![];
         for def in start_payload.new_ast.definitions.iter() {
             if let Definition::TypeDefinition(TypeDefinition::InputObject(input_obj)) = def {

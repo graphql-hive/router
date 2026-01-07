@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use hive_router_query_planner::ast::operation::OperationDefinition;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
+use ntex::http::Response;
 use serde::Serialize;
 use sonic_rs::json;
 
@@ -46,10 +47,17 @@ impl<'exec> OnExecuteStartHookPayload<'exec> {
     }
 }
 
-impl<'exec> StartHookPayload<OnExecuteEndHookPayload<'exec>> for OnExecuteStartHookPayload<'exec> {}
+impl<'exec> StartHookPayload<OnExecuteEndHookPayload<'exec>, Response>
+    for OnExecuteStartHookPayload<'exec>
+{
+}
 
-pub type OnExecuteStartHookResult<'exec> =
-    StartHookResult<'exec, OnExecuteStartHookPayload<'exec>, OnExecuteEndHookPayload<'exec>>;
+pub type OnExecuteStartHookResult<'exec> = StartHookResult<
+    'exec,
+    OnExecuteStartHookPayload<'exec>,
+    OnExecuteEndHookPayload<'exec>,
+    Response,
+>;
 
 pub struct OnExecuteEndHookPayload<'exec> {
     pub data: Value<'exec>,
@@ -80,6 +88,6 @@ impl<'exec> OnExecuteEndHookPayload<'exec> {
     }
 }
 
-impl<'exec> EndHookPayload for OnExecuteEndHookPayload<'exec> {}
+impl<'exec> EndHookPayload<Response> for OnExecuteEndHookPayload<'exec> {}
 
-pub type OnExecuteEndHookResult<'exec> = EndHookResult<OnExecuteEndHookPayload<'exec>>;
+pub type OnExecuteEndHookResult<'exec> = EndHookResult<OnExecuteEndHookPayload<'exec>, Response>;

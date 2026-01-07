@@ -1,4 +1,5 @@
 use graphql_tools::static_graphql::query::Document;
+use ntex::http::Response;
 
 use crate::{
     hooks::on_graphql_params::GraphQLParams,
@@ -21,18 +22,22 @@ impl<'exec> OnGraphQLParseStartHookPayload<'exec> {
     }
 }
 
-impl<'exec> StartHookPayload<OnGraphQLParseEndHookPayload>
+impl<'exec> StartHookPayload<OnGraphQLParseEndHookPayload, Response>
     for OnGraphQLParseStartHookPayload<'exec>
 {
 }
 
-pub type OnGraphQLParseHookResult<'exec> =
-    StartHookResult<'exec, OnGraphQLParseStartHookPayload<'exec>, OnGraphQLParseEndHookPayload>;
+pub type OnGraphQLParseHookResult<'exec> = StartHookResult<
+    'exec,
+    OnGraphQLParseStartHookPayload<'exec>,
+    OnGraphQLParseEndHookPayload,
+    Response,
+>;
 
 pub struct OnGraphQLParseEndHookPayload {
     pub document: Document,
 }
 
-impl EndHookPayload for OnGraphQLParseEndHookPayload {}
+impl EndHookPayload<Response> for OnGraphQLParseEndHookPayload {}
 
-pub type OnGraphQLParseEndHookResult = EndHookResult<OnGraphQLParseEndHookPayload>;
+pub type OnGraphQLParseEndHookResult = EndHookResult<OnGraphQLParseEndHookPayload, Response>;

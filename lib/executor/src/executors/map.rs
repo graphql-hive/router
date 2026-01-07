@@ -164,7 +164,6 @@ impl SubgraphExecutorMap {
                 subgraph_name,
                 executor,
                 execution_request,
-                execution_result,
             };
             for plugin in plugin_req_state.plugins.as_ref() {
                 let result = plugin.on_subgraph_execute(start_payload).await;
@@ -173,9 +172,9 @@ impl SubgraphExecutorMap {
                     StartControlFlow::Proceed => {
                         // continue to next plugin
                     }
-                    StartControlFlow::EndWithResponse(_response) => {
-                        // TODO: FFIX
-                        todo!()
+                    StartControlFlow::EndWithResponse(response) => {
+                        execution_result = Some(response);
+                        break;
                     }
                     StartControlFlow::OnEnd(callback) => {
                         on_end_callbacks.push(callback);
@@ -183,7 +182,6 @@ impl SubgraphExecutorMap {
                 }
             }
             execution_request = start_payload.execution_request;
-            execution_result = start_payload.execution_result;
             executor = start_payload.executor;
         }
 
@@ -210,9 +208,8 @@ impl SubgraphExecutorMap {
                         EndControlFlow::Proceed => {
                             // continue to next callback
                         }
-                        EndControlFlow::EndWithResponse(_response) => {
-                            // TODO: FFIX
-                            todo!("Handle EndResponse in end hooks");
+                        EndControlFlow::EndWithResponse(response) => {
+                            end_payload.execution_result = response;
                         }
                     }
                 }

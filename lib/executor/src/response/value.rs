@@ -14,8 +14,9 @@ use xxhash_rust::xxh3::Xxh3;
 
 use crate::{introspection::schema::PossibleTypes, utils::consts::TYPENAME_FIELD_NAME};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum Value<'a> {
+    #[default]
     Null,
     F64(f64),
     I64(i64),

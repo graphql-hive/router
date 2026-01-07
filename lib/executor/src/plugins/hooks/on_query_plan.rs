@@ -4,6 +4,7 @@ use hive_router_query_planner::{
     planner::{plan_nodes::QueryPlan, Planner},
     utils::cancellation::CancellationToken,
 };
+use ntex::http::Response;
 
 use crate::{
     plugin_context::{PluginContext, RouterHttpRequest},
@@ -28,15 +29,18 @@ impl<'exec> OnQueryPlanStartHookPayload<'exec> {
     }
 }
 
-impl<'exec> StartHookPayload<OnQueryPlanEndHookPayload> for OnQueryPlanStartHookPayload<'exec> {}
+impl<'exec> StartHookPayload<OnQueryPlanEndHookPayload, Response>
+    for OnQueryPlanStartHookPayload<'exec>
+{
+}
 
 pub type OnQueryPlanStartHookResult<'exec> =
-    StartHookResult<'exec, OnQueryPlanStartHookPayload<'exec>, OnQueryPlanEndHookPayload>;
+    StartHookResult<'exec, OnQueryPlanStartHookPayload<'exec>, OnQueryPlanEndHookPayload, Response>;
 
 pub struct OnQueryPlanEndHookPayload {
     pub query_plan: QueryPlan,
 }
 
-impl EndHookPayload for OnQueryPlanEndHookPayload {}
+impl EndHookPayload<Response> for OnQueryPlanEndHookPayload {}
 
-pub type OnQueryPlanEndHookResult = EndHookResult<OnQueryPlanEndHookPayload>;
+pub type OnQueryPlanEndHookResult = EndHookResult<OnQueryPlanEndHookPayload, Response>;

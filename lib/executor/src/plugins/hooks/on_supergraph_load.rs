@@ -24,19 +24,20 @@ pub struct OnSupergraphLoadStartHookPayload {
     pub new_ast: Document,
 }
 
-impl StartHookPayload<OnSupergraphLoadEndHookPayload> for OnSupergraphLoadStartHookPayload {}
+impl StartHookPayload<OnSupergraphLoadEndHookPayload, ()> for OnSupergraphLoadStartHookPayload {}
 
 pub type OnSupergraphLoadStartHookResult<'exec> = crate::plugin_trait::StartHookResult<
     'exec,
     OnSupergraphLoadStartHookPayload,
     OnSupergraphLoadEndHookPayload,
+    (),
 >;
 
 pub struct OnSupergraphLoadEndHookPayload {
     pub new_supergraph_data: SupergraphData,
 }
 
-impl EndHookPayload for OnSupergraphLoadEndHookPayload {}
+impl EndHookPayload<()> for OnSupergraphLoadEndHookPayload {}
 
 pub type OnSupergraphLoadEndHookResult =
-    crate::plugin_trait::EndHookResult<OnSupergraphLoadEndHookPayload>;
+    crate::plugin_trait::EndHookResult<OnSupergraphLoadEndHookPayload, ()>;
