@@ -20,9 +20,12 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 http = { workspace = true }
+tonic = { workspace = true }
 jsonwebtoken = { workspace = true }
 retry-policies = { workspace = true}
 tracing = { workspace = true }
+regex-automata = { workspace = true }
+once_cell = "1.21.3"
 
 schemars = "1.0.4"
 humantime-serde = "1.1.1"

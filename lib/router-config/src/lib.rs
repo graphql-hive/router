@@ -14,6 +14,7 @@ pub mod override_subgraph_urls;
 pub mod primitives;
 pub mod query_planner;
 pub mod supergraph;
+pub mod telemetry;
 pub mod traffic_shaping;
 pub mod usage_reporting;
 
@@ -100,9 +101,6 @@ pub struct HiveRouterConfig {
 
     #[serde(default)]
     pub authorization: authorization::AuthorizationConfig,
-    /// Configuration for usage reporting to GraphQL Hive.
-    #[serde(default)]
-    pub usage_reporting: usage_reporting::UsageReportingConfig,
 
     #[serde(default)]
     /// Configuration for checking the limits such as query depth, complexity, etc.
@@ -111,6 +109,9 @@ pub struct HiveRouterConfig {
     /// Configuration to enable or disable introspection queries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub introspection: Option<IntrospectionPermissionConfig>,
+
+    #[serde(default)]
+    pub telemetry: telemetry::TelemetryConfig,
 }
 
 #[derive(Debug, thiserror::Error)]

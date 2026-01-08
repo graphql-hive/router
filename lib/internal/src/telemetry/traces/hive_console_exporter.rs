@@ -1,0 +1,439 @@
+use opentelemetry::trace::SpanId;
+use opentelemetry::KeyValue;
+use opentelemetry_sdk::error::OTelSdkResult;
+use opentelemetry_sdk::trace::{SpanData, SpanExporter};
+use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
+
+use crate::telemetry::traces::spans::{attributes, kind::HiveSpanKind};
+
+const HTTP_SERVER_TO_GRAPHQL_ATTR_MAP: &[(&str, &str)] = &[
+    (
+        attributes::HTTP_RESPONSE_STATUS_CODE,
+        attributes::DEPRECATED_HTTP_STATUS_CODE,
+    ),
+    (attributes::SERVER_ADDRESS, attributes::DEPRECATED_HTTP_HOST),
+    (
+        attributes::HTTP_REQUEST_METHOD,
+        attributes::DEPRECATED_HTTP_METHOD,
+    ),
+    (attributes::HTTP_ROUTE, attributes::HTTP_ROUTE),
+    (attributes::URL_FULL, attributes::DEPRECATED_HTTP_URL),
+];
+
+const HTTP_CLIENT_TO_GRAPHQL_ATTR_MAP: &[(&str, &str)] = &[
+    (
+        attributes::HTTP_RESPONSE_STATUS_CODE,
+        attributes::DEPRECATED_HTTP_STATUS_CODE,
+    ),
+    (attributes::SERVER_ADDRESS, attributes::DEPRECATED_HTTP_HOST),
+    (
+        attributes::HTTP_REQUEST_METHOD,
+        attributes::DEPRECATED_HTTP_METHOD,
+    ),
+    (attributes::URL_PATH, attributes::HTTP_ROUTE),
+    (attributes::URL_FULL, attributes::DEPRECATED_HTTP_URL),
+];
+
+const GRAPHQL_TO_HIVE_GRAPHQL_OPERATION_ATTR_MAP: &[(&str, &str)] = &[(
+    attributes::GRAPHQL_DOCUMENT_TEXT,
+    attributes::DEPRECATED_GRAPHQL_DOCUMENT,
+)];
+
+#[derive(Debug)]
+pub struct HiveConsoleExporter<E: SpanExporter> {
+    inner: E,
+}
+
+impl<E: SpanExporter> HiveConsoleExporter<E> {
+    pub fn new(inner: E) -> Self {
+        Self { inner }
+    }
+
+    #[inline]
+    fn process_spans(&self, batch: &mut Vec<SpanData>) {
+        if batch.is_empty() {
+            return;
+        }
+
+        let mut ignored_trace_ids = HashSet::new();
+        let mut http_server_indexes: Vec<usize> = Vec::new();
+        let mut graphql_root_operation_indexes: Vec<usize> = Vec::new();
+        let mut graphql_subgraph_operation_indexes: Vec<usize> = Vec::new();
+        let mut http_client_or_inflight_indexes: Vec<usize> = Vec::new();
+
+        // Build a map of parent span IDs to their child span indexes
+        // It maps only spans relevant to our processing (with hive.kind attr)
+        let mut parent_id_to_child_indices: HashMap<SpanId, Vec<usize>> = HashMap::new();
+        for (index, span) in batch.iter().enumerate() {
+            let Some(kind) = self.get_hive_kind(span) else {
+                continue;
+            };
+
+            if span.parent_span_id != SpanId::INVALID {
+                parent_id_to_child_indices
+                    .entry(span.parent_span_id)
+                    .or_default()
+                    .push(index);
+            }
+
+            match kind {
+                HiveSpanKind::HttpServerRequest => {
+                    http_server_indexes.push(index);
+                }
+                HiveSpanKind::GraphqlOperation => {
+                    graphql_root_operation_indexes.push(index);
+                }
+                HiveSpanKind::GraphQLSubgraphOperation => {
+                    graphql_subgraph_operation_indexes.push(index);
+                }
+                HiveSpanKind::HttpClientRequest | HiveSpanKind::HttpInflightRequest => {
+                    http_client_or_inflight_indexes.push(index);
+                }
+                _ => {
+                    // Leave other spans untouched
+                }
+            }
+        }
+
+        if http_server_indexes.is_empty() {
+            // Nothing to do, clear the batch to avoid sending irrelevant spans
+            batch.clear();
+            return;
+        }
+
+        // Transfer root span attributes (http.server -> graphql.operation)
+        self.http_server_attr_to_graphql_operation(
+            batch,
+            &http_server_indexes,
+            &parent_id_to_child_indices,
+            &mut ignored_trace_ids,
+        );
+        // Transfer subgraph span attributes (http.client/http.inflight -> graphql.subgraph.operation)
+        self.http_client_attr_to_subgraph_graphql_operation(
+            batch,
+            &graphql_subgraph_operation_indexes,
+            &parent_id_to_child_indices,
+            &mut ignored_trace_ids,
+        );
+        // Gather subgraph names into hive.gateway.operation.subgraph.names attribute
+        self.subgraph_attr_to_root(
+            batch,
+            &graphql_subgraph_operation_indexes,
+            &graphql_root_operation_indexes,
+            &ignored_trace_ids,
+        );
+
+        // Remove all http.server spans (in reverse order to avoid index shifting)
+        let mut indices_to_remove = http_server_indexes;
+        indices_to_remove.sort_unstable_by(|a, b| b.cmp(a));
+        for idx in indices_to_remove {
+            batch.swap_remove(idx);
+        }
+
+        // Remove spans of ignored traces
+        batch.retain(|span| !ignored_trace_ids.contains(&span.span_context.trace_id()));
+
+        // Add hive.graphql=true to all spans so Hive Console accepts them
+        self.add_hive_graphql_flag(batch);
+    }
+
+    #[inline]
+    fn http_server_attr_to_graphql_operation(
+        &self,
+        batch: &mut [SpanData],
+        http_server_indexes: &[usize],
+        parent_id_to_child_indices: &HashMap<SpanId, Vec<usize>>,
+        ignored_trace_ids: &mut HashSet<opentelemetry::TraceId>,
+    ) {
+        for http_idx in http_server_indexes {
+            let http_idx = *http_idx;
+
+            // Find the graphql.operation span that has this http.server as parent
+            let http_span_id = batch[http_idx].span_context.span_id();
+            let Some(graphql_idx) = parent_id_to_child_indices
+                .get(&http_span_id)
+                .into_iter()
+                .flatten()
+                .find(|&&child_idx| {
+                    self.get_hive_kind(&batch[child_idx]) == Some(HiveSpanKind::GraphqlOperation)
+                })
+                .copied()
+            else {
+                let trace_id = batch[http_idx].span_context.trace_id();
+                tracing::error!(
+                    { component = "hive_console_exporter", trace_id = trace_id.to_string() },
+                    "No matching 'graphql.operation' span found for 'http.server' span. Trace ignored.",
+                );
+                ignored_trace_ids.insert(trace_id);
+                continue;
+            };
+
+            // Hive Console expects no parent span for root GraphQL operation spans
+            batch[graphql_idx].parent_span_id = SpanId::INVALID;
+
+            if http_idx == graphql_idx {
+                let trace_id = batch[http_idx].span_context.trace_id();
+                tracing::error!(
+                    { component = "hive_console_exporter", trace_id = trace_id.to_string() },
+                    "Expected 'http.server' and 'graphql.operation' to be different spans. Trace ignored.",
+                );
+                ignored_trace_ids.insert(trace_id);
+                continue;
+            }
+
+            if http_idx > batch.len() || graphql_idx > batch.len() {
+                let trace_id = batch[http_idx].span_context.trace_id();
+                tracing::error!(
+                    { component = "hive_console_exporter", trace_id = trace_id.to_string() },
+                    "Span indexes out of bounds. Trace ignored.",
+                );
+                ignored_trace_ids.insert(trace_id);
+                continue;
+            }
+
+            let (http_span, graphql_span) = if http_idx < graphql_idx {
+                let (before, after) = batch.split_at_mut(graphql_idx);
+                (&mut before[http_idx], &mut after[0])
+            } else {
+                let (before, after) = batch.split_at_mut(http_idx);
+                (&mut after[0], &mut before[graphql_idx])
+            };
+
+            // Transfer mapped attributes
+            for (http_attr_key, graphql_attr_key) in HTTP_SERVER_TO_GRAPHQL_ATTR_MAP {
+                let Some(idx) = http_span
+                    .attributes
+                    .iter()
+                    .position(|kv| kv.key.as_str() == *http_attr_key)
+                else {
+                    tracing::debug!(
+                        { component = "hive_console_exporter" },
+                        "Attribute '{}' not found in 'http.server' span. Ignoring.",
+                        http_attr_key
+                    );
+                    continue;
+                };
+
+                let value = http_span.attributes.swap_remove(idx).value;
+                graphql_span
+                    .attributes
+                    .push(KeyValue::new(*graphql_attr_key, value));
+            }
+
+            for (existing_key, replacing_key) in GRAPHQL_TO_HIVE_GRAPHQL_OPERATION_ATTR_MAP {
+                let Some(idx) = graphql_span
+                    .attributes
+                    .iter()
+                    .position(|kv| kv.key.as_str() == *existing_key)
+                else {
+                    tracing::debug!(
+                        { component = "hive_console_exporter" },
+                        "Attribute '{}' not found in 'graphql.operation' span. Ignoring.",
+                        existing_key
+                    );
+                    continue;
+                };
+
+                let value = graphql_span.attributes.swap_remove(idx).value;
+                graphql_span
+                    .attributes
+                    .push(KeyValue::new(*replacing_key, value));
+            }
+
+            // Transfer timing of the http span to the graphql span,
+            // so that Hive Console shows correct duration for the operation
+            graphql_span.start_time = http_span.start_time;
+            graphql_span.end_time = http_span.end_time;
+        }
+    }
+
+    #[inline]
+    fn http_client_attr_to_subgraph_graphql_operation(
+        &self,
+        batch: &mut [SpanData],
+        graphql_subgraph_operation_indexes: &[usize],
+        parent_id_to_child_indices: &HashMap<SpanId, Vec<usize>>,
+        ignored_trace_ids: &mut HashSet<opentelemetry::TraceId>,
+    ) {
+        for graphql_idx in graphql_subgraph_operation_indexes {
+            let graphql_idx = *graphql_idx;
+
+            if ignored_trace_ids.contains(&batch[graphql_idx].span_context.trace_id()) {
+                // This trace is already ignored
+                continue;
+            }
+
+            let graphql_span_id = batch[graphql_idx].span_context.span_id();
+            let Some(http_idx) = parent_id_to_child_indices
+                .get(&graphql_span_id)
+                .into_iter()
+                .flatten()
+                .find(|&&child_idx| {
+                    matches!(
+                        self.get_hive_kind(&batch[child_idx]),
+                        Some(HiveSpanKind::HttpClientRequest)
+                            | Some(HiveSpanKind::HttpInflightRequest)
+                    )
+                })
+                .copied()
+            else {
+                let trace_id = batch[graphql_idx].span_context.trace_id();
+                tracing::error!(
+                    { component = "hive_console_exporter", trace_id = trace_id.to_string() },
+                    "No matching 'http.client' or 'http.inflight' span found for 'graphql.subgraph.operation' span. Trace ignored.",
+                );
+                ignored_trace_ids.insert(trace_id);
+                continue;
+            };
+
+            let (http_span, graphql_span) = if http_idx < graphql_idx {
+                let (before, after) = batch.split_at_mut(graphql_idx);
+                (&mut before[http_idx], &mut after[0])
+            } else {
+                let (before, after) = batch.split_at_mut(http_idx);
+                (&mut after[0], &mut before[graphql_idx])
+            };
+
+            // Transfer mapped attributes
+            for (http_attr_key, graphql_attr_key) in HTTP_CLIENT_TO_GRAPHQL_ATTR_MAP {
+                let Some(idx) = http_span
+                    .attributes
+                    .iter()
+                    .position(|kv| kv.key.as_str() == *http_attr_key)
+                else {
+                    tracing::warn!(
+                        { component = "hive_console_exporter" },
+                        "Attribute '{}' not found in 'http.client' span. Ignoring.",
+                        http_attr_key
+                    );
+                    continue;
+                };
+
+                let value = http_span.attributes.swap_remove(idx).value;
+                graphql_span
+                    .attributes
+                    .push(KeyValue::new(*graphql_attr_key, value));
+            }
+
+            for (existing_key, replacing_key) in GRAPHQL_TO_HIVE_GRAPHQL_OPERATION_ATTR_MAP {
+                let Some(idx) = graphql_span
+                    .attributes
+                    .iter()
+                    .position(|kv| kv.key.as_str() == *existing_key)
+                else {
+                    tracing::warn!(
+                        { component = "hive_console_exporter" },
+                        "Attribute '{}' not found in 'graphql.operation' span. Ignoring.",
+                        existing_key
+                    );
+                    continue;
+                };
+
+                let value = graphql_span.attributes.swap_remove(idx).value;
+                graphql_span
+                    .attributes
+                    .push(KeyValue::new(*replacing_key, value));
+            }
+        }
+    }
+
+    #[inline]
+    fn subgraph_attr_to_root(
+        &self,
+        batch: &mut [SpanData],
+        graphql_subgraph_operation_indexes: &[usize],
+        graphql_root_operation_indexes: &[usize],
+        ignored_trace_ids: &HashSet<opentelemetry::TraceId>,
+    ) {
+        // I need to collect all subgraph names from subgraph spans and add them to the root span
+        let mut trace_id_to_subgraph_names: std::collections::HashMap<
+            opentelemetry::TraceId,
+            HashSet<String>,
+        > = HashMap::new();
+
+        for graphql_idx in graphql_subgraph_operation_indexes {
+            let graphql_idx = *graphql_idx;
+            let trace_id = batch[graphql_idx].span_context.trace_id();
+
+            if ignored_trace_ids.contains(&trace_id) {
+                // This trace is already ignored
+                continue;
+            }
+
+            let subgraph_name_opt = batch[graphql_idx]
+                .attributes
+                .iter()
+                .find(|kv| kv.key.as_str() == "hive.graphql.subgraph.name")
+                .and_then(|kv| match &kv.value {
+                    opentelemetry::Value::String(s) => Some(s.as_str()),
+                    _ => None,
+                });
+
+            let Some(subgraph_name) = subgraph_name_opt else {
+                continue;
+            };
+
+            trace_id_to_subgraph_names
+                .entry(trace_id)
+                .or_default()
+                .insert(subgraph_name.to_string());
+        }
+
+        for root_idx in graphql_root_operation_indexes {
+            let root_idx = *root_idx;
+            let trace_id = batch[root_idx].span_context.trace_id();
+            let Some(subgraph_names) = trace_id_to_subgraph_names.get(&trace_id) else {
+                continue;
+            };
+            batch[root_idx].attributes.push(KeyValue::new(
+                "hive.gateway.operation.subgraph.names",
+                subgraph_names
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ));
+        }
+    }
+
+    #[inline]
+    fn get_hive_kind(&self, span: &SpanData) -> Option<HiveSpanKind> {
+        span.attributes
+            .iter()
+            .find(|kv| kv.key.as_str() == "hive.kind")
+            .and_then(|kv| match &kv.value {
+                opentelemetry::Value::String(s) => {
+                    Some(HiveSpanKind::from_str(s.as_str()).expect("Invalid hive.kind value"))
+                }
+                _ => None,
+            })
+    }
+
+    /// Add hive.graphql=true to all spans
+    #[inline]
+    fn add_hive_graphql_flag(&self, batch: &mut [SpanData]) {
+        for span in batch.iter_mut() {
+            span.attributes.push(KeyValue::new("hive.graphql", true));
+        }
+    }
+}
+
+impl<E: SpanExporter> SpanExporter for HiveConsoleExporter<E> {
+    async fn export(&self, mut batch: Vec<SpanData>) -> OTelSdkResult {
+        self.process_spans(&mut batch);
+        self.inner.export(batch).await
+    }
+
+    fn shutdown(&mut self) -> OTelSdkResult {
+        self.inner.shutdown()
+    }
+
+    fn force_flush(&mut self) -> OTelSdkResult {
+        self.inner.force_flush()
+    }
+
+    fn set_resource(&mut self, res: &opentelemetry_sdk::Resource) {
+        self.inner.set_resource(res);
+    }
+}

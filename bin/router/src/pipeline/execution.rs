@@ -7,6 +7,9 @@ use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::schema_state::SupergraphData;
 use crate::shared_state::RouterSharedState;
+use hive_router_internal::telemetry::traces::spans::graphql::{
+    GraphQLExecuteSpan, GraphQLOperationSpan,
+};
 use hive_router_plan_executor::execute_query_plan;
 use hive_router_plan_executor::execution::client_request_details::ClientRequestDetails;
 use hive_router_plan_executor::execution::error::{IntoPlanExecutionError, LazyPlanContext};
@@ -17,6 +20,7 @@ use hive_router_plan_executor::projection::response::project_by_operation;
 use hive_router_plan_executor::response::value::Value;
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use http::{HeaderMap, HeaderName};
+use tracing::Instrument;
 
 pub static EXPOSE_QUERY_PLAN_HEADER: HeaderName = HeaderName::from_static("hive-expose-query-plan");
 
@@ -41,6 +45,7 @@ pub async fn execute_plan(
     app_state: &Arc<RouterSharedState>,
     expose_query_plan: &ExposeQueryPlanMode,
     planned_request: PlannedRequest<'_>,
+    span: &GraphQLOperationSpan,
 ) -> Result<PlanExecutionOutput, PipelineError> {
     let introspection_context = IntrospectionContext {
         query: planned_request
@@ -113,6 +118,8 @@ pub async fn execute_plan(
         None
     };
 
+    let execute_span = GraphQLExecuteSpan::new();
+
     execute_query_plan(QueryPlanExecutionContext {
         query_plan: planned_request.query_plan_payload,
         projection_plan: &planned_request.normalized_payload.projection_plan,
@@ -129,7 +136,9 @@ pub async fn execute_plan(
             .into_iter()
             .map(|e| e.into())
             .collect(),
+        span,
     })
+    .instrument(execute_span.span)
     .await
     .map_err(|err| {
         tracing::error!("Failed to execute query plan: {}", err);

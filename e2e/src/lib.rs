@@ -29,6 +29,8 @@ mod probes;
 #[cfg(test)]
 mod supergraph;
 #[cfg(test)]
+mod telemetry;
+#[cfg(test)]
 mod testkit;
 #[cfg(test)]
 mod timeout_per_subgraph;
