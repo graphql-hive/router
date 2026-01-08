@@ -37,10 +37,20 @@ impl<S> OpenTelemetry<S> {
             return Ok(OpenTelemetry::new_noop());
         }
 
-        // TODO: allow to configure resource attributes through config
-        // TODO: make `service.name` configurable
-        let resource_attributes: Vec<_> =
-            vec![KeyValue::new("service.name", config.service.name.clone())];
+        let resolved_attributes =
+            traces::resolve_string_map(&config.resource.attributes, "resource attribute")?;
+
+        let mut resource_attributes: Vec<_> = resolved_attributes
+            .into_iter()
+            .map(|(k, v)| KeyValue::new(k, v))
+            .collect();
+
+        if !resource_attributes
+            .iter()
+            .any(|kv| kv.key.as_str() == "service.name")
+        {
+            resource_attributes.push(KeyValue::new("service.name", "hive-router"));
+        }
 
         let resource = Resource::builder()
             .with_attributes(resource_attributes)

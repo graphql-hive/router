@@ -286,7 +286,7 @@ fn evaluate_expression_as_string(
         .to_string())
 }
 
-fn resolve_value_or_expression(
+pub(crate) fn resolve_value_or_expression(
     value_or_expr: &ValueOrExpression<String>,
     context: &str,
 ) -> Result<String, TelemetryError> {
@@ -298,7 +298,7 @@ fn resolve_value_or_expression(
     }
 }
 
-fn resolve_string_map(
+pub(crate) fn resolve_string_map(
     map: &HashMap<String, ValueOrExpression<String>>,
     context_prefix: &str,
 ) -> Result<HashMap<String, String>, TelemetryError> {
