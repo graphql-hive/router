@@ -10,21 +10,13 @@ use tracing_subscriber::registry::LookupSpan;
 use crate::telemetry::traces::build_trace_provider;
 
 mod error;
-pub mod logs;
-pub mod metrics;
 pub mod otel;
 pub mod traces;
 mod utils;
 
-// docker run -p 4316:8080 -p 4317:4317 -p 4318:4318 docker.hyperdx.io/hyperdx/hyperdx-all-in-one
-// Send OpenTelemetry data via:
-//   http/protobuf: OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-//   gRPC: OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-
 pub struct OpenTelemetry<Subscriber> {
     pub tracer: Option<traces::Tracer<Subscriber>>,
-    // metrics: metrics::MetricsState,
-    pub logger: Option<logs::Logger>,
+    // logs and metrics can be added here later
 }
 
 impl<S> OpenTelemetry<S> {
@@ -32,10 +24,7 @@ impl<S> OpenTelemetry<S> {
     where
         S: Subscriber + for<'span> LookupSpan<'span> + Send + Sync,
     {
-        OpenTelemetry {
-            tracer: None,
-            logger: None,
-        }
+        OpenTelemetry { tracer: None }
     }
 
     pub fn from_config<I>(
@@ -69,15 +58,11 @@ impl<S> OpenTelemetry<S> {
         let tracer = traces_provider.tracer_with_scope(scope);
         let traces_layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
-        // let logs_provider = build_logs_provider(config, resource)?;
-        // let logs_layer = OpenTelemetryTracingBridge::new(&logs_provider);
-
         Ok(OpenTelemetry {
             tracer: Some(traces::Tracer {
                 layer: traces_layer,
                 provider: traces_provider,
             }),
-            logger: None,
         })
     }
 }

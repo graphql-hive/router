@@ -11,7 +11,6 @@ use hive_router_internal::telemetry::{
         },
         opentelemetry_jaeger_propagator::Propagator as JaegerPropagator,
         opentelemetry_sdk::{
-            logs::SdkLoggerProvider,
             propagation::{BaggagePropagator, TraceContextPropagator},
             trace::{RandomIdGenerator, SdkTracerProvider},
         },
@@ -44,7 +43,6 @@ impl Extractor for HeaderExtractor<'_> {
 
 #[derive(Default, Clone)]
 pub(crate) struct OpenTelemetryProviders {
-    pub logger: Option<SdkLoggerProvider>,
     pub tracer: Option<SdkTracerProvider>,
 }
 
@@ -59,14 +57,7 @@ impl OpenTelemetryProviders {
             }
         });
 
-        let logger_provider = self.logger.clone();
-        let shutdown_logger = spawn_blocking(|| {
-            if let Some(provider) = logger_provider {
-                let _ = provider.shutdown();
-            }
-        });
-
-        let _ = tokio::join!(shutdown_tracer, shutdown_logger);
+        let _ = tokio::join!(shutdown_tracer);
     }
 }
 
@@ -79,7 +70,7 @@ pub(crate) fn init(config: &HiveRouterConfig) -> OpenTelemetryProviders {
 
     init_propagators(&config.telemetry.tracing.propagation);
 
-    let OpenTelemetry { tracer, logger } =
+    let OpenTelemetry { tracer } =
         OpenTelemetry::from_config(&config.telemetry, id_generator).unwrap();
 
     if let Some(tracer) = &tracer {
@@ -90,11 +81,8 @@ pub(crate) fn init(config: &HiveRouterConfig) -> OpenTelemetryProviders {
     }
 
     let tracer_provider = tracer.as_ref().map(|t| t.provider.clone());
-    let logger_provider = logger.as_ref().map(|l| l.provider.clone());
 
-    let registry = tracing_subscriber::registry()
-        .with(tracer.map(|t| t.layer))
-        .with(logger.map(|l| l.layer));
+    let registry = tracing_subscriber::registry().with(tracer.map(|t| t.layer));
 
     let is_terminal = std::io::stdout().is_terminal();
     match config.log.format {
@@ -130,7 +118,6 @@ pub(crate) fn init(config: &HiveRouterConfig) -> OpenTelemetryProviders {
 
     OpenTelemetryProviders {
         tracer: tracer_provider,
-        logger: logger_provider,
     }
 }
 
