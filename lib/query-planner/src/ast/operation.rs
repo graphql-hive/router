@@ -43,6 +43,7 @@ impl OperationDefinition {
 pub struct SubgraphFetchOperation {
     pub document: Document,
     pub document_str: String,
+    pub hash: u64,
 }
 
 impl SubgraphFetchOperation {

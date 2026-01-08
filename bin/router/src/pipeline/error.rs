@@ -48,6 +48,8 @@ pub enum PipelineError {
     FailedToParseExtensions(sonic_rs::Error),
     #[error("Failed to parse GraphQL operation")]
     FailedToParseOperation(graphql_tools::parser::query::ParseError),
+    #[error("Failed to minify parsed GraphQL operation")]
+    FailedToMinifyParsedOperation(String),
     #[error("Failed to normalize GraphQL operation")]
     NormalizationError(NormalizationError),
     #[error("Failed to collect GraphQL variables: {0}")]
@@ -122,6 +124,8 @@ impl PipelineError {
             (Self::FailedToParseExtensions(_), _) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseOperation(_), false) => StatusCode::BAD_REQUEST,
             (Self::FailedToParseOperation(_), true) => StatusCode::OK,
+            (Self::FailedToMinifyParsedOperation(_), false) => StatusCode::BAD_REQUEST,
+            (Self::FailedToMinifyParsedOperation(_), true) => StatusCode::OK,
             (Self::NormalizationError(_), _) => StatusCode::BAD_REQUEST,
             (Self::VariablesCoercionError(_), false) => StatusCode::BAD_REQUEST,
             (Self::VariablesCoercionError(_), true) => StatusCode::OK,
