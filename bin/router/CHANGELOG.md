@@ -116,6 +116,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - *(deps)* update release-plz/action action to v0.5.113 ([#389](https://github.com/graphql-hive/router/pull/389))
+## 0.0.27 (2026-01-07)
+
+### Features
+
+#### Make JWK algorithm optional
+
+Make the JWK algorithm optional as it is defined as such in the RFC. To handle a missing algorithm, we fall back to reading the algorithm from the user JWT. To protect against forged tokens, we add a validation that the algorithm in the token is part of the `allowed_algorithms`. Since `JwkMissingAlgorithm` is not longer an error, the field is removed.
+
+### Fixes
+
+#### Internal refactoring of JWT handling
+
+Passing mutable request reference around was the unnecessary use of `req.extensions` to pass `JwtContext`. 
+
+Instead, we can directly pass `JwtContext` as-is instead of using `req.extensions`.
+
 ## 0.0.26 (2025-12-12)
 
 ### Features
