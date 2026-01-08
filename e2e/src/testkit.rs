@@ -1,10 +1,11 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use hive_router::{
     background_tasks::BackgroundTasksManager, configure_app_from_config, configure_ntex_app,
-    init_rustls_crypto_provider, RouterSharedState, SchemaState,
+    init_rustls_crypto_provider, telemetry::Telemetry, RouterSharedState, SchemaState,
 };
 use hive_router_config::{load_config, parse_yaml_config, HiveRouterConfig};
+
 use ntex::{
     http::Request,
     web::{
@@ -17,6 +18,8 @@ use ntex::{
 use sonic_rs::json;
 use subgraphs::{start_subgraphs_server, RequestLog, SubgraphsServiceState};
 use tracing::{info, warn};
+
+pub mod otel;
 
 pub fn init_graphql_request(op: &str, variables: Option<sonic_rs::Value>) -> TestRequest {
     let body = json!({
@@ -150,10 +153,12 @@ pub async fn init_router_from_config_inline(
 
 pub struct TestRouterApp<T> {
     pub app: Pipeline<T>,
-    #[allow(dead_code)]
-    pub shared_state: Arc<RouterSharedState>,
+    pub _shared_state: Arc<RouterSharedState>,
     pub schema_state: Arc<SchemaState>,
     pub bg_tasks_manager: BackgroundTasksManager,
+    pub telemetry: Telemetry,
+    // List of dependencies to hold until shutdown of the router
+    pub _dependencies: Vec<Box<dyn Any>>,
 }
 
 impl<S> TestRouterApp<S> {
@@ -169,6 +174,10 @@ impl<S> TestRouterApp<S> {
         self.schema_state.plan_cache.run_pending_tasks().await;
         self.schema_state.validate_cache.run_pending_tasks().await;
     }
+
+    pub fn hold_until_shutdown(&mut self, dependency: Box<dyn Any>) {
+        self._dependencies.push(dependency);
+    }
 }
 
 pub async fn init_router_from_config(
@@ -180,11 +189,20 @@ pub async fn init_router_from_config(
     Box<dyn std::error::Error>,
 > {
     init_rustls_crypto_provider();
+    let (telemetry, subscriber) = Telemetry::init_subscriber(&router_config);
+    let subscription_guard = tracing::subscriber::set_default(subscriber);
+
     let mut bg_tasks_manager = BackgroundTasksManager::new();
     let http_config = router_config.http.clone();
     let graphql_path = http_config.graphql_endpoint();
-    let (shared_state, schema_state) =
-        configure_app_from_config(router_config, &mut bg_tasks_manager).await?;
+
+    let (shared_state, schema_state) = configure_app_from_config(
+        router_config,
+        telemetry.context.clone(),
+        &mut bg_tasks_manager,
+    )
+    .await
+    .unwrap();
 
     let ntex_app = test::init_service(
         web::App::new()
@@ -196,9 +214,11 @@ pub async fn init_router_from_config(
 
     Ok(TestRouterApp {
         app: ntex_app,
-        shared_state,
+        _shared_state: shared_state,
         schema_state,
         bg_tasks_manager,
+        telemetry,
+        _dependencies: vec![Box::new(subscription_guard)],
     })
 }
 
@@ -240,5 +260,31 @@ impl Drop for EnvVarGuard {
 impl<T> Drop for TestRouterApp<T> {
     fn drop(&mut self) {
         self.bg_tasks_manager.shutdown();
+        shutdown_telemetry_sync(&self.telemetry);
     }
+}
+
+fn shutdown_telemetry_sync(telemetry: &Telemetry) {
+    let Some(provider) = telemetry.provider.clone() else {
+        return;
+    };
+
+    let dispatch = tracing::dispatcher::get_default(|current| current.clone());
+    let handle = std::thread::spawn(move || {
+        tracing::dispatcher::with_default(&dispatch, || {
+            tracing::info!(
+                component = "telemetry",
+                layer = "provider",
+                "shutdown scheduled"
+            );
+            let _ = provider.force_flush();
+            let _ = provider.shutdown();
+            tracing::info!(
+                component = "telemetry",
+                layer = "provider",
+                "shutdown completed"
+            );
+        });
+    });
+    let _ = handle.join();
 }

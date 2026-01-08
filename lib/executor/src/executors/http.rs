@@ -9,7 +9,12 @@ use futures::TryFutureExt;
 use async_trait::async_trait;
 
 use bytes::{BufMut, Bytes};
+use hive_router_internal::telemetry::traces::spans::http_request::HttpClientRequestSpan;
+use hive_router_internal::telemetry::traces::spans::http_request::HttpInflightRequestSpan;
+use hive_router_internal::telemetry::Injector;
+use hive_router_internal::telemetry::TelemetryContext;
 use http::HeaderMap;
+use http::HeaderName;
 use http::HeaderValue;
 use http::StatusCode;
 use http_body_util::BodyExt;
@@ -19,6 +24,7 @@ use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use tokio::sync::Semaphore;
 use tracing::debug;
+use tracing::Instrument;
 
 use crate::executors::common::SubgraphExecutionRequest;
 use crate::executors::error::SubgraphExecutorError;
@@ -36,6 +42,7 @@ pub struct HTTPSubgraphExecutor {
     pub semaphore: Arc<Semaphore>,
     pub dedupe_enabled: bool,
     pub in_flight_requests: InflightRequestsMap,
+    pub telemetry_context: Arc<TelemetryContext>,
 }
 
 const FIRST_VARIABLE_STR: &[u8] = b",\"variables\":{";
@@ -51,6 +58,7 @@ impl HTTPSubgraphExecutor {
         semaphore: Arc<Semaphore>,
         dedupe_enabled: bool,
         in_flight_requests: InflightRequestsMap,
+        telemetry_context: Arc<TelemetryContext>,
     ) -> Self {
         let mut header_map = HeaderMap::new();
         header_map.insert(
@@ -70,6 +78,7 @@ impl HTTPSubgraphExecutor {
             semaphore,
             dedupe_enabled,
             in_flight_requests,
+            telemetry_context,
         }
     }
 
@@ -151,56 +160,67 @@ impl HTTPSubgraphExecutor {
 
         debug!("making http request to {}", self.endpoint.to_string());
 
-        let res_fut = self.http_client.request(req).map_err(|e| {
-            SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-        });
+        let http_request_span = HttpClientRequestSpan::from_request(&req);
 
-        let res = if let Some(timeout_duration) = timeout {
-            tokio::time::timeout(timeout_duration, res_fut)
-                .await
-                .map_err(|_| {
-                    SubgraphExecutorError::RequestTimeout(
-                        self.endpoint.to_string(),
-                        timeout_duration.as_millis(),
-                    )
-                })?
-        } else {
-            res_fut.await
-        }?;
-
-        debug!(
-            "http request to {} completed, status: {}",
-            self.endpoint.to_string(),
-            res.status()
-        );
-
-        let (parts, body) = res.into_parts();
-        let body = body
-            .collect()
-            .await
-            .map_err(|e| {
+        async {
+            // TODO: let's decide at some point if the tracing headers
+            //       should be part of the fingerprint or not.
+            self.telemetry_context
+                .inject_context(&mut TraceHeaderInjector(req.headers_mut()));
+            let res_fut = self.http_client.request(req).map_err(|e| {
                 SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
-            })?
-            .to_bytes();
+            });
 
-        if body.is_empty() {
-            return Err(SubgraphExecutorError::RequestFailure(
+            let res = if let Some(timeout_duration) = timeout {
+                tokio::time::timeout(timeout_duration, res_fut)
+                    .await
+                    .map_err(|_| {
+                        SubgraphExecutorError::RequestTimeout(
+                            self.endpoint.to_string(),
+                            timeout_duration.as_millis(),
+                        )
+                    })?
+            } else {
+                res_fut.await
+            }?;
+
+            http_request_span.record_response(&res);
+
+            debug!(
+                "http request to {} completed, status: {}",
                 self.endpoint.to_string(),
-                "Empty response body".to_string(),
-            ));
-        }
+                res.status()
+            );
 
-        Ok(HttpResponse {
-            status: parts.status,
-            body,
-            headers: parts.headers.into(),
-        })
+            let (parts, body) = res.into_parts();
+            let body = body
+                .collect()
+                .await
+                .map_err(|e| {
+                    SubgraphExecutorError::RequestFailure(self.endpoint.to_string(), e.to_string())
+                })?
+                .to_bytes();
+
+            if body.is_empty() {
+                return Err(SubgraphExecutorError::RequestFailure(
+                    self.endpoint.to_string(),
+                    "Empty response body".to_string(),
+                ));
+            }
+
+            Ok(HttpResponse {
+                status: parts.status,
+                body,
+                headers: parts.headers.into(),
+            })
+        }
+        .instrument(http_request_span.clone())
+        .await
     }
 }
 
 #[async_trait]
 impl SubgraphExecutor for HTTPSubgraphExecutor {
-    #[tracing::instrument(level = "trace", skip_all, fields(subgraph_name = %self.subgraph_name))]
     async fn execute<'a>(
         &self,
         execution_request: SubgraphExecutionRequest<'a>,
@@ -222,33 +242,56 @@ impl SubgraphExecutor for HTTPSubgraphExecutor {
         }
 
         let fingerprint = request_fingerprint(&http::Method::POST, &self.endpoint, &headers, &body);
+        let inflight_span = HttpInflightRequestSpan::new(
+            &http::Method::POST,
+            &self.endpoint,
+            &headers,
+            &body,
+            fingerprint,
+        );
 
-        // Clone the cell from the map, dropping the lock from the DashMap immediately.
-        // Prevents any deadlocks.
-        let cell = self
-            .in_flight_requests
-            .entry(fingerprint)
-            .or_default()
-            .value()
-            .clone();
+        async {
+            // Clone the cell from the map, dropping the lock from the DashMap immediately.
+            // Prevents any deadlocks.
+            let cell = self
+                .in_flight_requests
+                .entry(fingerprint)
+                .or_default()
+                .value()
+                .clone();
 
-        let shared_response = cell
-            .get_or_try_init(|| async {
-                let res = {
-                    // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
-                    // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
-                    let _permit = self.semaphore.acquire().await.unwrap();
-                    self._send_request(body, headers, timeout).await
-                };
-                // It's important to remove the entry from the map before returning the result.
-                // This ensures that once the OnceCell is set, no future requests can join it.
-                // The cache is for the lifetime of the in-flight request only.
-                self.in_flight_requests.remove(&fingerprint);
-                res
-            })
-            .await?;
+            // Mark it as a joiner span by default.
+            let mut is_leader = false;
+            let shared_response = cell
+                .get_or_try_init(|| async {
+                    // Override the span to be a leader span for this request.
+                    is_leader = true;
+                    let res = {
+                        // This unwrap is safe because the semaphore is never closed during the application's lifecycle.
+                        // `acquire()` only fails if the semaphore is closed, so this will always return `Ok`.
+                        let _permit = self.semaphore.acquire().await.unwrap();
+                        self._send_request(body, headers, timeout).await
+                    };
+                    // It's important to remove the entry from the map before returning the result.
+                    // This ensures that once the OnceCell is set, no future requests can join it.
+                    // The cache is for the lifetime of the in-flight request only.
+                    self.in_flight_requests.remove(&fingerprint);
+                    res
+                })
+                .await?;
 
-        shared_response.deserialize_http_response()
+            if is_leader {
+                inflight_span.record_as_leader();
+            } else {
+                inflight_span.record_as_joiner();
+            }
+
+            inflight_span.record_response(&shared_response.body, &shared_response.status);
+
+            shared_response.deserialize_http_response()
+        }
+        .instrument(inflight_span.clone())
+        .await
     }
 }
 
@@ -280,5 +323,21 @@ impl HttpResponse {
                 resp.bytes = Some(self.body.clone());
                 resp
             })
+    }
+}
+
+struct TraceHeaderInjector<'a>(pub &'a mut HeaderMap);
+
+impl<'a> Injector for TraceHeaderInjector<'a> {
+    fn set(&mut self, key: &str, value: String) {
+        let Ok(name) = HeaderName::from_bytes(key.as_bytes()) else {
+            return;
+        };
+
+        let Ok(val) = HeaderValue::from_str(&value) else {
+            return;
+        };
+
+        self.0.insert(name, val);
     }
 }

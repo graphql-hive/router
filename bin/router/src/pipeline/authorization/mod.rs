@@ -13,6 +13,8 @@ mod metadata;
 mod rebuilder;
 mod tree;
 
+use std::sync::Arc;
+
 use crate::pipeline::authorization::collector::{
     collect_authorization_statuses, propagate_null_bubbling,
 };
@@ -21,6 +23,7 @@ use crate::pipeline::authorization::rebuilder::{
 };
 use crate::pipeline::authorization::tree::UnauthorizedPathTrie;
 use crate::pipeline::coerce_variables::CoerceVariablesPayload;
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 
 use hive_router_config::authorization::UnauthorizedMode;
@@ -31,6 +34,7 @@ use hive_router_plan_executor::projection::plan::FieldProjectionPlan;
 use hive_router_plan_executor::response::graphql_error::GraphQLError;
 use hive_router_query_planner::ast::operation::OperationDefinition;
 
+use hive_router_internal::telemetry::traces::spans::graphql::GraphQLAuthorizeSpan;
 pub use metadata::{
     AuthorizationMetadata, AuthorizationMetadataError, ScopeId, ScopeInterner, UserAuthContext,
 };
@@ -77,31 +81,60 @@ impl From<AuthorizationError> for GraphQLError {
 /// unchanged, be modified, or be rejected.
 pub fn enforce_operation_authorization(
     router_config: &HiveRouterConfig,
-    normalized_payload: &GraphQLNormalizationPayload,
+    normalized_payload: &Arc<GraphQLNormalizationPayload>,
     auth_metadata: &AuthorizationMetadata,
     schema_metadata: &SchemaMetadata,
     variable_payload: &CoerceVariablesPayload,
     jwt_request_details: &JwtRequestDetails,
-) -> AuthorizationDecision {
+) -> Result<(Arc<GraphQLNormalizationPayload>, Vec<AuthorizationError>), PipelineError> {
     if !router_config.authorization.directives.enabled {
-        return AuthorizationDecision::NoChange;
+        return Ok((normalized_payload.clone(), vec![]));
     }
 
     if !router_config.jwt.enabled {
-        return AuthorizationDecision::NoChange;
+        return Ok((normalized_payload.clone(), vec![]));
     }
+
+    let span = GraphQLAuthorizeSpan::new();
+    let _guard = span.span.enter();
 
     let reject_mode =
         router_config.authorization.directives.unauthorized.mode == UnauthorizedMode::Reject;
 
-    apply_authorization_to_operation(
+    let decision = apply_authorization_to_operation(
         normalized_payload,
         auth_metadata,
         schema_metadata,
         variable_payload,
         jwt_request_details,
         reject_mode,
-    )
+    );
+
+    Ok(match decision {
+        AuthorizationDecision::NoChange => (normalized_payload.clone(), vec![]),
+        AuthorizationDecision::Modified {
+            new_operation_definition,
+            new_projection_plan,
+            errors,
+        } => {
+            (
+                Arc::new(GraphQLNormalizationPayload {
+                    operation_for_plan: Arc::new(new_operation_definition),
+                    // These are cheap Arc clones
+                    operation_for_introspection: normalized_payload
+                        .operation_for_introspection
+                        .clone(),
+                    root_type_name: normalized_payload.root_type_name,
+                    projection_plan: Arc::new(new_projection_plan),
+                    operation_indentity: normalized_payload.operation_indentity.clone(),
+                }),
+                errors,
+            )
+        }
+        AuthorizationDecision::Reject { errors } => {
+            return Err(PipelineError::AuthorizationFailed(errors));
+        }
+    })
 }
 
 pub fn apply_authorization_to_operation(

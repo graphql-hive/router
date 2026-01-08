@@ -1,0 +1,837 @@
+use ntex::{util::join_all, web::test};
+use std::time::Duration;
+
+use crate::testkit::{
+    init_graphql_request, init_router_from_config_inline,
+    otel::{CollectedSpan, OtlpCollector},
+    wait_for_readiness, SubgraphsServer,
+};
+
+/// Verify OTLP exporter works with HTTP protocol
+#[ntex::test]
+async fn test_otlp_http_export_with_graphql_request() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_endpoint();
+
+    let _subgraphs = SubgraphsServer::start().await;
+
+    let mut app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: http
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ users { id } }", None);
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports to be sent
+    tokio::time::sleep(Duration::from_millis(60)).await;
+
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces.first().expect("Failed to get first trace");
+
+    let http_server_span = trace.span_by_hive_kind_one("http.server");
+    let operation_span = trace.span_by_hive_kind_one("graphql.operation");
+    let parse_span = trace.span_by_hive_kind_one("graphql.parse");
+    let validate_span = trace.span_by_hive_kind_one("graphql.validate");
+    let variable_coercion_span = trace.span_by_hive_kind_one("graphql.variable_coercion");
+    let normalization_span = trace.span_by_hive_kind_one("graphql.normalize");
+    let plan_span = trace.span_by_hive_kind_one("graphql.plan");
+    let execution_span = trace.span_by_hive_kind_one("graphql.execute");
+    let subgraph_operation_span = trace.span_by_hive_kind_one("graphql.subgraph.operation");
+    let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
+    let http_client_span = trace.span_by_hive_kind_one("http.client");
+
+    insta::assert_snapshot!(
+      http_server_span,
+      @r"
+    Span: http.server
+      Kind: Server
+      Status: message='' code='1'
+      Attributes:
+        hive.kind: http.server
+        http.request.body.size: 45
+        http.request.method: POST
+        http.response.body.size: 86
+        http.response.status_code: 200
+        http.route: /graphql
+        network.protocol.version: 1.1
+        target: hive-router
+        url.full: /graphql
+        url.path: /graphql
+    "
+    );
+
+    insta::assert_snapshot!(
+      operation_span,
+      @r"
+    Span: graphql.operation
+      Kind: Server
+      Status: message='' code='0'
+      Attributes:
+        graphql.document.hash: 1237612228098794304
+        graphql.operation.type: query
+        hive.graphql.operation.hash: e92177e49c0010d4e52929531ebe30c9
+        hive.kind: graphql.operation
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      parse_span,
+      @r"
+    Span: graphql.parse
+      Kind: Internal
+      Status: message='' code='0'
+      Attributes:
+        cache.hit: false
+        graphql.document.hash: 1237612228098794304
+        graphql.operation.type: query
+        hive.kind: graphql.parse
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      validate_span,
+      @r"
+    Span: graphql.validate
+      Kind: Internal
+      Status: message='' code='0'
+      Attributes:
+        cache.hit: false
+        hive.kind: graphql.validate
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      variable_coercion_span,
+      @r"
+    Span: graphql.variable_coercion
+      Kind: Internal
+      Status: message='' code='0'
+      Attributes:
+        hive.kind: graphql.variable_coercion
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      normalization_span,
+      @r"
+    Span: graphql.normalize
+      Kind: Internal
+      Status: message='' code='0'
+      Attributes:
+        cache.hit: false
+        hive.kind: graphql.normalize
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      plan_span,
+      @r"
+    Span: graphql.plan
+      Kind: Internal
+      Status: message='' code='0'
+      Attributes:
+        cache.hit: false
+        hive.kind: graphql.plan
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      execution_span,
+      @r"
+    Span: graphql.execute
+      Kind: Internal
+      Status: message='' code='0'
+      Attributes:
+        hive.kind: graphql.execute
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      subgraph_operation_span,
+      @r"
+    Span: graphql.subgraph.operation
+      Kind: Client
+      Status: message='' code='0'
+      Attributes:
+        graphql.document.hash: 7148583861642513753
+        graphql.operation.type: query
+        hive.graphql.subgraph.name: accounts
+        hive.kind: graphql.subgraph.operation
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      http_inflight_span,
+      @r"
+    Span: http.inflight
+      Kind: Internal
+      Status: message='' code='1'
+      Attributes:
+        hive.inflight.key: 15555024578502296811
+        hive.inflight.role: leader
+        hive.kind: http.inflight
+        http.request.body.size: 23
+        http.request.method: POST
+        http.response.body.size: 86
+        http.response.status_code: 200
+        network.protocol.version: 1.1
+        server.address: 0.0.0.0
+        server.port: 4200
+        target: hive-router
+        url.full: http://0.0.0.0:4200/accounts
+        url.path: /accounts
+        url.scheme: http
+    "
+    );
+
+    insta::assert_snapshot!(
+      http_client_span,
+      @r"
+    Span: http.client
+      Kind: Client
+      Status: message='' code='1'
+      Attributes:
+        hive.kind: http.client
+        http.request.body.size: 23
+        http.request.method: POST
+        http.response.body.size: 86
+        http.response.status_code: 200
+        network.protocol.version: 1.1
+        server.address: 0.0.0.0
+        server.port: 4200
+        target: hive-router
+        url.full: http://0.0.0.0:4200/accounts
+        url.path: /accounts
+        url.scheme: http
+    "
+    );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
+}
+
+/// Verify OTLP exporter works with gRPC protocol
+#[ntex::test]
+async fn test_otlp_grpc_export_with_graphql_request() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.grpc_endpoint();
+
+    let _subgraphs = SubgraphsServer::start().await;
+
+    let mut app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: grpc
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ users { id } }", None);
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports to be sent
+    tokio::time::sleep(Duration::from_millis(60)).await;
+
+    let all_traces = otlp_collector.traces().await;
+    let trace = all_traces.first().expect("Failed to get first trace");
+
+    let http_server_span = trace.span_by_hive_kind_one("http.server");
+    let operation_span = trace.span_by_hive_kind_one("graphql.operation");
+    let parse_span = trace.span_by_hive_kind_one("graphql.parse");
+    let validate_span = trace.span_by_hive_kind_one("graphql.validate");
+    let variable_coercion_span = trace.span_by_hive_kind_one("graphql.variable_coercion");
+    let normalization_span = trace.span_by_hive_kind_one("graphql.normalize");
+    let plan_span = trace.span_by_hive_kind_one("graphql.plan");
+    let execution_span = trace.span_by_hive_kind_one("graphql.execute");
+    let subgraph_operation_span = trace.span_by_hive_kind_one("graphql.subgraph.operation");
+    let http_inflight_span = trace.span_by_hive_kind_one("http.inflight");
+    let http_client_span = trace.span_by_hive_kind_one("http.client");
+
+    insta::assert_snapshot!(
+      http_server_span,
+      @r"
+    Span: http.server
+      Kind: Server
+      Status: message='' code='1'
+      Attributes:
+        hive.kind: http.server
+        http.request.body.size: 45
+        http.request.method: POST
+        http.response.body.size: 86
+        http.response.status_code: 200
+        http.route: /graphql
+        network.protocol.version: 1.1
+        target: hive-router
+        url.full: /graphql
+        url.path: /graphql
+    "
+    );
+
+    insta::assert_snapshot!(
+      operation_span,
+      @r"
+    Span: graphql.operation
+      Kind: Server
+      Status: message='' code='0'
+      Attributes:
+        graphql.document.hash: 1237612228098794304
+        graphql.operation.type: query
+        hive.graphql.operation.hash: e92177e49c0010d4e52929531ebe30c9
+        hive.kind: graphql.operation
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      parse_span,
+      @r"
+    Span: graphql.parse
+      Kind: Internal
+      Status: message='' code='0'
+      Attributes:
+        cache.hit: false
+        graphql.document.hash: 1237612228098794304
+        graphql.operation.type: query
+        hive.kind: graphql.parse
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      validate_span,
+      @r"
+    Span: graphql.validate
+      Kind: Internal
+      Status: message='' code='0'
+      Attributes:
+        cache.hit: false
+        hive.kind: graphql.validate
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      variable_coercion_span,
+      @r"
+    Span: graphql.variable_coercion
+      Kind: Internal
+      Status: message='' code='0'
+      Attributes:
+        hive.kind: graphql.variable_coercion
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      normalization_span,
+      @r"
+    Span: graphql.normalize
+      Kind: Internal
+      Status: message='' code='0'
+      Attributes:
+        cache.hit: false
+        hive.kind: graphql.normalize
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      plan_span,
+      @r"
+    Span: graphql.plan
+      Kind: Internal
+      Status: message='' code='0'
+      Attributes:
+        cache.hit: false
+        hive.kind: graphql.plan
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      execution_span,
+      @r"
+    Span: graphql.execute
+      Kind: Internal
+      Status: message='' code='0'
+      Attributes:
+        hive.kind: graphql.execute
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      subgraph_operation_span,
+      @r"
+    Span: graphql.subgraph.operation
+      Kind: Client
+      Status: message='' code='0'
+      Attributes:
+        graphql.document.hash: 7148583861642513753
+        graphql.operation.type: query
+        hive.graphql.subgraph.name: accounts
+        hive.kind: graphql.subgraph.operation
+        target: hive-router
+    "
+    );
+
+    insta::assert_snapshot!(
+      http_inflight_span,
+      @r"
+    Span: http.inflight
+      Kind: Internal
+      Status: message='' code='1'
+      Attributes:
+        hive.inflight.key: 15555024578502296811
+        hive.inflight.role: leader
+        hive.kind: http.inflight
+        http.request.body.size: 23
+        http.request.method: POST
+        http.response.body.size: 86
+        http.response.status_code: 200
+        network.protocol.version: 1.1
+        server.address: 0.0.0.0
+        server.port: 4200
+        target: hive-router
+        url.full: http://0.0.0.0:4200/accounts
+        url.path: /accounts
+        url.scheme: http
+    "
+    );
+
+    insta::assert_snapshot!(
+      http_client_span,
+      @r"
+    Span: http.client
+      Kind: Client
+      Status: message='' code='1'
+      Attributes:
+        hive.kind: http.client
+        http.request.body.size: 23
+        http.request.method: POST
+        http.response.body.size: 86
+        http.response.status_code: 200
+        network.protocol.version: 1.1
+        server.address: 0.0.0.0
+        server.port: 4200
+        target: hive-router
+        url.full: http://0.0.0.0:4200/accounts
+        url.path: /accounts
+        url.scheme: http
+    "
+    );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
+}
+
+/// Verify OTLP exporters do not export telemetry when disabled
+#[ntex::test]
+async fn test_otlp_disabled() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_grpc_endpoint = otlp_collector.grpc_endpoint();
+    let otlp_http_endpoint = otlp_collector.http_endpoint();
+
+    let _subgraphs = SubgraphsServer::start().await;
+
+    let mut app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: grpc
+                  enabled: false
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+                - kind: otlp
+                  endpoint: {}
+                  enabled: false
+                  protocol: http
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_grpc_endpoint,
+            otlp_http_endpoint,
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ users { id } }", None);
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports to be sent
+    tokio::time::sleep(Duration::from_millis(60)).await;
+
+    assert_eq!(
+        otlp_collector.is_empty().await,
+        true,
+        "Expected no traces to be exported"
+    );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
+}
+
+/// Verify custom headers are sent with HTTP OTLP requests
+#[ntex::test]
+async fn test_otlp_http_headers() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let _subgraphs = SubgraphsServer::start().await;
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_endpoint();
+
+    let app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: http
+                  http:
+                    headers:
+                      custom-header: custom-value
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ users { id } }", None);
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let first_request = otlp_collector
+        .request_at(0)
+        .await
+        .expect("Failed to get first request");
+    let custom_header = first_request
+        .headers
+        .iter()
+        .find(|(name, _value)| name == "custom-header");
+    assert_eq!(
+        custom_header,
+        Some(&("custom-header".to_string(), "custom-value".to_string())),
+        "Custom header not found in request headers"
+    );
+}
+
+/// Verify custom metadata is sent with gRPC OTLP requests
+#[ntex::test]
+async fn test_otlp_grpc_metadata() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let _subgraphs = SubgraphsServer::start().await;
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.grpc_endpoint();
+
+    let mut app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: grpc
+                  grpc:
+                    metadata:
+                      custom-header: custom-value
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ users { id } }", None);
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let first_request = otlp_collector
+        .request_at(0)
+        .await
+        .expect("Failed to get first request");
+    let custom_header = first_request
+        .headers
+        .iter()
+        .find(|(name, _value)| name == "custom-header");
+    assert_eq!(
+        custom_header,
+        Some(&("custom-header".to_string(), "custom-value".to_string())),
+        "Custom header not found in request headers"
+    );
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
+}
+
+/// Verify cache.hit attributes are reported correctly
+#[ntex::test]
+async fn test_otlp_cache_hits() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_endpoint();
+
+    let _subgraphs = SubgraphsServer::start().await;
+
+    let mut app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: http
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    let req = init_graphql_request("{ users { id } }", None);
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports to be sent
+    tokio::time::sleep(Duration::from_millis(60)).await;
+
+    // Should hit the caches
+    let req = init_graphql_request("{ users { id } }", None);
+    test::call_service(&app.app, req.to_request()).await;
+
+    // Wait for exports to be sent
+    tokio::time::sleep(Duration::from_millis(60)).await;
+
+    let all_traces = otlp_collector.traces().await;
+    let first_trace = all_traces.first().expect("Failed to get first trace");
+    let second_trace = all_traces.get(1).expect("Failed to get second trace");
+
+    let first_parse_span = first_trace.span_by_hive_kind_one("graphql.parse");
+    let first_validate_span = first_trace.span_by_hive_kind_one("graphql.validate");
+    let first_normalization_span = first_trace.span_by_hive_kind_one("graphql.normalize");
+    let first_plan_span = first_trace.span_by_hive_kind_one("graphql.plan");
+
+    let second_parse_span = second_trace.span_by_hive_kind_one("graphql.parse");
+    let second_validate_span = second_trace.span_by_hive_kind_one("graphql.validate");
+    let second_normalization_span = second_trace.span_by_hive_kind_one("graphql.normalize");
+    let second_plan_span = second_trace.span_by_hive_kind_one("graphql.plan");
+
+    fn assert_cache_hit(span: &CollectedSpan) {
+        assert_eq!(span.attributes.get("cache.hit"), Some(&"true".to_string()));
+    }
+
+    fn assert_cache_miss(span: &CollectedSpan) {
+        assert_eq!(span.attributes.get("cache.hit"), Some(&"false".to_string()));
+    }
+
+    assert_cache_miss(first_parse_span);
+    assert_cache_miss(first_validate_span);
+    assert_cache_miss(first_normalization_span);
+    assert_cache_miss(first_plan_span);
+
+    assert_cache_hit(second_parse_span);
+    assert_cache_hit(second_validate_span);
+    assert_cache_hit(second_normalization_span);
+    assert_cache_hit(second_plan_span);
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
+}
+
+/// Verify cache.hit attributes are reported correctly
+#[ntex::test]
+async fn test_otlp_no_trace_id_collision() {
+    let supergraph_path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("supergraph.graphql");
+
+    let otlp_collector = OtlpCollector::start()
+        .await
+        .expect("Failed to start OTLP collector");
+    let otlp_endpoint = otlp_collector.http_endpoint();
+
+    let _subgraphs = SubgraphsServer::start().await;
+
+    let mut app = init_router_from_config_inline(
+        format!(
+            r#"
+          supergraph:
+            source: file
+            path: {}
+
+          telemetry:
+            tracing:
+              exporters:
+                - kind: otlp
+                  endpoint: {}
+                  protocol: http
+                  batch_processor:
+                    scheduled_delay: 50ms
+                    max_export_timeout: 50ms
+      "#,
+            supergraph_path.to_str().unwrap(),
+            otlp_endpoint
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Failed to initialize router from config file");
+
+    wait_for_readiness(&app.app).await;
+
+    join_all(vec![
+        test::call_service(
+            &app.app,
+            init_graphql_request("{ users { id } }", None).to_request(),
+        ),
+        test::call_service(
+            &app.app,
+            init_graphql_request("{ users { id } }", None).to_request(),
+        ),
+        test::call_service(
+            &app.app,
+            init_graphql_request("{ users { id } }", None).to_request(),
+        ),
+    ])
+    .await;
+
+    // Wait for exports to be sent
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let all_traces = otlp_collector.traces().await;
+    println!("all_traces: {}", all_traces.len());
+    let first_trace = all_traces.first().expect("Failed to get first trace");
+    let second_trace = all_traces.get(1).expect("Failed to get second trace");
+    let third_trace = all_traces.get(2).expect("Failed to get third trace");
+
+    assert_ne!(first_trace.id, second_trace.id);
+    assert_ne!(second_trace.id, third_trace.id);
+    assert_ne!(first_trace.id, third_trace.id);
+
+    app.hold_until_shutdown(Box::new(otlp_collector));
+}
