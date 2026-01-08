@@ -31,7 +31,7 @@ use crate::{
     },
 };
 
-pub use control::{disabled_span, is_tracing_enabled, set_tracing_enabled};
+pub use control::{disabled_span, is_level_enabled, is_tracing_enabled, set_tracing_enabled};
 
 pub mod compatibility;
 pub mod control;

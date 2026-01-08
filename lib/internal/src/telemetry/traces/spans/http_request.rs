@@ -8,11 +8,11 @@ use hyper::body::Body;
 use ntex::http::body::MessageBody;
 use opentelemetry::KeyValue;
 use std::borrow::{Borrow, Cow};
-use tracing::{field::Empty, info_span, Span};
+use tracing::{field::Empty, info_span, Level, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::telemetry::traces::{
-    disabled_span, is_tracing_enabled,
+    disabled_span, is_level_enabled,
     spans::{
         attributes::{self, HIVE_INFLIGHT_LINK_RELATIONSHIP},
         kind::HiveSpanKind,
@@ -39,7 +39,7 @@ impl Borrow<Span> for HttpServerRequestSpan {
 
 impl HttpServerRequestSpan {
     pub fn from_request(request: &ntex::web::HttpRequest, body: &ntex::util::Bytes) -> Self {
-        if !is_tracing_enabled() {
+        if !is_level_enabled(Level::INFO) {
             return Self {
                 span: disabled_span(),
             };
@@ -142,7 +142,7 @@ impl Borrow<Span> for HttpClientRequestSpan {
 
 impl HttpClientRequestSpan {
     pub fn from_request(request: &http::Request<Full<Bytes>>) -> Self {
-        if !is_tracing_enabled() {
+        if !is_level_enabled(Level::INFO) {
             return Self {
                 span: disabled_span(),
             };
@@ -239,7 +239,7 @@ impl HttpInflightRequestSpan {
         body_bytes: &[u8],
         fingerprint: u64,
     ) -> Self {
-        if !is_tracing_enabled() {
+        if !is_level_enabled(Level::INFO) {
             return Self {
                 span: disabled_span(),
             };

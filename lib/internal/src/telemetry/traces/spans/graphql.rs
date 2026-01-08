@@ -1,12 +1,12 @@
 use opentelemetry::KeyValue;
 use std::fmt::Write;
-use tracing::{field::Empty, info_span, Span};
+use tracing::{field::Empty, info_span, Level, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
     graphql::{ObservedGraphQLError, PathSegment},
     telemetry::traces::{
-        disabled_span, is_tracing_enabled,
+        disabled_span, is_level_enabled,
         spans::{
             attributes::{
                 self, ERROR_MESSAGE, ERROR_TYPE, HIVE_ERROR_AFFECTED_PATH, HIVE_ERROR_PATH,
@@ -37,7 +37,7 @@ impl Default for GraphQLParseSpan {
 
 impl GraphQLParseSpan {
     pub fn new() -> Self {
-        if !is_tracing_enabled() {
+        if !is_level_enabled(Level::INFO) {
             return Self {
                 span: disabled_span(),
             };
@@ -84,7 +84,7 @@ impl Default for GraphQLValidateSpan {
 
 impl GraphQLValidateSpan {
     pub fn new() -> Self {
-        if !is_tracing_enabled() {
+        if !is_level_enabled(Level::INFO) {
             return Self {
                 span: disabled_span(),
             };
@@ -131,7 +131,7 @@ impl Default for GraphQLVariableCoercionSpan {
 
 impl GraphQLVariableCoercionSpan {
     pub fn new() -> Self {
-        if !is_tracing_enabled() {
+        if !is_level_enabled(Level::INFO) {
             return Self {
                 span: disabled_span(),
             };
@@ -173,7 +173,7 @@ impl Default for GraphQLNormalizeSpan {
 
 impl GraphQLNormalizeSpan {
     pub fn new() -> Self {
-        if !is_tracing_enabled() {
+        if !is_level_enabled(Level::INFO) {
             return Self {
                 span: disabled_span(),
             };
@@ -220,7 +220,7 @@ impl Default for GraphQLAuthorizeSpan {
 
 impl GraphQLAuthorizeSpan {
     pub fn new() -> Self {
-        if !is_tracing_enabled() {
+        if !is_level_enabled(Level::INFO) {
             return Self {
                 span: disabled_span(),
             };
@@ -267,7 +267,7 @@ impl Default for GraphQLPlanSpan {
 
 impl GraphQLPlanSpan {
     pub fn new() -> Self {
-        if !is_tracing_enabled() {
+        if !is_level_enabled(Level::INFO) {
             return Self {
                 span: disabled_span(),
             };
@@ -314,7 +314,7 @@ impl Default for GraphQLExecuteSpan {
 
 impl GraphQLExecuteSpan {
     pub fn new() -> Self {
-        if !is_tracing_enabled() {
+        if !is_level_enabled(Level::INFO) {
             return Self {
                 span: disabled_span(),
             };
@@ -356,7 +356,7 @@ impl Default for GraphQLOperationSpan {
 
 impl GraphQLOperationSpan {
     pub fn new() -> Self {
-        if !is_tracing_enabled() {
+        if !is_level_enabled(Level::INFO) {
             return Self {
                 span: disabled_span(),
             };
@@ -419,7 +419,7 @@ impl std::ops::Deref for GraphQLSubgraphOperationSpan {
 
 impl GraphQLSubgraphOperationSpan {
     pub fn new(subgraph_name: &str) -> Self {
-        if !is_tracing_enabled() {
+        if !is_level_enabled(Level::INFO) {
             return Self {
                 span: disabled_span(),
             };
