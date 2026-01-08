@@ -1,20 +1,18 @@
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::normalize::GraphQLNormalizationPayload;
 use crate::pipeline::progressive_override::{RequestOverrideContext, StableOverrideContext};
 use crate::schema_state::{SchemaState, SupergraphData};
 use hive_router_query_planner::planner::plan_nodes::QueryPlan;
 use hive_router_query_planner::utils::cancellation::CancellationToken;
-use ntex::web::HttpRequest;
 use xxhash_rust::xxh3::Xxh3;
 
 #[inline]
 pub async fn plan_operation_with_cache(
-    req: &HttpRequest,
     supergraph: &SupergraphData,
-    schema_state: &Arc<SchemaState>,
+    schema_state: &SchemaState,
     normalized_operation: &GraphQLNormalizationPayload,
     request_override_context: &RequestOverrideContext,
     cancellation_token: &CancellationToken,
@@ -72,7 +70,7 @@ pub async fn plan_operation_with_cache(
 
     match plan_result {
         Ok(plan) => Ok(plan),
-        Err(e) => Err(req.new_pipeline_error(PipelineErrorVariant::PlannerError(e.clone()))),
+        Err(e) => Err(PipelineError::PlannerError(e.clone())),
     }
 }
 

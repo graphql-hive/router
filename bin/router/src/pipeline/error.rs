@@ -3,43 +3,22 @@ use std::sync::Arc;
 use graphql_tools::validation::utils::ValidationError;
 use hive_router_plan_executor::{
     execution::{error::PlanExecutionError, jwt_forward::JwtForwardingError},
-    response::graphql_error::{GraphQLError, GraphQLErrorExtensions},
+    response::graphql_error::GraphQLError,
 };
 use hive_router_query_planner::{
     ast::normalization::error::NormalizationError, planner::PlannerError,
 };
 use http::{HeaderName, Method, StatusCode};
-use ntex::{
-    http::ResponseBuilder,
-    web::{self, error::QueryPayloadError, HttpRequest},
-};
+use ntex::web::error::QueryPayloadError;
 use serde::{Deserialize, Serialize};
 
-use crate::pipeline::{
-    header::{RequestAccepts, APPLICATION_GRAPHQL_RESPONSE_JSON_STR},
-    progressive_override::LabelEvaluationError,
+use crate::{
+    jwt::errors::JwtError,
+    pipeline::{authorization::AuthorizationError, progressive_override::LabelEvaluationError},
 };
 
-#[derive(Debug)]
-pub struct PipelineError {
-    pub accept_ok: bool,
-    pub error: PipelineErrorVariant,
-}
-
-pub trait PipelineErrorFromAcceptHeader {
-    fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError;
-}
-
-impl PipelineErrorFromAcceptHeader for HttpRequest {
-    #[inline]
-    fn new_pipeline_error(&self, error: PipelineErrorVariant) -> PipelineError {
-        let accept_ok = !self.accepts_content_type(&APPLICATION_GRAPHQL_RESPONSE_JSON_STR);
-        PipelineError { accept_ok, error }
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
-pub enum PipelineErrorVariant {
+pub enum PipelineError {
     // HTTP-related errors
     #[error("Unsupported HTTP method: {0}")]
     UnsupportedHttpMethod(Method),
@@ -76,7 +55,7 @@ pub enum PipelineErrorVariant {
     #[error("Validation errors")]
     ValidationErrors(Arc<Vec<ValidationError>>),
     #[error("Authorization failed")]
-    AuthorizationFailed(Vec<GraphQLError>),
+    AuthorizationFailed(Vec<AuthorizationError>),
     #[error("Failed to execute a plan: {0}")]
     PlanExecutionError(PlanExecutionError),
     #[error("Failed to produce a plan: {0}")]
@@ -89,11 +68,13 @@ pub enum PipelineErrorVariant {
     CsrfPreventionFailed,
 
     // JWT-auth plugin errors
+    #[error(transparent)]
+    JwtError(JwtError),
     #[error("Failed to forward jwt: {0}")]
     JwtForwardingError(JwtForwardingError),
 }
 
-impl PipelineErrorVariant {
+impl PipelineError {
     pub fn graphql_error_code(&self) -> &'static str {
         match self {
             Self::UnsupportedHttpMethod(_) => "METHOD_NOT_ALLOWED",
@@ -113,6 +94,7 @@ impl PipelineErrorVariant {
             Self::NormalizationError(NormalizationError::MultipleMatchingOperationsFound) => {
                 "OPERATION_RESOLUTION_FAILURE"
             }
+            Self::JwtError(err) => err.error_code(),
             _ => "BAD_REQUEST",
         }
     }
@@ -150,6 +132,7 @@ impl PipelineErrorVariant {
             (Self::MissingContentTypeHeader, _) => StatusCode::NOT_ACCEPTABLE,
             (Self::UnsupportedContentType, _) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             (Self::CsrfPreventionFailed, _) => StatusCode::FORBIDDEN,
+            (Self::JwtError(err), _) => err.status_code(),
         }
     }
 }
@@ -158,40 +141,4 @@ impl PipelineErrorVariant {
 pub struct FailedExecutionResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub errors: Option<Vec<GraphQLError>>,
-}
-
-impl PipelineError {
-    pub fn into_response(self) -> web::HttpResponse {
-        let status = self.error.default_status_code(self.accept_ok);
-
-        if let PipelineErrorVariant::ValidationErrors(validation_errors) = self.error {
-            let validation_error_result = FailedExecutionResult {
-                errors: Some(validation_errors.iter().map(|error| error.into()).collect()),
-            };
-
-            return ResponseBuilder::new(status).json(&validation_error_result);
-        }
-
-        if let PipelineErrorVariant::AuthorizationFailed(authorization_errors) = self.error {
-            let authorization_error_result = FailedExecutionResult {
-                errors: Some(authorization_errors),
-            };
-
-            return ResponseBuilder::new(status).json(&authorization_error_result);
-        }
-
-        let code = self.error.graphql_error_code();
-        let message = self.error.graphql_error_message();
-
-        let graphql_error = GraphQLError::from_message_and_extensions(
-            message,
-            GraphQLErrorExtensions::new_from_code(code),
-        );
-
-        let result = FailedExecutionResult {
-            errors: Some(vec![graphql_error]),
-        };
-
-        ResponseBuilder::new(status).json(&result)
-    }
 }

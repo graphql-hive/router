@@ -1,19 +1,17 @@
 use std::sync::Arc;
 
-use crate::pipeline::error::{PipelineError, PipelineErrorFromAcceptHeader, PipelineErrorVariant};
+use crate::pipeline::error::PipelineError;
 use crate::pipeline::parser::GraphQLParserPayload;
 use crate::schema_state::{SchemaState, SupergraphData};
 use crate::shared_state::RouterSharedState;
 use graphql_tools::validation::validate::validate;
-use ntex::web::HttpRequest;
 use tracing::{error, trace};
 
 #[inline]
 pub async fn validate_operation_with_cache(
-    req: &HttpRequest,
     supergraph: &SupergraphData,
-    schema_state: &Arc<SchemaState>,
-    app_state: &Arc<RouterSharedState>,
+    schema_state: &SchemaState,
+    app_state: &RouterSharedState,
     parser_payload: &GraphQLParserPayload,
 ) -> Result<(), PipelineError> {
     let consumer_schema_ast = &supergraph.planner.consumer_schema.document;
@@ -59,9 +57,7 @@ pub async fn validate_operation_with_cache(
         );
         trace!("Validation errors: {:?}", validation_result);
 
-        return Err(
-            req.new_pipeline_error(PipelineErrorVariant::ValidationErrors(validation_result))
-        );
+        return Err(PipelineError::ValidationErrors(validation_result));
     }
 
     Ok(())
