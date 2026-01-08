@@ -15,10 +15,12 @@ pub enum TelemetryLevel {
     Trace = 5,
 }
 
+#[inline]
 pub fn set_tracing_level(level: TelemetryLevel) {
     MAX_LEVEL.store(level as u8, Ordering::Relaxed);
 }
 
+#[inline]
 pub fn set_tracing_enabled(enabled: bool) {
     if enabled {
         set_tracing_level(TelemetryLevel::Info);
@@ -27,22 +29,28 @@ pub fn set_tracing_enabled(enabled: bool) {
     }
 }
 
-pub fn is_level_enabled(level: Level) -> bool {
-    let current = MAX_LEVEL.load(Ordering::Relaxed);
-    let requested = match level {
+#[inline]
+fn level_to_u8(level: Level) -> u8 {
+    match level {
         Level::ERROR => 1,
         Level::WARN => 2,
         Level::INFO => 3,
         Level::DEBUG => 4,
         Level::TRACE => 5,
-    };
-    current >= requested
+    }
 }
 
+#[inline]
+pub fn is_level_enabled(level: Level) -> bool {
+    MAX_LEVEL.load(Ordering::Relaxed) >= level_to_u8(level)
+}
+
+#[inline]
 pub fn is_tracing_enabled() -> bool {
     MAX_LEVEL.load(Ordering::Relaxed) > 0
 }
 
+#[inline]
 pub fn disabled_span() -> Span {
     Span::none()
 }
