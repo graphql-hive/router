@@ -3,19 +3,12 @@ use futures::stream::BoxStream;
 use http_body_util::BodyExt;
 use hyper::body::Body;
 
-/// The boundary used in multipart subscription responses.
-/// Per the spec, this is always "graphql".
-const BOUNDARY_MARKER: &str = "--graphql";
-const END_MARKER: &str = "--graphql--";
-
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum ParseError {
     #[error("Invalid UTF-8 sequence: {0}")]
     InvalidUtf8(String),
     #[error("Stream read error: {0}")]
     StreamReadError(String),
-    #[error("Missing 'payload' field in multipart response")]
-    MissingPayload,
     #[error("Invalid JSON: {0}")]
     InvalidJson(String),
 }
@@ -39,9 +32,7 @@ where
                         Ok(Some(payload)) => {
                             yield Ok(Bytes::from(payload));
                         }
-                        Ok(None) => {
-                            // heartbeat, skip
-                        }
+                        Ok(None) => {}
                         Err(e) => {
                             yield Err(e);
                             return;
@@ -74,68 +65,46 @@ where
     Box::pin(stream)
 }
 
-/// Find the boundary of a complete multipart part in the buffer.
-/// Returns the index just past the part (up to the next boundary), and whether it's the end marker.
-///
-/// Multipart format per multipart-spec.md:
-/// ```text
-/// --graphql
-/// Content-Type: application/json
-///
-/// {"payload":{"data":{...}}}
-/// --graphql
-/// ...
-/// --graphql--
-/// ```
 fn find_multipart_boundary(buffer: &[u8]) -> Option<(usize, bool)> {
     let buffer_str = std::str::from_utf8(buffer).ok()?;
 
-    // Find the first boundary marker
-    let first_boundary_pos = buffer_str.find(BOUNDARY_MARKER)?;
+    let first_boundary_pos = find_first_boundary(buffer_str)?;
+    let boundary_marker = extract_boundary_marker(buffer_str, first_boundary_pos)?;
 
-    // Look for the next boundary marker after the first one
-    let after_first = first_boundary_pos + BOUNDARY_MARKER.len();
+    let after_first = first_boundary_pos + boundary_marker.len();
     if after_first >= buffer_str.len() {
         return None;
     }
 
-    // Find the next boundary
-    if let Some(next_pos) = buffer_str[after_first..].find(BOUNDARY_MARKER) {
+    if let Some(next_pos) = buffer_str[after_first..].find(&boundary_marker) {
         let absolute_next_pos = after_first + next_pos;
-
-        // Check if this is the end marker
-        let is_end = buffer_str[absolute_next_pos..].starts_with(END_MARKER);
-
+        let end_marker = format!("{}--", boundary_marker);
+        let is_end = buffer_str[absolute_next_pos..].starts_with(&end_marker);
         return Some((absolute_next_pos, is_end));
     }
 
     None
 }
 
-/// Parse a single multipart part and extract the GraphQL payload.
-/// Returns None for heartbeats (empty object `{}`).
+fn find_first_boundary(text: &str) -> Option<usize> {
+    text.find("--")
+}
+
+fn extract_boundary_marker(text: &str, start: usize) -> Option<String> {
+    let after_dashes = &text[start..];
+    let boundary_end = after_dashes
+        .find('\r')
+        .or_else(|| after_dashes.find('\n'))?;
+    
+    let boundary = &after_dashes[..boundary_end];
+    Some(boundary.to_string())
+}
+
 fn parse_part(raw: &[u8]) -> Result<Option<String>, ParseError> {
     let text = std::str::from_utf8(raw).map_err(|e| ParseError::InvalidUtf8(e.to_string()))?;
 
-    // Skip the boundary marker and its trailing newline
-    let content = if let Some(pos) = text.find(BOUNDARY_MARKER) {
-        let after_boundary = &text[pos + BOUNDARY_MARKER.len()..];
-        after_boundary
-            .trim_start_matches("\r\n")
-            .trim_start_matches('\n')
-    } else {
-        text
-    };
-
-    // Split headers from body (separated by double CRLF or double LF)
-    let body = if let Some(pos) = content.find("\r\n\r\n") {
-        content[pos + 4..].trim()
-    } else if let Some(pos) = content.find("\n\n") {
-        content[pos + 2..].trim()
-    } else {
-        // No headers, entire content is body
-        content.trim()
-    };
+    let content = skip_boundary_line(text);
+    let body = extract_body_after_headers(content);
 
     if body.is_empty() {
         return Ok(None);
@@ -144,54 +113,70 @@ fn parse_part(raw: &[u8]) -> Result<Option<String>, ParseError> {
     extract_payload(body)
 }
 
-/// Extract the GraphQL payload from a multipart part body.
-///
-/// Per multipart-spec.md:
-/// - Regular events have: `{"payload": {"data": {...}}}`
-/// - Heartbeats are: `{}` (empty object, no payload wrapper)
-/// - Transport errors have: `{"payload": null, "errors": [...]}`
-///
-/// Returns the inner payload body (the GraphQL response), or None for heartbeats.
-fn extract_payload(body: &str) -> Result<Option<String>, ParseError> {
-    use sonic_rs::{JsonContainerTrait, JsonValueTrait};
+fn skip_boundary_line(text: &str) -> &str {
+    if let Some(pos) = text.find("--") {
+        let after_boundary = &text[pos..];
+        if let Some(newline_pos) = after_boundary.find('\n') {
+            return &after_boundary[newline_pos + 1..];
+        }
+    }
+    text
+}
 
-    // Parse the body as JSON
+fn extract_body_after_headers(content: &str) -> &str {
+    if let Some(pos) = content.find("\r\n\r\n") {
+        content[pos + 4..].trim()
+    } else if let Some(pos) = content.find("\n\n") {
+        content[pos + 2..].trim()
+    } else {
+        content.trim()
+    }
+}
+
+fn extract_payload(body: &str) -> Result<Option<String>, ParseError> {
+    use sonic_rs::JsonValueTrait;
+
     let parsed: sonic_rs::Value =
         sonic_rs::from_str(body).map_err(|e| ParseError::InvalidJson(e.to_string()))?;
 
-    // Check if this is a heartbeat (empty object)
-    if parsed.is_object() {
-        let obj = parsed.as_object().unwrap();
-        if obj.is_empty() {
-            return Ok(None); // Heartbeat
-        }
+    if is_heartbeat(&parsed) {
+        return Ok(None);
     }
 
-    // Check for transport-level error (payload is null, errors at top level)
-    if parsed.get("payload").map(|v| v.is_null()).unwrap_or(false) {
-        if let Some(errors) = parsed.get("errors") {
-            // Return the transport error as a GraphQL error response
-            let error_response = format!(
-                r#"{{"errors":{}}}"#,
-                sonic_rs::to_string(errors).unwrap_or_default()
-            );
-            return Ok(Some(error_response));
-        }
+    if let Some(transport_error) = extract_transport_error(&parsed) {
+        return Ok(Some(transport_error));
     }
 
-    // Extract the payload field
     if let Some(payload) = parsed.get("payload") {
         if payload.is_null() {
             return Ok(None);
         }
-        // Return the payload content as string (the GraphQL response)
         return Ok(Some(
             sonic_rs::to_string(payload).map_err(|e| ParseError::InvalidJson(e.to_string()))?,
         ));
     }
 
-    // If there's no payload field, it's an invalid format
-    Err(ParseError::MissingPayload)
+    Ok(Some(body.to_string()))
+}
+
+fn is_heartbeat(value: &sonic_rs::Value) -> bool {
+    use sonic_rs::{JsonContainerTrait, JsonValueTrait};
+    
+    value.is_object() && value.as_object().map_or(false, |obj| obj.is_empty())
+}
+
+fn extract_transport_error(value: &sonic_rs::Value) -> Option<String> {
+    use sonic_rs::JsonValueTrait;
+
+    if value.get("payload").map(|v| v.is_null()).unwrap_or(false) {
+        if let Some(errors) = value.get("errors") {
+            return Some(format!(
+                r#"{{"errors":{}}}"#,
+                sonic_rs::to_string(errors).unwrap_or_default()
+            ));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -223,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_payload_normal() {
+    fn test_extract_payload_with_payload_property() {
         let body = r#"{"payload":{"data":{"reviewAdded":{"id":"1"}}}}"#;
 
         let payload = extract_payload(body)
@@ -232,6 +217,19 @@ mod tests {
 
         assert!(payload.contains("reviewAdded"));
         assert!(payload.contains("id"));
+    }
+
+    #[test]
+    fn test_extract_payload_without_payload_property() {
+        let body = r#"{"data":{"user":{"name":"Alice"}}}"#;
+
+        let payload = extract_payload(body)
+            .expect("Should extract payload")
+            .expect("Should have payload");
+
+        assert!(payload.contains("user"));
+        assert!(payload.contains("Alice"));
+        assert_eq!(payload, body);
     }
 
     #[test]
@@ -256,9 +254,22 @@ mod tests {
     }
 
     #[test]
-    fn test_find_multipart_boundary() {
+    fn test_find_multipart_boundary_graphql() {
         let buffer =
             b"--graphql\r\nContent-Type: application/json\r\n\r\n{\"payload\":{\"data\":{}}}\r\n--graphql\r\n";
+
+        let result = find_multipart_boundary(buffer);
+
+        assert!(result.is_some());
+        let (pos, is_end) = result.unwrap();
+        assert!(!is_end);
+        assert!(pos > 0);
+    }
+
+    #[test]
+    fn test_find_multipart_boundary_custom() {
+        let buffer =
+            b"--myboundary\r\nContent-Type: application/json\r\n\r\n{\"data\":{}}\r\n--myboundary\r\n";
 
         let result = find_multipart_boundary(buffer);
 
@@ -272,6 +283,18 @@ mod tests {
     fn test_find_multipart_boundary_end_marker() {
         let buffer =
             b"--graphql\r\nContent-Type: application/json\r\n\r\n{\"payload\":{\"data\":{}}}\r\n--graphql--\r\n";
+
+        let result = find_multipart_boundary(buffer);
+
+        assert!(result.is_some());
+        let (_, is_end) = result.unwrap();
+        assert!(is_end);
+    }
+
+    #[test]
+    fn test_find_multipart_boundary_custom_end_marker() {
+        let buffer =
+            b"--xyz123\r\nContent-Type: application/json\r\n\r\n{\"data\":{}}\r\n--xyz123--\r\n";
 
         let result = find_multipart_boundary(buffer);
 
@@ -322,7 +345,6 @@ mod tests {
         use http_body_util::StreamBody;
         use hyper::body::Frame;
 
-        // Chunked delivery where events are split across multiple chunks
         let chunks: Vec<Result<Frame<Bytes>, std::convert::Infallible>> = vec![
             Ok(Frame::data(Bytes::from(
                 "--graphql\r\nContent-Type: application/json\r\n\r\n{\"pay",
@@ -373,7 +395,6 @@ mod tests {
         let body = StreamBody::new(futures::stream::iter(chunks));
         let mut stream = parse_to_stream(body);
 
-        // First event should be the data (heartbeat is skipped)
         let first = stream.next().await;
         assert!(first.is_some());
         let first_result = first.unwrap();
@@ -407,6 +428,61 @@ mod tests {
         let payload = String::from_utf8(first_result.unwrap().to_vec()).unwrap();
         assert!(payload.contains("errors"));
         assert!(payload.contains("Connection lost"));
+
+        let second = stream.next().await;
+        assert!(second.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_parse_to_stream_custom_boundary() {
+        use futures::StreamExt;
+        use http_body_util::StreamBody;
+        use hyper::body::Frame;
+
+        let chunks: Vec<Result<Frame<Bytes>, std::convert::Infallible>> = vec![Ok(Frame::data(
+            Bytes::from(
+                "--myboundary\r\nContent-Type: application/json\r\n\r\n{\"data\":{\"test\":1}}\r\n--myboundary--\r\n",
+            ),
+        ))];
+
+        let body = StreamBody::new(futures::stream::iter(chunks));
+        let mut stream = parse_to_stream(body);
+
+        let first = stream.next().await;
+        assert!(first.is_some());
+        let first_result = first.unwrap();
+        assert!(first_result.is_ok());
+        let payload = String::from_utf8(first_result.unwrap().to_vec()).unwrap();
+        assert!(payload.contains("test"));
+        assert!(payload.contains("data"));
+
+        let second = stream.next().await;
+        assert!(second.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_parse_to_stream_without_payload_wrapper() {
+        use futures::StreamExt;
+        use http_body_util::StreamBody;
+        use hyper::body::Frame;
+
+        let chunks: Vec<Result<Frame<Bytes>, std::convert::Infallible>> = vec![Ok(Frame::data(
+            Bytes::from(
+                "--boundary\r\nContent-Type: application/json\r\n\r\n{\"data\":{\"user\":\"Alice\"}}\r\n--boundary--\r\n",
+            ),
+        ))];
+
+        let body = StreamBody::new(futures::stream::iter(chunks));
+        let mut stream = parse_to_stream(body);
+
+        let first = stream.next().await;
+        assert!(first.is_some());
+        let first_result = first.unwrap();
+        assert!(first_result.is_ok());
+        let payload = String::from_utf8(first_result.unwrap().to_vec()).unwrap();
+        assert!(payload.contains("Alice"));
+        assert!(payload.contains("user"));
+        assert!(payload.contains("data"));
 
         let second = stream.next().await;
         assert!(second.is_none());
