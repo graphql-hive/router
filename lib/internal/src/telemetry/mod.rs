@@ -2,6 +2,7 @@ use hive_router_config::telemetry::TelemetryConfig;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_sdk::{trace::IdGenerator, Resource};
+use std::env;
 use tracing::Subscriber;
 use tracing_subscriber::registry::LookupSpan;
 
@@ -58,9 +59,8 @@ impl<S> OpenTelemetry<S> {
 
         let traces_provider = build_trace_provider(config, id_generator, resource.clone())?;
 
-        // TODO: make those configurable
-        let scope = InstrumentationScope::builder("hive-router")
-            .with_version("v0")
+        let scope = InstrumentationScope::builder("graphql-hive.router")
+            .with_version(env!("CARGO_PKG_VERSION"))
             .build();
 
         let tracer = traces_provider.tracer_with_scope(scope);
